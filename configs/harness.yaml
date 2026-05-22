@@ -11,6 +11,12 @@ search:
   max_debug_depth: 2
   debug_prob: 0.25
   num_drafts: 3
+  sunk_cost_policy: progress_gated
+  scaleup_policy: disallow_by_default
+  scaleup_requires:
+    - root_goal_contains_efficiency_or_scale
+    - current_branch_has_positive_signal
+    - failure_memory_controls_are_addressed
 
 stage_configs:
   ideation:
@@ -29,4 +35,3 @@ harness_semantics:
   critic_governance: deterministic_folder_routing
   lesson_policy: always_include_active_one_line_lessons
   publication_gate: rebuttal_then_ac
-

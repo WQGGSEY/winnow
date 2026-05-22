@@ -63,6 +63,20 @@ runs/demo_run/interactive_summary.html
 python -B -m unittest discover -s tests -v
 ```
 
+## Run Mock Tree Search
+
+```bash
+python -B -m unittest tests.test_tree_search -v
+```
+
+```bash
+python -B -m research_harness.orchestrator.tree_search
+```
+
+The staged tree-search loop currently accepts only dry-run/local backends. Live
+Claude Code remains behind `research_harness.workers.live_gate` and is not
+called by tree search.
+
 ## Run Pre-Live Local Preflight
 
 ```bash

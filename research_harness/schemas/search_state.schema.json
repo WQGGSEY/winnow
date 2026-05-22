@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/search_state.schema.json",
+  "title": "SearchState",
+  "type": "object",
+  "required": [
+    "search_id",
+    "status",
+    "max_depth",
+    "max_debug_depth",
+    "sunk_cost_policy",
+    "scaleup_policy",
+    "frontier",
+    "nodes",
+    "completed_node_ids",
+    "promoted_node_ids",
+    "pruned_node_ids",
+    "transitions"
+  ],
+  "properties": {
+    "search_id": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["initialized", "running", "completed", "blocked"]
+    },
+    "max_depth": { "type": "integer", "minimum": 0 },
+    "max_debug_depth": { "type": "integer", "minimum": 0 },
+    "sunk_cost_policy": { "type": "string" },
+    "scaleup_policy": { "type": "string" },
+    "frontier": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "nodes": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "completed_node_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "promoted_node_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "pruned_node_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "transitions": {
+      "type": "array",
+      "items": { "type": "object" }
+    }
+  },
+  "additionalProperties": false
+}

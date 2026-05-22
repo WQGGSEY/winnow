@@ -75,6 +75,14 @@ Failure memory is a non-binding branch prior. Retrieved one-line lessons and
 failure summaries add risk controls to future child branches, but they do not
 block promotion by themselves.
 
+Search depth, debug depth, sunk-cost behavior, and scale-up requirements are
+read from `configs/harness.yaml`. Scale-up is disallowed by default unless the
+configured policy and root goal allow it.
+
+The staged tree-search loop only accepts dry-run/local backends. Live Claude
+Code remains outside the loop behind `live_gate`, explicit billing
+acknowledgement, auth-status verification, and stdout ingestion.
+
 ## Long Jobs
 
 Long training jobs are split:

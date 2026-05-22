@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/frontier_item.schema.json",
+  "title": "FrontierItem",
+  "type": "object",
+  "required": [
+    "node_id",
+    "parent",
+    "depth",
+    "priority",
+    "stage",
+    "status",
+    "reason"
+  ],
+  "properties": {
+    "node_id": { "type": "string" },
+    "parent": { "type": ["string", "null"] },
+    "depth": { "type": "integer", "minimum": 0 },
+    "priority": { "type": "number" },
+    "stage": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["queued", "running", "done", "pruned"]
+    },
+    "reason": { "type": "string" }
+  },
+  "additionalProperties": false
+}

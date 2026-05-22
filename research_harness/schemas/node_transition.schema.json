@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/node_transition.schema.json",
+  "title": "NodeTransition",
+  "type": "object",
+  "required": [
+    "node_id",
+    "from_status",
+    "to_status",
+    "event",
+    "reason",
+    "created_child_ids"
+  ],
+  "properties": {
+    "node_id": { "type": "string" },
+    "from_status": { "type": "string" },
+    "to_status": { "type": "string" },
+    "event": { "type": "string" },
+    "reason": { "type": "string" },
+    "created_child_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

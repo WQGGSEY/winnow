@@ -13,6 +13,7 @@ from research_harness.config import (
 from research_harness.critics.governance import select_critics
 from research_harness.memory.baseline_dossier import load_baseline_dossier
 from research_harness.orchestrator.demo import _demo_node, run_demo
+from research_harness.orchestrator.tree_search import run_mock_tree_search
 from research_harness.orchestrator.validation import validate_node_invariants
 from research_harness.schemas.validator import validate_named_schema
 
@@ -44,6 +45,8 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
     validate_named_schema("job_manifest", state["job_manifest"])
     validate_named_schema("baseline_dossier", baseline_dossier)
     validate_named_schema("ac_decision", state["ac_decision"])
+    tree_result = run_mock_tree_search(root, root / "runs" / "prelive_tree_search")
+    validate_named_schema("search_state", tree_result["search_state"])
 
     return {
         "status": "passed",
@@ -55,6 +58,7 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
         "promotion_critic_count": len(promotion_routing["applied_critics"]),
         "rebuttal_critic_count": len(rebuttal_routing["applied_critics"]),
         "run_dir": str(run_dir),
+        "tree_search_state": str(root / "runs" / "prelive_tree_search" / "search_state.json"),
         "interactive_summary": str(run_dir / "interactive_summary.html"),
     }
 
