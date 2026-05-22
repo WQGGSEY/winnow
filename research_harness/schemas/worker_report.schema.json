@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/worker_report.schema.json",
+  "title": "WorkerReport",
+  "type": "object",
+  "required": [
+    "node_id",
+    "status",
+    "claim_verdict_candidate",
+    "metrics",
+    "baselines",
+    "disproof_conditions_hit",
+    "artifacts",
+    "unexpected_observations"
+  ],
+  "properties": {
+    "node_id": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "failed",
+        "blocked_preflight",
+        "blocked_permission",
+        "timeout_or_turn_exhausted",
+        "invalid_worker_output"
+      ]
+    },
+    "claim_verdict_candidate": {
+      "type": "string",
+      "enum": ["supported", "contradicted", "inconclusive", "not_evaluable"]
+    },
+    "metrics": { "type": "object" },
+    "baselines": { "type": "object" },
+    "disproof_conditions_hit": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "unexpected_observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["observation", "evidence", "scope_relation"],
+        "properties": {
+          "observation": { "type": "string" },
+          "evidence": { "type": "string" },
+          "suggested_branch_type": { "type": ["string", "null"] },
+          "scope_relation": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "failure_record_candidate": { "type": ["object", "null"] }
+  },
+  "additionalProperties": false
+}
+

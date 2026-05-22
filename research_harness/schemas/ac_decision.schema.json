@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/ac_decision.schema.json",
+  "title": "ACDecision",
+  "type": "object",
+  "required": [
+    "decision",
+    "confidence",
+    "score_summary",
+    "blocking_reasons",
+    "required_next_search_nodes",
+    "camera_ready_conditions"
+  ],
+  "properties": {
+    "decision": { "type": "string", "enum": ["accept", "revise", "reject"] },
+    "confidence": { "type": "string", "enum": ["low", "medium", "high"] },
+    "score_summary": {
+      "type": "object",
+      "required": [
+        "novelty",
+        "validity",
+        "necessity",
+        "clarity",
+        "reproducibility",
+        "taste_alignment"
+      ],
+      "properties": {
+        "novelty": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "validity": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "necessity": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "clarity": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "reproducibility": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "taste_alignment": { "type": "integer", "minimum": 1, "maximum": 10 }
+      },
+      "additionalProperties": false
+    },
+    "blocking_reasons": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "required_next_search_nodes": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "camera_ready_conditions": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}
+

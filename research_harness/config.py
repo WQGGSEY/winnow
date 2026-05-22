@@ -1,0 +1,226 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+
+class ConfigError(ValueError):
+    """Raised when repository configuration violates harness policy."""
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _strip_comment(line: str) -> str:
+    in_single = False
+    in_double = False
+    for index, char in enumerate(line):
+        if char == "'" and not in_double:
+            in_single = not in_single
+        elif char == '"' and not in_single:
+            in_double = not in_double
+        elif char == "#" and not in_single and not in_double:
+            return line[:index]
+    return line
+
+
+def _parse_scalar(value: str) -> Any:
+    value = value.strip()
+    if value == "":
+        return ""
+    if value in {"true", "True"}:
+        return True
+    if value in {"false", "False"}:
+        return False
+    if value in {"null", "None", "~"}:
+        return None
+    if value.startswith("[") and value.endswith("]"):
+        inner = value[1:-1].strip()
+        if not inner:
+            return []
+        return [_parse_scalar(part.strip()) for part in inner.split(",")]
+    if (
+        (value.startswith('"') and value.endswith('"'))
+        or (value.startswith("'") and value.endswith("'"))
+    ):
+        return value[1:-1]
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        return value
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def _logical_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = _strip_comment(raw_line).rstrip()
+        if not line.strip():
+            continue
+        lines.append(line)
+    return lines
+
+
+def parse_simple_yaml(text: str) -> Any:
+    """Parse the small YAML subset used by this scaffold.
+
+    Supported features are nested maps, lists, inline scalar lists, quoted
+    strings, booleans, nulls, ints, and floats. This intentionally avoids a
+    runtime dependency while keeping config files readable.
+    """
+
+    lines = _logical_lines(text)
+
+    def parse_block(index: int, indent: int) -> tuple[Any, int]:
+        if index >= len(lines):
+            return {}, index
+        stripped = lines[index].strip()
+        if _indent(lines[index]) < indent:
+            return {}, index
+        if stripped.startswith("- "):
+            return parse_list(index, indent)
+        return parse_map(index, indent)
+
+    def parse_list(index: int, indent: int) -> tuple[list[Any], int]:
+        items: list[Any] = []
+        while index < len(lines):
+            line = lines[index]
+            if _indent(line) != indent or not line.strip().startswith("- "):
+                break
+            content = line.strip()[2:].strip()
+            index += 1
+
+            if content == "":
+                value, index = parse_block(index, indent + 2)
+                items.append(value)
+                continue
+
+            if ":" in content:
+                key, raw_value = content.split(":", 1)
+                item: dict[str, Any] = {}
+                if raw_value.strip():
+                    item[key.strip()] = _parse_scalar(raw_value.strip())
+                else:
+                    nested, index = parse_block(index, indent + 2)
+                    item[key.strip()] = nested
+
+                if index < len(lines) and _indent(lines[index]) > indent:
+                    extra, index = parse_block(index, indent + 2)
+                    if isinstance(extra, dict):
+                        item.update(extra)
+                items.append(item)
+            else:
+                items.append(_parse_scalar(content))
+                if index < len(lines) and _indent(lines[index]) > indent:
+                    _, index = parse_block(index, indent + 2)
+        return items, index
+
+    def parse_map(index: int, indent: int) -> tuple[dict[str, Any], int]:
+        mapping: dict[str, Any] = {}
+        while index < len(lines):
+            line = lines[index]
+            current_indent = _indent(line)
+            if current_indent < indent:
+                break
+            if current_indent > indent:
+                break
+            stripped = line.strip()
+            if stripped.startswith("- "):
+                break
+            if ":" not in stripped:
+                raise ConfigError(f"invalid YAML line: {line}")
+            key, raw_value = stripped.split(":", 1)
+            index += 1
+            if raw_value.strip():
+                mapping[key.strip()] = _parse_scalar(raw_value.strip())
+            else:
+                value, index = parse_block(index, indent + 2)
+                mapping[key.strip()] = value
+        return mapping, index
+
+    parsed, final_index = parse_block(0, _indent(lines[0]) if lines else 0)
+    if final_index != len(lines):
+        raise ConfigError("YAML parser did not consume the full document")
+    return parsed
+
+
+def load_yaml(path: Path) -> Any:
+    return parse_simple_yaml(path.read_text(encoding="utf-8"))
+
+
+def split_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}, text
+    for index in range(1, len(lines)):
+        if lines[index].strip() == "---":
+            raw_frontmatter = "\n".join(lines[1:index])
+            body = "\n".join(lines[index + 1 :]).lstrip("\n")
+            parsed = parse_simple_yaml(raw_frontmatter) if raw_frontmatter.strip() else {}
+            if not isinstance(parsed, dict):
+                raise ConfigError(f"frontmatter must be a map: {path}")
+            return parsed, body
+    raise ConfigError(f"frontmatter was opened but not closed: {path}")
+
+
+def load_settings(repo_root: Path) -> dict[str, Any]:
+    settings = load_json(repo_root / "settings.json")
+    if "framework_invariants" in settings:
+        raise ConfigError("settings.json cannot override framework invariants")
+    runtime = settings.get("runtime", {})
+    auth = runtime.get("auth_policy", {})
+    if auth.get("mode") == "subscription_oauth" and not auth.get(
+        "require_no_anthropic_api_key"
+    ):
+        raise ConfigError("subscription_oauth requires require_no_anthropic_api_key=true")
+    return settings
+
+
+def load_harness_config(repo_root: Path) -> dict[str, Any]:
+    config = load_yaml(repo_root / "configs" / "harness.yaml")
+    if not isinstance(config, dict):
+        raise ConfigError("harness config must be a map")
+    if "harness_semantics" not in config:
+        raise ConfigError("harness config requires harness_semantics")
+    return config
+
+
+def load_research_profile(repo_root: Path) -> dict[str, Any]:
+    frontmatter, body = split_frontmatter(repo_root / "research_profile.md")
+    if frontmatter.get("settings_override"):
+        raise ConfigError("research_profile.md cannot override core settings/invariants")
+    frontmatter["body"] = body
+    return frontmatter
+
+
+def load_lessons(repo_root: Path) -> dict[str, Any]:
+    lessons = load_yaml(repo_root / "lessons.yaml")
+    if not isinstance(lessons, dict):
+        raise ConfigError("lessons.yaml must be a map")
+    for lesson in lessons.get("active_lessons", []):
+        text = lesson.get("text", "")
+        if "\n" in text:
+            raise ConfigError(f"lesson must be one line: {lesson.get('id')}")
+    return lessons
+
+
+def load_critic_profile(path: Path) -> dict[str, Any]:
+    frontmatter, body = split_frontmatter(path)
+    if frontmatter.get("override_policy") not in {None, "taste_only"}:
+        raise ConfigError(f"critic override_policy must be taste_only: {path}")
+    if not frontmatter.get("critic_profile_id"):
+        raise ConfigError(f"critic requires critic_profile_id: {path}")
+    frontmatter["body"] = body
+    frontmatter["path"] = str(path)
+    return frontmatter
+

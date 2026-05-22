@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/manual_live_smoke_plan.schema.json",
+  "title": "ManualLiveSmokePlan",
+  "type": "object",
+  "required": [
+    "status",
+    "execution_enabled",
+    "reason",
+    "preflight_summary",
+    "auth_preflight",
+    "claude_cli",
+    "live_invocation_envelope",
+    "manual_command",
+    "expected_output_path",
+    "post_run_checks"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "ready_to_manually_run",
+        "blocked_by_auth",
+        "blocked_by_missing_cli",
+        "blocked_by_local_preflight"
+      ]
+    },
+    "execution_enabled": { "type": "boolean" },
+    "reason": { "type": "string" },
+    "preflight_summary": { "type": "object" },
+    "auth_preflight": {
+      "type": "object",
+      "required": ["ok", "mode", "reason"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "mode": { "type": "string" },
+        "reason": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "claude_cli": {
+      "type": "object",
+      "required": ["found", "path"],
+      "properties": {
+        "found": { "type": "boolean" },
+        "path": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "live_invocation_envelope": { "type": "object" },
+    "manual_command": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "expected_output_path": { "type": "string" },
+    "post_run_checks": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    }
+  },
+  "additionalProperties": false
+}
+

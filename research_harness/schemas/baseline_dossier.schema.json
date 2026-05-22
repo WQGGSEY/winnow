@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/baseline_dossier.schema.json",
+  "title": "BaselineDossier",
+  "type": "object",
+  "required": [
+    "id",
+    "created_at",
+    "query",
+    "problem_scope",
+    "selected",
+    "candidates_index",
+    "source_index",
+    "refresh_policy"
+  ],
+  "properties": {
+    "id": { "type": "string" },
+    "created_at": { "type": "string" },
+    "query": { "type": "string", "minLength": 1 },
+    "problem_scope": { "type": "object" },
+    "selected": {
+      "type": "object",
+      "required": [
+        "method",
+        "role",
+        "candidate_id",
+        "one_paragraph_reason",
+        "evidence_tags",
+        "risk_tags"
+      ],
+      "properties": {
+        "method": { "type": "string", "minLength": 1 },
+        "role": { "type": "string" },
+        "candidate_id": { "type": "string" },
+        "one_paragraph_reason": { "type": "string", "minLength": 1 },
+        "evidence_tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "risk_tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "candidates_index": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "method", "decision", "reason_tags", "detail_file"],
+        "properties": {
+          "id": { "type": "string" },
+          "method": { "type": "string" },
+          "decision": { "type": "string" },
+          "reason_tags": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1
+          },
+          "detail_file": { "type": "string" }
+        },
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "source_index": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "url", "accessed_at", "supports"],
+        "properties": {
+          "id": { "type": "string" },
+          "url": { "type": "string", "minLength": 1 },
+          "accessed_at": { "type": "string" },
+          "supports": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "refresh_policy": {
+      "type": "object",
+      "required": ["required_before"],
+      "properties": {
+        "required_before": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
+

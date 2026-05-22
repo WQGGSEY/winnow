@@ -1,0 +1,32 @@
+# Sakana-v2-like search keys remain the outer vocabulary. Harness-specific
+# invariants live under harness_semantics and are not runtime-overridable.
+
+agent:
+  num_workers: 3
+  steps: 12
+  num_seeds: 3
+
+search:
+  max_depth: 5
+  max_debug_depth: 2
+  debug_prob: 0.25
+  num_drafts: 3
+
+stage_configs:
+  ideation:
+    enabled: true
+  experimentation:
+    enabled: true
+  writeup:
+    enabled: true
+  rebuttal:
+    enabled: true
+
+harness_semantics:
+  require_claim_contract: true
+  baseline_policy: web_current_best_naive_random
+  worker_scope_policy: no_self_expansion
+  critic_governance: deterministic_folder_routing
+  lesson_policy: always_include_active_one_line_lessons
+  publication_gate: rebuttal_then_ac
+

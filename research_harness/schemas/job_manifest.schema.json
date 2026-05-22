@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/job_manifest.schema.json",
+  "title": "JobManifest",
+  "type": "object",
+  "required": [
+    "job_id",
+    "node_id",
+    "task_class",
+    "workspace",
+    "entrypoint",
+    "resources",
+    "inputs",
+    "outputs",
+    "claim_contract",
+    "failure_index_hints",
+    "reproducibility"
+  ],
+  "properties": {
+    "job_id": { "type": "string" },
+    "node_id": { "type": "string" },
+    "task_class": {
+      "type": "string",
+      "enum": ["smoke_test", "ablation", "training", "eval", "analysis"]
+    },
+    "workspace": { "type": "string" },
+    "entrypoint": {
+      "type": "object",
+      "required": ["command", "args"],
+      "properties": {
+        "command": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "resources": {
+      "type": "object",
+      "required": ["timeout_sec"],
+      "properties": {
+        "timeout_sec": { "type": "integer", "minimum": 1 },
+        "gpu": { "type": ["object", "null"] },
+        "cpu": { "type": ["integer", "null"] },
+        "memory_gb": { "type": ["integer", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "inputs": { "type": "object" },
+    "outputs": { "type": "object" },
+    "claim_contract": { "type": "object" },
+    "failure_index_hints": {
+      "type": "object",
+      "properties": {
+        "domain_tags": { "type": "array", "items": { "type": "string" } },
+        "method_tags": { "type": "array", "items": { "type": "string" } },
+        "risk_tags": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "reproducibility": {
+      "type": "object",
+      "required": ["seed", "code_snapshot", "data_snapshot"],
+      "properties": {
+        "seed": {},
+        "code_snapshot": { "type": "string" },
+        "data_snapshot": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
+

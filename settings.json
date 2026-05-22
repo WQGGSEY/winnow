@@ -1,0 +1,75 @@
+{
+  "runtime": {
+    "default_backend": "mock",
+    "auth_policy": {
+      "provider": "claude_code",
+      "mode": "subscription_oauth",
+      "require_no_anthropic_api_key": true,
+      "token_source": "login_session_or_setup_token",
+      "fail_if_api_key_present": true
+    },
+    "worker_turn_budgets": {
+      "text_worker": 2,
+      "experiment_worker": 6,
+      "critic_worker": 3
+    },
+    "worker_backends": {
+      "mock": {
+        "required_for_ci": true
+      },
+      "claude_code_dry_run": {
+        "executes_agent": false
+      },
+      "claude_code_live": {
+        "manual_smoke_only": true,
+        "requires_auth_preflight": true
+      }
+    }
+  },
+  "memory": {
+    "failure_retrieval_top_k": 5,
+    "baseline_dossier_detail_policy": "on_demand",
+    "lessons": {
+      "always_include_active": true,
+      "max_chars_per_lesson": 240,
+      "distill_when_count_exceeds": 40
+    }
+  },
+  "publishing": {
+    "default_outputs": ["interactive_html", "slides_html"],
+    "allow_tex": false,
+    "paper_format": "markdown_first",
+    "slides_format": "html",
+    "interactive_html": {
+      "include_tree_viz": true,
+      "include_claim_map": true,
+      "include_failure_summary": true,
+      "include_rebuttal_and_ac": true
+    },
+    "token_policy": {
+      "avoid_tex_until_final": true,
+      "prefer_structured_artifacts": true
+    }
+  },
+  "publication_gate": {
+    "enabled": true,
+    "rebuttal": {
+      "enabled": true,
+      "max_depth": 2,
+      "max_new_nodes": 3,
+      "allow_baseline_refresh": true,
+      "allow_expensive_scaleup": false
+    },
+    "ac_agent": {
+      "enabled": true,
+      "decision_options": ["accept", "revise", "reject"],
+      "accept_thresholds": {
+        "validity": 7,
+        "necessity": 6,
+        "reproducibility": 6,
+        "taste_alignment": 7
+      }
+    }
+  }
+}
+

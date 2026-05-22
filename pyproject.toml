@@ -1,0 +1,13 @@
+[project]
+name = "research-harness"
+version = "0.1.0"
+description = "Greenfield-compatible Sakana v2 style research harness scaffold for bounded Claude Code workers."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+research-harness-demo = "research_harness.orchestrator.demo:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

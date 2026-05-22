@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/node.schema.json",
+  "title": "ResearchNode",
+  "type": "object",
+  "required": [
+    "id",
+    "type",
+    "status",
+    "domain",
+    "stage",
+    "lineage",
+    "claim_contract",
+    "baseline_refs",
+    "runtime_profile",
+    "failure_retrieval",
+    "outputs"
+  ],
+  "properties": {
+    "id": { "type": "string", "pattern": "^n_[A-Za-z0-9_\\-]+$" },
+    "type": {
+      "type": "string",
+      "enum": [
+        "capability",
+        "validity",
+        "necessity",
+        "boundary",
+        "mechanism",
+        "constraint",
+        "taste",
+        "operational"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "proposed",
+        "ready",
+        "running",
+        "completed_worker_report",
+        "critic_reviewed",
+        "orchestrator_reduced",
+        "promoted",
+        "needs_child_branch",
+        "pruned",
+        "blocked",
+        "failed"
+      ]
+    },
+    "domain": { "type": "string" },
+    "stage": {
+      "type": "string",
+      "enum": ["ideation", "experimentation", "promotion", "rebuttal", "publication"]
+    },
+    "parent": { "type": ["string", "null"] },
+    "lineage": {
+      "type": "object",
+      "required": [
+        "root_goal_id",
+        "covers_goal_facets",
+        "inherited_assumptions",
+        "introduced_assumptions",
+        "taste_constraints_applied"
+      ],
+      "properties": {
+        "root_goal_id": { "type": "string" },
+        "covers_goal_facets": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "inherited_assumptions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "introduced_assumptions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "taste_constraints_applied": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "claim_contract": {
+      "type": "object",
+      "required": [
+        "claim_under_test",
+        "mandatory_baselines",
+        "success_criteria",
+        "disproof_conditions"
+      ],
+      "properties": {
+        "claim_under_test": { "type": "string", "minLength": 1 },
+        "mandatory_baselines": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "success_criteria": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "disproof_conditions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "baseline_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["baseline_dossier_id", "roles"],
+        "properties": {
+          "baseline_dossier_id": { "type": "string" },
+          "candidate_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["current_best_known", "naive", "random_or_null"]
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "runtime_profile": {
+      "type": "object",
+      "required": ["worker_type", "timeout_policy"],
+      "properties": {
+        "worker_type": {
+          "type": "string",
+          "enum": ["text_worker", "experiment_worker", "critic_worker", "runner_job"]
+        },
+        "timeout_policy": { "type": "string" },
+        "turn_budget": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "failure_retrieval": {
+      "type": "object",
+      "required": ["query_tags", "selected_fail_files"],
+      "properties": {
+        "query_tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "selected_fail_files": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "outputs": {
+      "type": "object",
+      "required": ["artifacts", "verdict"],
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "verdict": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}
+

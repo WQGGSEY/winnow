@@ -1,0 +1,10 @@
+active_source: ../../lessons.yaml
+distillation_policy:
+  active_lessons_always_included: true
+  lesson_format: "In [regime], [principle], unless/when [condition]."
+  archive_atomic_lessons_after_distillation: true
+  owner: memory_maintenance
+  requires:
+    - critic_governance_check
+    - orchestrator_acceptance
+

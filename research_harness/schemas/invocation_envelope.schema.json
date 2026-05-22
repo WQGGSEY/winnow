@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/invocation_envelope.schema.json",
+  "title": "InvocationEnvelope",
+  "type": "object",
+  "required": [
+    "backend",
+    "invocation_id",
+    "node_id",
+    "role",
+    "workspace",
+    "allowed_read_roots",
+    "allowed_write_roots",
+    "denied_write_roots",
+    "permission_mode",
+    "scope_policy",
+    "network",
+    "turn_budget",
+    "timeout_policy",
+    "output_schema",
+    "expected_output_path",
+    "environment_policy",
+    "prompt_path",
+    "command_plan"
+  ],
+  "properties": {
+    "backend": {
+      "type": "string",
+      "enum": ["claude_code_dry_run", "claude_code_live"]
+    },
+    "invocation_id": { "type": "string", "pattern": "^invoke_[A-Za-z0-9_\\-]+$" },
+    "node_id": { "type": "string" },
+    "role": {
+      "type": "string",
+      "enum": ["text_worker", "experiment_worker", "critic_worker"]
+    },
+    "workspace": { "type": "string" },
+    "allowed_read_roots": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "allowed_write_roots": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "denied_write_roots": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "permission_mode": {
+      "type": "string",
+      "enum": ["non_interactive_or_fail"]
+    },
+    "scope_policy": {
+      "type": "string",
+      "enum": ["no_self_expansion"]
+    },
+    "network": {
+      "type": "string",
+      "enum": ["disabled_by_default"]
+    },
+    "turn_budget": { "type": "integer", "minimum": 1 },
+    "timeout_policy": { "type": "string" },
+    "output_schema": {
+      "type": "object",
+      "required": ["name", "path"],
+      "properties": {
+        "name": { "type": "string", "enum": ["worker_report"] },
+        "path": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "expected_output_path": { "type": "string" },
+    "environment_policy": {
+      "type": "object",
+      "required": ["unset", "secret_logging"],
+      "properties": {
+        "unset": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "secret_logging": { "type": "string", "enum": ["forbidden"] }
+      },
+      "additionalProperties": false
+    },
+    "prompt_path": { "type": "string" },
+    "command_plan": {
+      "type": "object",
+      "required": ["executable", "args", "executes_in_dry_run"],
+      "properties": {
+        "executable": { "type": "string" },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "executes_in_dry_run": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
+

@@ -1,0 +1,17 @@
+active_lessons:
+  - id: lesson_001
+    text: "In supervised-rich retrieval, contrastive gains do not prove necessity unless they beat same-split supervised baselines."
+    tags: [retrieval, contrastive_learning, necessity, baseline_dominated]
+    evidence_refs: []
+  - id: lesson_002
+    text: "When data curation dominates errors, objective changes should yield to data-quality branches."
+    tags: [data_curation, representation_learning, bottleneck_shift]
+    evidence_refs: []
+  - id: lesson_003
+    text: "Near-SOTA low-compute results support necessity only when efficiency is a root-goal facet or the claim is narrowed."
+    tags: [necessity, pareto_advantage, goal_facets]
+    evidence_refs: []
+
+archive:
+  path: memory/lessons/archive
+
