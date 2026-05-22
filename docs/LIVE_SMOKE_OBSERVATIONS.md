@@ -51,6 +51,8 @@ Current policy:
 - Claude workers run with tools disabled. The orchestrator embeds active
   lessons, baseline dossier summaries, and failure retrieval indexes directly in
   the prompt instead of expecting worker-side file reads.
+- Failure candidates are only proposals. Shared failure files and one-line
+  lessons are written by orchestrator-owned memory code after validation.
 - `research_harness.workers.live_gate` returns `blocked_by_billing_guard`
   unless `RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack` is explicitly
   present or a test passes `billing_ack=True`.

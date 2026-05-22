@@ -90,7 +90,7 @@ class ClaudeStdoutIngestTests(unittest.TestCase):
             self.assertEqual(result.worker_report["status"], "blocked_permission")
             self.assertEqual(
                 result.worker_report["failure_record_candidate"]["category"],
-                "permission_denied",
+                "invalid_experiment",
             )
 
     def test_budget_error_becomes_non_promotable_worker_report(self) -> None:

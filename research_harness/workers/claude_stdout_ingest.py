@@ -87,7 +87,7 @@ def _report_from_cli_result(
             _blocked_report(
                 envelope,
                 status="blocked_permission",
-                category="permission_denied",
+                category="invalid_experiment",
                 tags=["claude_cli", "permission_denied"],
                 evidence=(
                     "Claude CLI reported permission denials before a trusted "
@@ -111,7 +111,7 @@ def _report_from_cli_result(
             _blocked_report(
                 envelope,
                 status=status,
-                category="runtime_blocker",
+                category="invalid_experiment",
                 tags=tags,
                 evidence=_runtime_evidence(cli_result),
                 cli_result=cli_result,
@@ -127,7 +127,7 @@ def _report_from_cli_result(
             _blocked_report(
                 envelope,
                 status="invalid_worker_output",
-                category="invalid_worker_output",
+                category="implementation_failure",
                 tags=["claude_cli", "invalid_worker_output"],
                 evidence=str(exc),
                 cli_result=cli_result,
@@ -142,7 +142,7 @@ def _report_from_cli_result(
             _blocked_report(
                 envelope,
                 status="invalid_worker_output",
-                category="node_id_mismatch",
+                category="scope_violation",
                 tags=["claude_cli", "node_id_mismatch"],
                 evidence=(
                     f"Worker report node_id {repair.data.get('node_id')!r} "

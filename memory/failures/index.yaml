@@ -1,7 +1,9 @@
 categories:
   invalid_experiment:
     description: "Execution, environment, permission, or timeout prevented evaluation."
-    files: []
+    files:
+      - "invalid_experiment/n_demo_001__invalid_experiment__90e4fb0d8b.md"
+      - "invalid_experiment/n_demo_001__invalid_experiment__509089f891.md"
   implementation_failure:
     description: "The idea was not evaluated because implementation failed."
     files: []
@@ -20,4 +22,3 @@ categories:
   scope_violation:
     description: "The worker or node left its authorized scope."
     files: []
-
