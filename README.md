@@ -85,7 +85,9 @@ This still does not call Claude Code. It writes a schema-valid manual smoke
 plan under `runs/manual_live_smoke/`, checks subscription auth precedence, and
 records the exact command a human operator can run later. By default, the plan
 is blocked by the billing guard; live Claude Code requires an explicit
-`RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack` acknowledgement.
+`RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack` acknowledgement. The
+auth probe accepts only Claude.ai subscription auth status and stores no email,
+organization id, or token fields.
 
 ## Core Files
 

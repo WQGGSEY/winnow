@@ -46,8 +46,11 @@ def build_manual_live_smoke_plan(
         encoding="utf-8",
     )
 
-    auth = invoker.auth_preflight()
     detected_claude = claude_path or shutil.which("claude")
+    auth = invoker.auth_preflight(
+        claude_path=detected_claude or "claude",
+        probe_cli_status=detected_claude is not None,
+    )
     live_backend = (
         settings.get("runtime", {})
         .get("worker_backends", {})
@@ -94,6 +97,7 @@ def build_manual_live_smoke_plan(
             "ok": auth.ok,
             "mode": auth.mode,
             "reason": auth.reason,
+            "details": auth.details,
         },
         "claude_cli": {
             "found": detected_claude is not None,

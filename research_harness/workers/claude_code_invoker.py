@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ class AuthPreflightResult:
     ok: bool
     mode: str
     reason: str | None = None
+    details: dict[str, Any] | None = None
 
 
 class ClaudeCodeInvoker:
@@ -30,7 +32,11 @@ class ClaudeCodeInvoker:
         self.settings = settings
         self.repo_root = (repo_root or Path.cwd()).resolve()
 
-    def auth_preflight(self) -> AuthPreflightResult:
+    def auth_preflight(
+        self,
+        claude_path: str | None = None,
+        probe_cli_status: bool = False,
+    ) -> AuthPreflightResult:
         auth_policy = self.settings.get("runtime", {}).get("auth_policy", {})
         if auth_policy.get("require_no_anthropic_api_key") and os.environ.get("ANTHROPIC_API_KEY"):
             return AuthPreflightResult(
@@ -38,7 +44,86 @@ class ClaudeCodeInvoker:
                 mode="api_key_would_take_precedence",
                 reason="ANTHROPIC_API_KEY is set; subscription OAuth mode requires it to be unset.",
             )
+        if probe_cli_status:
+            return self._probe_claude_auth_status(claude_path or "claude")
         return AuthPreflightResult(ok=True, mode=auth_policy.get("mode", "unknown"))
+
+    def _probe_claude_auth_status(self, claude_path: str) -> AuthPreflightResult:
+        auth_policy = self.settings.get("runtime", {}).get("auth_policy", {})
+        allowed_subscriptions = {
+            str(item).lower()
+            for item in auth_policy.get(
+                "allowed_subscription_types",
+                ["pro", "max", "team", "enterprise"],
+            )
+        }
+        env = os.environ.copy()
+        env.pop("ANTHROPIC_API_KEY", None)
+        try:
+            completed = subprocess.run(
+                [claude_path, "auth", "status", "--json"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=env,
+            )
+        except FileNotFoundError:
+            return AuthPreflightResult(
+                ok=False,
+                mode="claude_cli_missing",
+                reason="claude CLI was not found for auth status probe.",
+            )
+        except subprocess.TimeoutExpired:
+            return AuthPreflightResult(
+                ok=False,
+                mode="auth_status_timeout",
+                reason="claude auth status timed out.",
+            )
+
+        raw_status = completed.stdout.strip() or completed.stderr.strip()
+        try:
+            status = json.loads(raw_status)
+        except json.JSONDecodeError:
+            return AuthPreflightResult(
+                ok=False,
+                mode="auth_status_unparseable",
+                reason="claude auth status did not return JSON.",
+            )
+
+        details = {
+            "logged_in": bool(status.get("loggedIn")),
+            "auth_method": status.get("authMethod"),
+            "api_provider": status.get("apiProvider"),
+            "subscription_type": status.get("subscriptionType"),
+        }
+        if completed.returncode != 0 or not status.get("loggedIn"):
+            return AuthPreflightResult(
+                ok=False,
+                mode="not_logged_in",
+                reason="claude auth status reports no active login.",
+                details=details,
+            )
+        if status.get("authMethod") != "claude.ai":
+            return AuthPreflightResult(
+                ok=False,
+                mode="non_subscription_auth",
+                reason="claude auth status is not using claude.ai subscription auth.",
+                details=details,
+            )
+        subscription_type = str(status.get("subscriptionType") or "").lower()
+        if subscription_type not in allowed_subscriptions:
+            return AuthPreflightResult(
+                ok=False,
+                mode="unsupported_subscription_type",
+                reason="claude auth status did not report an allowed subscription type.",
+                details=details,
+            )
+        return AuthPreflightResult(
+            ok=True,
+            mode=auth_policy.get("mode", "subscription_oauth"),
+            details=details,
+        )
 
     def build_dry_run_invocation(self, node: dict[str, Any]) -> dict[str, Any]:
         runtime = node["runtime_profile"]

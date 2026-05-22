@@ -22,6 +22,9 @@ backend.
   claim, baselines, success criteria, disproof conditions, no scope expansion,
   and strict JSON output.
 - `ANTHROPIC_API_KEY` preflight fails in subscription mode.
+- Live auth status must be checked through `claude auth status --json`; only
+  `authMethod: claude.ai` with an allowed subscription type may pass. Persist no
+  email, org id, or token fields.
 - Critic routing includes `critics/always`, node-type, domain, and rebuttal
   stage critics where applicable.
 - Output repair accepts only deterministic format repair and rejects

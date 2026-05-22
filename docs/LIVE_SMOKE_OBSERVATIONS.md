@@ -10,6 +10,10 @@ Environment:
 
 - `ANTHROPIC_API_KEY` was unset for the live command.
 - Claude Code auth preflight reported subscription OAuth mode.
+- A non-inference `claude auth status --json` probe later confirmed
+  `authMethod: claude.ai`, `apiProvider: firstParty`, and
+  `subscriptionType: max`. Email and organization identifiers are not persisted
+  in harness artifacts.
 - The generated command used `--permission-mode dontAsk` and JSON output.
 
 Observed runs:
@@ -38,6 +42,9 @@ Interpretation:
 Current policy:
 
 - `claude_code_live` is blocked by default.
+- Live gate probes `claude auth status --json` and blocks if the auth method is
+  not `claude.ai` or the subscription type is not one of the allowed
+  subscription plans.
 - `research_harness.workers.live_gate` returns `blocked_by_billing_guard`
   unless `RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack` is explicitly
   present or a test passes `billing_ack=True`.

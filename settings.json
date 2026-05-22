@@ -6,7 +6,9 @@
       "mode": "subscription_oauth",
       "require_no_anthropic_api_key": true,
       "token_source": "login_session_or_setup_token",
-      "fail_if_api_key_present": true
+      "fail_if_api_key_present": true,
+      "require_cli_auth_status": true,
+      "allowed_subscription_types": ["pro", "max", "team", "enterprise"]
     },
     "worker_turn_budgets": {
       "text_worker": 2,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,16 +15,38 @@ from research_harness.workers.live_gate import build_manual_live_smoke_plan
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _auth_status(subscription_type: str = "max") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=["claude", "auth", "status", "--json"],
+        returncode=0,
+        stdout=json.dumps(
+            {
+                "loggedIn": True,
+                "authMethod": "claude.ai",
+                "apiProvider": "firstParty",
+                "email": "redacted@example.com",
+                "orgId": "redacted",
+                "subscriptionType": subscription_type,
+            }
+        ),
+        stderr="",
+    )
+
+
 class LiveGateTests(unittest.TestCase):
     def test_manual_live_plan_is_ready_when_auth_ok_and_cli_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(os.environ, {}, clear=True):
-                plan = build_manual_live_smoke_plan(
-                    REPO_ROOT,
-                    Path(tmp) / "live",
-                    claude_path="/usr/local/bin/claude",
-                    billing_ack=True,
-                )
+                with patch(
+                    "research_harness.workers.claude_code_invoker.subprocess.run",
+                    return_value=_auth_status(),
+                ):
+                    plan = build_manual_live_smoke_plan(
+                        REPO_ROOT,
+                        Path(tmp) / "live",
+                        claude_path="/usr/local/bin/claude",
+                        billing_ack=True,
+                    )
 
             validate_named_schema("manual_live_smoke_plan", plan)
             validate_named_schema("invocation_envelope", plan["live_invocation_envelope"])
@@ -36,6 +59,8 @@ class LiveGateTests(unittest.TestCase):
             self.assertIn("--model", plan["manual_command"])
             self.assertIn("--max-budget-usd", plan["manual_command"])
             self.assertIn("--tools", plan["manual_command"])
+            self.assertEqual(plan["auth_preflight"]["details"]["subscription_type"], "max")
+            self.assertNotIn("email", plan["auth_preflight"]["details"])
             self.assertTrue((Path(tmp) / "live" / "manual_live_smoke_plan.json").exists())
             self.assertEqual(
                 plan["live_invocation_envelope"]["command_plan"]["stdin_path"],
@@ -73,12 +98,16 @@ class LiveGateTests(unittest.TestCase):
     def test_written_manual_live_plan_is_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(os.environ, {}, clear=True):
-                plan = build_manual_live_smoke_plan(
-                    REPO_ROOT,
-                    Path(tmp) / "live",
-                    claude_path="/usr/local/bin/claude",
-                    billing_ack=True,
-                )
+                with patch(
+                    "research_harness.workers.claude_code_invoker.subprocess.run",
+                    return_value=_auth_status(),
+                ):
+                    plan = build_manual_live_smoke_plan(
+                        REPO_ROOT,
+                        Path(tmp) / "live",
+                        claude_path="/usr/local/bin/claude",
+                        billing_ack=True,
+                    )
             written = json.loads(
                 (Path(tmp) / "live" / "manual_live_smoke_plan.json").read_text(
                     encoding="utf-8"
@@ -92,15 +121,49 @@ class LiveGateTests(unittest.TestCase):
     def test_manual_live_plan_blocks_without_billing_ack_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(os.environ, {}, clear=True):
-                plan = build_manual_live_smoke_plan(
-                    REPO_ROOT,
-                    Path(tmp) / "live",
-                    claude_path="/usr/local/bin/claude",
-                )
+                with patch(
+                    "research_harness.workers.claude_code_invoker.subprocess.run",
+                    return_value=_auth_status(),
+                ):
+                    plan = build_manual_live_smoke_plan(
+                        REPO_ROOT,
+                        Path(tmp) / "live",
+                        claude_path="/usr/local/bin/claude",
+                    )
 
             self.assertEqual(plan["status"], "blocked_by_billing_guard")
             self.assertFalse(plan["billing_guard"]["ack_ok"])
             self.assertFalse(plan["execution_enabled"])
+
+    def test_manual_live_plan_blocks_non_subscription_auth(self) -> None:
+        not_subscription = subprocess.CompletedProcess(
+            args=["claude", "auth", "status", "--json"],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "loggedIn": True,
+                    "authMethod": "console",
+                    "apiProvider": "firstParty",
+                    "subscriptionType": None,
+                }
+            ),
+            stderr="",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {}, clear=True):
+                with patch(
+                    "research_harness.workers.claude_code_invoker.subprocess.run",
+                    return_value=not_subscription,
+                ):
+                    plan = build_manual_live_smoke_plan(
+                        REPO_ROOT,
+                        Path(tmp) / "live",
+                        claude_path="/usr/local/bin/claude",
+                        billing_ack=True,
+                    )
+
+            self.assertEqual(plan["status"], "blocked_by_auth")
+            self.assertEqual(plan["auth_preflight"]["mode"], "non_subscription_auth")
 
 
 if __name__ == "__main__":

@@ -32,11 +32,21 @@
     "preflight_summary": { "type": "object" },
     "auth_preflight": {
       "type": "object",
-      "required": ["ok", "mode", "reason"],
+      "required": ["ok", "mode", "reason", "details"],
       "properties": {
         "ok": { "type": "boolean" },
         "mode": { "type": "string" },
-        "reason": { "type": ["string", "null"] }
+        "reason": { "type": ["string", "null"] },
+        "details": {
+          "type": ["object", "null"],
+          "properties": {
+            "logged_in": { "type": "boolean" },
+            "auth_method": { "type": ["string", "null"] },
+            "api_provider": { "type": ["string", "null"] },
+            "subscription_type": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -77,6 +78,39 @@ class PipelineTests(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertEqual(result.mode, "subscription_oauth")
+
+    def test_auth_preflight_probes_subscription_status_without_pii(self) -> None:
+        settings = load_settings(REPO_ROOT)
+        invoker = ClaudeCodeInvoker(REPO_ROOT, settings)
+        status = subprocess.CompletedProcess(
+            args=["claude", "auth", "status", "--json"],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "loggedIn": True,
+                    "authMethod": "claude.ai",
+                    "apiProvider": "firstParty",
+                    "email": "redacted@example.com",
+                    "orgId": "redacted",
+                    "subscriptionType": "max",
+                }
+            ),
+            stderr="",
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            with patch(
+                "research_harness.workers.claude_code_invoker.subprocess.run",
+                return_value=status,
+            ):
+                result = invoker.auth_preflight(
+                    claude_path="/usr/local/bin/claude",
+                    probe_cli_status=True,
+                )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.details["subscription_type"], "max")
+        self.assertNotIn("email", result.details)
 
 
 if __name__ == "__main__":
