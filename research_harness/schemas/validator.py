@@ -22,6 +22,7 @@ SCHEMA_FILES = {
     "frontier_item": "frontier_item.schema.json",
     "node_transition": "node_transition.schema.json",
     "search_state": "search_state.schema.json",
+    "runner_result": "runner_result.schema.json",
 }
 
 

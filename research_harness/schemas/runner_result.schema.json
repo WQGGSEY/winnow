@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/runner_result.schema.json",
+  "title": "RunnerResult",
+  "type": "object",
+  "required": [
+    "job_id",
+    "node_id",
+    "status",
+    "exit_code",
+    "elapsed_sec",
+    "timeout_sec",
+    "workspace",
+    "command",
+    "stdout_path",
+    "stderr_path",
+    "failure_record_candidate"
+  ],
+  "properties": {
+    "job_id": { "type": "string" },
+    "node_id": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "failed", "timeout"]
+    },
+    "exit_code": { "type": ["integer", "null"] },
+    "elapsed_sec": { "type": "number", "minimum": 0 },
+    "timeout_sec": { "type": "integer", "minimum": 1 },
+    "workspace": { "type": "string" },
+    "command": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "stdout_path": { "type": "string" },
+    "stderr_path": { "type": "string" },
+    "failure_record_candidate": { "type": ["object", "null"] }
+  },
+  "additionalProperties": false
+}

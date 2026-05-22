@@ -26,6 +26,7 @@ class ConfigLoaderTests(unittest.TestCase):
         lessons = load_lessons(REPO_ROOT)
 
         self.assertEqual(settings["runtime"]["default_backend"], "mock")
+        self.assertGreaterEqual(settings["runtime"]["runner_timeouts"]["training"], 3600)
         self.assertIn("harness_semantics", harness)
         self.assertEqual(profile["profile_id"], "seongje_research_v1")
         self.assertGreaterEqual(len(lessons["active_lessons"]), 1)
@@ -68,4 +69,3 @@ class ConfigLoaderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

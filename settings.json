@@ -15,6 +15,13 @@
       "experiment_worker": 6,
       "critic_worker": 3
     },
+    "runner_timeouts": {
+      "smoke_test": 60,
+      "analysis": 300,
+      "eval": 900,
+      "ablation": 7200,
+      "training": 21600
+    },
     "worker_backends": {
       "mock": {
         "required_for_ci": true

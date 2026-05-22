@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,7 @@ def build_demo_job_manifest(node: dict[str, Any], run_dir: Path) -> dict[str, An
         "task_class": "smoke_test",
         "workspace": str(workspace.resolve()),
         "entrypoint": {
-            "command": ["python"],
+            "command": [sys.executable],
             "args": ["-c", "print('runner smoke placeholder')"],
         },
         "resources": {
@@ -42,4 +43,3 @@ def build_demo_job_manifest(node: dict[str, Any], run_dir: Path) -> dict[str, An
             "data_snapshot": "none",
         },
     }
-

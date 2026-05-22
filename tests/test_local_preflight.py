@@ -18,6 +18,7 @@ class LocalPreflightTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "passed")
         self.assertEqual(result["settings_backend"], "mock")
+        self.assertEqual(result["runner_result_status"], "completed")
         self.assertGreaterEqual(result["promotion_critic_count"], 1)
         self.assertGreaterEqual(result["rebuttal_critic_count"], 1)
 
@@ -36,4 +37,3 @@ class LocalPreflightTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

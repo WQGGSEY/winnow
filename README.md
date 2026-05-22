@@ -24,7 +24,7 @@ Included:
 - Deterministic critic folder routing.
 - Rebuttal packet, rebuttal critic stage, AC decision schema.
 - Dry-run Claude Code invocation envelope and bounded prompt generation.
-- Deterministic local runner manifest validation.
+- Deterministic local runner manifest validation and bounded smoke execution.
 - Baseline dossier validation and dry-run resolution report.
 - Mock end-to-end pipeline that writes a research state bundle and HTML summary.
 
@@ -46,6 +46,8 @@ The demo writes:
 
 ```text
 runs/demo_run/node.json
+runs/demo_run/job_manifest.json
+runs/demo_run/nodes/n_demo_001/workspace/runner_result.json
 runs/demo_run/worker_report.json
 runs/demo_run/critic_review_bundle.json
 runs/demo_run/orchestrator_reduction.json
@@ -85,7 +87,7 @@ python -B -m research_harness.local_preflight
 
 This checks config/profile loading, node invariants, deterministic critic
 routing, dry-run Claude invocation envelope generation, worker-report schema
-validation, deterministic runner manifest validation, baseline dossier
+validation, deterministic runner manifest/result validation, baseline dossier
 validation, rebuttal/AC gating, and interactive HTML generation without calling
 Claude Code.
 

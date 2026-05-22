@@ -11,6 +11,10 @@ from research_harness.orchestrator.branch_prior import build_failure_branch_prio
 from research_harness.orchestrator.reduction import reduce_node
 from research_harness.orchestrator.validation import validate_node_invariants
 from research_harness.memory.baseline_dossier import build_baseline_resolution_report
+from research_harness.memory.failure_memory import (
+    FailureMemoryResult,
+    record_runner_failure_candidate,
+)
 from research_harness.publishing.ac import decide_acceptance
 from research_harness.publishing.html import render_interactive_html
 from research_harness.publishing.rebuttal import (
@@ -118,6 +122,16 @@ def _validate_reviews(reviews: list[dict[str, Any]]) -> None:
         validate_named_schema("critic_review", review)
 
 
+def _failure_memory_summary(result: FailureMemoryResult | None) -> dict[str, str] | None:
+    if result is None:
+        return None
+    return {
+        "record_path": str(result.record_path),
+        "index_path": str(result.index_path),
+        "lesson": result.lesson,
+    }
+
+
 def run_demo(repo_root: Path | None = None, run_dir: Path | None = None) -> Path:
     repo_root = repo_root or _repo_root()
     settings = _settings(repo_root)
@@ -139,10 +153,12 @@ def run_demo(repo_root: Path | None = None, run_dir: Path | None = None) -> Path
 
     job_manifest = build_demo_job_manifest(node, run_dir)
     validate_named_schema("job_manifest", job_manifest)
-    runner = LocalRunner(run_dir)
+    runner = LocalRunner(run_dir, settings=settings)
     runner.validate_or_raise(job_manifest)
     _write_json(run_dir / "job_manifest.json", job_manifest)
-    runner_stub = runner.write_stub_result(job_manifest["job_id"])
+    runner_result = runner.execute(job_manifest)
+    validate_named_schema("runner_result", runner_result)
+    runner_failure_memory = record_runner_failure_candidate(repo_root, node, runner_result)
 
     baseline_resolution = build_baseline_resolution_report(
         repo_root,
@@ -177,7 +193,8 @@ def run_demo(repo_root: Path | None = None, run_dir: Path | None = None) -> Path
         "node": node,
         "invocation_envelope": invocation_envelope,
         "job_manifest": job_manifest,
-        "runner_stub": str(runner_stub),
+        "runner_result": runner_result,
+        "runner_failure_memory": _failure_memory_summary(runner_failure_memory),
         "baseline_resolution": baseline_resolution,
         "worker_report": worker_report,
         "failure_branch_prior": failure_branch_prior,

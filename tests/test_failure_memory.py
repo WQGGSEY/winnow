@@ -12,6 +12,7 @@ from research_harness.config import load_yaml
 from research_harness.memory.failure_memory import (
     FailureMemoryError,
     record_failure_candidate,
+    record_runner_failure_candidate,
 )
 from research_harness.orchestrator.demo import _demo_node
 
@@ -122,6 +123,32 @@ class FailureMemoryTests(unittest.TestCase):
             summary = json.loads(completed.stdout)
             self.assertTrue(summary["recorded"])
             self.assertTrue(Path(summary["record_path"]).exists())
+
+    def test_records_runner_failure_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._temp_repo(tmp)
+            runner_result = {
+                "job_id": "job_1",
+                "node_id": "n_demo_001",
+                "status": "failed",
+                "exit_code": 2,
+                "elapsed_sec": 0.1,
+                "timeout_sec": 60,
+                "workspace": str(repo),
+                "command": ["python", "-c", "raise SystemExit(2)"],
+                "stdout_path": str(repo / "stdout.log"),
+                "stderr_path": str(repo / "stderr.log"),
+                "failure_record_candidate": {
+                    "category": "invalid_experiment",
+                    "tags": ["runner", "failed", "smoke_test"],
+                    "reason": "runner command exited with code 2",
+                },
+            }
+
+            result = record_runner_failure_candidate(repo, _demo_node(), runner_result)
+
+            self.assertIsNotNone(result)
+            self.assertTrue(result.record_path.exists())
 
 
 if __name__ == "__main__":

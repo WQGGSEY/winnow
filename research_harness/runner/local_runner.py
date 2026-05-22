@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -12,14 +16,17 @@ class RunnerValidationError(ValueError):
 
 
 class LocalRunner:
-    """Placeholder deterministic runner for long-running jobs.
+    """Deterministic bounded runner for manifest-defined jobs."""
 
-    v0 does not execute training jobs. The runner boundary exists so Claude Code
-    workers can prepare manifests while deterministic infrastructure owns long
-    execution.
-    """
-
-    DEFAULT_ALLOWED_EXECUTABLES = {"python", "pytest", "node", "npm", "rg"}
+    DEFAULT_ALLOWED_EXECUTABLES = {
+        "python",
+        "python3",
+        Path(sys.executable).name,
+        "pytest",
+        "node",
+        "npm",
+        "rg",
+    }
     FORBIDDEN_TOKENS = {
         "&&",
         "||",
@@ -36,9 +43,11 @@ class LocalRunner:
         self,
         run_dir: Path,
         allowed_executables: set[str] | None = None,
+        settings: dict[str, Any] | None = None,
     ) -> None:
         self.run_dir = run_dir.resolve()
         self.allowed_executables = allowed_executables or self.DEFAULT_ALLOWED_EXECUTABLES
+        self.settings = settings or {}
 
     def validate_manifest(self, manifest: dict[str, Any]) -> list[str]:
         errors: list[str] = []
@@ -53,7 +62,7 @@ class LocalRunner:
         workspace = Path(manifest["workspace"]).resolve()
         ensure_path_inside(workspace, self.run_dir, "job workspace")
 
-        executable = manifest["entrypoint"]["command"][0]
+        executable = Path(manifest["entrypoint"]["command"][0]).name
         if executable not in self.allowed_executables:
             raise RunnerValidationError(f"entrypoint executable is not allowlisted: {executable}")
 
@@ -82,7 +91,139 @@ class LocalRunner:
                     raise RunnerValidationError(f"{key} must use relative workspace paths")
                 ensure_path_inside(workspace / output_path, workspace, key)
 
-    def write_stub_result(self, job_id: str) -> Path:
-        path = self.run_dir / f"{job_id}_runner_stub.txt"
-        path.write_text("v0 runner stub: no long-running job executed.\n", encoding="utf-8")
-        return path
+    def execute(self, manifest: dict[str, Any]) -> dict[str, Any]:
+        self.validate_or_raise(manifest)
+        workspace = Path(manifest["workspace"]).resolve()
+        workspace.mkdir(parents=True, exist_ok=True)
+        stdout_path = workspace / "stdout.log"
+        stderr_path = workspace / "stderr.log"
+        result_path = workspace / "runner_result.json"
+        timeout_sec = self._effective_timeout(manifest)
+        command = manifest["entrypoint"]["command"] + manifest["entrypoint"]["args"]
+
+        started = time.monotonic()
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+                check=False,
+            )
+            elapsed_sec = round(time.monotonic() - started, 6)
+            stdout_path.write_text(_output_text(completed.stdout), encoding="utf-8")
+            stderr_path.write_text(_output_text(completed.stderr), encoding="utf-8")
+            status = "completed" if completed.returncode == 0 else "failed"
+            result = self._runner_result(
+                manifest,
+                workspace,
+                command,
+                status=status,
+                exit_code=completed.returncode,
+                elapsed_sec=elapsed_sec,
+                timeout_sec=timeout_sec,
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+                failure_reason=None
+                if completed.returncode == 0
+                else f"runner command exited with code {completed.returncode}",
+            )
+        except subprocess.TimeoutExpired as exc:
+            elapsed_sec = round(time.monotonic() - started, 6)
+            stdout_path.write_text(_output_text(exc.stdout), encoding="utf-8")
+            stderr_path.write_text(_output_text(exc.stderr), encoding="utf-8")
+            result = self._runner_result(
+                manifest,
+                workspace,
+                command,
+                status="timeout",
+                exit_code=None,
+                elapsed_sec=elapsed_sec,
+                timeout_sec=timeout_sec,
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+                failure_reason=f"runner command exceeded timeout_sec={timeout_sec}",
+            )
+        except OSError as exc:
+            elapsed_sec = round(time.monotonic() - started, 6)
+            stdout_path.write_text("", encoding="utf-8")
+            stderr_path.write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
+            result = self._runner_result(
+                manifest,
+                workspace,
+                command,
+                status="failed",
+                exit_code=None,
+                elapsed_sec=elapsed_sec,
+                timeout_sec=timeout_sec,
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+                failure_reason=f"runner command could not start: {exc}",
+            )
+
+        validate_named_schema("runner_result", result)
+        result_path.write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return result
+
+    def _runner_result(
+        self,
+        manifest: dict[str, Any],
+        workspace: Path,
+        command: list[str],
+        *,
+        status: str,
+        exit_code: int | None,
+        elapsed_sec: float,
+        timeout_sec: int,
+        stdout_path: Path,
+        stderr_path: Path,
+        failure_reason: str | None,
+    ) -> dict[str, Any]:
+        failure_record_candidate = None
+        if failure_reason:
+            failure_record_candidate = {
+                "category": "invalid_experiment",
+                "tags": [
+                    "runner",
+                    status,
+                    manifest["task_class"],
+                    *manifest.get("failure_index_hints", {}).get("risk_tags", []),
+                ],
+                "reason": failure_reason,
+            }
+        return {
+            "job_id": manifest["job_id"],
+            "node_id": manifest["node_id"],
+            "status": status,
+            "exit_code": exit_code,
+            "elapsed_sec": elapsed_sec,
+            "timeout_sec": timeout_sec,
+            "workspace": str(workspace),
+            "command": command,
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+            "failure_record_candidate": failure_record_candidate,
+        }
+
+    def _effective_timeout(self, manifest: dict[str, Any]) -> int:
+        manifest_timeout = int(manifest["resources"]["timeout_sec"])
+        configured = (
+            self.settings.get("runtime", {})
+            .get("runner_timeouts", {})
+            .get(manifest["task_class"])
+        )
+        if configured is None:
+            return manifest_timeout
+        return min(manifest_timeout, int(configured))
+
+
+def _output_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value

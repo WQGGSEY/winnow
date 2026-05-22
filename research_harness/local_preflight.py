@@ -43,6 +43,7 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
     validate_named_schema("worker_report", state["worker_report"])
     validate_named_schema("invocation_envelope", state["invocation_envelope"])
     validate_named_schema("job_manifest", state["job_manifest"])
+    validate_named_schema("runner_result", state["runner_result"])
     validate_named_schema("baseline_dossier", baseline_dossier)
     validate_named_schema("ac_decision", state["ac_decision"])
     tree_result = run_mock_tree_search(root, root / "runs" / "prelive_tree_search")
@@ -55,6 +56,7 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
         "research_profile_id": research_profile["profile_id"],
         "active_lesson_count": len(lessons.get("active_lessons", [])),
         "baseline_dossier_id": baseline_dossier["id"],
+        "runner_result_status": state["runner_result"]["status"],
         "promotion_critic_count": len(promotion_routing["applied_critics"]),
         "rebuttal_critic_count": len(rebuttal_routing["applied_critics"]),
         "run_dir": str(run_dir),

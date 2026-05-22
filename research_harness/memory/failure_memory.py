@@ -83,6 +83,53 @@ def record_failure_candidate(
     )
 
 
+def record_runner_failure_candidate(
+    repo_root: Path,
+    node: dict[str, Any],
+    runner_result: dict[str, Any],
+) -> FailureMemoryResult | None:
+    candidate = runner_result.get("failure_record_candidate")
+    if not candidate:
+        return None
+    status = (
+        "timeout_or_turn_exhausted"
+        if runner_result["status"] == "timeout"
+        else "failed"
+    )
+    worker_like_report = {
+        "node_id": runner_result["node_id"],
+        "status": status,
+        "claim_verdict_candidate": "not_evaluable",
+        "metrics": {
+            "runner_status": runner_result["status"],
+            "runner_exit_code": runner_result["exit_code"],
+            "runner_elapsed_sec": runner_result["elapsed_sec"],
+            "runner_timeout_sec": runner_result["timeout_sec"],
+        },
+        "baselines": {},
+        "disproof_conditions_hit": [],
+        "artifacts": [
+            runner_result["stdout_path"],
+            runner_result["stderr_path"],
+        ],
+        "unexpected_observations": [
+            {
+                "observation": "Deterministic runner did not complete successfully.",
+                "evidence": str(candidate.get("reason") or runner_result["status"]),
+                "suggested_branch_type": None,
+                "scope_relation": "operational_blocker",
+            }
+        ],
+        "failure_record_candidate": candidate,
+    }
+    return record_failure_candidate(
+        repo_root,
+        node,
+        worker_like_report,
+        source_artifact=str(runner_result.get("stdout_path")),
+    )
+
+
 def _record_id(node_id: str, category: str, reason: str, tags: list[str]) -> str:
     digest = hashlib.sha256(
         json.dumps(
