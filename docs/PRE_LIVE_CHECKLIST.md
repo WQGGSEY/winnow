@@ -38,6 +38,9 @@ backend.
   `stdin_path` for a later operator-controlled live smoke.
 - Live smoke planning must return `blocked_by_billing_guard` unless the operator
   explicitly sets `RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack`.
+- Captured Claude CLI stdout must be ingested through
+  `python -B -m research_harness.workers.claude_stdout_ingest --stdout <captured_stdout> --envelope <live_invocation_envelope>`;
+  workers must not be trusted to write `worker_report.json` directly.
 
 ## Live Backend Still Not Allowed
 

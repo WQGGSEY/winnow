@@ -113,8 +113,8 @@ def build_manual_live_smoke_plan(
         "expected_output_path": live_envelope["expected_output_path"],
         "post_run_checks": [
             "Feed prompt_path to manual_command stdin; do not use interactive mode.",
-            "Extract Claude CLI JSON result text, then parse through output_repair.parse_or_repair_json(schema_name='worker_report').",
-            "Validate worker_report schema before critic review.",
+            "Run python -B -m research_harness.workers.claude_stdout_ingest --stdout <captured_stdout> --envelope <live_invocation_envelope>.",
+            "Let the harness, not Claude, write worker_report.json after schema validation.",
             "Reject permission, timeout, or invalid output as non-promotable worker states.",
             "Run deterministic critic governance before orchestrator reduction.",
         ],
