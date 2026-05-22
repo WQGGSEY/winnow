@@ -71,6 +71,10 @@ Workers may report unexpected observations, but they may not pursue them.
 Orchestrator reduction decides whether an observation becomes a child branch,
 lesson, or discarded note.
 
+Failure memory is a non-binding branch prior. Retrieved one-line lessons and
+failure summaries add risk controls to future child branches, but they do not
+block promotion by themselves.
+
 ## Long Jobs
 
 Long training jobs are split:
@@ -112,4 +116,3 @@ promotion candidate
 
 `revise` returns to publishing. `reject` returns to search with blocker-linked
 nodes. `accept` triggers the renderers selected in `settings.json`.
-

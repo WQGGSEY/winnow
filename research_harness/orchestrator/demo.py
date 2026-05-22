@@ -7,6 +7,7 @@ from typing import Any
 from research_harness.critics.governance import select_critics
 from research_harness.critics.review_runner import run_critic_reviews
 from research_harness.config import load_settings
+from research_harness.orchestrator.branch_prior import build_failure_branch_prior
 from research_harness.orchestrator.reduction import reduce_node
 from research_harness.orchestrator.validation import validate_node_invariants
 from research_harness.memory.baseline_dossier import build_baseline_resolution_report
@@ -163,7 +164,13 @@ def run_demo(repo_root: Path | None = None, run_dir: Path | None = None) -> Path
         },
     )
 
-    reduction = reduce_node(node, worker_report, critic_reviews)
+    failure_branch_prior = build_failure_branch_prior(repo_root, node, settings)
+    reduction = reduce_node(
+        node,
+        worker_report,
+        critic_reviews,
+        branch_prior=failure_branch_prior,
+    )
     _write_json(run_dir / "orchestrator_reduction.json", reduction)
 
     state = {
@@ -173,6 +180,7 @@ def run_demo(repo_root: Path | None = None, run_dir: Path | None = None) -> Path
         "runner_stub": str(runner_stub),
         "baseline_resolution": baseline_resolution,
         "worker_report": worker_report,
+        "failure_branch_prior": failure_branch_prior,
         "critic_routing": critic_routing,
         "critic_reviews": critic_reviews,
         "orchestrator_reduction": reduction,

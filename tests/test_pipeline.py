@@ -37,6 +37,7 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(ac_decision["decision"], "accept")
             self.assertFalse(bundle["baseline_resolution"]["webfetch_executed"])
             self.assertIn("rebuttal_critic_reviews", bundle)
+            self.assertIn("failure_branch_prior", bundle)
             self.assertTrue((run_dir / "interactive_summary.html").exists())
 
     def test_critic_blocks_missing_current_best_role(self) -> None:

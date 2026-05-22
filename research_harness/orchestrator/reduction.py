@@ -12,6 +12,7 @@ def reduce_node(
     node: dict[str, Any],
     worker_report: dict[str, Any],
     critic_reviews: list[dict[str, Any]],
+    branch_prior: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not critic_reviews:
         raise ReductionError("orchestrator reduction requires at least one critic review")
@@ -40,6 +41,20 @@ def reduce_node(
     for review in critic_reviews:
         lesson_candidates.extend(review.get("lesson_candidates", []))
 
+    child_branch_suggestions = (
+        [
+            {
+                "type": "validity",
+                "reason": "Unexpected observation should be checked without letting the worker pursue it.",
+                "source": "worker_report.unexpected_observations",
+            }
+        ]
+        if worker_report.get("unexpected_observations")
+        else []
+    )
+    if next_transition == "needs_child_branch" and branch_prior:
+        child_branch_suggestions.extend(branch_prior.get("branch_suggestions", []))
+
     reduction = {
         "node_id": node["id"],
         "final_verdict": final_verdict,
@@ -52,14 +67,13 @@ def reduce_node(
             for objection in review.get("objections", [])
         ],
         "accepted_lesson_candidates": sorted(set(lesson_candidates)),
-        "child_branch_suggestions": [
-            {
-                "type": "validity",
-                "reason": "Unexpected observation should be checked without letting the worker pursue it.",
-                "source": "worker_report.unexpected_observations",
-            }
-        ]
-        if worker_report.get("unexpected_observations")
-        else [],
+        "failure_branch_prior": branch_prior or {
+            "source": "failure_memory",
+            "query_tags": [],
+            "selected_failure_files": [],
+            "risk_controls": [],
+            "branch_suggestions": [],
+        },
+        "child_branch_suggestions": child_branch_suggestions,
     }
     return reduction

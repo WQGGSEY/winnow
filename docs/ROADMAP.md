@@ -21,7 +21,8 @@
 - Add live Claude Code worker backend behind manual smoke gates.
 - Add Sakana-v2-compatible staged tree search loop.
 - Add failure retrieval and selective fail-file loading. (Initial indexed
-  retrieval is implemented; richer branch-prior weighting remains open.)
+  retrieval and non-binding branch priors are implemented; richer weighting
+  remains open.)
 - Add lesson distillation maintenance.
 
 ## v3
