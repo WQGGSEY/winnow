@@ -20,7 +20,8 @@ backend.
   naive, and random/null baselines without executing webfetch.
 - `runs/prelive_preflight/nodes/*/workspace/prompt.md` states the worker role,
   claim, baselines, success criteria, disproof conditions, no scope expansion,
-  and strict JSON output.
+  active lessons, baseline dossier summary, failure retrieval index, and strict
+  JSON output.
 - `ANTHROPIC_API_KEY` preflight fails in subscription mode.
 - Live auth status must be checked through `claude auth status --json`; only
   `authMethod: claude.ai` with an allowed subscription type may pass. Persist no
@@ -41,6 +42,9 @@ backend.
 - Captured Claude CLI stdout must be ingested through
   `python -B -m research_harness.workers.claude_stdout_ingest --stdout <captured_stdout> --envelope <live_invocation_envelope>`;
   workers must not be trusted to write `worker_report.json` directly.
+- Live workers run with tools disabled; any lessons, baselines, or failure
+  retrieval context needed by a worker must be embedded by the orchestrator in
+  the prompt rather than read by the worker.
 
 ## Live Backend Still Not Allowed
 

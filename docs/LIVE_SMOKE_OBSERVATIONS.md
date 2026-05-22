@@ -48,6 +48,9 @@ Current policy:
 - Claude workers do not write report files directly. The harness ingests Claude
   CLI JSON stdout, rejects runtime blockers first, extracts only the nested
   `result` as worker output, and writes `worker_report.json` after validation.
+- Claude workers run with tools disabled. The orchestrator embeds active
+  lessons, baseline dossier summaries, and failure retrieval indexes directly in
+  the prompt instead of expecting worker-side file reads.
 - `research_harness.workers.live_gate` returns `blocked_by_billing_guard`
   unless `RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack` is explicitly
   present or a test passes `billing_ack=True`.

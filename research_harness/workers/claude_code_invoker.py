@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from research_harness.config import load_lessons, load_yaml
 from research_harness.schemas.validator import validate_named_schema
 from research_harness.workers.workspace import WorkspaceGuardError, ensure_path_inside
 
@@ -148,12 +149,7 @@ class ClaudeCodeInvoker:
             "node_id": node["id"],
             "role": role,
             "workspace": str(self.workspace),
-            "allowed_read_roots": [
-                str(self.workspace),
-                str(self.repo_root / "lessons.yaml"),
-                str(self.repo_root / "memory" / "baseline_dossiers"),
-                str(self.repo_root / "memory" / "failures"),
-            ],
+            "allowed_read_roots": [str(self.workspace)],
             "allowed_write_roots": [str(self.workspace)],
             "denied_write_roots": [
                 str(self.repo_root),
@@ -220,6 +216,7 @@ class ClaudeCodeInvoker:
         baselines = "\n".join(f"- {item}" for item in contract["mandatory_baselines"])
         success = "\n".join(f"- {item}" for item in contract["success_criteria"])
         disproof = "\n".join(f"- {item}" for item in contract["disproof_conditions"])
+        context_bundle = self._build_prompt_context_bundle(node)
         return (
             "# Claude Code Worker Contract\n\n"
             f"Role: {node['runtime_profile']['worker_type']}\n"
@@ -238,6 +235,8 @@ class ClaudeCodeInvoker:
             f"{success}\n\n"
             "## Disproof Conditions\n"
             f"{disproof}\n\n"
+            "## Context Bundle\n"
+            f"{context_bundle}\n\n"
             "## Output\n"
             "Return only raw JSON matching this shape. Preserve unknowns as null. "
             "Do not add facts that were not observed in this invocation.\n\n"
@@ -257,6 +256,77 @@ class ClaudeCodeInvoker:
             "  \"failure_record_candidate\": null\n"
             "}\n"
         )
+
+    def _build_prompt_context_bundle(self, node: dict[str, Any]) -> str:
+        return "\n".join(
+            [
+                "### Active Lessons",
+                self._active_lessons_context(),
+                "",
+                "### Baseline Dossier Summary",
+                self._baseline_context(node),
+                "",
+                "### Failure Retrieval Index",
+                self._failure_context(node),
+            ]
+        )
+
+    def _active_lessons_context(self) -> str:
+        lessons = load_lessons(self.repo_root).get("active_lessons", [])
+        if not lessons:
+            return "- none"
+        return "\n".join(
+            f"- {lesson.get('id')}: {lesson.get('text')}"
+            for lesson in lessons
+        )
+
+    def _baseline_context(self, node: dict[str, Any]) -> str:
+        lines: list[str] = []
+        for ref in node.get("baseline_refs", []):
+            dossier_id = ref.get("baseline_dossier_id")
+            if not dossier_id:
+                continue
+            dossier_path = (
+                self.repo_root / "memory" / "baseline_dossiers" / f"{dossier_id}.yaml"
+            )
+            dossier = load_yaml(dossier_path)
+            selected = dossier.get("selected", {})
+            lines.append(
+                "- dossier "
+                f"{dossier_id}: selected={selected.get('candidate_id')} "
+                f"role={selected.get('role')} reason={selected.get('one_paragraph_reason')}"
+            )
+            for candidate in dossier.get("candidates_index", []):
+                tags = ", ".join(str(tag) for tag in candidate.get("reason_tags", []))
+                lines.append(
+                    "  - candidate "
+                    f"{candidate.get('id')}: decision={candidate.get('decision')} "
+                    f"method={candidate.get('method')} tags=[{tags}]"
+                )
+        return "\n".join(lines) if lines else "- none"
+
+    def _failure_context(self, node: dict[str, Any]) -> str:
+        failure_index_path = self.repo_root / "memory" / "failures" / "index.yaml"
+        failures = load_yaml(failure_index_path)
+        query_tags = ", ".join(
+            str(tag) for tag in node.get("failure_retrieval", {}).get("query_tags", [])
+        )
+        selected_fail_files = node.get("failure_retrieval", {}).get(
+            "selected_fail_files",
+            [],
+        )
+        lines = [f"- query_tags=[{query_tags}]", "- categories:"]
+        for category, spec in failures.get("categories", {}).items():
+            file_count = len(spec.get("files", []) or [])
+            lines.append(
+                f"  - {category}: files={file_count}; {spec.get('description')}"
+            )
+        if selected_fail_files:
+            lines.append("- selected_fail_files:")
+            lines.extend(f"  - {item}" for item in selected_fail_files)
+        else:
+            lines.append("- selected_fail_files: none")
+        return "\n".join(lines)
 
     def write_dry_run_artifacts(
         self,
