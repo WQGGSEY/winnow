@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from research_harness.config import load_lessons, load_yaml
+from research_harness.memory.failure_retrieval import (
+    format_failure_summaries,
+    retrieve_failure_summaries,
+)
 from research_harness.schemas.validator import validate_named_schema
 from research_harness.workers.workspace import WorkspaceGuardError, ensure_path_inside
 
@@ -308,12 +312,18 @@ class ClaudeCodeInvoker:
     def _failure_context(self, node: dict[str, Any]) -> str:
         failure_index_path = self.repo_root / "memory" / "failures" / "index.yaml"
         failures = load_yaml(failure_index_path)
-        query_tags = ", ".join(
-            str(tag) for tag in node.get("failure_retrieval", {}).get("query_tags", [])
+        retrieval = node.get("failure_retrieval", {})
+        query_tag_list = [str(tag) for tag in retrieval.get("query_tags", [])]
+        query_tags = ", ".join(query_tag_list)
+        selected_fail_files = retrieval.get("selected_fail_files", [])
+        top_k = int(
+            self.settings.get("memory", {}).get("failure_retrieval_top_k", 5)
         )
-        selected_fail_files = node.get("failure_retrieval", {}).get(
-            "selected_fail_files",
-            [],
+        summaries = retrieve_failure_summaries(
+            self.repo_root,
+            query_tags=[node.get("domain", ""), *query_tag_list],
+            selected_fail_files=selected_fail_files,
+            top_k=top_k,
         )
         lines = [f"- query_tags=[{query_tags}]", "- categories:"]
         for category, spec in failures.get("categories", {}).items():
@@ -321,11 +331,7 @@ class ClaudeCodeInvoker:
             lines.append(
                 f"  - {category}: files={file_count}; {spec.get('description')}"
             )
-        if selected_fail_files:
-            lines.append("- selected_fail_files:")
-            lines.extend(f"  - {item}" for item in selected_fail_files)
-        else:
-            lines.append("- selected_fail_files: none")
+        lines.append(format_failure_summaries(summaries))
         return "\n".join(lines)
 
     def write_dry_run_artifacts(

@@ -39,6 +39,8 @@ class InvocationEnvelopeTests(unittest.TestCase):
             self.assertIn("c1_sakana_ai_scientist_v2", prompt)
             self.assertIn("Failure Retrieval Index", prompt)
             self.assertIn("confounded_result", prompt)
+            self.assertIn("relevant_failures", prompt)
+            self.assertIn("n_demo_001__invalid_experiment", prompt)
             self.assertEqual(envelope["permission_mode"], "non_interactive_or_fail")
             self.assertEqual(envelope["allowed_read_roots"], [str(workspace.resolve())])
             self.assertFalse(envelope["command_plan"]["executes_in_dry_run"])

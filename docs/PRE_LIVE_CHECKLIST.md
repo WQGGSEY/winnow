@@ -45,6 +45,9 @@ backend.
 - Live workers run with tools disabled; any lessons, baselines, or failure
   retrieval context needed by a worker must be embedded by the orchestrator in
   the prompt rather than read by the worker.
+- Failure retrieval must read only category-indexed files selected by explicit
+  `selected_fail_files` or compact tag/lesson overlap, up to
+  `settings.memory.failure_retrieval_top_k`.
 - Failure candidates from worker reports must be promoted by orchestrator-owned
   memory code
   (`python -B -m research_harness.memory.failure_memory --node <node.json> --worker-report <worker_report.json>`);
