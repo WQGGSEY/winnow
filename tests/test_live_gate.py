@@ -22,6 +22,7 @@ class LiveGateTests(unittest.TestCase):
                     REPO_ROOT,
                     Path(tmp) / "live",
                     claude_path="/usr/local/bin/claude",
+                    billing_ack=True,
                 )
 
             validate_named_schema("manual_live_smoke_plan", plan)
@@ -32,7 +33,14 @@ class LiveGateTests(unittest.TestCase):
             self.assertFalse(
                 plan["live_invocation_envelope"]["command_plan"]["executes_in_dry_run"]
             )
+            self.assertIn("--model", plan["manual_command"])
+            self.assertIn("--max-budget-usd", plan["manual_command"])
+            self.assertIn("--tools", plan["manual_command"])
             self.assertTrue((Path(tmp) / "live" / "manual_live_smoke_plan.json").exists())
+            self.assertEqual(
+                plan["live_invocation_envelope"]["command_plan"]["stdin_path"],
+                plan["live_invocation_envelope"]["prompt_path"],
+            )
 
     def test_manual_live_plan_blocks_when_api_key_would_override_subscription(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -41,6 +49,7 @@ class LiveGateTests(unittest.TestCase):
                     REPO_ROOT,
                     Path(tmp) / "live",
                     claude_path="/usr/local/bin/claude",
+                    billing_ack=True,
                 )
 
             self.assertEqual(plan["status"], "blocked_by_auth")
@@ -51,7 +60,11 @@ class LiveGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(os.environ, {}, clear=True):
                 with patch("research_harness.workers.live_gate.shutil.which", return_value=None):
-                    plan = build_manual_live_smoke_plan(REPO_ROOT, Path(tmp) / "live")
+                    plan = build_manual_live_smoke_plan(
+                        REPO_ROOT,
+                        Path(tmp) / "live",
+                        billing_ack=True,
+                    )
 
             self.assertEqual(plan["status"], "blocked_by_missing_cli")
             self.assertFalse(plan["claude_cli"]["found"])
@@ -64,6 +77,7 @@ class LiveGateTests(unittest.TestCase):
                     REPO_ROOT,
                     Path(tmp) / "live",
                     claude_path="/usr/local/bin/claude",
+                    billing_ack=True,
                 )
             written = json.loads(
                 (Path(tmp) / "live" / "manual_live_smoke_plan.json").read_text(
@@ -73,8 +87,21 @@ class LiveGateTests(unittest.TestCase):
 
             self.assertEqual(written["status"], plan["status"])
             self.assertEqual(written["manual_command"][0], "/usr/local/bin/claude")
+            self.assertIn("-p", written["manual_command"])
+
+    def test_manual_live_plan_blocks_without_billing_ack_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {}, clear=True):
+                plan = build_manual_live_smoke_plan(
+                    REPO_ROOT,
+                    Path(tmp) / "live",
+                    claude_path="/usr/local/bin/claude",
+                )
+
+            self.assertEqual(plan["status"], "blocked_by_billing_guard")
+            self.assertFalse(plan["billing_guard"]["ack_ok"])
+            self.assertFalse(plan["execution_enabled"])
 
 
 if __name__ == "__main__":
     unittest.main()
-

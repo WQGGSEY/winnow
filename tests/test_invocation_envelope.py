@@ -34,6 +34,9 @@ class InvocationEnvelopeTests(unittest.TestCase):
             self.assertIn("Do not expand scope", prompt_path.read_text(encoding="utf-8"))
             self.assertEqual(envelope["permission_mode"], "non_interactive_or_fail")
             self.assertFalse(envelope["command_plan"]["executes_in_dry_run"])
+            self.assertIn("--tools", envelope["command_plan"]["args"])
+            self.assertIn("--max-budget-usd", envelope["command_plan"]["args"])
+            self.assertIn("--no-session-persistence", envelope["command_plan"]["args"])
             self.assertIn("ANTHROPIC_API_KEY", envelope["environment_policy"]["unset"])
 
             written = json.loads(envelope_path.read_text(encoding="utf-8"))
@@ -85,4 +88,3 @@ class InvocationEnvelopeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

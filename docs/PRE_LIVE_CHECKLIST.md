@@ -31,12 +31,21 @@ backend.
 - Baseline dossiers reject missing selected candidates, missing naive/null
   candidates, missing detail files, non-http sources, and invalid dates.
 - `runs/manual_live_smoke/manual_live_smoke_plan.json` is schema-valid, has
-  `execution_enabled: false`, and records the exact manual command for a later
-  operator-controlled live smoke.
+  `execution_enabled: false`, and records the exact manual command plus
+  `stdin_path` for a later operator-controlled live smoke.
+- Live smoke planning must return `blocked_by_billing_guard` unless the operator
+  explicitly sets `RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack`.
 
 ## Live Backend Still Not Allowed
 
 The current code may construct dry-run and live-smoke command plans, but
 `execution_enabled` must remain `false`. Live Claude execution should not be
-enabled until a human explicitly runs the generated manual command after
-reviewing the plan.
+enabled until a human explicitly accepts subscription/API usage risk and runs
+the generated manual command after reviewing the plan.
+
+## First Live Smoke Observation
+
+On 2026-05-23, the first manual smoke used subscription OAuth with
+`ANTHROPIC_API_KEY` unset. Claude Code still reported `total_cost_usd` fields in
+its JSON output. Treat those values as billing-risk evidence, not as harmless
+metadata, until verified against the user's Claude billing/usage settings.

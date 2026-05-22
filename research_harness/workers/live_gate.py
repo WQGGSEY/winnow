@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ def build_manual_live_smoke_plan(
     repo_root: Path,
     run_dir: Path | None = None,
     claude_path: str | None = None,
+    billing_ack: bool | None = None,
 ) -> dict[str, Any]:
     """Build, but do not execute, the first live Claude Code smoke plan."""
 
@@ -46,10 +48,29 @@ def build_manual_live_smoke_plan(
 
     auth = invoker.auth_preflight()
     detected_claude = claude_path or shutil.which("claude")
+    live_backend = (
+        settings.get("runtime", {})
+        .get("worker_backends", {})
+        .get("claude_code_live", {})
+    )
+    ack_env = live_backend.get("billing_ack_env")
+    ack_value = live_backend.get("billing_ack_value")
+    requires_ack = bool(live_backend.get("requires_billing_ack", True))
+    if billing_ack is None:
+        billing_ack = bool(
+            (not requires_ack)
+            or (ack_env and os.environ.get(str(ack_env)) == str(ack_value))
+        )
 
     if preflight_summary["status"] != "passed":
         status = "blocked_by_local_preflight"
         reason = "local preflight did not pass"
+    elif requires_ack and not billing_ack:
+        status = "blocked_by_billing_guard"
+        reason = (
+            "live Claude Code may consume subscription quota or API/extra usage; "
+            f"set {ack_env}={ack_value} only after accepting that risk"
+        )
     elif not auth.ok:
         status = "blocked_by_auth"
         reason = auth.reason or "auth preflight failed"
@@ -78,11 +99,17 @@ def build_manual_live_smoke_plan(
             "found": detected_claude is not None,
             "path": detected_claude,
         },
+        "billing_guard": {
+            "requires_ack": requires_ack,
+            "ack_env": ack_env,
+            "ack_ok": bool(billing_ack),
+        },
         "live_invocation_envelope": live_envelope,
         "manual_command": manual_command,
         "expected_output_path": live_envelope["expected_output_path"],
         "post_run_checks": [
-            "Parse output through output_repair.parse_or_repair_json(schema_name='worker_report').",
+            "Feed prompt_path to manual_command stdin; do not use interactive mode.",
+            "Extract Claude CLI JSON result text, then parse through output_repair.parse_or_repair_json(schema_name='worker_report').",
             "Validate worker_report schema before critic review.",
             "Reject permission, timeout, or invalid output as non-promotable worker states.",
             "Run deterministic critic governance before orchestrator reduction.",
@@ -104,4 +131,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

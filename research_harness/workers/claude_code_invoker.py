@@ -93,14 +93,37 @@ class ClaudeCodeInvoker:
             "command_plan": {
                 "executable": "claude",
                 "args": [
-                    "run",
+                    "-p",
+                    "--model",
+                    str(
+                        self.settings.get("runtime", {})
+                        .get("worker_backends", {})
+                        .get("claude_code_live", {})
+                        .get("model", "sonnet")
+                    ),
                     "--permission-mode",
-                    "non-interactive",
+                    "dontAsk",
+                    "--tools",
+                    str(
+                        self.settings.get("runtime", {})
+                        .get("worker_backends", {})
+                        .get("claude_code_live", {})
+                        .get("tools", "")
+                    ),
                     "--output-format",
                     "json",
-                    "--input",
-                    str(prompt_path),
+                    "--input-format",
+                    "text",
+                    "--no-session-persistence",
+                    "--max-budget-usd",
+                    str(
+                        self.settings.get("runtime", {})
+                        .get("worker_backends", {})
+                        .get("claude_code_live", {})
+                        .get("max_budget_usd", "0.25")
+                    ),
                 ],
+                "stdin_path": str(prompt_path),
                 "executes_in_dry_run": False,
             },
         }
@@ -118,7 +141,8 @@ class ClaudeCodeInvoker:
             f"Node: {node['id']}\n\n"
             "You are a bounded worker. Do not expand scope, choose new baselines, "
             "change the claim, mutate shared memory, or ask for interactive permission. "
-            "If blocked, return a schema-valid worker_report JSON with the blocker.\n\n"
+            "For this live smoke, do not use tools. Treat this prompt as the complete "
+            "context and return a schema-valid worker_report JSON on stdout only.\n\n"
             "## Claim Under Test\n"
             f"{contract['claim_under_test']}\n\n"
             "## Mandatory Baselines\n"
@@ -128,8 +152,23 @@ class ClaudeCodeInvoker:
             "## Disproof Conditions\n"
             f"{disproof}\n\n"
             "## Output\n"
-            "Return only JSON matching worker_report.schema.json. Preserve unknowns as null. "
-            "Do not add facts that were not observed in this invocation.\n"
+            "Return only raw JSON matching this shape. Preserve unknowns as null. "
+            "Do not add facts that were not observed in this invocation.\n\n"
+            "{\n"
+            f"  \"node_id\": \"{node['id']}\",\n"
+            "  \"status\": \"completed\",\n"
+            "  \"claim_verdict_candidate\": \"not_evaluable\",\n"
+            "  \"metrics\": {\"live_smoke_json_contract\": 1},\n"
+            "  \"baselines\": {\n"
+            "    \"current_best_known\": {\"compared\": false, \"reason\": \"live smoke only\"},\n"
+            "    \"naive\": {\"compared\": false, \"reason\": \"live smoke only\"},\n"
+            "    \"random_or_null\": {\"compared\": false, \"reason\": \"live smoke only\"}\n"
+            "  },\n"
+            "  \"disproof_conditions_hit\": [],\n"
+            "  \"artifacts\": [],\n"
+            "  \"unexpected_observations\": [],\n"
+            "  \"failure_record_candidate\": null\n"
+            "}\n"
         )
 
     def write_dry_run_artifacts(

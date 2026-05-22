@@ -83,7 +83,9 @@ python -B -m research_harness.workers.live_gate
 
 This still does not call Claude Code. It writes a schema-valid manual smoke
 plan under `runs/manual_live_smoke/`, checks subscription auth precedence, and
-records the exact command a human operator can run later.
+records the exact command a human operator can run later. By default, the plan
+is blocked by the billing guard; live Claude Code requires an explicit
+`RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack` acknowledgement.
 
 ## Core Files
 

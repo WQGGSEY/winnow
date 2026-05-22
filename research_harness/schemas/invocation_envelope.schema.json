@@ -88,13 +88,14 @@
     "prompt_path": { "type": "string" },
     "command_plan": {
       "type": "object",
-      "required": ["executable", "args", "executes_in_dry_run"],
+      "required": ["executable", "args", "stdin_path", "executes_in_dry_run"],
       "properties": {
         "executable": { "type": "string" },
         "args": {
           "type": "array",
           "items": { "type": "string" }
         },
+        "stdin_path": { "type": "string" },
         "executes_in_dry_run": { "type": "boolean" }
       },
       "additionalProperties": false
@@ -102,4 +103,3 @@
   },
   "additionalProperties": false
 }
-

@@ -10,6 +10,7 @@
     "preflight_summary",
     "auth_preflight",
     "claude_cli",
+    "billing_guard",
     "live_invocation_envelope",
     "manual_command",
     "expected_output_path",
@@ -20,6 +21,7 @@
       "type": "string",
       "enum": [
         "ready_to_manually_run",
+        "blocked_by_billing_guard",
         "blocked_by_auth",
         "blocked_by_missing_cli",
         "blocked_by_local_preflight"
@@ -47,6 +49,16 @@
       },
       "additionalProperties": false
     },
+    "billing_guard": {
+      "type": "object",
+      "required": ["requires_ack", "ack_env", "ack_ok"],
+      "properties": {
+        "requires_ack": { "type": "boolean" },
+        "ack_env": { "type": ["string", "null"] },
+        "ack_ok": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
     "live_invocation_envelope": { "type": "object" },
     "manual_command": {
       "type": "array",
@@ -62,4 +74,3 @@
   },
   "additionalProperties": false
 }
-
