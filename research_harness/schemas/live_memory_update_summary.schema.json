@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/live_memory_update_summary.schema.json",
+  "title": "LiveMemoryUpdateSummary",
+  "type": "object",
+  "required": [
+    "type",
+    "status",
+    "node_id",
+    "bundle_path",
+    "repo_root",
+    "approval_required",
+    "approved",
+    "failure_memory",
+    "recorded_lessons",
+    "lessons_path",
+    "summary_path",
+    "error"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": ["live_memory_update_summary"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["blocked_by_missing_approval", "applied"]
+    },
+    "node_id": { "type": "string" },
+    "bundle_path": { "type": "string" },
+    "repo_root": { "type": "string" },
+    "approval_required": { "type": "boolean" },
+    "approved": { "type": "boolean" },
+    "failure_memory": { "type": ["object", "null"] },
+    "recorded_lessons": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "lessons_path": { "type": "string" },
+    "summary_path": { "type": "string" },
+    "error": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}

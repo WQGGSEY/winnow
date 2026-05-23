@@ -25,6 +25,7 @@ SCHEMA_FILES = {
     "live_node_dispatch": "live_node_dispatch.schema.json",
     "live_reduction_apply_summary": "live_reduction_apply_summary.schema.json",
     "live_reduction_bundle": "live_reduction_bundle.schema.json",
+    "live_memory_update_summary": "live_memory_update_summary.schema.json",
     "live_smoke_run_summary": "live_smoke_run_summary.schema.json",
     "frontier_item": "frontier_item.schema.json",
     "node_transition": "node_transition.schema.json",
