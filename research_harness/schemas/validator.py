@@ -12,6 +12,7 @@ class SchemaValidationError(ValueError):
 
 SCHEMA_FILES = {
     "node": "node.schema.json",
+    "experiment_plan": "experiment_plan.schema.json",
     "job_manifest": "job_manifest.schema.json",
     "worker_report": "worker_report.schema.json",
     "critic_review": "critic_review.schema.json",

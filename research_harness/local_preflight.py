@@ -42,8 +42,11 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
     validate_named_schema("node", state["node"])
     validate_named_schema("worker_report", state["worker_report"])
     validate_named_schema("invocation_envelope", state["invocation_envelope"])
+    validate_named_schema("experiment_plan", state["experiment_plan"])
     validate_named_schema("job_manifest", state["job_manifest"])
     validate_named_schema("runner_result", state["runner_result"])
+    if not (run_dir / "experiment_plan.json").is_file():
+        raise FileNotFoundError(run_dir / "experiment_plan.json")
     for source_file in state["source_files"]:
         source_path = run_dir / source_file
         if not source_path.is_file():
@@ -53,6 +56,7 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
     tree_result = run_mock_tree_search(root, root / "runs" / "prelive_tree_search")
     validate_named_schema("search_state", tree_result["search_state"])
     tree_runner_statuses = []
+    tree_experiment_plan_count = 0
     tree_source_file_count = 0
     tree_metrics_evidence_count = 0
     for artifact in tree_result["artifacts"]:
@@ -62,6 +66,15 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
         runner_result = json.loads(runner_result_path.read_text(encoding="utf-8"))
         validate_named_schema("runner_result", runner_result)
         tree_runner_statuses.append(runner_result["status"])
+        experiment_plan_path = (
+            root
+            / "runs"
+            / "prelive_tree_search"
+            / artifact["experiment_plan_path"]
+        )
+        experiment_plan = json.loads(experiment_plan_path.read_text(encoding="utf-8"))
+        validate_named_schema("experiment_plan", experiment_plan)
+        tree_experiment_plan_count += 1
         worker_report_path = (
             root
             / "runs"
@@ -91,6 +104,7 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
         "baseline_dossier_id": baseline_dossier["id"],
         "runner_result_status": state["runner_result"]["status"],
         "tree_runner_statuses": tree_runner_statuses,
+        "tree_experiment_plan_count": tree_experiment_plan_count,
         "tree_source_file_count": tree_source_file_count,
         "tree_metrics_evidence_count": tree_metrics_evidence_count,
         "promotion_critic_count": len(promotion_routing["applied_critics"]),

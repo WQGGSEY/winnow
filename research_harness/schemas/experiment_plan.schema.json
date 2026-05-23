@@ -1,35 +1,49 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://local/research_harness/job_manifest.schema.json",
-  "title": "JobManifest",
+  "$id": "https://local/research_harness/experiment_plan.schema.json",
+  "title": "ExperimentPlan",
   "type": "object",
   "required": [
-    "job_id",
-    "experiment_plan_id",
+    "plan_id",
     "node_id",
+    "claim_under_test",
+    "objective",
     "task_class",
     "workspace",
     "source_files",
     "entrypoint",
     "resources",
     "inputs",
-    "outputs",
-    "claim_contract",
+    "expected_outputs",
+    "mandatory_baselines",
+    "success_criteria",
+    "disproof_conditions",
+    "guardrails",
     "failure_index_hints",
     "reproducibility"
   ],
   "properties": {
-    "job_id": { "type": "string" },
-    "experiment_plan_id": { "type": "string" },
-    "node_id": { "type": "string" },
+    "plan_id": { "type": "string", "minLength": 1 },
+    "node_id": { "type": "string", "minLength": 1 },
+    "claim_under_test": { "type": "string", "minLength": 1 },
+    "objective": { "type": "string", "minLength": 1 },
     "task_class": {
       "type": "string",
       "enum": ["smoke_test", "ablation", "training", "eval", "analysis"]
     },
-    "workspace": { "type": "string" },
+    "workspace": { "type": "string", "minLength": 1 },
     "source_files": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "object",
+        "required": ["path", "purpose", "content"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "purpose": { "type": "string", "minLength": 1 },
+          "content": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      },
       "minItems": 1
     },
     "entrypoint": {
@@ -60,8 +74,40 @@
       "additionalProperties": true
     },
     "inputs": { "type": "object" },
-    "outputs": { "type": "object" },
-    "claim_contract": { "type": "object" },
+    "expected_outputs": { "type": "object" },
+    "mandatory_baselines": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "success_criteria": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "disproof_conditions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "guardrails": {
+      "type": "object",
+      "required": ["allowed_write_roots", "forbidden_actions", "scope_policy"],
+      "properties": {
+        "allowed_write_roots": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "forbidden_actions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "scope_policy": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
     "failure_index_hints": {
       "type": "object",
       "properties": {

@@ -8,6 +8,11 @@ from research_harness.critics.governance import select_critics
 from research_harness.critics.review_runner import run_critic_reviews
 from research_harness.config import load_settings
 from research_harness.orchestrator.branch_prior import build_failure_branch_prior
+from research_harness.orchestrator.experiment_plan import (
+    build_demo_experiment_plan,
+    build_job_manifest_from_experiment_plan,
+    validate_experiment_plan,
+)
 from research_harness.orchestrator.reduction import reduce_node
 from research_harness.orchestrator.validation import validate_node_invariants
 from research_harness.memory.baseline_dossier import build_baseline_resolution_report
@@ -23,7 +28,6 @@ from research_harness.publishing.rebuttal import (
     build_rebuttal_packet,
 )
 from research_harness.runner.evidence import build_worker_report_from_runner_evidence
-from research_harness.runner.job_manifest import build_demo_job_manifest
 from research_harness.runner.local_runner import LocalRunner
 from research_harness.schemas.validator import validate_named_schema
 from research_harness.workers.claude_code_invoker import ClaudeCodeInvoker
@@ -159,7 +163,12 @@ def run_demo(repo_root: Path | None = None, run_dir: Path | None = None) -> Path
     ).write_dry_run_artifacts(node)
     validate_named_schema("invocation_envelope", invocation_envelope)
 
-    job_manifest = build_demo_job_manifest(node, run_dir)
+    experiment_plan = build_demo_experiment_plan(node, run_dir)
+    validate_experiment_plan(node, experiment_plan, run_dir)
+    validate_named_schema("experiment_plan", experiment_plan)
+    _write_json(run_dir / "experiment_plan.json", experiment_plan)
+
+    job_manifest = build_job_manifest_from_experiment_plan(node, experiment_plan, run_dir)
     validate_named_schema("job_manifest", job_manifest)
     runner = LocalRunner(run_dir, settings=settings)
     runner.validate_or_raise(job_manifest)
@@ -215,6 +224,7 @@ def run_demo(repo_root: Path | None = None, run_dir: Path | None = None) -> Path
     state = {
         "node": node,
         "invocation_envelope": invocation_envelope,
+        "experiment_plan": experiment_plan,
         "job_manifest": job_manifest,
         "runner_result": runner_result,
         "source_files": evidence_report.source_files,

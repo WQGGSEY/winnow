@@ -33,9 +33,15 @@ class PipelineTests(unittest.TestCase):
             validate_named_schema("worker_report", worker_report)
             validate_named_schema("ac_decision", ac_decision)
             validate_named_schema("invocation_envelope", bundle["invocation_envelope"])
+            validate_named_schema("experiment_plan", bundle["experiment_plan"])
             validate_named_schema("job_manifest", bundle["job_manifest"])
             validate_named_schema("runner_result", bundle["runner_result"])
+            self.assertEqual(
+                bundle["job_manifest"]["experiment_plan_id"],
+                bundle["experiment_plan"]["plan_id"],
+            )
             self.assertEqual(bundle["runner_result"]["status"], "completed")
+            self.assertTrue((run_dir / "experiment_plan.json").exists())
             self.assertEqual(
                 bundle["source_files"],
                 ["nodes/n_demo_001/workspace/experiment.py"],

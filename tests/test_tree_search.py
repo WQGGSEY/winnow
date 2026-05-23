@@ -6,22 +6,22 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from research_harness.orchestrator.experiment_plan import build_demo_experiment_plan
 from research_harness.orchestrator.tree_search import run_mock_tree_search
-from research_harness.runner.job_manifest import build_demo_job_manifest
 from research_harness.schemas.validator import validate_named_schema
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _metrics_manifest(
+def _metrics_plan(
     node: dict[str, Any],
     run_dir: Path,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    manifest = build_demo_job_manifest(node, run_dir)
+    plan = build_demo_experiment_plan(node, run_dir)
     payload_json = json.dumps(payload, sort_keys=True)
-    Path(manifest["workspace"], "experiment.py").write_text(
+    plan["source_files"][0]["content"] = (
         "\n".join(
             [
                 "from pathlib import Path",
@@ -30,23 +30,19 @@ def _metrics_manifest(
                 f"(artifacts / 'metrics.json').write_text({payload_json!r} + '\\n')",
                 "",
             ]
-        ),
-        encoding="utf-8",
+        )
     )
-    return manifest
+    return plan
 
 
-def failing_runner_manifest(node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
-    manifest = build_demo_job_manifest(node, run_dir)
-    Path(manifest["workspace"], "experiment.py").write_text(
-        "raise SystemExit(4)\n",
-        encoding="utf-8",
-    )
-    return manifest
+def failing_experiment_plan(node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+    plan = build_demo_experiment_plan(node, run_dir)
+    plan["source_files"][0]["content"] = "raise SystemExit(4)\n"
+    return plan
 
 
-def inconclusive_runner_manifest(node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
-    return _metrics_manifest(
+def inconclusive_experiment_plan(node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+    return _metrics_plan(
         node,
         run_dir,
         {
@@ -64,30 +60,24 @@ def inconclusive_runner_manifest(node: dict[str, Any], run_dir: Path) -> dict[st
     )
 
 
-def missing_metrics_manifest(node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
-    manifest = build_demo_job_manifest(node, run_dir)
-    Path(manifest["workspace"], "experiment.py").write_text(
-        "print('no metrics written')\n",
-        encoding="utf-8",
-    )
-    return manifest
+def missing_metrics_plan(node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+    plan = build_demo_experiment_plan(node, run_dir)
+    plan["source_files"][0]["content"] = "print('no metrics written')\n"
+    return plan
 
 
-def invalid_json_metrics_manifest(node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
-    manifest = build_demo_job_manifest(node, run_dir)
-    Path(manifest["workspace"], "experiment.py").write_text(
-        "\n".join(
-            [
-                "from pathlib import Path",
-                "artifacts = Path('artifacts')",
-                "artifacts.mkdir(exist_ok=True)",
-                "(artifacts / 'metrics.json').write_text('not-json\\n')",
-                "",
-            ]
-        ),
-        encoding="utf-8",
+def invalid_json_metrics_plan(node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+    plan = build_demo_experiment_plan(node, run_dir)
+    plan["source_files"][0]["content"] = "\n".join(
+        [
+            "from pathlib import Path",
+            "artifacts = Path('artifacts')",
+            "artifacts.mkdir(exist_ok=True)",
+            "(artifacts / 'metrics.json').write_text('not-json\\n')",
+            "",
+        ]
     )
-    return manifest
+    return plan
 
 
 class TreeSearchTests(unittest.TestCase):
@@ -112,6 +102,10 @@ class TreeSearchTests(unittest.TestCase):
             artifact = result["artifacts"][0]
             self.assertEqual(artifact["runner_status"], "completed")
             self.assertEqual(
+                artifact["experiment_plan_path"],
+                "nodes/n_demo_001/experiment_plan.json",
+            )
+            self.assertEqual(
                 artifact["source_files"],
                 ["nodes/n_demo_001/workspace/experiment.py"],
             )
@@ -123,6 +117,7 @@ class TreeSearchTests(unittest.TestCase):
             runner_result = json.loads(runner_result_path.read_text(encoding="utf-8"))
             validate_named_schema("runner_result", runner_result)
             self.assertEqual(runner_result["status"], "completed")
+            self.assertEqual(runner_result["experiment_plan_id"], "plan_n_demo_001_smoke")
             self.assertEqual(
                 runner_result["source_files"],
                 [
@@ -150,6 +145,7 @@ class TreeSearchTests(unittest.TestCase):
                 if node["id"] == artifact["node_id"]
             )
             self.assertIn(artifact["runner_result_path"], node["outputs"]["artifacts"])
+            self.assertIn(artifact["experiment_plan_path"], node["outputs"]["artifacts"])
             self.assertIn(artifact["source_files"][0], node["outputs"]["artifacts"])
 
     def test_runner_failure_becomes_non_promotable_worker_report(self) -> None:
@@ -159,7 +155,7 @@ class TreeSearchTests(unittest.TestCase):
                 REPO_ROOT,
                 run_dir,
                 max_steps=1,
-                job_manifest_builder=failing_runner_manifest,
+                experiment_plan_builder=failing_experiment_plan,
                 record_runner_failures=False,
             )
 
@@ -187,7 +183,7 @@ class TreeSearchTests(unittest.TestCase):
                 REPO_ROOT,
                 run_dir,
                 max_steps=1,
-                job_manifest_builder=missing_metrics_manifest,
+                experiment_plan_builder=missing_metrics_plan,
                 record_runner_failures=False,
             )
 
@@ -217,7 +213,7 @@ class TreeSearchTests(unittest.TestCase):
                 REPO_ROOT,
                 run_dir,
                 max_steps=1,
-                job_manifest_builder=invalid_json_metrics_manifest,
+                experiment_plan_builder=invalid_json_metrics_plan,
                 record_runner_failures=False,
             )
 
@@ -240,7 +236,7 @@ class TreeSearchTests(unittest.TestCase):
             result = run_mock_tree_search(
                 REPO_ROOT,
                 Path(tmp) / "tree",
-                job_manifest_builder=inconclusive_runner_manifest,
+                experiment_plan_builder=inconclusive_experiment_plan,
                 max_steps=1,
             )
 

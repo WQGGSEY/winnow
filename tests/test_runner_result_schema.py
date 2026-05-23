@@ -9,6 +9,7 @@ class RunnerResultSchemaTests(unittest.TestCase):
     def test_runner_result_schema_accepts_completed_result(self) -> None:
         result = {
             "job_id": "job_1",
+            "experiment_plan_id": "plan_1",
             "node_id": "n_demo_001",
             "status": "completed",
             "exit_code": 0,

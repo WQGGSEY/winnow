@@ -216,6 +216,7 @@ class LocalRunner:
             }
         return {
             "job_id": manifest["job_id"],
+            "experiment_plan_id": manifest["experiment_plan_id"],
             "node_id": manifest["node_id"],
             "status": status,
             "exit_code": exit_code,

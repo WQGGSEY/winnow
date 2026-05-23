@@ -21,6 +21,7 @@ class RunnerManifestTests(unittest.TestCase):
             manifest = build_demo_job_manifest(node, run_dir)
 
             validate_named_schema("job_manifest", manifest)
+            self.assertEqual(manifest["experiment_plan_id"], "plan_n_demo_001_smoke")
             self.assertEqual(manifest["source_files"], ["experiment.py"])
             self.assertTrue((Path(manifest["workspace"]) / "experiment.py").is_file())
             self.assertEqual(manifest["entrypoint"]["args"], ["experiment.py"])
@@ -100,6 +101,7 @@ class RunnerManifestTests(unittest.TestCase):
             result = LocalRunner(run_dir).execute(manifest)
 
             validate_named_schema("runner_result", result)
+            self.assertEqual(result["experiment_plan_id"], manifest["experiment_plan_id"])
             self.assertEqual(result["status"], "completed")
             self.assertEqual(result["exit_code"], 0)
             self.assertEqual(

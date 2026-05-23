@@ -129,6 +129,7 @@ class FailureMemoryTests(unittest.TestCase):
             repo = self._temp_repo(tmp)
             runner_result = {
                 "job_id": "job_1",
+                "experiment_plan_id": "plan_1",
                 "node_id": "n_demo_001",
                 "status": "failed",
                 "exit_code": 2,

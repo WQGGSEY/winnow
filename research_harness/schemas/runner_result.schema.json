@@ -5,6 +5,7 @@
   "type": "object",
   "required": [
     "job_id",
+    "experiment_plan_id",
     "node_id",
     "status",
     "exit_code",
@@ -19,6 +20,7 @@
   ],
   "properties": {
     "job_id": { "type": "string" },
+    "experiment_plan_id": { "type": "string" },
     "node_id": { "type": "string" },
     "status": {
       "type": "string",

@@ -16,6 +16,11 @@ from research_harness.memory.failure_memory import (
 from research_harness.orchestrator.branch_prior import build_failure_branch_prior
 from research_harness.orchestrator.child_nodes import draft_child_nodes
 from research_harness.orchestrator.demo import _demo_node
+from research_harness.orchestrator.experiment_plan import (
+    build_demo_experiment_plan,
+    build_job_manifest_from_experiment_plan,
+    validate_experiment_plan,
+)
 from research_harness.orchestrator.reduction import reduce_node
 from research_harness.orchestrator.search_state import (
     add_child_nodes,
@@ -25,13 +30,12 @@ from research_harness.orchestrator.search_state import (
     validate_search_state,
 )
 from research_harness.runner.evidence import build_worker_report_from_runner_evidence
-from research_harness.runner.job_manifest import build_demo_job_manifest
 from research_harness.runner.local_runner import LocalRunner
 from research_harness.schemas.validator import validate_named_schema
 
 
 ALLOWED_TREE_SEARCH_BACKENDS = {"mock"}
-JobManifestBuilder = Callable[[dict[str, Any], Path], dict[str, Any]]
+ExperimentPlanBuilder = Callable[[dict[str, Any], Path], dict[str, Any]]
 
 
 def run_mock_tree_search(
@@ -40,7 +44,7 @@ def run_mock_tree_search(
     *,
     backend_name: str = "mock",
     max_steps: int | None = None,
-    job_manifest_builder: JobManifestBuilder = build_demo_job_manifest,
+    experiment_plan_builder: ExperimentPlanBuilder = build_demo_experiment_plan,
     record_runner_failures: bool = True,
 ) -> dict[str, Any]:
     if backend_name not in ALLOWED_TREE_SEARCH_BACKENDS:
@@ -83,7 +87,7 @@ def run_mock_tree_search(
             run_dir,
             node_run_dir,
             node,
-            job_manifest_builder=job_manifest_builder,
+            experiment_plan_builder=experiment_plan_builder,
             record_failures=record_runner_failures,
         )
         worker_report = runner_summary["worker_report"]
@@ -173,6 +177,7 @@ def run_mock_tree_search(
         artifacts.append(
             {
                 "node_id": node["id"],
+                "experiment_plan_path": runner_summary["experiment_plan_path"],
                 "job_manifest_path": runner_summary["job_manifest_path"],
                 "source_files": runner_summary["source_files"],
                 "runner_result_path": runner_summary["runner_result_path"],
@@ -215,10 +220,19 @@ def _execute_node_runner(
     node_run_dir: Path,
     node: dict[str, Any],
     *,
-    job_manifest_builder: JobManifestBuilder,
+    experiment_plan_builder: ExperimentPlanBuilder,
     record_failures: bool,
 ) -> dict[str, Any]:
-    job_manifest = job_manifest_builder(node, run_dir)
+    experiment_plan = experiment_plan_builder(node, run_dir)
+    validate_experiment_plan(node, experiment_plan, run_dir)
+    experiment_plan_path = node_run_dir / "experiment_plan.json"
+    _write_json(experiment_plan_path, experiment_plan)
+
+    job_manifest = build_job_manifest_from_experiment_plan(
+        node,
+        experiment_plan,
+        run_dir,
+    )
     validate_named_schema("job_manifest", job_manifest)
     job_manifest_path = node_run_dir / "job_manifest.json"
     _write_json(job_manifest_path, job_manifest)
@@ -241,6 +255,7 @@ def _execute_node_runner(
     _attach_runner_outputs(
         node,
         run_dir,
+        experiment_plan_path=experiment_plan_path,
         job_manifest_path=job_manifest_path,
         runner_result_path=runner_result_path,
         runner_result=runner_result,
@@ -248,6 +263,7 @@ def _execute_node_runner(
         metrics_evidence_paths=evidence_report.metrics_evidence_paths,
     )
     return {
+        "experiment_plan_path": _display_path(experiment_plan_path, run_dir),
         "job_manifest_path": _display_path(job_manifest_path, run_dir),
         "source_files": evidence_report.source_files,
         "runner_result_path": _display_path(runner_result_path, run_dir),
@@ -262,6 +278,7 @@ def _attach_runner_outputs(
     node: dict[str, Any],
     run_dir: Path,
     *,
+    experiment_plan_path: Path,
     job_manifest_path: Path,
     runner_result_path: Path,
     runner_result: dict[str, Any],
@@ -269,7 +286,7 @@ def _attach_runner_outputs(
     metrics_evidence_paths: list[str],
 ) -> None:
     artifacts = node["outputs"].setdefault("artifacts", [])
-    for path in (job_manifest_path, runner_result_path):
+    for path in (experiment_plan_path, job_manifest_path, runner_result_path):
         artifact = _display_path(path, run_dir)
         if artifact not in artifacts:
             artifacts.append(artifact)
@@ -280,6 +297,10 @@ def _attach_runner_outputs(
         if artifact not in artifacts:
             artifacts.append(artifact)
     node["outputs"]["runner_status"] = runner_result["status"]
+    node["outputs"]["experiment_plan_path"] = _display_path(
+        experiment_plan_path,
+        run_dir,
+    )
     node["outputs"]["source_files"] = source_files
     node["outputs"]["runner_result_path"] = _display_path(runner_result_path, run_dir)
     node["outputs"]["metrics_evidence_paths"] = metrics_evidence_paths
