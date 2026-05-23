@@ -36,7 +36,13 @@ class PipelineTests(unittest.TestCase):
             validate_named_schema("job_manifest", bundle["job_manifest"])
             validate_named_schema("runner_result", bundle["runner_result"])
             self.assertEqual(bundle["runner_result"]["status"], "completed")
+            self.assertEqual(worker_report["metrics"]["schema_validity"], 1.0)
+            self.assertEqual(
+                bundle["metrics_evidence_paths"],
+                ["nodes/n_demo_001/workspace/artifacts/metrics.json"],
+            )
             self.assertIsNone(bundle["runner_failure_memory"])
+            self.assertIsNone(bundle["worker_failure_memory"])
             self.assertEqual(ac_decision["decision"], "accept")
             self.assertFalse(bundle["baseline_resolution"]["webfetch_executed"])
             self.assertIn("rebuttal_critic_reviews", bundle)

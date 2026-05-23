@@ -49,6 +49,7 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
     tree_result = run_mock_tree_search(root, root / "runs" / "prelive_tree_search")
     validate_named_schema("search_state", tree_result["search_state"])
     tree_runner_statuses = []
+    tree_metrics_evidence_count = 0
     for artifact in tree_result["artifacts"]:
         runner_result_path = (
             root / "runs" / "prelive_tree_search" / artifact["runner_result_path"]
@@ -56,6 +57,20 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
         runner_result = json.loads(runner_result_path.read_text(encoding="utf-8"))
         validate_named_schema("runner_result", runner_result)
         tree_runner_statuses.append(runner_result["status"])
+        worker_report_path = (
+            root
+            / "runs"
+            / "prelive_tree_search"
+            / "nodes"
+            / artifact["node_id"]
+            / "worker_report.json"
+        )
+        worker_report = json.loads(worker_report_path.read_text(encoding="utf-8"))
+        validate_named_schema("worker_report", worker_report)
+        for metrics_path in artifact["metrics_evidence_paths"]:
+            evidence_path = root / "runs" / "prelive_tree_search" / metrics_path
+            json.loads(evidence_path.read_text(encoding="utf-8"))
+            tree_metrics_evidence_count += 1
 
     return {
         "status": "passed",
@@ -66,6 +81,7 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
         "baseline_dossier_id": baseline_dossier["id"],
         "runner_result_status": state["runner_result"]["status"],
         "tree_runner_statuses": tree_runner_statuses,
+        "tree_metrics_evidence_count": tree_metrics_evidence_count,
         "promotion_critic_count": len(promotion_routing["applied_critics"]),
         "rebuttal_critic_count": len(rebuttal_routing["applied_critics"]),
         "run_dir": str(run_dir),

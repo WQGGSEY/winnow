@@ -14,29 +14,71 @@ from research_harness.schemas.validator import validate_named_schema
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-class BlockingBackend:
-    def run(self, node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
-        return {
-            "node_id": node["id"],
-            "status": "timeout_or_turn_exhausted",
-            "claim_verdict_candidate": "not_evaluable",
-            "metrics": {},
-            "baselines": {},
-            "disproof_conditions_hit": [],
-            "artifacts": [],
-            "unexpected_observations": [],
-            "failure_record_candidate": None,
-        }
-
-
-class ShouldNotRunBackend:
-    def run(self, node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
-        raise AssertionError("worker backend must not run after runner failure")
+def _metrics_manifest(
+    node: dict[str, Any],
+    run_dir: Path,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    manifest = build_demo_job_manifest(node, run_dir)
+    payload_json = json.dumps(payload, sort_keys=True)
+    manifest["entrypoint"]["args"] = [
+        "-c",
+        "\n".join(
+            [
+                "from pathlib import Path",
+                "artifacts = Path('artifacts')",
+                "artifacts.mkdir(exist_ok=True)",
+                f"(artifacts / 'metrics.json').write_text({payload_json!r} + '\\n')",
+            ]
+        ),
+    ]
+    return manifest
 
 
 def failing_runner_manifest(node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
     manifest = build_demo_job_manifest(node, run_dir)
     manifest["entrypoint"]["args"] = ["-c", "raise SystemExit(4)"]
+    return manifest
+
+
+def inconclusive_runner_manifest(node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+    return _metrics_manifest(
+        node,
+        run_dir,
+        {
+            "metrics": {"schema_validity": 1.0},
+            "claim_verdict_candidate": "inconclusive",
+            "unexpected_observations": [
+                {
+                    "observation": "The smoke evidence is insufficient.",
+                    "evidence": "Only schema_validity was measured.",
+                    "suggested_branch_type": "validity",
+                    "scope_relation": "operational_blocker",
+                }
+            ],
+        },
+    )
+
+
+def missing_metrics_manifest(node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+    manifest = build_demo_job_manifest(node, run_dir)
+    manifest["entrypoint"]["args"] = ["-c", "print('no metrics written')"]
+    return manifest
+
+
+def invalid_json_metrics_manifest(node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+    manifest = build_demo_job_manifest(node, run_dir)
+    manifest["entrypoint"]["args"] = [
+        "-c",
+        "\n".join(
+            [
+                "from pathlib import Path",
+                "artifacts = Path('artifacts')",
+                "artifacts.mkdir(exist_ok=True)",
+                "(artifacts / 'metrics.json').write_text('not-json\\n')",
+            ]
+        ),
+    ]
     return manifest
 
 
@@ -54,14 +96,28 @@ class TreeSearchTests(unittest.TestCase):
     def test_tree_search_writes_runner_artifacts_for_node(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "tree"
-            result = run_mock_tree_search(REPO_ROOT, run_dir)
+            result = run_mock_tree_search(
+                REPO_ROOT,
+                run_dir,
+            )
 
             artifact = result["artifacts"][0]
             self.assertEqual(artifact["runner_status"], "completed")
+            self.assertEqual(
+                artifact["metrics_evidence_paths"],
+                ["nodes/n_demo_001/workspace/artifacts/metrics.json"],
+            )
             runner_result_path = run_dir / artifact["runner_result_path"]
             runner_result = json.loads(runner_result_path.read_text(encoding="utf-8"))
             validate_named_schema("runner_result", runner_result)
             self.assertEqual(runner_result["status"], "completed")
+            worker_report = json.loads(
+                (run_dir / "nodes" / "n_demo_001" / "worker_report.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            validate_named_schema("worker_report", worker_report)
+            self.assertEqual(worker_report["metrics"]["schema_validity"], 1.0)
             node = next(
                 node
                 for node in result["search_state"]["nodes"]
@@ -75,7 +131,6 @@ class TreeSearchTests(unittest.TestCase):
             result = run_mock_tree_search(
                 REPO_ROOT,
                 run_dir,
-                backend=ShouldNotRunBackend(),
                 max_steps=1,
                 job_manifest_builder=failing_runner_manifest,
                 record_runner_failures=False,
@@ -98,12 +153,67 @@ class TreeSearchTests(unittest.TestCase):
             self.assertEqual(worker_report["claim_verdict_candidate"], "not_evaluable")
             self.assertNotIn("n_demo_001", result["search_state"]["promoted_node_ids"])
 
-    def test_blocking_backend_opens_child_branch_until_step_limit(self) -> None:
+    def test_missing_metrics_file_becomes_invalid_experiment_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "tree"
+            result = run_mock_tree_search(
+                REPO_ROOT,
+                run_dir,
+                max_steps=1,
+                job_manifest_builder=missing_metrics_manifest,
+                record_runner_failures=False,
+            )
+
+            artifact = result["artifacts"][0]
+            self.assertEqual(artifact["runner_status"], "completed")
+            self.assertEqual(artifact["worker_status"], "failed")
+            self.assertIsNone(artifact["worker_failure_memory"])
+            worker_report = json.loads(
+                (run_dir / "nodes" / "n_demo_001" / "worker_report.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            validate_named_schema("worker_report", worker_report)
+            self.assertEqual(
+                worker_report["failure_record_candidate"]["category"],
+                "invalid_experiment",
+            )
+            self.assertIn(
+                "missing_metrics_file",
+                worker_report["failure_record_candidate"]["tags"],
+            )
+
+    def test_invalid_metrics_json_becomes_invalid_experiment_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "tree"
+            result = run_mock_tree_search(
+                REPO_ROOT,
+                run_dir,
+                max_steps=1,
+                job_manifest_builder=invalid_json_metrics_manifest,
+                record_runner_failures=False,
+            )
+
+            artifact = result["artifacts"][0]
+            self.assertEqual(artifact["runner_status"], "completed")
+            self.assertEqual(artifact["worker_status"], "failed")
+            worker_report = json.loads(
+                (run_dir / "nodes" / "n_demo_001" / "worker_report.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            validate_named_schema("worker_report", worker_report)
+            self.assertIn(
+                "invalid_metrics_json",
+                worker_report["failure_record_candidate"]["tags"],
+            )
+
+    def test_inconclusive_metrics_open_child_branch_until_step_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = run_mock_tree_search(
                 REPO_ROOT,
                 Path(tmp) / "tree",
-                backend=BlockingBackend(),
+                job_manifest_builder=inconclusive_runner_manifest,
                 max_steps=1,
             )
 

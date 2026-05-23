@@ -13,6 +13,7 @@ from research_harness.orchestrator.validation import validate_node_invariants
 from research_harness.memory.baseline_dossier import build_baseline_resolution_report
 from research_harness.memory.failure_memory import (
     FailureMemoryResult,
+    record_failure_candidate,
     record_runner_failure_candidate,
 )
 from research_harness.publishing.ac import decide_acceptance
@@ -21,11 +22,11 @@ from research_harness.publishing.rebuttal import (
     build_orchestrator_rebuttal,
     build_rebuttal_packet,
 )
+from research_harness.runner.evidence import build_worker_report_from_runner_evidence
 from research_harness.runner.job_manifest import build_demo_job_manifest
 from research_harness.runner.local_runner import LocalRunner
 from research_harness.schemas.validator import validate_named_schema
 from research_harness.workers.claude_code_invoker import ClaudeCodeInvoker
-from research_harness.workers.mock_backend import MockWorkerBackend
 from research_harness.workers.workspace import prepare_node_workspace
 
 
@@ -132,6 +133,13 @@ def _failure_memory_summary(result: FailureMemoryResult | None) -> dict[str, str
     }
 
 
+def _worker_failure_source(worker_report: dict[str, Any]) -> str | None:
+    artifacts = worker_report.get("artifacts") or []
+    if not artifacts:
+        return None
+    return str(artifacts[0])
+
+
 def run_demo(repo_root: Path | None = None, run_dir: Path | None = None) -> Path:
     repo_root = repo_root or _repo_root()
     settings = _settings(repo_root)
@@ -159,6 +167,12 @@ def run_demo(repo_root: Path | None = None, run_dir: Path | None = None) -> Path
     runner_result = runner.execute(job_manifest)
     validate_named_schema("runner_result", runner_result)
     runner_failure_memory = record_runner_failure_candidate(repo_root, node, runner_result)
+    evidence_report = build_worker_report_from_runner_evidence(
+        node,
+        job_manifest,
+        runner_result,
+        run_dir,
+    )
 
     baseline_resolution = build_baseline_resolution_report(
         repo_root,
@@ -166,8 +180,17 @@ def run_demo(repo_root: Path | None = None, run_dir: Path | None = None) -> Path
         run_dir / "baseline_resolution.md",
     )
 
-    worker_report = MockWorkerBackend().run(node, run_dir)
+    worker_report = evidence_report.worker_report
     validate_named_schema("worker_report", worker_report)
+    _write_json(run_dir / "worker_report.json", worker_report)
+    worker_failure_memory = None
+    if worker_report.get("failure_record_candidate") and runner_failure_memory is None:
+        worker_failure_memory = record_failure_candidate(
+            repo_root,
+            node,
+            worker_report,
+            source_artifact=_worker_failure_source(worker_report),
+        )
 
     critic_routing = select_critics(repo_root, node)
     critic_reviews = run_critic_reviews(node, worker_report, critic_routing)
@@ -194,7 +217,9 @@ def run_demo(repo_root: Path | None = None, run_dir: Path | None = None) -> Path
         "invocation_envelope": invocation_envelope,
         "job_manifest": job_manifest,
         "runner_result": runner_result,
+        "metrics_evidence_paths": evidence_report.metrics_evidence_paths,
         "runner_failure_memory": _failure_memory_summary(runner_failure_memory),
+        "worker_failure_memory": _failure_memory_summary(worker_failure_memory),
         "baseline_resolution": baseline_resolution,
         "worker_report": worker_report,
         "failure_branch_prior": failure_branch_prior,

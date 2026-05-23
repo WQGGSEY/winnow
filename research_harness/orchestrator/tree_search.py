@@ -10,6 +10,7 @@ from research_harness.critics.governance import select_critics
 from research_harness.critics.review_runner import run_critic_reviews
 from research_harness.memory.failure_memory import (
     FailureMemoryResult,
+    record_failure_candidate,
     record_runner_failure_candidate,
 )
 from research_harness.orchestrator.branch_prior import build_failure_branch_prior
@@ -23,27 +24,20 @@ from research_harness.orchestrator.search_state import (
     transition_node,
     validate_search_state,
 )
+from research_harness.runner.evidence import build_worker_report_from_runner_evidence
 from research_harness.runner.job_manifest import build_demo_job_manifest
 from research_harness.runner.local_runner import LocalRunner
-from research_harness.runner.result_bridge import runner_failure_worker_report
 from research_harness.schemas.validator import validate_named_schema
-from research_harness.workers.mock_backend import MockWorkerBackend
 
 
 ALLOWED_TREE_SEARCH_BACKENDS = {"mock"}
 JobManifestBuilder = Callable[[dict[str, Any], Path], dict[str, Any]]
 
 
-class MockTreeSearchBackend:
-    def run(self, node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
-        return MockWorkerBackend().run(node, run_dir)
-
-
 def run_mock_tree_search(
     repo_root: Path,
     run_dir: Path,
     *,
-    backend: Any | None = None,
     backend_name: str = "mock",
     max_steps: int | None = None,
     job_manifest_builder: JobManifestBuilder = build_demo_job_manifest,
@@ -61,7 +55,6 @@ def run_mock_tree_search(
         root_node=root,
         policy=policy,
     )
-    backend = backend or MockTreeSearchBackend()
     max_steps = max_steps or int(policy["max_depth"]) + 1
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -93,15 +86,21 @@ def run_mock_tree_search(
             job_manifest_builder=job_manifest_builder,
             record_failures=record_runner_failures,
         )
-        runner_failure_report = runner_failure_worker_report(
-            runner_summary["runner_result"]
-        )
-        if runner_failure_report is None:
-            worker_report = backend.run(node, node_run_dir)
-        else:
-            worker_report = runner_failure_report
+        worker_report = runner_summary["worker_report"]
         validate_named_schema("worker_report", worker_report)
         _write_json(node_run_dir / "worker_report.json", worker_report)
+        worker_failure_memory = None
+        if (
+            record_runner_failures
+            and worker_report.get("failure_record_candidate")
+            and runner_summary["runner_failure_memory"] is None
+        ):
+            worker_failure_memory = record_failure_candidate(
+                repo_root,
+                node,
+                worker_report,
+                source_artifact=_worker_failure_source(worker_report),
+            )
         transition_node(
             state,
             node["id"],
@@ -177,7 +176,9 @@ def run_mock_tree_search(
                 "job_manifest_path": runner_summary["job_manifest_path"],
                 "runner_result_path": runner_summary["runner_result_path"],
                 "runner_status": runner_summary["runner_result"]["status"],
+                "metrics_evidence_paths": runner_summary["metrics_evidence_paths"],
                 "runner_failure_memory": runner_summary["runner_failure_memory"],
+                "worker_failure_memory": _failure_memory_summary(worker_failure_memory),
                 "worker_status": worker_report["status"],
                 "next_transition": reduction["next_transition"],
             }
@@ -224,6 +225,12 @@ def _execute_node_runner(
     runner = LocalRunner(run_dir, settings=settings)
     runner_result = runner.execute(job_manifest)
     validate_named_schema("runner_result", runner_result)
+    evidence_report = build_worker_report_from_runner_evidence(
+        node,
+        job_manifest,
+        runner_result,
+        run_dir,
+    )
     runner_failure_memory = (
         record_runner_failure_candidate(repo_root, node, runner_result)
         if record_failures
@@ -236,11 +243,14 @@ def _execute_node_runner(
         job_manifest_path=job_manifest_path,
         runner_result_path=runner_result_path,
         runner_result=runner_result,
+        metrics_evidence_paths=evidence_report.metrics_evidence_paths,
     )
     return {
         "job_manifest_path": _display_path(job_manifest_path, run_dir),
         "runner_result_path": _display_path(runner_result_path, run_dir),
         "runner_result": runner_result,
+        "metrics_evidence_paths": evidence_report.metrics_evidence_paths,
+        "worker_report": evidence_report.worker_report,
         "runner_failure_memory": _failure_memory_summary(runner_failure_memory),
     }
 
@@ -252,14 +262,19 @@ def _attach_runner_outputs(
     job_manifest_path: Path,
     runner_result_path: Path,
     runner_result: dict[str, Any],
+    metrics_evidence_paths: list[str],
 ) -> None:
     artifacts = node["outputs"].setdefault("artifacts", [])
     for path in (job_manifest_path, runner_result_path):
         artifact = _display_path(path, run_dir)
         if artifact not in artifacts:
             artifacts.append(artifact)
+    for artifact in metrics_evidence_paths:
+        if artifact not in artifacts:
+            artifacts.append(artifact)
     node["outputs"]["runner_status"] = runner_result["status"]
     node["outputs"]["runner_result_path"] = _display_path(runner_result_path, run_dir)
+    node["outputs"]["metrics_evidence_paths"] = metrics_evidence_paths
 
 
 def _failure_memory_summary(result: FailureMemoryResult | None) -> dict[str, str] | None:
@@ -278,6 +293,13 @@ def _display_path(path: Path, run_dir: Path) -> str:
         return str(resolved.relative_to(run_dir.resolve()))
     except ValueError:
         return str(resolved)
+
+
+def _worker_failure_source(worker_report: dict[str, Any]) -> str | None:
+    artifacts = worker_report.get("artifacts") or []
+    if not artifacts:
+        return None
+    return str(artifacts[0])
 
 
 def _write_json(path: Path, obj: Any) -> None:
