@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/live_reduction_bundle.schema.json",
+  "title": "LiveReductionBundle",
+  "type": "object",
+  "required": [
+    "type",
+    "status",
+    "node_id",
+    "search_state_path",
+    "search_state_sha256",
+    "dispatch_path",
+    "live_summary_path",
+    "worker_report_path",
+    "critic_review_bundle_path",
+    "orchestrator_reduction_path",
+    "bundle_path",
+    "state_mutation",
+    "memory_mutation",
+    "apply_required",
+    "node",
+    "worker_report",
+    "critic_routing",
+    "critic_reviews",
+    "failure_branch_prior",
+    "orchestrator_reduction",
+    "error"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": ["live_reduction_bundle"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ready_for_apply"]
+    },
+    "node_id": { "type": "string" },
+    "search_state_path": { "type": "string" },
+    "search_state_sha256": { "type": "string" },
+    "dispatch_path": { "type": "string" },
+    "live_summary_path": { "type": "string" },
+    "worker_report_path": { "type": "string" },
+    "critic_review_bundle_path": { "type": "string" },
+    "orchestrator_reduction_path": { "type": "string" },
+    "bundle_path": { "type": "string" },
+    "state_mutation": {
+      "type": "string",
+      "enum": ["forbidden"]
+    },
+    "memory_mutation": {
+      "type": "string",
+      "enum": ["forbidden"]
+    },
+    "apply_required": { "type": "boolean" },
+    "node": { "type": "object" },
+    "worker_report": { "type": "object" },
+    "critic_routing": { "type": "object" },
+    "critic_reviews": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "failure_branch_prior": { "type": "object" },
+    "orchestrator_reduction": { "type": "object" },
+    "error": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}
