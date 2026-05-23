@@ -82,6 +82,9 @@ configured policy and root goal allow it.
 The staged tree-search loop only accepts dry-run/local backends. Live Claude
 Code remains outside the loop behind `live_gate`, explicit billing
 acknowledgement, auth-status verification, and stdout ingestion.
+When a search state has a queued ready node, `orchestrator.live_dispatch` can
+select exactly one node for operator-controlled live execution. Dispatch writes
+separate live artifacts and does not mutate the search frontier.
 
 ## Long Jobs
 

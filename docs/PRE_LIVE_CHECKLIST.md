@@ -46,6 +46,10 @@ backend.
   single arbitrary node, but they must preserve per-node workspace isolation,
   live gate validation, stdout ingest, and non-promotable timeout/runtime
   failure handling.
+- `research_harness.orchestrator.live_dispatch` may select one queued,
+  ready node from a `search_state.json`, but it must write only dispatch/live
+  artifacts and must not mutate search state or let tree search call
+  `claude_code_live`.
 - Captured Claude CLI stdout must be ingested through
   `python -B -m research_harness.workers.claude_stdout_ingest --stdout <captured_stdout> --envelope <live_invocation_envelope> --plan <manual_live_smoke_plan>`;
   workers must not be trusted to write `worker_report.json` directly.
@@ -66,8 +70,9 @@ backend.
 The current code may construct dry-run and live-smoke command plans, but
 `execution_enabled` must remain `false`. Live Claude execution is limited to
 one gated node at a time through `research_harness.workers.live_smoke_runner`
-after a human explicitly accepts subscription/API usage risk. Tree search must
-not call `claude_code_live` directly.
+or `research_harness.orchestrator.live_dispatch` after a human explicitly
+accepts subscription/API usage risk. Tree search must not call
+`claude_code_live` directly.
 
 ## First Live Smoke Observation
 

@@ -143,6 +143,19 @@ Internally the same runner path now supports a single arbitrary node through
 `run_live_node_once(...)`, but tree search still rejects `claude_code_live` so
 the live worker cannot expand into autonomous search execution.
 
+To dispatch the next queued `search_state` node without letting tree search call
+the live backend directly:
+
+```bash
+python -B -m research_harness.orchestrator.live_dispatch \
+  --search-state runs/<tree_run>/search_state.json
+```
+
+Add `--execute --billing-ack --execute-ack` only after reviewing the generated
+`live_node_dispatch.json` and live plan. The dispatch layer selects one queued
+ready node, preserves the search state unchanged, and records that tree-search
+mutation is forbidden.
+
 ## Core Files
 
 ```text

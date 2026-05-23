@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/live_node_dispatch.schema.json",
+  "title": "LiveNodeDispatch",
+  "type": "object",
+  "required": [
+    "type",
+    "mode",
+    "status",
+    "search_state_path",
+    "search_id",
+    "node_id",
+    "node_status",
+    "frontier_item",
+    "live_run_dir",
+    "live_plan_path",
+    "live_runbook_path",
+    "live_summary_path",
+    "live_summary_status",
+    "tree_search_mutation",
+    "operator_required_acks",
+    "error"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": ["live_node_dispatch"]
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["plan", "execute_once"]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ready_to_manually_run",
+        "blocked_by_billing_guard",
+        "blocked_by_auth",
+        "blocked_by_missing_cli",
+        "blocked_by_local_preflight",
+        "blocked_by_gate",
+        "blocked_by_execution_ack",
+        "completed",
+        "worker_blocked",
+        "runtime_failed",
+        "timeout"
+      ]
+    },
+    "search_state_path": { "type": "string" },
+    "search_id": { "type": "string" },
+    "node_id": { "type": "string" },
+    "node_status": { "type": "string" },
+    "frontier_item": { "type": "object" },
+    "live_run_dir": { "type": "string" },
+    "live_plan_path": { "type": "string" },
+    "live_runbook_path": { "type": "string" },
+    "live_summary_path": { "type": ["string", "null"] },
+    "live_summary_status": { "type": ["string", "null"] },
+    "tree_search_mutation": {
+      "type": "string",
+      "enum": ["forbidden"]
+    },
+    "operator_required_acks": {
+      "type": "object",
+      "required": [
+        "billing_ack_env",
+        "billing_ack_value",
+        "execution_ack_env",
+        "execution_ack_value"
+      ],
+      "properties": {
+        "billing_ack_env": { "type": ["string", "null"] },
+        "billing_ack_value": { "type": ["string", "null"] },
+        "execution_ack_env": { "type": "string" },
+        "execution_ack_value": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "error": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}
