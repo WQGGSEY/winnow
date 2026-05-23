@@ -10,6 +10,7 @@ from research_harness.config import load_settings
 from research_harness.orchestrator.demo import _demo_node
 from research_harness.schemas.validator import validate_named_schema
 from research_harness.workers.claude_code_invoker import ClaudeCodeInvoker
+from research_harness.workers.output_repair import parse_or_repair_json
 from research_harness.workers.workspace import WorkspaceGuardError
 
 
@@ -37,6 +38,10 @@ class InvocationEnvelopeTests(unittest.TestCase):
             self.assertIn("Do not expand scope", prompt)
             self.assertIn("worker_task_result", prompt)
             self.assertIn("branch suggestions", prompt)
+            self.assertIn("unexpected_observations must be an array of objects", prompt)
+            self.assertIn("keep it exactly []", prompt)
+            self.assertIn("Do not emit label/rationale/may_create", prompt)
+            self.assertIn("Do not convert Active Lessons", prompt)
             self.assertIn("Active Lessons", prompt)
             self.assertIn("lesson_001", prompt)
             self.assertIn("Baseline Dossier Summary", prompt)
@@ -63,6 +68,18 @@ class InvocationEnvelopeTests(unittest.TestCase):
                 set(worker_task["allowed_output_kinds"]),
                 {"source_patch", "observed_result"},
             )
+
+            output_section = prompt.split("## Canonical Output JSON\n", 1)[1]
+            output_template = parse_or_repair_json(
+                output_section,
+                "worker_task_result",
+            )
+            self.assertFalse(output_template.repaired)
+            self.assertEqual(
+                output_template.data["observed_result"]["unexpected_observations"],
+                [],
+            )
+            self.assertEqual(output_template.data["branch_suggestions"], [])
 
     def test_repo_root_cannot_be_worker_workspace(self) -> None:
         settings = load_settings(REPO_ROOT)

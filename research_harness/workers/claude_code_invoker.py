@@ -243,6 +243,31 @@ class ClaudeCodeInvoker:
         disproof = "\n".join(f"- {item}" for item in contract["disproof_conditions"])
         context_bundle = self._build_prompt_context_bundle(node)
         task_json = json.dumps(worker_task, indent=2, sort_keys=True)
+        output_template = {
+            "task_id": worker_task["task_id"],
+            "node_id": node["id"],
+            "status": "completed",
+            "output_kind": "observed_result",
+            "summary": "live smoke only; no experiment was executed",
+            "source_patch": None,
+            "observed_result": {
+                "claim_verdict_candidate": "not_evaluable",
+                "metrics": {"live_smoke_json_contract": 1},
+                "baselines": {},
+                "disproof_conditions_hit": [],
+                "artifacts": [],
+                "unexpected_observations": [],
+            },
+            "branch_suggestions": [],
+            "scope_check": {
+                "claim_changed": False,
+                "baselines_changed": False,
+                "shared_memory_write_attempted": False,
+                "branch_created": False,
+                "files_written_outside_workspace": False,
+            },
+        }
+        output_json = json.dumps(output_template, indent=2)
         return (
             "# Claude Code Worker Contract\n\n"
             f"Role: {node['runtime_profile']['worker_type']}\n"
@@ -251,9 +276,9 @@ class ClaudeCodeInvoker:
             "change the claim, mutate shared memory, or ask for interactive permission. "
             "For this live smoke, do not use tools. Treat this prompt as the complete "
             "context and return a schema-valid worker_task_result JSON on stdout only. "
-            "You may report source_patch or observed_result only. You may describe "
-            "branch suggestions, but you must not create branches. The harness will "
-            "derive worker_report.json after validating this task result.\n\n"
+            "You may report source_patch or observed_result only. For live smoke, "
+            "the branch suggestions array must remain empty. The harness will derive "
+            "worker_report.json after validating this task result.\n\n"
             "## Claim Under Test\n"
             f"{contract['claim_under_test']}\n\n"
             "## Mandatory Baselines\n"
@@ -269,33 +294,26 @@ class ClaudeCodeInvoker:
             "```json\n"
             f"{task_json}\n"
             "```\n\n"
-            "## Output\n"
-            "Return only raw JSON matching this shape. Preserve unknowns as null. "
+            "## Output Contract\n"
+            "Return only raw JSON. Do not wrap it in markdown fences. Do not add "
+            "explanatory prose before or after the JSON. Preserve unknowns as null. "
             "Do not add facts that were not observed in this invocation.\n\n"
-            "{\n"
-            f"  \"task_id\": \"{worker_task['task_id']}\",\n"
-            f"  \"node_id\": \"{node['id']}\",\n"
-            "  \"status\": \"completed\",\n"
-            "  \"output_kind\": \"observed_result\",\n"
-            "  \"summary\": \"live smoke only; no experiment was executed\",\n"
-            "  \"source_patch\": null,\n"
-            "  \"observed_result\": {\n"
-            "    \"claim_verdict_candidate\": \"not_evaluable\",\n"
-            "    \"metrics\": {\"live_smoke_json_contract\": 1},\n"
-            "    \"baselines\": {},\n"
-            "    \"disproof_conditions_hit\": [],\n"
-            "    \"artifacts\": [],\n"
-            "    \"unexpected_observations\": []\n"
-            "  },\n"
-            "  \"branch_suggestions\": [],\n"
-            "  \"scope_check\": {\n"
-            "    \"claim_changed\": false,\n"
-            "    \"baselines_changed\": false,\n"
-            "    \"shared_memory_write_attempted\": false,\n"
-            "    \"branch_created\": false,\n"
-            "    \"files_written_outside_workspace\": false\n"
-            "  },\n"
-            "}\n"
+            "Non-negotiable nested schema rules:\n"
+            "- observed_result.unexpected_observations must be an array of objects, "
+            "not strings. For this live smoke, keep it exactly [].\n"
+            "- If a future task needs an unexpected observation, each item must be "
+            "{\"observation\": string, \"evidence\": string, "
+            "\"suggested_branch_type\": string|null, \"scope_relation\": string}.\n"
+            "- branch_suggestions must be [] for this live smoke. Do not emit "
+            "label/rationale/may_create. Future branch suggestions, if explicitly "
+            "allowed, must use suggested_branch_type, description, and evidence.\n"
+            "- Do not convert Active Lessons, Baseline Dossier Summary, or Failure "
+            "Retrieval Index entries into unexpected_observations; they are context "
+            "only, not observations from this invocation.\n"
+            "- All scope_check values must stay false unless you actually attempted "
+            "that forbidden action in this invocation.\n\n"
+            "## Canonical Output JSON\n"
+            f"{output_json}\n"
         )
 
     def _build_prompt_context_bundle(self, node: dict[str, Any]) -> str:
