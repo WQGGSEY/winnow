@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/live_rebuttal_session.schema.json",
+  "title": "LiveRebuttalSession",
+  "type": "object",
+  "required": [
+    "type",
+    "status",
+    "node_id",
+    "bundle_path",
+    "rebuttal_packet_path",
+    "orchestrator_rebuttal_path",
+    "rebuttal_critic_bundle_path",
+    "ac_decision_path",
+    "research_state_bundle_path",
+    "session_path",
+    "state_mutation",
+    "memory_mutation",
+    "ac_decision",
+    "publication_ready",
+    "error"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": ["live_rebuttal_session"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "blocked_not_promoted"]
+    },
+    "node_id": { "type": "string" },
+    "bundle_path": { "type": "string" },
+    "rebuttal_packet_path": { "type": ["string", "null"] },
+    "orchestrator_rebuttal_path": { "type": ["string", "null"] },
+    "rebuttal_critic_bundle_path": { "type": ["string", "null"] },
+    "ac_decision_path": { "type": ["string", "null"] },
+    "research_state_bundle_path": { "type": ["string", "null"] },
+    "session_path": { "type": "string" },
+    "state_mutation": {
+      "type": "string",
+      "enum": ["forbidden"]
+    },
+    "memory_mutation": {
+      "type": "string",
+      "enum": ["forbidden"]
+    },
+    "ac_decision": { "type": ["object", "null"] },
+    "publication_ready": { "type": "boolean" },
+    "error": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}
