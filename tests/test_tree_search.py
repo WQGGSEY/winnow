@@ -80,6 +80,26 @@ def invalid_json_metrics_plan(node: dict[str, Any], run_dir: Path) -> dict[str, 
     return plan
 
 
+def baseline_dominated_plan(node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+    return _metrics_plan(
+        node,
+        run_dir,
+        {
+            "metrics": {
+                "bounded_worker_success_rate": 0.91,
+                "schema_validity": 1.0,
+            },
+            "baselines": {
+                "current_best_known": 0.80,
+                "naive_direct_port": 0.95,
+                "random_or_null": 0.05,
+            },
+            "claim_verdict_candidate": "supported",
+            "unexpected_observations": [],
+        },
+    )
+
+
 class TreeSearchTests(unittest.TestCase):
     def test_mock_tree_search_promotes_root_with_default_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -139,6 +159,7 @@ class TreeSearchTests(unittest.TestCase):
             )
             validate_named_schema("worker_report", worker_report)
             self.assertEqual(worker_report["metrics"]["schema_validity"], 1.0)
+            self.assertEqual(worker_report["baseline_evidence_status"]["overall"], "passed")
             node = next(
                 node
                 for node in result["search_state"]["nodes"]
@@ -231,6 +252,55 @@ class TreeSearchTests(unittest.TestCase):
                 worker_report["failure_record_candidate"]["tags"],
             )
 
+    def test_baseline_dominated_supported_metric_becomes_negative_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "tree"
+            result = run_mock_tree_search(
+                REPO_ROOT,
+                run_dir,
+                max_steps=1,
+                experiment_plan_builder=baseline_dominated_plan,
+                record_runner_failures=False,
+            )
+
+            worker_report = json.loads(
+                (run_dir / "nodes" / "n_demo_001" / "worker_report.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            validate_named_schema("worker_report", worker_report)
+            self.assertEqual(worker_report["status"], "completed")
+            self.assertEqual(worker_report["claim_verdict_candidate"], "contradicted")
+            self.assertEqual(worker_report["baseline_evidence_status"]["overall"], "failed")
+            self.assertEqual(
+                worker_report["failure_record_candidate"]["category"],
+                "negative_result",
+            )
+            self.assertIn(
+                "baseline_dominated_success",
+                worker_report["failure_record_candidate"]["tags"],
+            )
+            self.assertIn(
+                "naive_direct_port",
+                worker_report["failure_record_candidate"]["tags"],
+            )
+            self.assertNotIn("n_demo_001", result["search_state"]["promoted_node_ids"])
+            reduction = json.loads(
+                (
+                    run_dir
+                    / "nodes"
+                    / "n_demo_001"
+                    / "orchestrator_reduction.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(reduction["final_verdict"], "contradicted")
+            self.assertTrue(
+                any(
+                    suggestion["source"] == "worker_report.baseline_evidence_status"
+                    for suggestion in reduction["child_branch_suggestions"]
+                )
+            )
+
     def test_inconclusive_metrics_open_child_branch_until_step_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = run_mock_tree_search(
@@ -238,6 +308,7 @@ class TreeSearchTests(unittest.TestCase):
                 Path(tmp) / "tree",
                 experiment_plan_builder=inconclusive_experiment_plan,
                 max_steps=1,
+                record_runner_failures=False,
             )
 
             state = result["search_state"]

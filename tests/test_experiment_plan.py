@@ -28,6 +28,13 @@ class ExperimentPlanTests(unittest.TestCase):
             source_files = materialize_experiment_plan(node, plan, run_dir)
 
             self.assertEqual(source_files, ["experiment.py"])
+            self.assertEqual(
+                {
+                    requirement["role"]
+                    for requirement in plan["baseline_evidence_requirements"]
+                },
+                {"current_best_known", "naive", "random_or_null"},
+            )
             self.assertTrue((Path(plan["workspace"]) / "experiment.py").is_file())
 
     def test_job_manifest_is_derived_from_experiment_plan_contract(self) -> None:
@@ -41,6 +48,10 @@ class ExperimentPlanTests(unittest.TestCase):
             validate_named_schema("job_manifest", manifest)
             self.assertEqual(manifest["experiment_plan_id"], plan["plan_id"])
             self.assertEqual(manifest["claim_contract"], node["claim_contract"])
+            self.assertEqual(
+                manifest["baseline_evidence_requirements"],
+                plan["baseline_evidence_requirements"],
+            )
             self.assertEqual(manifest["source_files"], ["experiment.py"])
 
     def test_plan_cannot_override_node_claim_contract(self) -> None:
@@ -61,6 +72,20 @@ class ExperimentPlanTests(unittest.TestCase):
             plan["source_files"][0]["path"] = "/tmp/experiment.py"
 
             with self.assertRaisesRegex(ExperimentPlanError, "source_files"):
+                validate_experiment_plan(node, plan, run_dir)
+
+    def test_plan_must_include_all_mandatory_baseline_roles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            node = _demo_node()
+            plan = build_demo_experiment_plan(node, run_dir)
+            plan["baseline_evidence_requirements"] = [
+                requirement
+                for requirement in plan["baseline_evidence_requirements"]
+                if requirement["role"] != "naive"
+            ]
+
+            with self.assertRaisesRegex(ExperimentPlanError, "naive"):
                 validate_experiment_plan(node, plan, run_dir)
 
 

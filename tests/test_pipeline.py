@@ -43,6 +43,10 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(bundle["runner_result"]["status"], "completed")
             self.assertTrue((run_dir / "experiment_plan.json").exists())
             self.assertEqual(
+                worker_report["baseline_evidence_status"]["overall"],
+                "passed",
+            )
+            self.assertEqual(
                 bundle["source_files"],
                 ["nodes/n_demo_001/workspace/experiment.py"],
             )

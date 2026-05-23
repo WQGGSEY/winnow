@@ -15,6 +15,7 @@
     "resources",
     "inputs",
     "expected_outputs",
+    "baseline_evidence_requirements",
     "mandatory_baselines",
     "success_criteria",
     "disproof_conditions",
@@ -75,6 +76,36 @@
     },
     "inputs": { "type": "object" },
     "expected_outputs": { "type": "object" },
+    "baseline_evidence_requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "role",
+          "metric_key",
+          "baseline_key",
+          "operator",
+          "margin",
+          "required"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": ["current_best_known", "naive", "random_or_null"]
+          },
+          "metric_key": { "type": "string", "minLength": 1 },
+          "baseline_key": { "type": "string", "minLength": 1 },
+          "operator": {
+            "type": "string",
+            "enum": ["greater_than", "greater_equal", "less_than", "less_equal"]
+          },
+          "margin": { "type": "number", "minimum": 0 },
+          "required": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
     "mandatory_baselines": {
       "type": "array",
       "items": { "type": "string" },

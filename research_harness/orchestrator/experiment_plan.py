@@ -51,6 +51,32 @@ def build_demo_experiment_plan(node: dict[str, Any], run_dir: Path) -> dict[str,
             "logs": ["artifacts/run.log"],
             "artifact_dirs": ["artifacts/"],
         },
+        "baseline_evidence_requirements": [
+            {
+                "role": "current_best_known",
+                "metric_key": "bounded_worker_success_rate",
+                "baseline_key": "current_best_known",
+                "operator": "greater_than",
+                "margin": 0,
+                "required": True,
+            },
+            {
+                "role": "naive",
+                "metric_key": "bounded_worker_success_rate",
+                "baseline_key": "naive_direct_port",
+                "operator": "greater_than",
+                "margin": 0,
+                "required": True,
+            },
+            {
+                "role": "random_or_null",
+                "metric_key": "bounded_worker_success_rate",
+                "baseline_key": "random_or_null",
+                "operator": "greater_than",
+                "margin": 0,
+                "required": True,
+            },
+        ],
         "mandatory_baselines": list(node["claim_contract"]["mandatory_baselines"]),
         "success_criteria": list(node["claim_contract"]["success_criteria"]),
         "disproof_conditions": list(node["claim_contract"]["disproof_conditions"]),
@@ -124,6 +150,19 @@ def validate_experiment_plan(
     if "workspace" not in experiment_plan["guardrails"]["allowed_write_roots"]:
         raise ExperimentPlanError("experiment plan must restrict writes to workspace")
 
+    required_roles = {"current_best_known", "naive", "random_or_null"}
+    planned_roles = {
+        requirement["role"]
+        for requirement in experiment_plan["baseline_evidence_requirements"]
+        if requirement["required"]
+    }
+    missing_roles = sorted(required_roles - planned_roles)
+    if missing_roles:
+        raise ExperimentPlanError(
+            "experiment plan missing required baseline evidence roles: "
+            + ", ".join(missing_roles)
+        )
+
 
 def materialize_experiment_plan(
     node: dict[str, Any],
@@ -162,6 +201,9 @@ def build_job_manifest_from_experiment_plan(
         "resources": experiment_plan["resources"],
         "inputs": experiment_plan["inputs"],
         "outputs": experiment_plan["expected_outputs"],
+        "baseline_evidence_requirements": experiment_plan[
+            "baseline_evidence_requirements"
+        ],
         "claim_contract": node["claim_contract"],
         "failure_index_hints": experiment_plan["failure_index_hints"],
         "reproducibility": experiment_plan["reproducibility"],

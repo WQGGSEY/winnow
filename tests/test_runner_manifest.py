@@ -23,6 +23,13 @@ class RunnerManifestTests(unittest.TestCase):
             validate_named_schema("job_manifest", manifest)
             self.assertEqual(manifest["experiment_plan_id"], "plan_n_demo_001_smoke")
             self.assertEqual(manifest["source_files"], ["experiment.py"])
+            self.assertEqual(
+                {
+                    requirement["role"]
+                    for requirement in manifest["baseline_evidence_requirements"]
+                },
+                {"current_best_known", "naive", "random_or_null"},
+            )
             self.assertTrue((Path(manifest["workspace"]) / "experiment.py").is_file())
             self.assertEqual(manifest["entrypoint"]["args"], ["experiment.py"])
             LocalRunner(run_dir).validate_or_raise(manifest)

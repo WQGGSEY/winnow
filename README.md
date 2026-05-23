@@ -25,7 +25,8 @@ Included:
 - Rebuttal packet, rebuttal critic stage, AC decision schema.
 - Dry-run Claude Code invocation envelope and bounded prompt generation.
 - Deterministic experiment-plan contracts, local runner manifest validation,
-  bounded execution, and source/metrics-evidence ingestion into worker reports.
+  bounded execution, baseline-evidence checks, and source/metrics-evidence
+  ingestion into worker reports.
 - Baseline dossier validation and dry-run resolution report.
 - Dry-run end-to-end pipeline that writes a research state bundle and HTML summary.
 
@@ -83,9 +84,13 @@ The staged tree-search loop currently accepts only dry-run/local backends. Each
 node first writes an orchestrator-owned `experiment_plan.json`, materializes
 declared workspace-local source files from that plan, derives `job_manifest.json`,
 writes `workspace/runner_result.json` and declared metrics files, then builds
-`worker_report.json` only from that runner evidence. Runner failures or missing
-metrics become non-promotable worker reports. Live Claude Code remains behind
-`research_harness.workers.live_gate` and is not called by tree search.
+`worker_report.json` only from that runner evidence. The experiment plan declares
+which metric must beat current-best, naive, and random/null baselines. If a
+worker reports a supported result but the mandatory baseline comparison fails,
+the claim is downgraded to a non-promotable `negative_result`. Runner failures,
+missing metrics, or missing baseline evidence become non-promotable worker
+reports. Live Claude Code remains behind `research_harness.workers.live_gate`
+and is not called by tree search.
 
 ## Run Pre-Live Local Preflight
 

@@ -244,12 +244,62 @@ def _evidence_to_worker_report(
             )
         unexpected_observations.extend(raw_observations)
 
+    baseline_status = _evaluate_baseline_evidence_requirements(
+        manifest,
+        metrics,
+        baselines,
+    )
+    if baseline_status["overall"] == "not_evaluable":
+        return _baseline_confounded_report(
+            node,
+            manifest,
+            runner_result,
+            run_dir,
+            metrics=metrics,
+            baselines=baselines,
+            baseline_status=baseline_status,
+            source_files=source_files,
+            metrics_evidence_paths=evidence_paths,
+        )
+
+    failure_record_candidate = None
+    if baseline_status["overall"] == "failed":
+        verdict = "contradicted"
+        disproof_conditions_hit.extend(
+            [
+                "mandatory baseline evidence requirement failed: "
+                f"{result['role']} via {result['baseline_key']}"
+                for result in baseline_status["results"]
+                if result["status"] == "failed"
+            ]
+        )
+        unexpected_observations.append(
+            {
+                "observation": "Claim looked supported by raw metrics but failed mandatory baseline comparison.",
+                "evidence": _baseline_failure_reason(baseline_status),
+                "suggested_branch_type": "necessity",
+                "scope_relation": "directly_refutes_claim",
+            }
+        )
+        failure_record_candidate = {
+            "category": "negative_result",
+            "tags": [
+                "baseline_dominated_success",
+                "mandatory_baseline",
+                manifest["task_class"],
+                *_baseline_failure_tags(baseline_status),
+                *manifest.get("failure_index_hints", {}).get("risk_tags", []),
+            ],
+            "reason": _baseline_failure_reason(baseline_status),
+        }
+
     worker_report = {
         "node_id": node["id"],
         "status": "completed",
         "claim_verdict_candidate": verdict,
         "metrics": metrics,
         "baselines": baselines,
+        "baseline_evidence_status": baseline_status,
         "disproof_conditions_hit": disproof_conditions_hit,
         "artifacts": [
             *source_files,
@@ -258,7 +308,7 @@ def _evidence_to_worker_report(
             _display_path(Path(runner_result["stderr_path"]), run_dir),
         ],
         "unexpected_observations": unexpected_observations,
-        "failure_record_candidate": None,
+        "failure_record_candidate": failure_record_candidate,
     }
     return EvidenceReport(
         worker_report=worker_report,
@@ -326,6 +376,164 @@ def _invalid_report(
     )
 
 
+def _baseline_confounded_report(
+    node: dict[str, Any],
+    manifest: dict[str, Any],
+    runner_result: dict[str, Any],
+    run_dir: Path,
+    *,
+    metrics: dict[str, Any],
+    baselines: dict[str, Any],
+    baseline_status: dict[str, Any],
+    source_files: list[str],
+    metrics_evidence_paths: list[str],
+) -> EvidenceReport:
+    reason = _baseline_failure_reason(baseline_status)
+    worker_report = {
+        "node_id": node["id"],
+        "status": "completed",
+        "claim_verdict_candidate": "not_evaluable",
+        "metrics": metrics,
+        "baselines": baselines,
+        "baseline_evidence_status": baseline_status,
+        "disproof_conditions_hit": [],
+        "artifacts": [
+            *source_files,
+            *metrics_evidence_paths,
+            _display_path(Path(runner_result["stdout_path"]), run_dir),
+            _display_path(Path(runner_result["stderr_path"]), run_dir),
+        ],
+        "unexpected_observations": [
+            {
+                "observation": "Mandatory baseline evidence could not be evaluated.",
+                "evidence": reason,
+                "suggested_branch_type": "validity",
+                "scope_relation": "operational_blocker",
+            }
+        ],
+        "failure_record_candidate": {
+            "category": "confounded_result",
+            "tags": [
+                "baseline_evidence_missing",
+                "mandatory_baseline",
+                manifest["task_class"],
+                *_baseline_failure_tags(baseline_status),
+                *manifest.get("failure_index_hints", {}).get("risk_tags", []),
+            ],
+            "reason": reason,
+        },
+    }
+    return EvidenceReport(
+        worker_report=worker_report,
+        source_files=source_files,
+        metrics_evidence_paths=metrics_evidence_paths,
+    )
+
+
+def _evaluate_baseline_evidence_requirements(
+    manifest: dict[str, Any],
+    metrics: dict[str, Any],
+    baselines: dict[str, Any],
+) -> dict[str, Any]:
+    results: list[dict[str, Any]] = []
+    overall = "passed"
+    for requirement in manifest.get("baseline_evidence_requirements", []):
+        metric_key = requirement["metric_key"]
+        baseline_key = requirement["baseline_key"]
+        metric_value = metrics.get(metric_key)
+        baseline_value = baselines.get(baseline_key)
+        result = {
+            "role": requirement["role"],
+            "metric_key": metric_key,
+            "baseline_key": baseline_key,
+            "operator": requirement["operator"],
+            "margin": requirement["margin"],
+            "required": requirement["required"],
+            "metric_value": metric_value,
+            "baseline_value": baseline_value,
+            "status": "passed",
+            "reason": "requirement satisfied",
+        }
+        if metric_key not in metrics:
+            result["status"] = "not_evaluable"
+            result["reason"] = f"metric key is missing: {metric_key}"
+        elif baseline_key not in baselines:
+            result["status"] = "not_evaluable"
+            result["reason"] = f"baseline key is missing: {baseline_key}"
+        elif not _is_number(metric_value) or not _is_number(baseline_value):
+            result["status"] = "not_evaluable"
+            result["reason"] = (
+                "metric and baseline values must be numeric for baseline comparison"
+            )
+        elif not _passes_requirement(
+            float(metric_value),
+            float(baseline_value),
+            requirement["operator"],
+            float(requirement["margin"]),
+        ):
+            result["status"] = "failed"
+            result["reason"] = (
+                f"{metric_key}={metric_value} does not satisfy "
+                f"{requirement['operator']} {baseline_key}={baseline_value} "
+                f"with margin={requirement['margin']}"
+            )
+        results.append(result)
+
+    required_results = [result for result in results if result["required"]]
+    if any(result["status"] == "not_evaluable" for result in required_results):
+        overall = "not_evaluable"
+    elif any(result["status"] == "failed" for result in required_results):
+        overall = "failed"
+    return {
+        "overall": overall,
+        "results": results,
+    }
+
+
+def _passes_requirement(
+    metric_value: float,
+    baseline_value: float,
+    operator: str,
+    margin: float,
+) -> bool:
+    if operator == "greater_than":
+        return metric_value > baseline_value + margin
+    if operator == "greater_equal":
+        return metric_value >= baseline_value + margin
+    if operator == "less_than":
+        return metric_value < baseline_value - margin
+    if operator == "less_equal":
+        return metric_value <= baseline_value - margin
+    return False
+
+
+def _baseline_failure_reason(baseline_status: dict[str, Any]) -> str:
+    failures = [
+        result
+        for result in baseline_status.get("results", [])
+        if result.get("status") != "passed"
+    ]
+    if not failures:
+        return "All mandatory baseline evidence requirements passed."
+    return "; ".join(str(result["reason"]) for result in failures)
+
+
+def _baseline_failure_tags(baseline_status: dict[str, Any]) -> list[str]:
+    tags: list[str] = []
+    for result in baseline_status.get("results", []):
+        if result.get("status") == "passed":
+            continue
+        tags.extend(
+            [
+                str(result.get("role")),
+                str(result.get("metric_key")),
+                str(result.get("baseline_key")),
+                str(result.get("status")),
+            ]
+        )
+    return sorted(set(tags))
+
+
 def _source_files(runner_result: dict[str, Any], run_dir: Path) -> list[str]:
     return [
         _display_path(Path(raw_path), run_dir)
@@ -357,6 +565,13 @@ def _is_observation_list(value: Any) -> bool:
         ):
             return False
     return True
+
+
+def _is_number(value: Any) -> bool:
+    return (isinstance(value, int) or isinstance(value, float)) and not isinstance(
+        value,
+        bool,
+    )
 
 
 def _display_path(path: Path, run_dir: Path) -> str:

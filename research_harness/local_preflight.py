@@ -47,6 +47,9 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
     validate_named_schema("runner_result", state["runner_result"])
     if not (run_dir / "experiment_plan.json").is_file():
         raise FileNotFoundError(run_dir / "experiment_plan.json")
+    baseline_evidence_overall = state["worker_report"]["baseline_evidence_status"][
+        "overall"
+    ]
     for source_file in state["source_files"]:
         source_path = run_dir / source_file
         if not source_path.is_file():
@@ -56,6 +59,7 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
     tree_result = run_mock_tree_search(root, root / "runs" / "prelive_tree_search")
     validate_named_schema("search_state", tree_result["search_state"])
     tree_runner_statuses = []
+    tree_baseline_evidence_overalls = []
     tree_experiment_plan_count = 0
     tree_source_file_count = 0
     tree_metrics_evidence_count = 0
@@ -85,6 +89,9 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
         )
         worker_report = json.loads(worker_report_path.read_text(encoding="utf-8"))
         validate_named_schema("worker_report", worker_report)
+        tree_baseline_evidence_overalls.append(
+            worker_report.get("baseline_evidence_status", {}).get("overall")
+        )
         for source_file in artifact["source_files"]:
             source_path = root / "runs" / "prelive_tree_search" / source_file
             if not source_path.is_file():
@@ -103,7 +110,9 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
         "active_lesson_count": len(lessons.get("active_lessons", [])),
         "baseline_dossier_id": baseline_dossier["id"],
         "runner_result_status": state["runner_result"]["status"],
+        "baseline_evidence_overall": baseline_evidence_overall,
         "tree_runner_statuses": tree_runner_statuses,
+        "tree_baseline_evidence_overalls": tree_baseline_evidence_overalls,
         "tree_experiment_plan_count": tree_experiment_plan_count,
         "tree_source_file_count": tree_source_file_count,
         "tree_metrics_evidence_count": tree_metrics_evidence_count,

@@ -32,6 +32,7 @@
     },
     "metrics": { "type": "object" },
     "baselines": { "type": "object" },
+    "baseline_evidence_status": { "type": "object" },
     "disproof_conditions_hit": {
       "type": "array",
       "items": { "type": "string" }
@@ -58,4 +59,3 @@
   },
   "additionalProperties": false
 }
-
