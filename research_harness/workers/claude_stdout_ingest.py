@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from research_harness.schemas.validator import validate_named_schema
+from research_harness.workers.live_gate_validation import (
+    LiveGateValidationError,
+    validate_live_ingest_gate,
+)
 from research_harness.workers.output_repair import OutputRepairError, parse_or_repair_json
 from research_harness.workers.worker_task import worker_report_from_task_result
 from research_harness.workers.workspace import WorkspaceGuardError, ensure_path_inside
@@ -29,6 +33,9 @@ class ClaudeStdoutIngestResult:
 def ingest_claude_cli_stdout(
     stdout_path: Path,
     envelope: dict[str, Any],
+    *,
+    live_plan: dict[str, Any] | None = None,
+    envelope_path: Path | None = None,
 ) -> ClaudeStdoutIngestResult:
     """Convert Claude CLI JSON stdout into a schema-valid worker report.
 
@@ -45,6 +52,27 @@ def ingest_claude_cli_stdout(
     ensure_path_inside(stdout_path, workspace, "stdout_path")
     ensure_path_inside(expected_output_path, workspace, "expected_output_path")
     ensure_path_inside(worker_task_path, workspace, "worker_task_path")
+
+    if envelope["backend"] == "claude_code_live":
+        if live_plan is None:
+            return _blocked_preflight_result(
+                envelope,
+                expected_output_path,
+                evidence="live Claude ingest requires manual_live_smoke_plan.json",
+            )
+        try:
+            validate_live_ingest_gate(
+                live_plan,
+                envelope,
+                stdout_path=stdout_path,
+                envelope_path=envelope_path,
+            )
+        except LiveGateValidationError as exc:
+            return _blocked_preflight_result(
+                envelope,
+                expected_output_path,
+                evidence=str(exc),
+            )
 
     cli_result = _load_cli_result(stdout_path.read_text(encoding="utf-8"))
     worker_task = json.loads(worker_task_path.read_text(encoding="utf-8"))
@@ -222,6 +250,60 @@ def _blocked_report(
     }
 
 
+def _blocked_preflight_result(
+    envelope: dict[str, Any],
+    expected_output_path: Path,
+    *,
+    evidence: str,
+) -> ClaudeStdoutIngestResult:
+    report = {
+        "node_id": envelope["node_id"],
+        "status": "blocked_preflight",
+        "claim_verdict_candidate": "not_evaluable",
+        "metrics": {
+            "live_gate_ok": False,
+        },
+        "baselines": {},
+        "disproof_conditions_hit": [],
+        "artifacts": [],
+        "unexpected_observations": [
+            {
+                "observation": "Live Claude stdout ingest was blocked by the live gate.",
+                "evidence": evidence,
+                "suggested_branch_type": None,
+                "scope_relation": "operational_blocker",
+            }
+        ],
+        "failure_record_candidate": {
+            "category": "invalid_experiment",
+            "tags": ["live_gate", "blocked_preflight"],
+            "reason": evidence,
+        },
+    }
+    validate_named_schema("worker_report", report)
+    worker_report_path = expected_output_path.with_name("worker_report.json")
+    worker_report_path.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    metadata_path = worker_report_path.with_name("worker_report_ingest.json")
+    metadata = _ingest_metadata(None, repaired=False, note="blocked_preflight")
+    metadata["live_gate_blocked"] = True
+    metadata["live_gate_reason"] = evidence
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return ClaudeStdoutIngestResult(
+        worker_report=report,
+        worker_report_path=worker_report_path,
+        worker_task_result_path=None,
+        ingest_metadata_path=metadata_path,
+        repaired=False,
+        note="blocked_preflight",
+    )
+
+
 def _runtime_evidence(cli_result: dict[str, Any]) -> str:
     errors = cli_result.get("errors") or []
     if errors:
@@ -231,10 +313,11 @@ def _runtime_evidence(cli_result: dict[str, Any]) -> str:
 
 
 def _ingest_metadata(
-    cli_result: dict[str, Any],
+    cli_result: dict[str, Any] | None,
     repaired: bool,
     note: str,
 ) -> dict[str, Any]:
+    cli_result = cli_result or {}
     return {
         "type": "claude_cli_stdout_ingest",
         "subtype": cli_result.get("subtype"),
@@ -253,10 +336,17 @@ def main() -> None:
     )
     parser.add_argument("--stdout", required=True, type=Path)
     parser.add_argument("--envelope", required=True, type=Path)
+    parser.add_argument("--plan", type=Path)
     args = parser.parse_args()
 
     envelope = json.loads(args.envelope.read_text(encoding="utf-8"))
-    result = ingest_claude_cli_stdout(args.stdout, envelope)
+    live_plan = json.loads(args.plan.read_text(encoding="utf-8")) if args.plan else None
+    result = ingest_claude_cli_stdout(
+        args.stdout,
+        envelope,
+        live_plan=live_plan,
+        envelope_path=args.envelope,
+    )
     print(
         json.dumps(
             {

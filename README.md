@@ -122,8 +122,9 @@ billing guard; live Claude Code requires an explicit
 `RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack` acknowledgement. The auth
 probe accepts only Claude.ai subscription auth status and stores no email,
 organization id, or token fields. Claude live output is constrained to
-`worker_task_result`; the harness writes `worker_report.json` only after schema
-and scope validation.
+`worker_task_result`; `claude_stdout_ingest` requires the matching
+`manual_live_smoke_plan.json` for live backend stdout and writes
+`worker_report.json` only after gate, schema, and scope validation.
 
 ## Core Files
 

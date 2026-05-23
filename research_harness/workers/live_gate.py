@@ -100,6 +100,8 @@ def build_manual_live_smoke_plan(
         str(manual_stdout_path),
         "--envelope",
         str(workspace_paths["workspace"] / "live_invocation_envelope.json"),
+        "--plan",
+        str(run_dir / "manual_live_smoke_plan.json"),
     ]
     worker_task_result_path = Path(live_envelope["expected_output_path"])
     worker_report_path = worker_task_result_path.with_name("worker_report.json")
@@ -134,6 +136,9 @@ def build_manual_live_smoke_plan(
             "requires_anthropic_api_key_unset": True,
             "output_contract": "worker_task_result_then_harness_worker_report",
         },
+        "live_invocation_envelope_path": str(
+            workspace_paths["workspace"] / "live_invocation_envelope.json"
+        ),
         "live_invocation_envelope": live_envelope,
         "manual_command": manual_command,
         "manual_stdout_path": str(manual_stdout_path),
@@ -145,7 +150,7 @@ def build_manual_live_smoke_plan(
         "post_run_checks": [
             "Feed prompt_path to manual_command stdin; do not use interactive mode.",
             "Capture raw Claude CLI JSON stdout exactly at manual_stdout_path.",
-            "Run python -B -m research_harness.workers.claude_stdout_ingest --stdout <captured_stdout> --envelope <live_invocation_envelope>.",
+            "Run ingest_command with --plan; live backend ingest is blocked without the matching manual_live_smoke_plan.",
             "Require Claude to emit worker_task_result only; let the harness derive worker_report.json after schema validation.",
             "Reject permission, timeout, or invalid output as non-promotable worker states.",
             "Run deterministic critic governance before orchestrator reduction.",

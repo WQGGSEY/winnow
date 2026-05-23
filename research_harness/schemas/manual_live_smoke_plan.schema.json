@@ -12,6 +12,7 @@
     "claude_cli",
     "billing_guard",
     "runtime_guard",
+    "live_invocation_envelope_path",
     "live_invocation_envelope",
     "manual_command",
     "manual_stdout_path",
@@ -104,6 +105,7 @@
       },
       "additionalProperties": false
     },
+    "live_invocation_envelope_path": { "type": "string" },
     "live_invocation_envelope": { "type": "object" },
     "manual_command": {
       "type": "array",
