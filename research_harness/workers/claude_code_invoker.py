@@ -13,6 +13,11 @@ from research_harness.memory.failure_retrieval import (
     retrieve_failure_summaries,
 )
 from research_harness.schemas.validator import validate_named_schema
+from research_harness.workers.worker_task import (
+    build_worker_task,
+    validate_worker_task,
+    write_worker_task,
+)
 from research_harness.workers.workspace import WorkspaceGuardError, ensure_path_inside
 
 
@@ -130,7 +135,11 @@ class ClaudeCodeInvoker:
             details=details,
         )
 
-    def build_dry_run_invocation(self, node: dict[str, Any]) -> dict[str, Any]:
+    def build_dry_run_invocation(
+        self,
+        node: dict[str, Any],
+        worker_task: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         runtime = node["runtime_profile"]
         role = runtime["worker_type"]
         if role == "runner_job":
@@ -138,12 +147,19 @@ class ClaudeCodeInvoker:
 
         self.workspace.mkdir(parents=True, exist_ok=True)
         prompt_path = self.workspace / "prompt.md"
-        expected_output_path = self.workspace / "worker_report.json"
+        worker_task_path = self.workspace / "worker_task.json"
+        expected_output_path = self.workspace / "worker_task_result.json"
         output_schema_path = (
-            self.repo_root / "research_harness" / "schemas" / "worker_report.schema.json"
+            self.repo_root
+            / "research_harness"
+            / "schemas"
+            / "worker_task_result.schema.json"
         )
+        worker_task = worker_task or build_worker_task(node, self.workspace)
+        validate_worker_task(node, worker_task, self.workspace)
 
         ensure_path_inside(prompt_path, self.workspace, "prompt_path")
+        ensure_path_inside(worker_task_path, self.workspace, "worker_task_path")
         ensure_path_inside(expected_output_path, self.workspace, "expected_output_path")
         ensure_path_inside(output_schema_path, self.repo_root, "output_schema.path")
 
@@ -166,10 +182,11 @@ class ClaudeCodeInvoker:
             "turn_budget": runtime.get("turn_budget") or self._default_turn_budget(role),
             "timeout_policy": runtime["timeout_policy"],
             "output_schema": {
-                "name": "worker_report",
+                "name": "worker_task_result",
                 "path": str(output_schema_path),
             },
             "expected_output_path": str(expected_output_path),
+            "worker_task_path": str(worker_task_path),
             "environment_policy": {
                 "unset": ["ANTHROPIC_API_KEY"],
                 "secret_logging": "forbidden",
@@ -215,12 +232,17 @@ class ClaudeCodeInvoker:
         self.validate_invocation_envelope(envelope)
         return envelope
 
-    def build_worker_prompt(self, node: dict[str, Any]) -> str:
+    def build_worker_prompt(
+        self,
+        node: dict[str, Any],
+        worker_task: dict[str, Any],
+    ) -> str:
         contract = node["claim_contract"]
         baselines = "\n".join(f"- {item}" for item in contract["mandatory_baselines"])
         success = "\n".join(f"- {item}" for item in contract["success_criteria"])
         disproof = "\n".join(f"- {item}" for item in contract["disproof_conditions"])
         context_bundle = self._build_prompt_context_bundle(node)
+        task_json = json.dumps(worker_task, indent=2, sort_keys=True)
         return (
             "# Claude Code Worker Contract\n\n"
             f"Role: {node['runtime_profile']['worker_type']}\n"
@@ -228,9 +250,10 @@ class ClaudeCodeInvoker:
             "You are a bounded worker. Do not expand scope, choose new baselines, "
             "change the claim, mutate shared memory, or ask for interactive permission. "
             "For this live smoke, do not use tools. Treat this prompt as the complete "
-            "context and return a schema-valid worker_report JSON on stdout only. "
-            "The harness will write worker_report.json after validating stdout; you "
-            "must not try to read or write files.\n\n"
+            "context and return a schema-valid worker_task_result JSON on stdout only. "
+            "You may report source_patch or observed_result only. You may describe "
+            "branch suggestions, but you must not create branches. The harness will "
+            "derive worker_report.json after validating this task result.\n\n"
             "## Claim Under Test\n"
             f"{contract['claim_under_test']}\n\n"
             "## Mandatory Baselines\n"
@@ -241,23 +264,37 @@ class ClaudeCodeInvoker:
             f"{disproof}\n\n"
             "## Context Bundle\n"
             f"{context_bundle}\n\n"
+            "## Worker Task JSON\n"
+            "This is the binding task contract. Do not alter scope_locks.\n\n"
+            "```json\n"
+            f"{task_json}\n"
+            "```\n\n"
             "## Output\n"
             "Return only raw JSON matching this shape. Preserve unknowns as null. "
             "Do not add facts that were not observed in this invocation.\n\n"
             "{\n"
+            f"  \"task_id\": \"{worker_task['task_id']}\",\n"
             f"  \"node_id\": \"{node['id']}\",\n"
             "  \"status\": \"completed\",\n"
-            "  \"claim_verdict_candidate\": \"not_evaluable\",\n"
-            "  \"metrics\": {\"live_smoke_json_contract\": 1},\n"
-            "  \"baselines\": {\n"
-            "    \"current_best_known\": {\"compared\": false, \"reason\": \"live smoke only\"},\n"
-            "    \"naive\": {\"compared\": false, \"reason\": \"live smoke only\"},\n"
-            "    \"random_or_null\": {\"compared\": false, \"reason\": \"live smoke only\"}\n"
+            "  \"output_kind\": \"observed_result\",\n"
+            "  \"summary\": \"live smoke only; no experiment was executed\",\n"
+            "  \"source_patch\": null,\n"
+            "  \"observed_result\": {\n"
+            "    \"claim_verdict_candidate\": \"not_evaluable\",\n"
+            "    \"metrics\": {\"live_smoke_json_contract\": 1},\n"
+            "    \"baselines\": {},\n"
+            "    \"disproof_conditions_hit\": [],\n"
+            "    \"artifacts\": [],\n"
+            "    \"unexpected_observations\": []\n"
             "  },\n"
-            "  \"disproof_conditions_hit\": [],\n"
-            "  \"artifacts\": [],\n"
-            "  \"unexpected_observations\": [],\n"
-            "  \"failure_record_candidate\": null\n"
+            "  \"branch_suggestions\": [],\n"
+            "  \"scope_check\": {\n"
+            "    \"claim_changed\": false,\n"
+            "    \"baselines_changed\": false,\n"
+            "    \"shared_memory_write_attempted\": false,\n"
+            "    \"branch_created\": false,\n"
+            "    \"files_written_outside_workspace\": false\n"
+            "  },\n"
             "}\n"
         )
 
@@ -338,10 +375,29 @@ class ClaudeCodeInvoker:
         self,
         node: dict[str, Any],
         envelope_path: Path | None = None,
+        worker_task: dict[str, Any] | None = None,
+        experiment_plan: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        envelope = self.build_dry_run_invocation(node)
+        if worker_task is None:
+            worker_task = write_worker_task(
+                node,
+                self.workspace,
+                experiment_plan=experiment_plan,
+            )
+        else:
+            validate_worker_task(node, worker_task, self.workspace)
+            worker_task_path = self.workspace / "worker_task.json"
+            worker_task_path.parent.mkdir(parents=True, exist_ok=True)
+            worker_task_path.write_text(
+                json.dumps(worker_task, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        envelope = self.build_dry_run_invocation(node, worker_task=worker_task)
         prompt_path = Path(envelope["prompt_path"])
-        prompt_path.write_text(self.build_worker_prompt(node), encoding="utf-8")
+        prompt_path.write_text(
+            self.build_worker_prompt(node, worker_task),
+            encoding="utf-8",
+        )
 
         envelope_path = envelope_path or self.workspace / "invocation_envelope.json"
         ensure_path_inside(envelope_path, self.workspace, "invocation_envelope")
@@ -357,13 +413,20 @@ class ClaudeCodeInvoker:
             ensure_path_inside(Path(write_root), workspace, "allowed_write_roots")
         ensure_path_inside(Path(envelope["prompt_path"]), workspace, "prompt_path")
         ensure_path_inside(
+            Path(envelope["worker_task_path"]),
+            workspace,
+            "worker_task_path",
+        )
+        ensure_path_inside(
             Path(envelope["expected_output_path"]),
             workspace,
             "expected_output_path",
         )
         output_schema = Path(envelope["output_schema"]["path"])
-        if output_schema.name != "worker_report.schema.json":
-            raise WorkspaceGuardError("Claude Code worker must emit worker_report schema")
+        if output_schema.name != "worker_task_result.schema.json":
+            raise WorkspaceGuardError(
+                "Claude Code worker must emit worker_task_result schema"
+            )
         ensure_path_inside(output_schema, self.repo_root, "output_schema.path")
 
     def _default_turn_budget(self, role: str) -> int:

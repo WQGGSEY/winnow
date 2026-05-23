@@ -33,9 +33,15 @@ class PipelineTests(unittest.TestCase):
             validate_named_schema("worker_report", worker_report)
             validate_named_schema("ac_decision", ac_decision)
             validate_named_schema("invocation_envelope", bundle["invocation_envelope"])
+            validate_named_schema("worker_task", bundle["worker_task"])
             validate_named_schema("experiment_plan", bundle["experiment_plan"])
             validate_named_schema("job_manifest", bundle["job_manifest"])
             validate_named_schema("runner_result", bundle["runner_result"])
+            self.assertEqual(
+                bundle["worker_task"]["result_contract"]["schema_name"],
+                "worker_task_result",
+            )
+            self.assertFalse(bundle["worker_task"]["branch_policy"]["may_create_branches"])
             self.assertEqual(
                 bundle["job_manifest"]["experiment_plan_id"],
                 bundle["experiment_plan"]["plan_id"],

@@ -28,21 +28,33 @@ class ClaudeStdoutIngestTests(unittest.TestCase):
         invoker.validate_invocation_envelope(envelope)
         return envelope
 
-    def _worker_report(self) -> dict[str, object]:
+    def _worker_task_result(self, envelope: dict[str, object]) -> dict[str, object]:
+        worker_task = json.loads(
+            Path(str(envelope["worker_task_path"])).read_text(encoding="utf-8")
+        )
         return {
+            "task_id": worker_task["task_id"],
             "node_id": "n_demo_001",
             "status": "completed",
-            "claim_verdict_candidate": "not_evaluable",
-            "metrics": {"live_smoke_json_contract": 1},
-            "baselines": {
-                "current_best_known": {"compared": False, "reason": "live smoke only"},
-                "naive": {"compared": False, "reason": "live smoke only"},
-                "random_or_null": {"compared": False, "reason": "live smoke only"},
+            "output_kind": "observed_result",
+            "summary": "live smoke only; no experiment was executed",
+            "source_patch": None,
+            "observed_result": {
+                "claim_verdict_candidate": "not_evaluable",
+                "metrics": {"live_smoke_json_contract": 1},
+                "baselines": {},
+                "disproof_conditions_hit": [],
+                "artifacts": [],
+                "unexpected_observations": [],
             },
-            "disproof_conditions_hit": [],
-            "artifacts": [],
-            "unexpected_observations": [],
-            "failure_record_candidate": None,
+            "branch_suggestions": [],
+            "scope_check": {
+                "claim_changed": False,
+                "baselines_changed": False,
+                "shared_memory_write_attempted": False,
+                "branch_created": False,
+                "files_written_outside_workspace": False,
+            },
         }
 
     def test_success_result_is_repaired_and_written_to_expected_path(self) -> None:
@@ -55,7 +67,9 @@ class ClaudeStdoutIngestTests(unittest.TestCase):
                 "subtype": "success",
                 "is_error": False,
                 "num_turns": 1,
-                "result": "```json\n" + json.dumps(self._worker_report()) + "\n```",
+                "result": "```json\n"
+                + json.dumps(self._worker_task_result(envelope))
+                + "\n```",
                 "total_cost_usd": 0.01,
                 "permission_denials": [],
             }
@@ -66,7 +80,20 @@ class ClaudeStdoutIngestTests(unittest.TestCase):
             validate_named_schema("worker_report", result.worker_report)
             self.assertTrue(result.repaired)
             self.assertEqual(result.worker_report["status"], "completed")
+            self.assertEqual(
+                result.worker_report["metrics"]["live_smoke_json_contract"],
+                1,
+            )
             self.assertTrue(Path(envelope["expected_output_path"]).exists())
+            validate_named_schema(
+                "worker_task_result",
+                json.loads(
+                    Path(envelope["expected_output_path"]).read_text(
+                        encoding="utf-8"
+                    )
+                ),
+            )
+            self.assertTrue(result.worker_report_path.exists())
             self.assertTrue(result.ingest_metadata_path.exists())
 
     def test_permission_denials_force_blocked_permission_report(self) -> None:
@@ -79,7 +106,7 @@ class ClaudeStdoutIngestTests(unittest.TestCase):
                 "subtype": "success",
                 "is_error": False,
                 "num_turns": 2,
-                "result": json.dumps(self._worker_report()),
+                "result": json.dumps(self._worker_task_result(envelope)),
                 "total_cost_usd": 0.02,
                 "permission_denials": [{"tool_name": "Read"}],
             }
@@ -138,6 +165,36 @@ class ClaudeStdoutIngestTests(unittest.TestCase):
 
             self.assertEqual(result.worker_report["status"], "invalid_worker_output")
 
+    def test_scope_violation_becomes_invalid_worker_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            envelope = self._envelope(tmp)
+            workspace = Path(envelope["workspace"])
+            stdout_path = workspace / "claude_stdout.json"
+            task_result = self._worker_task_result(envelope)
+            task_result["scope_check"]["branch_created"] = True
+            cli_result = {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "num_turns": 1,
+                "result": json.dumps(task_result),
+                "total_cost_usd": 0.01,
+                "permission_denials": [],
+            }
+            stdout_path.write_text(json.dumps(cli_result), encoding="utf-8")
+
+            result = ingest_claude_cli_stdout(stdout_path, envelope)
+
+            self.assertEqual(result.worker_report["status"], "invalid_worker_output")
+            self.assertEqual(
+                result.worker_report["failure_record_candidate"]["category"],
+                "scope_violation",
+            )
+            self.assertIn(
+                "branch_created",
+                result.worker_report["failure_record_candidate"]["tags"],
+            )
+
     def test_ingest_module_cli_writes_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             envelope = self._envelope(tmp)
@@ -150,7 +207,7 @@ class ClaudeStdoutIngestTests(unittest.TestCase):
                 "subtype": "success",
                 "is_error": False,
                 "num_turns": 1,
-                "result": json.dumps(self._worker_report()),
+                "result": json.dumps(self._worker_task_result(envelope)),
                 "total_cost_usd": 0.01,
                 "permission_denials": [],
             }

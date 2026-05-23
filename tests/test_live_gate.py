@@ -53,6 +53,10 @@ class LiveGateTests(unittest.TestCase):
             self.assertEqual(plan["status"], "ready_to_manually_run")
             self.assertFalse(plan["execution_enabled"])
             self.assertEqual(plan["live_invocation_envelope"]["backend"], "claude_code_live")
+            self.assertEqual(
+                plan["live_invocation_envelope"]["output_schema"]["name"],
+                "worker_task_result",
+            )
             self.assertFalse(
                 plan["live_invocation_envelope"]["command_plan"]["executes_in_dry_run"]
             )
@@ -65,6 +69,9 @@ class LiveGateTests(unittest.TestCase):
             self.assertEqual(
                 plan["live_invocation_envelope"]["command_plan"]["stdin_path"],
                 plan["live_invocation_envelope"]["prompt_path"],
+            )
+            self.assertTrue(
+                Path(plan["live_invocation_envelope"]["worker_task_path"]).exists()
             )
 
     def test_manual_live_plan_blocks_when_api_key_would_override_subscription(self) -> None:

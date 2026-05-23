@@ -27,6 +27,8 @@ Included:
 - Deterministic experiment-plan contracts, local runner manifest validation,
   bounded execution, baseline-evidence checks, and source/metrics-evidence
   ingestion into worker reports.
+- Worker-task contracts that restrict Claude worker output to source patches or
+  observed results; the harness derives worker reports.
 - Baseline dossier validation and dry-run resolution report.
 - Dry-run end-to-end pipeline that writes a research state bundle and HTML summary.
 
@@ -49,6 +51,7 @@ The demo writes:
 ```text
 runs/demo_run/node.json
 runs/demo_run/experiment_plan.json
+runs/demo_run/nodes/n_demo_001/workspace/worker_task.json
 runs/demo_run/job_manifest.json
 runs/demo_run/nodes/n_demo_001/workspace/experiment.py
 runs/demo_run/nodes/n_demo_001/workspace/artifacts/metrics.json
@@ -117,7 +120,9 @@ records the exact command a human operator can run later. By default, the plan
 is blocked by the billing guard; live Claude Code requires an explicit
 `RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack` acknowledgement. The
 auth probe accepts only Claude.ai subscription auth status and stores no email,
-organization id, or token fields.
+organization id, or token fields. Claude live output is constrained to
+`worker_task_result`; the harness writes `worker_report.json` only after
+schema and scope validation.
 
 ## Core Files
 

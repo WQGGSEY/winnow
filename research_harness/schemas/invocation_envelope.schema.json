@@ -19,6 +19,7 @@
     "timeout_policy",
     "output_schema",
     "expected_output_path",
+    "worker_task_path",
     "environment_policy",
     "prompt_path",
     "command_plan"
@@ -67,12 +68,13 @@
       "type": "object",
       "required": ["name", "path"],
       "properties": {
-        "name": { "type": "string", "enum": ["worker_report"] },
+        "name": { "type": "string", "enum": ["worker_task_result"] },
         "path": { "type": "string" }
       },
       "additionalProperties": false
     },
     "expected_output_path": { "type": "string" },
+    "worker_task_path": { "type": "string" },
     "environment_policy": {
       "type": "object",
       "required": ["unset", "secret_logging"],

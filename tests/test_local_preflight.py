@@ -19,6 +19,8 @@ class LocalPreflightTests(unittest.TestCase):
         self.assertEqual(result["status"], "passed")
         self.assertEqual(result["settings_backend"], "mock")
         self.assertEqual(result["runner_result_status"], "completed")
+        self.assertIn("observed_result", result["worker_task_output_kinds"])
+        self.assertIn("source_patch", result["worker_task_output_kinds"])
         self.assertEqual(result["baseline_evidence_overall"], "passed")
         self.assertIn("completed", result["tree_runner_statuses"])
         self.assertIn("passed", result["tree_baseline_evidence_overalls"])

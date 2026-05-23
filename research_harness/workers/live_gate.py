@@ -114,7 +114,7 @@ def build_manual_live_smoke_plan(
         "post_run_checks": [
             "Feed prompt_path to manual_command stdin; do not use interactive mode.",
             "Run python -B -m research_harness.workers.claude_stdout_ingest --stdout <captured_stdout> --envelope <live_invocation_envelope>.",
-            "Let the harness, not Claude, write worker_report.json after schema validation.",
+            "Require Claude to emit worker_task_result only; let the harness derive worker_report.json after schema validation.",
             "Reject permission, timeout, or invalid output as non-promotable worker states.",
             "Run deterministic critic governance before orchestrator reduction.",
         ],

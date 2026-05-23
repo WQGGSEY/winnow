@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/worker_task.schema.json",
+  "title": "WorkerTask",
+  "type": "object",
+  "required": [
+    "task_id",
+    "node_id",
+    "role",
+    "status",
+    "objective",
+    "scope_locks",
+    "input_artifacts",
+    "allowed_output_kinds",
+    "result_contract",
+    "write_policy",
+    "branch_policy",
+    "forbidden_actions"
+  ],
+  "properties": {
+    "task_id": { "type": "string", "minLength": 1 },
+    "node_id": { "type": "string", "minLength": 1 },
+    "role": {
+      "type": "string",
+      "enum": ["text_worker", "experiment_worker", "critic_worker"]
+    },
+    "status": { "type": "string", "enum": ["ready"] },
+    "objective": { "type": "string", "minLength": 1 },
+    "scope_locks": {
+      "type": "object",
+      "required": [
+        "claim_under_test",
+        "mandatory_baselines",
+        "success_criteria",
+        "disproof_conditions"
+      ],
+      "properties": {
+        "claim_under_test": { "type": "string", "minLength": 1 },
+        "mandatory_baselines": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "success_criteria": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "disproof_conditions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "input_artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "path", "mode"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "path": { "type": "string", "minLength": 1 },
+          "mode": { "type": "string", "enum": ["read_only", "inline"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "allowed_output_kinds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["source_patch", "observed_result"]
+      },
+      "minItems": 1
+    },
+    "result_contract": {
+      "type": "object",
+      "required": ["schema_name", "expected_output_path"],
+      "properties": {
+        "schema_name": {
+          "type": "string",
+          "enum": ["worker_task_result"]
+        },
+        "expected_output_path": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "write_policy": {
+      "type": "object",
+      "required": [
+        "allowed_write_roots",
+        "shared_memory_write",
+        "repo_write"
+      ],
+      "properties": {
+        "allowed_write_roots": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "shared_memory_write": { "type": "string", "enum": ["forbidden"] },
+        "repo_write": { "type": "string", "enum": ["forbidden"] }
+      },
+      "additionalProperties": false
+    },
+    "branch_policy": {
+      "type": "object",
+      "required": ["may_suggest_branches", "may_create_branches"],
+      "properties": {
+        "may_suggest_branches": { "type": "boolean" },
+        "may_create_branches": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "forbidden_actions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "experiment_plan_summary": { "type": ["object", "null"] }
+  },
+  "additionalProperties": false
+}

@@ -155,18 +155,22 @@ def run_demo(repo_root: Path | None = None, run_dir: Path | None = None) -> Path
     validate_named_schema("node", node)
     _write_json(run_dir / "node.json", node)
 
+    experiment_plan = build_demo_experiment_plan(node, run_dir)
+    validate_experiment_plan(node, experiment_plan, run_dir)
+    validate_named_schema("experiment_plan", experiment_plan)
+    _write_json(run_dir / "experiment_plan.json", experiment_plan)
+
     workspace_paths = prepare_node_workspace(run_dir, node["id"])
     invocation_envelope = ClaudeCodeInvoker(
         workspace_paths["workspace"],
         settings,
         repo_root=repo_root,
-    ).write_dry_run_artifacts(node)
+    ).write_dry_run_artifacts(node, experiment_plan=experiment_plan)
     validate_named_schema("invocation_envelope", invocation_envelope)
-
-    experiment_plan = build_demo_experiment_plan(node, run_dir)
-    validate_experiment_plan(node, experiment_plan, run_dir)
-    validate_named_schema("experiment_plan", experiment_plan)
-    _write_json(run_dir / "experiment_plan.json", experiment_plan)
+    worker_task = json.loads(
+        Path(invocation_envelope["worker_task_path"]).read_text(encoding="utf-8")
+    )
+    validate_named_schema("worker_task", worker_task)
 
     job_manifest = build_job_manifest_from_experiment_plan(node, experiment_plan, run_dir)
     validate_named_schema("job_manifest", job_manifest)
@@ -224,6 +228,7 @@ def run_demo(repo_root: Path | None = None, run_dir: Path | None = None) -> Path
     state = {
         "node": node,
         "invocation_envelope": invocation_envelope,
+        "worker_task": worker_task,
         "experiment_plan": experiment_plan,
         "job_manifest": job_manifest,
         "runner_result": runner_result,

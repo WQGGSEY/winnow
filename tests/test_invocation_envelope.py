@@ -27,12 +27,16 @@ class InvocationEnvelopeTests(unittest.TestCase):
 
             validate_named_schema("invocation_envelope", envelope)
             prompt_path = Path(envelope["prompt_path"])
+            worker_task_path = Path(envelope["worker_task_path"])
             envelope_path = workspace / "invocation_envelope.json"
 
             self.assertTrue(prompt_path.exists())
+            self.assertTrue(worker_task_path.exists())
             self.assertTrue(envelope_path.exists())
             prompt = prompt_path.read_text(encoding="utf-8")
             self.assertIn("Do not expand scope", prompt)
+            self.assertIn("worker_task_result", prompt)
+            self.assertIn("branch suggestions", prompt)
             self.assertIn("Active Lessons", prompt)
             self.assertIn("lesson_001", prompt)
             self.assertIn("Baseline Dossier Summary", prompt)
@@ -42,6 +46,7 @@ class InvocationEnvelopeTests(unittest.TestCase):
             self.assertIn("relevant_failures", prompt)
             self.assertIn("n_demo_001__invalid_experiment", prompt)
             self.assertEqual(envelope["permission_mode"], "non_interactive_or_fail")
+            self.assertEqual(envelope["output_schema"]["name"], "worker_task_result")
             self.assertEqual(envelope["allowed_read_roots"], [str(workspace.resolve())])
             self.assertFalse(envelope["command_plan"]["executes_in_dry_run"])
             self.assertIn("--tools", envelope["command_plan"]["args"])
@@ -51,6 +56,13 @@ class InvocationEnvelopeTests(unittest.TestCase):
 
             written = json.loads(envelope_path.read_text(encoding="utf-8"))
             self.assertEqual(written["node_id"], node["id"])
+            worker_task = json.loads(worker_task_path.read_text(encoding="utf-8"))
+            validate_named_schema("worker_task", worker_task)
+            self.assertFalse(worker_task["branch_policy"]["may_create_branches"])
+            self.assertEqual(
+                set(worker_task["allowed_output_kinds"]),
+                {"source_patch", "observed_result"},
+            )
 
     def test_repo_root_cannot_be_worker_workspace(self) -> None:
         settings = load_settings(REPO_ROOT)
@@ -81,7 +93,7 @@ class InvocationEnvelopeTests(unittest.TestCase):
             with self.assertRaisesRegex(WorkspaceGuardError, "runner_job"):
                 invoker.build_dry_run_invocation(node)
 
-    def test_output_schema_must_be_worker_report_schema(self) -> None:
+    def test_output_schema_must_be_worker_task_result_schema(self) -> None:
         settings = load_settings(REPO_ROOT)
         node = _demo_node()
         with tempfile.TemporaryDirectory() as tmp:
@@ -92,7 +104,7 @@ class InvocationEnvelopeTests(unittest.TestCase):
                 REPO_ROOT / "research_harness" / "schemas" / "node.schema.json"
             )
 
-            with self.assertRaisesRegex(WorkspaceGuardError, "worker_report"):
+            with self.assertRaisesRegex(WorkspaceGuardError, "worker_task_result"):
                 invoker.validate_invocation_envelope(envelope)
 
 

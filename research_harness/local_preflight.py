@@ -42,9 +42,12 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
     validate_named_schema("node", state["node"])
     validate_named_schema("worker_report", state["worker_report"])
     validate_named_schema("invocation_envelope", state["invocation_envelope"])
+    validate_named_schema("worker_task", state["worker_task"])
     validate_named_schema("experiment_plan", state["experiment_plan"])
     validate_named_schema("job_manifest", state["job_manifest"])
     validate_named_schema("runner_result", state["runner_result"])
+    if not Path(state["invocation_envelope"]["worker_task_path"]).is_file():
+        raise FileNotFoundError(state["invocation_envelope"]["worker_task_path"])
     if not (run_dir / "experiment_plan.json").is_file():
         raise FileNotFoundError(run_dir / "experiment_plan.json")
     baseline_evidence_overall = state["worker_report"]["baseline_evidence_status"][
@@ -110,6 +113,7 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
         "active_lesson_count": len(lessons.get("active_lessons", [])),
         "baseline_dossier_id": baseline_dossier["id"],
         "runner_result_status": state["runner_result"]["status"],
+        "worker_task_output_kinds": state["worker_task"]["allowed_output_kinds"],
         "baseline_evidence_overall": baseline_evidence_overall,
         "tree_runner_statuses": tree_runner_statuses,
         "tree_baseline_evidence_overalls": tree_baseline_evidence_overalls,

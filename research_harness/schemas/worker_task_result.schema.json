@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/worker_task_result.schema.json",
+  "title": "WorkerTaskResult",
+  "type": "object",
+  "required": [
+    "task_id",
+    "node_id",
+    "status",
+    "output_kind",
+    "summary",
+    "source_patch",
+    "observed_result",
+    "branch_suggestions",
+    "scope_check"
+  ],
+  "properties": {
+    "task_id": { "type": "string", "minLength": 1 },
+    "node_id": { "type": "string", "minLength": 1 },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "failed", "not_evaluable"]
+    },
+    "output_kind": {
+      "type": "string",
+      "enum": ["source_patch", "observed_result"]
+    },
+    "summary": { "type": "string", "minLength": 1 },
+    "source_patch": {
+      "type": ["object", "null"],
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "content"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "content": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "rationale": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "observed_result": {
+      "type": ["object", "null"],
+      "properties": {
+        "claim_verdict_candidate": {
+          "type": "string",
+          "enum": ["supported", "contradicted", "inconclusive", "not_evaluable"]
+        },
+        "metrics": { "type": "object" },
+        "baselines": { "type": "object" },
+        "disproof_conditions_hit": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "unexpected_observations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["observation", "evidence", "scope_relation"],
+            "properties": {
+              "observation": { "type": "string" },
+              "evidence": { "type": "string" },
+              "suggested_branch_type": { "type": ["string", "null"] },
+              "scope_relation": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "branch_suggestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["suggested_branch_type", "description", "evidence"],
+        "properties": {
+          "suggested_branch_type": { "type": "string" },
+          "description": { "type": "string", "minLength": 1 },
+          "evidence": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "scope_check": {
+      "type": "object",
+      "required": [
+        "claim_changed",
+        "baselines_changed",
+        "shared_memory_write_attempted",
+        "branch_created",
+        "files_written_outside_workspace"
+      ],
+      "properties": {
+        "claim_changed": { "type": "boolean" },
+        "baselines_changed": { "type": "boolean" },
+        "shared_memory_write_attempted": { "type": "boolean" },
+        "branch_created": { "type": "boolean" },
+        "files_written_outside_workspace": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
