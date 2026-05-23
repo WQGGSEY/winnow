@@ -9,7 +9,6 @@ from typing import Any
 
 from research_harness.config import load_lessons, load_yaml
 from research_harness.memory.failure_retrieval import (
-    format_failure_summaries,
     retrieve_failure_summaries,
 )
 from research_harness.schemas.validator import validate_named_schema
@@ -157,6 +156,11 @@ class ClaudeCodeInvoker:
         )
         worker_task = worker_task or build_worker_task(node, self.workspace)
         validate_worker_task(node, worker_task, self.workspace)
+        live_backend = (
+            self.settings.get("runtime", {})
+            .get("worker_backends", {})
+            .get("claude_code_live", {})
+        )
 
         ensure_path_inside(prompt_path, self.workspace, "prompt_path")
         ensure_path_inside(worker_task_path, self.workspace, "worker_task_path")
@@ -197,33 +201,22 @@ class ClaudeCodeInvoker:
                 "args": [
                     "-p",
                     "--model",
-                    str(
-                        self.settings.get("runtime", {})
-                        .get("worker_backends", {})
-                        .get("claude_code_live", {})
-                        .get("model", "sonnet")
-                    ),
+                    str(live_backend.get("model", "sonnet")),
                     "--permission-mode",
                     "dontAsk",
                     "--tools",
-                    str(
-                        self.settings.get("runtime", {})
-                        .get("worker_backends", {})
-                        .get("claude_code_live", {})
-                        .get("tools", "")
-                    ),
+                    str(live_backend.get("tools", "")),
+                    "--disable-slash-commands",
+                    "--strict-mcp-config",
+                    "--system-prompt",
+                    self._minimal_worker_system_prompt(),
                     "--output-format",
                     "json",
                     "--input-format",
                     "text",
                     "--no-session-persistence",
                     "--max-budget-usd",
-                    str(
-                        self.settings.get("runtime", {})
-                        .get("worker_backends", {})
-                        .get("claude_code_live", {})
-                        .get("max_budget_usd", "0.25")
-                    ),
+                    str(live_backend.get("max_budget_usd", "0.25")),
                 ],
                 "stdin_path": str(prompt_path),
                 "executes_in_dry_run": False,
@@ -242,7 +235,11 @@ class ClaudeCodeInvoker:
         success = "\n".join(f"- {item}" for item in contract["success_criteria"])
         disproof = "\n".join(f"- {item}" for item in contract["disproof_conditions"])
         context_bundle = self._build_prompt_context_bundle(node)
-        task_json = json.dumps(worker_task, indent=2, sort_keys=True)
+        task_json = json.dumps(
+            self._compact_worker_task_contract(worker_task),
+            separators=(",", ":"),
+            sort_keys=True,
+        )
         output_template = {
             "task_id": worker_task["task_id"],
             "node_id": node["id"],
@@ -267,18 +264,13 @@ class ClaudeCodeInvoker:
                 "files_written_outside_workspace": False,
             },
         }
-        output_json = json.dumps(output_template, indent=2)
+        output_json = json.dumps(output_template, separators=(",", ":"))
         return (
-            "# Claude Code Worker Contract\n\n"
-            f"Role: {node['runtime_profile']['worker_type']}\n"
-            f"Node: {node['id']}\n\n"
-            "You are a bounded worker. Do not expand scope, choose new baselines, "
-            "change the claim, mutate shared memory, or ask for interactive permission. "
-            "For this live smoke, do not use tools. Treat this prompt as the complete "
-            "context and return a schema-valid worker_task_result JSON on stdout only. "
-            "You may report source_patch or observed_result only. For live smoke, "
-            "the branch suggestions array must remain empty. The harness will derive "
-            "worker_report.json after validating this task result.\n\n"
+            "# Bounded Worker Task\n\n"
+            f"Role: {node['runtime_profile']['worker_type']} | Node: {node['id']}\n\n"
+            "Do not expand scope, choose baselines, mutate shared memory, use tools, "
+            "or request permission. Return one raw worker_task_result JSON object; "
+            "the harness derives worker_report.json after validation.\n\n"
             "## Claim Under Test\n"
             f"{contract['claim_under_test']}\n\n"
             "## Mandatory Baselines\n"
@@ -290,31 +282,43 @@ class ClaudeCodeInvoker:
             "## Context Bundle\n"
             f"{context_bundle}\n\n"
             "## Worker Task JSON\n"
-            "This is the binding task contract. Do not alter scope_locks.\n\n"
+            "Compact binding task contract. Do not alter scope_locks.\n\n"
             "```json\n"
             f"{task_json}\n"
             "```\n\n"
             "## Output Contract\n"
-            "Return only raw JSON. Do not wrap it in markdown fences. Do not add "
-            "explanatory prose before or after the JSON. Preserve unknowns as null. "
-            "Do not add facts that were not observed in this invocation.\n\n"
-            "Non-negotiable nested schema rules:\n"
-            "- observed_result.unexpected_observations must be an array of objects, "
-            "not strings. For this live smoke, keep it exactly [].\n"
-            "- If a future task needs an unexpected observation, each item must be "
-            "{\"observation\": string, \"evidence\": string, "
-            "\"suggested_branch_type\": string|null, \"scope_relation\": string}.\n"
-            "- branch_suggestions must be [] for this live smoke. Do not emit "
-            "label/rationale/may_create. Future branch suggestions, if explicitly "
-            "allowed, must use suggested_branch_type, description, and evidence.\n"
-            "- Do not convert Active Lessons, Baseline Dossier Summary, or Failure "
-            "Retrieval Index entries into unexpected_observations; they are context "
-            "only, not observations from this invocation.\n"
-            "- All scope_check values must stay false unless you actually attempted "
-            "that forbidden action in this invocation.\n\n"
+            "Return only raw JSON, no markdown or prose. For this live smoke: "
+            "unexpected_observations must be an array of objects and must stay []; "
+            "branch_suggestions must stay []; do not emit label/rationale/may_create; "
+            "do not convert lessons/baselines/failures into observations; all "
+            "scope_check values stay false unless a forbidden action was attempted.\n\n"
             "## Canonical Output JSON\n"
             f"{output_json}\n"
         )
+
+    def _minimal_worker_system_prompt(self) -> str:
+        return (
+            "You are a bounded JSON worker inside a research harness. "
+            "Do not use tools. Output only the JSON object requested by the user. "
+            "Follow the provided schema shape exactly."
+        )
+
+    def _compact_worker_task_contract(self, worker_task: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "task_id": worker_task["task_id"],
+            "node_id": worker_task["node_id"],
+            "role": worker_task["role"],
+            "allowed_output_kinds": worker_task["allowed_output_kinds"],
+            "scope_locks": worker_task["scope_locks"],
+            "branch_policy": worker_task["branch_policy"],
+            "forbidden_actions": worker_task["forbidden_actions"],
+            "result_schema": worker_task["result_contract"]["schema_name"],
+            "write_policy": {
+                "allowed_write_roots": worker_task["write_policy"]["allowed_write_roots"],
+                "shared_memory_write": "forbidden",
+                "repo_write": "forbidden",
+            },
+        }
 
     def _build_prompt_context_bundle(self, node: dict[str, Any]) -> str:
         return "\n".join(
@@ -334,9 +338,8 @@ class ClaudeCodeInvoker:
         lessons = load_lessons(self.repo_root).get("active_lessons", [])
         if not lessons:
             return "- none"
-        return "\n".join(
-            f"- {lesson.get('id')}: {lesson.get('text')}"
-            for lesson in lessons
+        return "; ".join(
+            f"{lesson.get('id')}: {lesson.get('text')}" for lesson in lessons
         )
 
     def _baseline_context(self, node: dict[str, Any]) -> str:
@@ -350,18 +353,14 @@ class ClaudeCodeInvoker:
             )
             dossier = load_yaml(dossier_path)
             selected = dossier.get("selected", {})
-            lines.append(
-                "- dossier "
-                f"{dossier_id}: selected={selected.get('candidate_id')} "
-                f"role={selected.get('role')} reason={selected.get('one_paragraph_reason')}"
+            candidates = "; ".join(
+                f"{candidate.get('id')}={candidate.get('decision')}"
+                for candidate in dossier.get("candidates_index", [])
             )
-            for candidate in dossier.get("candidates_index", []):
-                tags = ", ".join(str(tag) for tag in candidate.get("reason_tags", []))
-                lines.append(
-                    "  - candidate "
-                    f"{candidate.get('id')}: decision={candidate.get('decision')} "
-                    f"method={candidate.get('method')} tags=[{tags}]"
-                )
+            lines.append(
+                f"- {dossier_id}: selected={selected.get('candidate_id')} "
+                f"role={selected.get('role')} candidates=[{candidates}]"
+            )
         return "\n".join(lines) if lines else "- none"
 
     def _failure_context(self, node: dict[str, Any]) -> str:
@@ -380,13 +379,26 @@ class ClaudeCodeInvoker:
             selected_fail_files=selected_fail_files,
             top_k=top_k,
         )
-        lines = [f"- query_tags=[{query_tags}]", "- categories:"]
-        for category, spec in failures.get("categories", {}).items():
-            file_count = len(spec.get("files", []) or [])
+        category_counts = ", ".join(
+            f"{category}:{len(spec.get('files', []) or [])}"
+            for category, spec in failures.get("categories", {}).items()
+        )
+        lines = [
+            f"- query_tags=[{query_tags}]",
+            f"- categories={category_counts}",
+            "- relevant_failures:",
+        ]
+        if not summaries:
+            lines.append("  - none")
+        for summary in summaries:
+            tags = ",".join(summary.tags)
+            mode = "explicit" if summary.explicit else "retrieved"
             lines.append(
-                f"  - {category}: files={file_count}; {spec.get('description')}"
+                "  - "
+                f"file={summary.file}; mode={mode}; category={summary.category}; "
+                f"tags=[{tags}]; score={summary.score}; lesson={summary.lesson}; "
+                f"reason={summary.reason}"
             )
-        lines.append(format_failure_summaries(summaries))
         return "\n".join(lines)
 
     def write_dry_run_artifacts(
