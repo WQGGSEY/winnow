@@ -75,9 +75,11 @@ python -B -m unittest tests.test_tree_search -v
 python -B -m research_harness.orchestrator.tree_search
 ```
 
-The staged tree-search loop currently accepts only dry-run/local backends. Live
-Claude Code remains behind `research_harness.workers.live_gate` and is not
-called by tree search.
+The staged tree-search loop currently accepts only dry-run/local backends. Each
+node runs a deterministic bounded runner job before the worker backend, writes
+`job_manifest.json` plus `workspace/runner_result.json`, and turns runner
+failures into non-promotable worker reports. Live Claude Code remains behind
+`research_harness.workers.live_gate` and is not called by tree search.
 
 ## Run Pre-Live Local Preflight
 
@@ -88,8 +90,8 @@ python -B -m research_harness.local_preflight
 This checks config/profile loading, node invariants, deterministic critic
 routing, dry-run Claude invocation envelope generation, worker-report schema
 validation, deterministic runner manifest/result validation, baseline dossier
-validation, rebuttal/AC gating, and interactive HTML generation without calling
-Claude Code.
+validation, tree-search runner artifact validation, rebuttal/AC gating, and
+interactive HTML generation without calling Claude Code.
 
 ## Build Manual Live Smoke Plan
 

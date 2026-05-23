@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from research_harness.config import load_yaml
+from research_harness.runner.result_bridge import runner_failure_worker_report
 from research_harness.workers.workspace import WorkspaceGuardError, ensure_path_inside
 
 
@@ -91,37 +92,9 @@ def record_runner_failure_candidate(
     candidate = runner_result.get("failure_record_candidate")
     if not candidate:
         return None
-    status = (
-        "timeout_or_turn_exhausted"
-        if runner_result["status"] == "timeout"
-        else "failed"
-    )
-    worker_like_report = {
-        "node_id": runner_result["node_id"],
-        "status": status,
-        "claim_verdict_candidate": "not_evaluable",
-        "metrics": {
-            "runner_status": runner_result["status"],
-            "runner_exit_code": runner_result["exit_code"],
-            "runner_elapsed_sec": runner_result["elapsed_sec"],
-            "runner_timeout_sec": runner_result["timeout_sec"],
-        },
-        "baselines": {},
-        "disproof_conditions_hit": [],
-        "artifacts": [
-            runner_result["stdout_path"],
-            runner_result["stderr_path"],
-        ],
-        "unexpected_observations": [
-            {
-                "observation": "Deterministic runner did not complete successfully.",
-                "evidence": str(candidate.get("reason") or runner_result["status"]),
-                "suggested_branch_type": None,
-                "scope_relation": "operational_blocker",
-            }
-        ],
-        "failure_record_candidate": candidate,
-    }
+    worker_like_report = runner_failure_worker_report(runner_result)
+    if worker_like_report is None:
+        return None
     return record_failure_candidate(
         repo_root,
         node,

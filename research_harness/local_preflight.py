@@ -48,6 +48,14 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
     validate_named_schema("ac_decision", state["ac_decision"])
     tree_result = run_mock_tree_search(root, root / "runs" / "prelive_tree_search")
     validate_named_schema("search_state", tree_result["search_state"])
+    tree_runner_statuses = []
+    for artifact in tree_result["artifacts"]:
+        runner_result_path = (
+            root / "runs" / "prelive_tree_search" / artifact["runner_result_path"]
+        )
+        runner_result = json.loads(runner_result_path.read_text(encoding="utf-8"))
+        validate_named_schema("runner_result", runner_result)
+        tree_runner_statuses.append(runner_result["status"])
 
     return {
         "status": "passed",
@@ -57,6 +65,7 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
         "active_lesson_count": len(lessons.get("active_lessons", [])),
         "baseline_dossier_id": baseline_dossier["id"],
         "runner_result_status": state["runner_result"]["status"],
+        "tree_runner_statuses": tree_runner_statuses,
         "promotion_critic_count": len(promotion_routing["applied_critics"]),
         "rebuttal_critic_count": len(rebuttal_routing["applied_critics"]),
         "run_dir": str(run_dir),

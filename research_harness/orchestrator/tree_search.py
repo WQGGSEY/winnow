@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from research_harness.config import load_settings
 from research_harness.critics.governance import select_critics
 from research_harness.critics.review_runner import run_critic_reviews
+from research_harness.memory.failure_memory import (
+    FailureMemoryResult,
+    record_runner_failure_candidate,
+)
 from research_harness.orchestrator.branch_prior import build_failure_branch_prior
 from research_harness.orchestrator.child_nodes import draft_child_nodes
 from research_harness.orchestrator.demo import _demo_node
@@ -18,11 +23,15 @@ from research_harness.orchestrator.search_state import (
     transition_node,
     validate_search_state,
 )
+from research_harness.runner.job_manifest import build_demo_job_manifest
+from research_harness.runner.local_runner import LocalRunner
+from research_harness.runner.result_bridge import runner_failure_worker_report
 from research_harness.schemas.validator import validate_named_schema
 from research_harness.workers.mock_backend import MockWorkerBackend
 
 
 ALLOWED_TREE_SEARCH_BACKENDS = {"mock"}
+JobManifestBuilder = Callable[[dict[str, Any], Path], dict[str, Any]]
 
 
 class MockTreeSearchBackend:
@@ -37,6 +46,8 @@ def run_mock_tree_search(
     backend: Any | None = None,
     backend_name: str = "mock",
     max_steps: int | None = None,
+    job_manifest_builder: JobManifestBuilder = build_demo_job_manifest,
+    record_runner_failures: bool = True,
 ) -> dict[str, Any]:
     if backend_name not in ALLOWED_TREE_SEARCH_BACKENDS:
         raise ValueError(
@@ -73,7 +84,22 @@ def run_mock_tree_search(
             event="dequeue",
             reason="frontier selected",
         )
-        worker_report = backend.run(node, node_run_dir)
+        runner_summary = _execute_node_runner(
+            repo_root,
+            settings,
+            run_dir,
+            node_run_dir,
+            node,
+            job_manifest_builder=job_manifest_builder,
+            record_failures=record_runner_failures,
+        )
+        runner_failure_report = runner_failure_worker_report(
+            runner_summary["runner_result"]
+        )
+        if runner_failure_report is None:
+            worker_report = backend.run(node, node_run_dir)
+        else:
+            worker_report = runner_failure_report
         validate_named_schema("worker_report", worker_report)
         _write_json(node_run_dir / "worker_report.json", worker_report)
         transition_node(
@@ -148,6 +174,10 @@ def run_mock_tree_search(
         artifacts.append(
             {
                 "node_id": node["id"],
+                "job_manifest_path": runner_summary["job_manifest_path"],
+                "runner_result_path": runner_summary["runner_result_path"],
+                "runner_status": runner_summary["runner_result"]["status"],
+                "runner_failure_memory": runner_summary["runner_failure_memory"],
                 "worker_status": worker_report["status"],
                 "next_transition": reduction["next_transition"],
             }
@@ -174,6 +204,80 @@ def _node_by_id(state: dict[str, Any], node_id: str) -> dict[str, Any]:
         if node["id"] == node_id:
             return node
     raise KeyError(node_id)
+
+
+def _execute_node_runner(
+    repo_root: Path,
+    settings: dict[str, Any],
+    run_dir: Path,
+    node_run_dir: Path,
+    node: dict[str, Any],
+    *,
+    job_manifest_builder: JobManifestBuilder,
+    record_failures: bool,
+) -> dict[str, Any]:
+    job_manifest = job_manifest_builder(node, run_dir)
+    validate_named_schema("job_manifest", job_manifest)
+    job_manifest_path = node_run_dir / "job_manifest.json"
+    _write_json(job_manifest_path, job_manifest)
+
+    runner = LocalRunner(run_dir, settings=settings)
+    runner_result = runner.execute(job_manifest)
+    validate_named_schema("runner_result", runner_result)
+    runner_failure_memory = (
+        record_runner_failure_candidate(repo_root, node, runner_result)
+        if record_failures
+        else None
+    )
+    runner_result_path = Path(runner_result["workspace"]) / "runner_result.json"
+    _attach_runner_outputs(
+        node,
+        run_dir,
+        job_manifest_path=job_manifest_path,
+        runner_result_path=runner_result_path,
+        runner_result=runner_result,
+    )
+    return {
+        "job_manifest_path": _display_path(job_manifest_path, run_dir),
+        "runner_result_path": _display_path(runner_result_path, run_dir),
+        "runner_result": runner_result,
+        "runner_failure_memory": _failure_memory_summary(runner_failure_memory),
+    }
+
+
+def _attach_runner_outputs(
+    node: dict[str, Any],
+    run_dir: Path,
+    *,
+    job_manifest_path: Path,
+    runner_result_path: Path,
+    runner_result: dict[str, Any],
+) -> None:
+    artifacts = node["outputs"].setdefault("artifacts", [])
+    for path in (job_manifest_path, runner_result_path):
+        artifact = _display_path(path, run_dir)
+        if artifact not in artifacts:
+            artifacts.append(artifact)
+    node["outputs"]["runner_status"] = runner_result["status"]
+    node["outputs"]["runner_result_path"] = _display_path(runner_result_path, run_dir)
+
+
+def _failure_memory_summary(result: FailureMemoryResult | None) -> dict[str, str] | None:
+    if result is None:
+        return None
+    return {
+        "record_path": str(result.record_path),
+        "index_path": str(result.index_path),
+        "lesson": result.lesson,
+    }
+
+
+def _display_path(path: Path, run_dir: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return str(resolved.relative_to(run_dir.resolve()))
+    except ValueError:
+        return str(resolved)
 
 
 def _write_json(path: Path, obj: Any) -> None:
