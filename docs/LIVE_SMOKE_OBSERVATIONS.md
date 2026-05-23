@@ -67,4 +67,7 @@ Current policy:
 - `research_harness.workers.live_smoke_runner` may execute only the single
   gated smoke command and requires a second acknowledgement:
   `RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE=live_smoke_ack` or `--execute-ack`.
+- The same runner module exposes `run_live_node_once(...)` for a single
+  arbitrary node. It is still an explicit operator-controlled path, not a tree
+  search backend.
 - Tree search must not execute live Claude workers directly.

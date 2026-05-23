@@ -42,6 +42,10 @@ backend.
 - The repeatable smoke runner must also require
   `RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE=live_smoke_ack` or `--execute-ack`
   before it invokes Claude Code.
+- `build_manual_live_node_plan(...)` and `run_live_node_once(...)` may target a
+  single arbitrary node, but they must preserve per-node workspace isolation,
+  live gate validation, stdout ingest, and non-promotable timeout/runtime
+  failure handling.
 - Captured Claude CLI stdout must be ingested through
   `python -B -m research_harness.workers.claude_stdout_ingest --stdout <captured_stdout> --envelope <live_invocation_envelope> --plan <manual_live_smoke_plan>`;
   workers must not be trusted to write `worker_report.json` directly.
@@ -61,7 +65,7 @@ backend.
 
 The current code may construct dry-run and live-smoke command plans, but
 `execution_enabled` must remain `false`. Live Claude execution is limited to
-the single smoke command through `research_harness.workers.live_smoke_runner`
+one gated node at a time through `research_harness.workers.live_smoke_runner`
 after a human explicitly accepts subscription/API usage risk. Tree search must
 not call `claude_code_live` directly.
 

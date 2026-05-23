@@ -5,6 +5,8 @@
   "type": "object",
   "required": [
     "type",
+    "node_id",
+    "invocation_id",
     "status",
     "gate_status",
     "execution_enabled_by_runner",
@@ -29,6 +31,8 @@
       "type": "string",
       "enum": ["live_smoke_run_summary"]
     },
+    "node_id": { "type": "string" },
+    "invocation_id": { "type": "string" },
     "status": {
       "type": "string",
       "enum": [

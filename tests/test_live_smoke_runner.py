@@ -8,10 +8,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from research_harness.orchestrator.demo import _demo_node
 from research_harness.schemas.validator import validate_named_schema
 from research_harness.workers.live_smoke_runner import (
     EXECUTION_ACK_ENV,
     EXECUTION_ACK_VALUE,
+    run_live_node_once,
     run_manual_live_smoke,
 )
 
@@ -37,19 +39,19 @@ def _auth_status(subscription_type: str = "max") -> subprocess.CompletedProcess[
     )
 
 
-def _worker_task_result(run_dir: Path) -> dict[str, object]:
+def _worker_task_result(run_dir: Path, node_id: str = "n_demo_001") -> dict[str, object]:
     worker_task = json.loads(
         (
             run_dir
             / "nodes"
-            / "n_demo_001"
+            / node_id
             / "workspace"
             / "worker_task.json"
         ).read_text(encoding="utf-8")
     )
     return {
         "task_id": worker_task["task_id"],
-        "node_id": "n_demo_001",
+        "node_id": node_id,
         "status": "completed",
         "output_kind": "observed_result",
         "summary": "live smoke only; no experiment was executed",
@@ -93,6 +95,7 @@ class LiveSmokeRunnerTests(unittest.TestCase):
 
             validate_named_schema("live_smoke_run_summary", summary)
             self.assertEqual(summary["status"], "blocked_by_execution_ack")
+            self.assertEqual(summary["node_id"], "n_demo_001")
             self.assertEqual(summary["gate_status"], "ready_to_manually_run")
             self.assertFalse(summary["execution_enabled_by_runner"])
             self.assertTrue((run_dir / "live_smoke_run_summary.json").exists())
@@ -169,6 +172,8 @@ class LiveSmokeRunnerTests(unittest.TestCase):
 
             validate_named_schema("live_smoke_run_summary", summary)
             self.assertEqual(summary["status"], "completed")
+            self.assertEqual(summary["node_id"], "n_demo_001")
+            self.assertEqual(summary["invocation_id"], "invoke_live_n_demo_001")
             self.assertEqual(summary["worker_report_status"], "completed")
             self.assertEqual(summary["ingest_note"], "valid_json")
             self.assertEqual(
@@ -177,6 +182,72 @@ class LiveSmokeRunnerTests(unittest.TestCase):
             )
             self.assertTrue(Path(summary["worker_report_path"]).exists())
             self.assertTrue(Path(summary["worker_task_result_path"]).exists())
+
+    def test_arbitrary_node_live_once_uses_node_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "live_node"
+            node = _demo_node()
+            node["id"] = "n_live_custom_001"
+
+            def fake_runner(
+                args: list[str],
+                **kwargs: object,
+            ) -> subprocess.CompletedProcess[str]:
+                self.assertIn("--system-prompt", args)
+                self.assertNotIn("ANTHROPIC_API_KEY", kwargs["env"])
+                cli_result = {
+                    "type": "result",
+                    "subtype": "success",
+                    "is_error": False,
+                    "num_turns": 1,
+                    "result": json.dumps(_worker_task_result(run_dir, node["id"])),
+                    "total_cost_usd": 0.004,
+                    "usage": {
+                        "input_tokens": 2,
+                        "cache_creation_input_tokens": 50,
+                        "cache_read_input_tokens": 0,
+                        "output_tokens": 40,
+                    },
+                    "modelUsage": {"claude-sonnet-test": {"costUSD": 0.004}},
+                    "permission_denials": [],
+                }
+                return subprocess.CompletedProcess(
+                    args=args,
+                    returncode=0,
+                    stdout=json.dumps(cli_result),
+                    stderr="",
+                )
+
+            with patch.dict(os.environ, {}, clear=True):
+                with patch(
+                    "research_harness.workers.claude_code_invoker.subprocess.run",
+                    return_value=_auth_status(),
+                ):
+                    summary = run_live_node_once(
+                        REPO_ROOT,
+                        node,
+                        run_dir=run_dir,
+                        claude_path="/usr/local/bin/claude",
+                        billing_ack=True,
+                        execution_ack=True,
+                        command_runner=fake_runner,
+                    )
+
+            validate_named_schema("live_smoke_run_summary", summary)
+            self.assertEqual(summary["status"], "completed")
+            self.assertEqual(summary["node_id"], "n_live_custom_001")
+            self.assertEqual(summary["invocation_id"], "invoke_live_n_live_custom_001")
+            self.assertTrue(summary["plan_path"].endswith("manual_live_worker_plan.json"))
+            self.assertTrue((run_dir / "live_worker_run_summary.json").exists())
+            self.assertTrue(
+                (
+                    run_dir
+                    / "nodes"
+                    / "n_live_custom_001"
+                    / "workspace"
+                    / "worker_report.json"
+                ).exists()
+            )
 
     def test_timeout_is_converted_to_non_promotable_worker_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

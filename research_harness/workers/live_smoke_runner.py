@@ -7,9 +7,10 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
+from research_harness.orchestrator.demo import _demo_node
 from research_harness.schemas.validator import validate_named_schema
 from research_harness.workers.claude_stdout_ingest import ingest_claude_cli_stdout
-from research_harness.workers.live_gate import build_manual_live_smoke_plan
+from research_harness.workers.live_gate import build_manual_live_node_plan
 
 
 EXECUTION_ACK_ENV = "RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE"
@@ -36,15 +37,50 @@ def run_manual_live_smoke(
     back to the normal live gate + ingest path.
     """
 
-    repo_root = repo_root.resolve()
-    plan = build_manual_live_smoke_plan(
+    return run_live_node_once(
         repo_root,
+        _demo_node(),
         run_dir=run_dir,
         claude_path=claude_path,
         billing_ack=billing_ack,
+        execution_ack=execution_ack,
+        timeout_seconds=timeout_seconds,
+        command_runner=command_runner,
+        plan_filename="manual_live_smoke_plan.json",
+        runbook_filename="manual_live_smoke_runbook.md",
+        summary_filename="live_smoke_run_summary.json",
     )
-    plan_path = Path(plan["runbook_path"]).with_name("manual_live_smoke_plan.json")
-    summary_path = Path(plan["runbook_path"]).with_name("live_smoke_run_summary.json")
+
+
+def run_live_node_once(
+    repo_root: Path,
+    node: dict[str, Any],
+    *,
+    run_dir: Path | None = None,
+    claude_path: str | None = None,
+    billing_ack: bool | None = None,
+    execution_ack: bool | None = None,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    command_runner: CommandRunner | None = None,
+    plan_filename: str = "manual_live_worker_plan.json",
+    runbook_filename: str = "manual_live_worker_runbook.md",
+    summary_filename: str = "live_worker_run_summary.json",
+) -> dict[str, Any]:
+    """Execute exactly one node through the live gate and stdout ingest path."""
+
+    repo_root = repo_root.resolve()
+    validate_named_schema("node", node)
+    plan = build_manual_live_node_plan(
+        repo_root,
+        node,
+        run_dir=run_dir,
+        claude_path=claude_path,
+        billing_ack=billing_ack,
+        plan_filename=plan_filename,
+        runbook_filename=runbook_filename,
+    )
+    plan_path = Path(plan["runbook_path"]).with_name(plan_filename)
+    summary_path = Path(plan["runbook_path"]).with_name(summary_filename)
     stdout_path = Path(plan["manual_stdout_path"])
     stderr_path = stdout_path.with_name("claude_stderr.txt")
     raw_stdout_path = stdout_path.with_name("claude_stdout.raw.txt")
@@ -53,6 +89,8 @@ def run_manual_live_smoke(
 
     base_summary = {
         "type": "live_smoke_run_summary",
+        "node_id": node["id"],
+        "invocation_id": plan["live_invocation_envelope"]["invocation_id"],
         "gate_status": plan["status"],
         "plan_path": str(plan_path),
         "stdout_path": str(stdout_path),
@@ -91,7 +129,7 @@ def run_manual_live_smoke(
                 "execution_enabled_by_runner": False,
                 "error": (
                     f"set {EXECUTION_ACK_ENV}={EXECUTION_ACK_VALUE} or pass "
-                    "--execute-ack to run the live smoke command"
+                    "--execute-ack to run the live node command"
                 ),
             },
         )

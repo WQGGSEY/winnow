@@ -139,6 +139,9 @@ The runner still keeps `execution_enabled: false` in the plan. It only runs the
 single smoke command after the second execution acknowledgement, unsets
 `ANTHROPIC_API_KEY`, captures stdout/stderr, ingests stdout through the same
 live gate, and writes `live_smoke_run_summary.json` with token/cost estimates.
+Internally the same runner path now supports a single arbitrary node through
+`run_live_node_once(...)`, but tree search still rejects `claude_code_live` so
+the live worker cannot expand into autonomous search execution.
 
 ## Core Files
 

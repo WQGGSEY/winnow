@@ -9,7 +9,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from research_harness.schemas.validator import validate_named_schema
-from research_harness.workers.live_gate import build_manual_live_smoke_plan
+from research_harness.orchestrator.demo import _demo_node
+from research_harness.workers.live_gate import (
+    build_manual_live_node_plan,
+    build_manual_live_smoke_plan,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -148,6 +152,43 @@ class LiveGateTests(unittest.TestCase):
             self.assertIn("-p", written["manual_command"])
             self.assertEqual(written["ingest_command"], plan["ingest_command"])
             self.assertTrue(Path(written["runbook_path"]).exists())
+
+    def test_manual_live_node_plan_accepts_arbitrary_node(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            node = _demo_node()
+            node["id"] = "n_custom_live_002"
+            with patch.dict(os.environ, {}, clear=True):
+                with patch(
+                    "research_harness.workers.claude_code_invoker.subprocess.run",
+                    return_value=_auth_status(),
+                ):
+                    plan = build_manual_live_node_plan(
+                        REPO_ROOT,
+                        node,
+                        run_dir=Path(tmp) / "live_node",
+                        claude_path="/usr/local/bin/claude",
+                        billing_ack=True,
+                    )
+
+            validate_named_schema("manual_live_smoke_plan", plan)
+            self.assertEqual(plan["status"], "ready_to_manually_run")
+            self.assertEqual(plan["live_invocation_envelope"]["node_id"], node["id"])
+            self.assertEqual(
+                plan["live_invocation_envelope"]["worker_task_path"],
+                str(
+                    (
+                        Path(tmp)
+                        / "live_node"
+                        / "nodes"
+                        / node["id"]
+                        / "workspace"
+                        / "worker_task.json"
+                    ).resolve()
+                ),
+            )
+            self.assertTrue(
+                (Path(tmp) / "live_node" / "manual_live_worker_plan.json").exists()
+            )
 
     def test_manual_live_plan_blocks_without_billing_ack_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
