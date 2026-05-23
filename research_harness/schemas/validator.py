@@ -23,6 +23,7 @@ SCHEMA_FILES = {
     "baseline_dossier": "baseline_dossier.schema.json",
     "manual_live_smoke_plan": "manual_live_smoke_plan.schema.json",
     "live_node_dispatch": "live_node_dispatch.schema.json",
+    "live_reduction_apply_summary": "live_reduction_apply_summary.schema.json",
     "live_reduction_bundle": "live_reduction_bundle.schema.json",
     "live_smoke_run_summary": "live_smoke_run_summary.schema.json",
     "frontier_item": "frontier_item.schema.json",

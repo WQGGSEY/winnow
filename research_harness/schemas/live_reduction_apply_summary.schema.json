@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/live_reduction_apply_summary.schema.json",
+  "title": "LiveReductionApplySummary",
+  "type": "object",
+  "required": [
+    "type",
+    "status",
+    "node_id",
+    "bundle_path",
+    "search_state_path",
+    "search_state_sha256_before",
+    "search_state_sha256_after",
+    "approval_required",
+    "approved",
+    "state_mutation",
+    "memory_mutation",
+    "applied_transition",
+    "created_child_ids",
+    "search_state_status",
+    "summary_path",
+    "error"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": ["live_reduction_apply_summary"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["blocked_by_missing_approval", "applied"]
+    },
+    "node_id": { "type": "string" },
+    "bundle_path": { "type": "string" },
+    "search_state_path": { "type": "string" },
+    "search_state_sha256_before": { "type": "string" },
+    "search_state_sha256_after": { "type": ["string", "null"] },
+    "approval_required": { "type": "boolean" },
+    "approved": { "type": "boolean" },
+    "state_mutation": {
+      "type": "string",
+      "enum": ["forbidden", "applied"]
+    },
+    "memory_mutation": {
+      "type": "string",
+      "enum": ["forbidden"]
+    },
+    "applied_transition": { "type": ["string", "null"] },
+    "created_child_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "search_state_status": { "type": ["string", "null"] },
+    "summary_path": { "type": "string" },
+    "error": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}
