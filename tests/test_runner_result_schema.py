@@ -15,6 +15,7 @@ class RunnerResultSchemaTests(unittest.TestCase):
             "elapsed_sec": 0.1,
             "timeout_sec": 60,
             "workspace": "/tmp/workspace",
+            "source_files": ["/tmp/workspace/experiment.py"],
             "command": ["python", "-c", "print(1)"],
             "stdout_path": "/tmp/workspace/stdout.log",
             "stderr_path": "/tmp/workspace/stderr.log",

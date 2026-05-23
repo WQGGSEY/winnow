@@ -26,6 +26,7 @@ def runner_failure_worker_report(runner_result: dict[str, Any]) -> dict[str, Any
         "baselines": {},
         "disproof_conditions_hit": [],
         "artifacts": [
+            *runner_result.get("source_files", []),
             runner_result["stdout_path"],
             runner_result["stderr_path"],
         ],

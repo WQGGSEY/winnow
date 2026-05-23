@@ -25,7 +25,7 @@ Included:
 - Rebuttal packet, rebuttal critic stage, AC decision schema.
 - Dry-run Claude Code invocation envelope and bounded prompt generation.
 - Deterministic local runner manifest validation, bounded execution, and
-  metrics-evidence ingestion into worker reports.
+  source/metrics-evidence ingestion into worker reports.
 - Baseline dossier validation and dry-run resolution report.
 - Dry-run end-to-end pipeline that writes a research state bundle and HTML summary.
 
@@ -48,6 +48,7 @@ The demo writes:
 ```text
 runs/demo_run/node.json
 runs/demo_run/job_manifest.json
+runs/demo_run/nodes/n_demo_001/workspace/experiment.py
 runs/demo_run/nodes/n_demo_001/workspace/artifacts/metrics.json
 runs/demo_run/nodes/n_demo_001/workspace/runner_result.json
 runs/demo_run/worker_report.json
@@ -78,11 +79,12 @@ python -B -m research_harness.orchestrator.tree_search
 ```
 
 The staged tree-search loop currently accepts only dry-run/local backends. Each
-node runs a deterministic bounded runner job, writes `job_manifest.json`,
-`workspace/runner_result.json`, and declared metrics files, then builds
-`worker_report.json` only from that runner evidence. Runner failures or missing
-metrics become non-promotable worker reports. Live Claude Code remains behind
-`research_harness.workers.live_gate` and is not called by tree search.
+node runs a deterministic bounded runner job from declared workspace-local
+source files, writes `job_manifest.json`, `workspace/runner_result.json`, and
+declared metrics files, then builds `worker_report.json` only from that runner
+evidence. Runner failures or missing metrics become non-promotable worker
+reports. Live Claude Code remains behind `research_harness.workers.live_gate`
+and is not called by tree search.
 
 ## Run Pre-Live Local Preflight
 

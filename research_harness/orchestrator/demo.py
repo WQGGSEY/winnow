@@ -217,6 +217,7 @@ def run_demo(repo_root: Path | None = None, run_dir: Path | None = None) -> Path
         "invocation_envelope": invocation_envelope,
         "job_manifest": job_manifest,
         "runner_result": runner_result,
+        "source_files": evidence_report.source_files,
         "metrics_evidence_paths": evidence_report.metrics_evidence_paths,
         "runner_failure_memory": _failure_memory_summary(runner_failure_memory),
         "worker_failure_memory": _failure_memory_summary(worker_failure_memory),

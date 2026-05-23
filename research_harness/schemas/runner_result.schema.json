@@ -11,6 +11,7 @@
     "elapsed_sec",
     "timeout_sec",
     "workspace",
+    "source_files",
     "command",
     "stdout_path",
     "stderr_path",
@@ -27,6 +28,11 @@
     "elapsed_sec": { "type": "number", "minimum": 0 },
     "timeout_sec": { "type": "integer", "minimum": 1 },
     "workspace": { "type": "string" },
+    "source_files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
     "command": {
       "type": "array",
       "items": { "type": "string" },

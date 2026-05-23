@@ -36,6 +36,10 @@ class PipelineTests(unittest.TestCase):
             validate_named_schema("job_manifest", bundle["job_manifest"])
             validate_named_schema("runner_result", bundle["runner_result"])
             self.assertEqual(bundle["runner_result"]["status"], "completed")
+            self.assertEqual(
+                bundle["source_files"],
+                ["nodes/n_demo_001/workspace/experiment.py"],
+            )
             self.assertEqual(worker_report["metrics"]["schema_validity"], 1.0)
             self.assertEqual(
                 bundle["metrics_evidence_paths"],

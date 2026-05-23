@@ -21,6 +21,9 @@ class RunnerManifestTests(unittest.TestCase):
             manifest = build_demo_job_manifest(node, run_dir)
 
             validate_named_schema("job_manifest", manifest)
+            self.assertEqual(manifest["source_files"], ["experiment.py"])
+            self.assertTrue((Path(manifest["workspace"]) / "experiment.py").is_file())
+            self.assertEqual(manifest["entrypoint"]["args"], ["experiment.py"])
             LocalRunner(run_dir).validate_or_raise(manifest)
 
     def test_workspace_must_stay_under_run_dir(self) -> None:
@@ -60,6 +63,24 @@ class RunnerManifestTests(unittest.TestCase):
             with self.assertRaisesRegex(RunnerValidationError, "relative"):
                 LocalRunner(run_dir).validate_or_raise(manifest)
 
+    def test_source_files_must_be_relative_workspace_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            manifest = build_demo_job_manifest(_demo_node(), run_dir)
+            manifest["source_files"] = ["/tmp/experiment.py"]
+
+            with self.assertRaisesRegex(RunnerValidationError, "source_files"):
+                LocalRunner(run_dir).validate_or_raise(manifest)
+
+    def test_source_files_must_exist_before_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            manifest = build_demo_job_manifest(_demo_node(), run_dir)
+            Path(manifest["workspace"], "experiment.py").unlink()
+
+            with self.assertRaisesRegex(RunnerValidationError, "source file is missing"):
+                LocalRunner(run_dir).validate_or_raise(manifest)
+
     def test_manifest_claim_contract_cannot_omit_baselines(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "run"
@@ -81,6 +102,10 @@ class RunnerManifestTests(unittest.TestCase):
             validate_named_schema("runner_result", result)
             self.assertEqual(result["status"], "completed")
             self.assertEqual(result["exit_code"], 0)
+            self.assertEqual(
+                result["source_files"],
+                [str(Path(manifest["workspace"]) / "experiment.py")],
+            )
             self.assertEqual(
                 Path(result["stdout_path"]).read_text(encoding="utf-8"),
                 "runner-ok\n",

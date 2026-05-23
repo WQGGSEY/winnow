@@ -44,11 +44,16 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
     validate_named_schema("invocation_envelope", state["invocation_envelope"])
     validate_named_schema("job_manifest", state["job_manifest"])
     validate_named_schema("runner_result", state["runner_result"])
+    for source_file in state["source_files"]:
+        source_path = run_dir / source_file
+        if not source_path.is_file():
+            raise FileNotFoundError(source_path)
     validate_named_schema("baseline_dossier", baseline_dossier)
     validate_named_schema("ac_decision", state["ac_decision"])
     tree_result = run_mock_tree_search(root, root / "runs" / "prelive_tree_search")
     validate_named_schema("search_state", tree_result["search_state"])
     tree_runner_statuses = []
+    tree_source_file_count = 0
     tree_metrics_evidence_count = 0
     for artifact in tree_result["artifacts"]:
         runner_result_path = (
@@ -67,6 +72,11 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
         )
         worker_report = json.loads(worker_report_path.read_text(encoding="utf-8"))
         validate_named_schema("worker_report", worker_report)
+        for source_file in artifact["source_files"]:
+            source_path = root / "runs" / "prelive_tree_search" / source_file
+            if not source_path.is_file():
+                raise FileNotFoundError(source_path)
+            tree_source_file_count += 1
         for metrics_path in artifact["metrics_evidence_paths"]:
             evidence_path = root / "runs" / "prelive_tree_search" / metrics_path
             json.loads(evidence_path.read_text(encoding="utf-8"))
@@ -81,6 +91,7 @@ def run_preflight(root: Path | None = None) -> dict[str, Any]:
         "baseline_dossier_id": baseline_dossier["id"],
         "runner_result_status": state["runner_result"]["status"],
         "tree_runner_statuses": tree_runner_statuses,
+        "tree_source_file_count": tree_source_file_count,
         "tree_metrics_evidence_count": tree_metrics_evidence_count,
         "promotion_critic_count": len(promotion_routing["applied_critics"]),
         "rebuttal_critic_count": len(rebuttal_routing["applied_critics"]),

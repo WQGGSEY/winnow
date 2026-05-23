@@ -20,6 +20,7 @@ class LocalPreflightTests(unittest.TestCase):
         self.assertEqual(result["settings_backend"], "mock")
         self.assertEqual(result["runner_result_status"], "completed")
         self.assertIn("completed", result["tree_runner_statuses"])
+        self.assertGreaterEqual(result["tree_source_file_count"], 1)
         self.assertGreaterEqual(result["tree_metrics_evidence_count"], 1)
         self.assertGreaterEqual(result["promotion_critic_count"], 1)
         self.assertGreaterEqual(result["rebuttal_critic_count"], 1)

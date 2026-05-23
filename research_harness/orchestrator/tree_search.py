@@ -174,6 +174,7 @@ def run_mock_tree_search(
             {
                 "node_id": node["id"],
                 "job_manifest_path": runner_summary["job_manifest_path"],
+                "source_files": runner_summary["source_files"],
                 "runner_result_path": runner_summary["runner_result_path"],
                 "runner_status": runner_summary["runner_result"]["status"],
                 "metrics_evidence_paths": runner_summary["metrics_evidence_paths"],
@@ -243,10 +244,12 @@ def _execute_node_runner(
         job_manifest_path=job_manifest_path,
         runner_result_path=runner_result_path,
         runner_result=runner_result,
+        source_files=evidence_report.source_files,
         metrics_evidence_paths=evidence_report.metrics_evidence_paths,
     )
     return {
         "job_manifest_path": _display_path(job_manifest_path, run_dir),
+        "source_files": evidence_report.source_files,
         "runner_result_path": _display_path(runner_result_path, run_dir),
         "runner_result": runner_result,
         "metrics_evidence_paths": evidence_report.metrics_evidence_paths,
@@ -262,6 +265,7 @@ def _attach_runner_outputs(
     job_manifest_path: Path,
     runner_result_path: Path,
     runner_result: dict[str, Any],
+    source_files: list[str],
     metrics_evidence_paths: list[str],
 ) -> None:
     artifacts = node["outputs"].setdefault("artifacts", [])
@@ -269,10 +273,14 @@ def _attach_runner_outputs(
         artifact = _display_path(path, run_dir)
         if artifact not in artifacts:
             artifacts.append(artifact)
+    for artifact in source_files:
+        if artifact not in artifacts:
+            artifacts.append(artifact)
     for artifact in metrics_evidence_paths:
         if artifact not in artifacts:
             artifacts.append(artifact)
     node["outputs"]["runner_status"] = runner_result["status"]
+    node["outputs"]["source_files"] = source_files
     node["outputs"]["runner_result_path"] = _display_path(runner_result_path, run_dir)
     node["outputs"]["metrics_evidence_paths"] = metrics_evidence_paths
 

@@ -8,6 +8,7 @@
     "node_id",
     "task_class",
     "workspace",
+    "source_files",
     "entrypoint",
     "resources",
     "inputs",
@@ -24,6 +25,11 @@
       "enum": ["smoke_test", "ablation", "training", "eval", "analysis"]
     },
     "workspace": { "type": "string" },
+    "source_files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
     "entrypoint": {
       "type": "object",
       "required": ["command", "args"],
@@ -76,4 +82,3 @@
   },
   "additionalProperties": false
 }
-

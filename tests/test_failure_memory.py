@@ -135,6 +135,7 @@ class FailureMemoryTests(unittest.TestCase):
                 "elapsed_sec": 0.1,
                 "timeout_sec": 60,
                 "workspace": str(repo),
+                "source_files": [str(repo / "experiment.py")],
                 "command": ["python", "-c", "raise SystemExit(2)"],
                 "stdout_path": str(repo / "stdout.log"),
                 "stderr_path": str(repo / "stderr.log"),

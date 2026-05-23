@@ -72,6 +72,7 @@ class LocalRunner:
                 raise RunnerValidationError(f"shell control token is forbidden in command: {part}")
 
         self._validate_claim_contract(manifest["claim_contract"])
+        self._validate_source_files(manifest, workspace)
         self._validate_output_paths(manifest, workspace)
 
     def _validate_claim_contract(self, contract: dict[str, Any]) -> None:
@@ -91,6 +92,16 @@ class LocalRunner:
                     raise RunnerValidationError(f"{key} must use relative workspace paths")
                 ensure_path_inside(workspace / output_path, workspace, key)
 
+    def _validate_source_files(self, manifest: dict[str, Any], workspace: Path) -> None:
+        for raw_path in manifest.get("source_files", []):
+            source_path = Path(raw_path)
+            if source_path.is_absolute():
+                raise RunnerValidationError("source_files must use relative workspace paths")
+            resolved = (workspace / source_path).resolve()
+            ensure_path_inside(resolved, workspace, "source_files")
+            if not resolved.is_file():
+                raise RunnerValidationError(f"source file is missing: {raw_path}")
+
     def execute(self, manifest: dict[str, Any]) -> dict[str, Any]:
         self.validate_or_raise(manifest)
         workspace = Path(manifest["workspace"]).resolve()
@@ -100,6 +111,10 @@ class LocalRunner:
         result_path = workspace / "runner_result.json"
         timeout_sec = self._effective_timeout(manifest)
         command = manifest["entrypoint"]["command"] + manifest["entrypoint"]["args"]
+        source_files = [
+            str((workspace / Path(raw_path)).resolve())
+            for raw_path in manifest.get("source_files", [])
+        ]
 
         started = time.monotonic()
         try:
@@ -125,6 +140,7 @@ class LocalRunner:
                 timeout_sec=timeout_sec,
                 stdout_path=stdout_path,
                 stderr_path=stderr_path,
+                source_files=source_files,
                 failure_reason=None
                 if completed.returncode == 0
                 else f"runner command exited with code {completed.returncode}",
@@ -143,6 +159,7 @@ class LocalRunner:
                 timeout_sec=timeout_sec,
                 stdout_path=stdout_path,
                 stderr_path=stderr_path,
+                source_files=source_files,
                 failure_reason=f"runner command exceeded timeout_sec={timeout_sec}",
             )
         except OSError as exc:
@@ -159,6 +176,7 @@ class LocalRunner:
                 timeout_sec=timeout_sec,
                 stdout_path=stdout_path,
                 stderr_path=stderr_path,
+                source_files=source_files,
                 failure_reason=f"runner command could not start: {exc}",
             )
 
@@ -181,6 +199,7 @@ class LocalRunner:
         timeout_sec: int,
         stdout_path: Path,
         stderr_path: Path,
+        source_files: list[str],
         failure_reason: str | None,
     ) -> dict[str, Any]:
         failure_record_candidate = None
@@ -203,6 +222,7 @@ class LocalRunner:
             "elapsed_sec": elapsed_sec,
             "timeout_sec": timeout_sec,
             "workspace": str(workspace),
+            "source_files": source_files,
             "command": command,
             "stdout_path": str(stdout_path),
             "stderr_path": str(stderr_path),

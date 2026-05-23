@@ -22,6 +22,7 @@ RESERVED_EVIDENCE_KEYS = {
 @dataclass(frozen=True)
 class EvidenceReport:
     worker_report: dict[str, Any]
+    source_files: list[str]
     metrics_evidence_paths: list[str]
 
 
@@ -32,8 +33,18 @@ def build_worker_report_from_runner_evidence(
     run_dir: Path,
 ) -> EvidenceReport:
     runner_failure = runner_failure_worker_report(runner_result)
+    source_files = _source_files(runner_result, run_dir)
     if runner_failure is not None:
-        return EvidenceReport(worker_report=runner_failure, metrics_evidence_paths=[])
+        runner_failure["artifacts"] = [
+            *source_files,
+            _display_path(Path(runner_result["stdout_path"]), run_dir),
+            _display_path(Path(runner_result["stderr_path"]), run_dir),
+        ]
+        return EvidenceReport(
+            worker_report=runner_failure,
+            source_files=source_files,
+            metrics_evidence_paths=[],
+        )
 
     workspace = Path(runner_result["workspace"]).resolve()
     metrics_files = manifest.get("outputs", {}).get("metrics_files", [])
@@ -45,6 +56,7 @@ def build_worker_report_from_runner_evidence(
             run_dir,
             reason="job manifest declares no metrics_files",
             tags=["missing_metrics_contract"],
+            source_files=source_files,
         )
 
     evidence: list[tuple[Path, dict[str, Any]]] = []
@@ -62,6 +74,7 @@ def build_worker_report_from_runner_evidence(
                 run_dir,
                 reason=f"declared metrics file is missing: {raw_path}",
                 tags=["missing_metrics_file"],
+                source_files=source_files,
                 metrics_evidence_paths=evidence_paths,
             )
         try:
@@ -74,6 +87,7 @@ def build_worker_report_from_runner_evidence(
                 run_dir,
                 reason=f"declared metrics file is not valid JSON: {raw_path}: {exc.msg}",
                 tags=["invalid_metrics_json"],
+                source_files=source_files,
                 metrics_evidence_paths=evidence_paths,
             )
         if not isinstance(parsed, dict):
@@ -84,6 +98,7 @@ def build_worker_report_from_runner_evidence(
                 run_dir,
                 reason=f"declared metrics file must contain a JSON object: {raw_path}",
                 tags=["invalid_metrics_shape"],
+                source_files=source_files,
                 metrics_evidence_paths=evidence_paths,
             )
         evidence.append((metric_path, parsed))
@@ -94,6 +109,7 @@ def build_worker_report_from_runner_evidence(
         runner_result,
         run_dir,
         evidence,
+        source_files,
         evidence_paths,
     )
 
@@ -104,6 +120,7 @@ def _evidence_to_worker_report(
     runner_result: dict[str, Any],
     run_dir: Path,
     evidence: list[tuple[Path, dict[str, Any]]],
+    source_files: list[str],
     evidence_paths: list[str],
 ) -> EvidenceReport:
     metrics: dict[str, Any] = {}
@@ -128,6 +145,7 @@ def _evidence_to_worker_report(
                 run_dir,
                 reason=f"metrics payload must be a non-empty object: {metric_path.name}",
                 tags=["invalid_metrics_payload"],
+                source_files=source_files,
                 metrics_evidence_paths=evidence_paths,
             )
         duplicate_metrics = sorted(set(metrics).intersection(raw_metrics))
@@ -140,6 +158,7 @@ def _evidence_to_worker_report(
                 reason="duplicate metric keys across evidence files: "
                 + ", ".join(duplicate_metrics),
                 tags=["duplicate_metric_keys"],
+                source_files=source_files,
                 metrics_evidence_paths=evidence_paths,
             )
         metrics.update(raw_metrics)
@@ -153,6 +172,7 @@ def _evidence_to_worker_report(
                 run_dir,
                 reason=f"baselines payload must be an object: {metric_path.name}",
                 tags=["invalid_baselines_payload"],
+                source_files=source_files,
                 metrics_evidence_paths=evidence_paths,
             )
         duplicate_baselines = sorted(set(baselines).intersection(raw_baselines))
@@ -165,6 +185,7 @@ def _evidence_to_worker_report(
                 reason="duplicate baseline keys across evidence files: "
                 + ", ".join(duplicate_baselines),
                 tags=["duplicate_baseline_keys"],
+                source_files=source_files,
                 metrics_evidence_paths=evidence_paths,
             )
         baselines.update(raw_baselines)
@@ -179,6 +200,7 @@ def _evidence_to_worker_report(
                     run_dir,
                     reason=f"invalid claim_verdict_candidate: {raw_verdict}",
                     tags=["invalid_verdict_payload"],
+                    source_files=source_files,
                     metrics_evidence_paths=evidence_paths,
                 )
             if verdict != "inconclusive" and verdict != raw_verdict:
@@ -189,6 +211,7 @@ def _evidence_to_worker_report(
                     run_dir,
                     reason="conflicting claim_verdict_candidate values across evidence files",
                     tags=["conflicting_verdict_payload"],
+                    source_files=source_files,
                     metrics_evidence_paths=evidence_paths,
                 )
             verdict = str(raw_verdict)
@@ -202,6 +225,7 @@ def _evidence_to_worker_report(
                 run_dir,
                 reason=f"disproof_conditions_hit must be a list of strings: {metric_path.name}",
                 tags=["invalid_disproof_payload"],
+                source_files=source_files,
                 metrics_evidence_paths=evidence_paths,
             )
         disproof_conditions_hit.extend(raw_disproof)
@@ -215,6 +239,7 @@ def _evidence_to_worker_report(
                 run_dir,
                 reason=f"unexpected_observations payload is invalid: {metric_path.name}",
                 tags=["invalid_observation_payload"],
+                source_files=source_files,
                 metrics_evidence_paths=evidence_paths,
             )
         unexpected_observations.extend(raw_observations)
@@ -227,6 +252,7 @@ def _evidence_to_worker_report(
         "baselines": baselines,
         "disproof_conditions_hit": disproof_conditions_hit,
         "artifacts": [
+            *source_files,
             *evidence_paths,
             _display_path(Path(runner_result["stdout_path"]), run_dir),
             _display_path(Path(runner_result["stderr_path"]), run_dir),
@@ -234,7 +260,11 @@ def _evidence_to_worker_report(
         "unexpected_observations": unexpected_observations,
         "failure_record_candidate": None,
     }
-    return EvidenceReport(worker_report=worker_report, metrics_evidence_paths=evidence_paths)
+    return EvidenceReport(
+        worker_report=worker_report,
+        source_files=source_files,
+        metrics_evidence_paths=evidence_paths,
+    )
 
 
 def _invalid_report(
@@ -245,8 +275,10 @@ def _invalid_report(
     *,
     reason: str,
     tags: list[str],
+    source_files: list[str] | None = None,
     metrics_evidence_paths: list[str] | None = None,
 ) -> EvidenceReport:
+    source_artifacts = source_files or []
     evidence_paths = metrics_evidence_paths or []
     failure_record_candidate = {
         "category": "invalid_experiment",
@@ -272,6 +304,7 @@ def _invalid_report(
         "baselines": {},
         "disproof_conditions_hit": [],
         "artifacts": [
+            *source_artifacts,
             *evidence_paths,
             _display_path(Path(runner_result["stdout_path"]), run_dir),
             _display_path(Path(runner_result["stderr_path"]), run_dir),
@@ -286,7 +319,18 @@ def _invalid_report(
         ],
         "failure_record_candidate": failure_record_candidate,
     }
-    return EvidenceReport(worker_report=worker_report, metrics_evidence_paths=evidence_paths)
+    return EvidenceReport(
+        worker_report=worker_report,
+        source_files=source_artifacts,
+        metrics_evidence_paths=evidence_paths,
+    )
+
+
+def _source_files(runner_result: dict[str, Any], run_dir: Path) -> list[str]:
+    return [
+        _display_path(Path(raw_path), run_dir)
+        for raw_path in runner_result.get("source_files", [])
+    ]
 
 
 def _is_string_list(value: Any) -> bool:

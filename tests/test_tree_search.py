@@ -21,23 +21,27 @@ def _metrics_manifest(
 ) -> dict[str, Any]:
     manifest = build_demo_job_manifest(node, run_dir)
     payload_json = json.dumps(payload, sort_keys=True)
-    manifest["entrypoint"]["args"] = [
-        "-c",
+    Path(manifest["workspace"], "experiment.py").write_text(
         "\n".join(
             [
                 "from pathlib import Path",
                 "artifacts = Path('artifacts')",
                 "artifacts.mkdir(exist_ok=True)",
                 f"(artifacts / 'metrics.json').write_text({payload_json!r} + '\\n')",
+                "",
             ]
         ),
-    ]
+        encoding="utf-8",
+    )
     return manifest
 
 
 def failing_runner_manifest(node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
     manifest = build_demo_job_manifest(node, run_dir)
-    manifest["entrypoint"]["args"] = ["-c", "raise SystemExit(4)"]
+    Path(manifest["workspace"], "experiment.py").write_text(
+        "raise SystemExit(4)\n",
+        encoding="utf-8",
+    )
     return manifest
 
 
@@ -62,23 +66,27 @@ def inconclusive_runner_manifest(node: dict[str, Any], run_dir: Path) -> dict[st
 
 def missing_metrics_manifest(node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
     manifest = build_demo_job_manifest(node, run_dir)
-    manifest["entrypoint"]["args"] = ["-c", "print('no metrics written')"]
+    Path(manifest["workspace"], "experiment.py").write_text(
+        "print('no metrics written')\n",
+        encoding="utf-8",
+    )
     return manifest
 
 
 def invalid_json_metrics_manifest(node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
     manifest = build_demo_job_manifest(node, run_dir)
-    manifest["entrypoint"]["args"] = [
-        "-c",
+    Path(manifest["workspace"], "experiment.py").write_text(
         "\n".join(
             [
                 "from pathlib import Path",
                 "artifacts = Path('artifacts')",
                 "artifacts.mkdir(exist_ok=True)",
                 "(artifacts / 'metrics.json').write_text('not-json\\n')",
+                "",
             ]
         ),
-    ]
+        encoding="utf-8",
+    )
     return manifest
 
 
@@ -104,6 +112,10 @@ class TreeSearchTests(unittest.TestCase):
             artifact = result["artifacts"][0]
             self.assertEqual(artifact["runner_status"], "completed")
             self.assertEqual(
+                artifact["source_files"],
+                ["nodes/n_demo_001/workspace/experiment.py"],
+            )
+            self.assertEqual(
                 artifact["metrics_evidence_paths"],
                 ["nodes/n_demo_001/workspace/artifacts/metrics.json"],
             )
@@ -111,6 +123,20 @@ class TreeSearchTests(unittest.TestCase):
             runner_result = json.loads(runner_result_path.read_text(encoding="utf-8"))
             validate_named_schema("runner_result", runner_result)
             self.assertEqual(runner_result["status"], "completed")
+            self.assertEqual(
+                runner_result["source_files"],
+                [
+                    str(
+                        (
+                            run_dir
+                            / "nodes"
+                            / "n_demo_001"
+                            / "workspace"
+                            / "experiment.py"
+                        ).resolve()
+                    )
+                ],
+            )
             worker_report = json.loads(
                 (run_dir / "nodes" / "n_demo_001" / "worker_report.json").read_text(
                     encoding="utf-8"
@@ -124,6 +150,7 @@ class TreeSearchTests(unittest.TestCase):
                 if node["id"] == artifact["node_id"]
             )
             self.assertIn(artifact["runner_result_path"], node["outputs"]["artifacts"])
+            self.assertIn(artifact["source_files"][0], node["outputs"]["artifacts"])
 
     def test_runner_failure_becomes_non_promotable_worker_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
