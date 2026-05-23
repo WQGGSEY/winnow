@@ -52,6 +52,9 @@ class LiveGateTests(unittest.TestCase):
             validate_named_schema("invocation_envelope", plan["live_invocation_envelope"])
             self.assertEqual(plan["status"], "ready_to_manually_run")
             self.assertFalse(plan["execution_enabled"])
+            self.assertEqual(plan["runtime_guard"]["execution_mode"], "manual_only")
+            self.assertEqual(plan["runtime_guard"]["auto_execution"], "forbidden")
+            self.assertFalse(plan["billing_guard"]["api_key_present"])
             self.assertEqual(plan["live_invocation_envelope"]["backend"], "claude_code_live")
             self.assertEqual(
                 plan["live_invocation_envelope"]["output_schema"]["name"],
@@ -73,6 +76,20 @@ class LiveGateTests(unittest.TestCase):
             self.assertTrue(
                 Path(plan["live_invocation_envelope"]["worker_task_path"]).exists()
             )
+            self.assertTrue(Path(plan["runbook_path"]).exists())
+            self.assertEqual(
+                plan["ingest_command"][3],
+                "research_harness.workers.claude_stdout_ingest",
+            )
+            self.assertEqual(
+                plan["ingest_command"][5],
+                plan["manual_stdout_path"],
+            )
+            self.assertEqual(
+                plan["expected_output_path"],
+                plan["live_invocation_envelope"]["expected_output_path"],
+            )
+            self.assertTrue(plan["worker_report_path"].endswith("worker_report.json"))
 
     def test_manual_live_plan_blocks_when_api_key_would_override_subscription(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -85,6 +102,7 @@ class LiveGateTests(unittest.TestCase):
                 )
 
             self.assertEqual(plan["status"], "blocked_by_auth")
+            self.assertTrue(plan["billing_guard"]["api_key_present"])
             self.assertFalse(plan["auth_preflight"]["ok"])
             self.assertIn("ANTHROPIC_API_KEY", plan["auth_preflight"]["reason"])
 
@@ -124,6 +142,8 @@ class LiveGateTests(unittest.TestCase):
             self.assertEqual(written["status"], plan["status"])
             self.assertEqual(written["manual_command"][0], "/usr/local/bin/claude")
             self.assertIn("-p", written["manual_command"])
+            self.assertEqual(written["ingest_command"], plan["ingest_command"])
+            self.assertTrue(Path(written["runbook_path"]).exists())
 
     def test_manual_live_plan_blocks_without_billing_ack_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -140,6 +160,10 @@ class LiveGateTests(unittest.TestCase):
 
             self.assertEqual(plan["status"], "blocked_by_billing_guard")
             self.assertFalse(plan["billing_guard"]["ack_ok"])
+            self.assertEqual(
+                plan["billing_guard"]["ack_value"],
+                "subscription_ack",
+            )
             self.assertFalse(plan["execution_enabled"])
 
     def test_manual_live_plan_blocks_non_subscription_auth(self) -> None:

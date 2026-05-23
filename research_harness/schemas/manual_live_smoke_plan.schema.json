@@ -11,9 +11,15 @@
     "auth_preflight",
     "claude_cli",
     "billing_guard",
+    "runtime_guard",
     "live_invocation_envelope",
     "manual_command",
+    "manual_stdout_path",
+    "ingest_command",
     "expected_output_path",
+    "worker_report_path",
+    "ingest_metadata_path",
+    "runbook_path",
     "post_run_checks"
   ],
   "properties": {
@@ -61,11 +67,40 @@
     },
     "billing_guard": {
       "type": "object",
-      "required": ["requires_ack", "ack_env", "ack_ok"],
+      "required": [
+        "requires_ack",
+        "ack_env",
+        "ack_value",
+        "ack_ok",
+        "api_key_present"
+      ],
       "properties": {
         "requires_ack": { "type": "boolean" },
         "ack_env": { "type": ["string", "null"] },
-        "ack_ok": { "type": "boolean" }
+        "ack_value": { "type": ["string", "null"] },
+        "ack_ok": { "type": "boolean" },
+        "api_key_present": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "runtime_guard": {
+      "type": "object",
+      "required": [
+        "execution_mode",
+        "auto_execution",
+        "requires_subscription_oauth",
+        "requires_anthropic_api_key_unset",
+        "output_contract"
+      ],
+      "properties": {
+        "execution_mode": { "type": "string", "enum": ["manual_only"] },
+        "auto_execution": { "type": "string", "enum": ["forbidden"] },
+        "requires_subscription_oauth": { "type": "boolean" },
+        "requires_anthropic_api_key_unset": { "type": "boolean" },
+        "output_contract": {
+          "type": "string",
+          "enum": ["worker_task_result_then_harness_worker_report"]
+        }
       },
       "additionalProperties": false
     },
@@ -75,7 +110,16 @@
       "items": { "type": "string" },
       "minItems": 1
     },
+    "manual_stdout_path": { "type": "string" },
+    "ingest_command": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
     "expected_output_path": { "type": "string" },
+    "worker_report_path": { "type": "string" },
+    "ingest_metadata_path": { "type": "string" },
+    "runbook_path": { "type": "string" },
     "post_run_checks": {
       "type": "array",
       "items": { "type": "string" },
