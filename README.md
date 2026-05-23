@@ -126,6 +126,20 @@ organization id, or token fields. Claude live output is constrained to
 `manual_live_smoke_plan.json` for live backend stdout and writes
 `worker_report.json` only after gate, schema, and scope validation.
 
+For a repeatable one-node smoke after reviewing the generated plan, use the
+explicit runner:
+
+```bash
+RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack \
+RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE=live_smoke_ack \
+python -B -m research_harness.workers.live_smoke_runner
+```
+
+The runner still keeps `execution_enabled: false` in the plan. It only runs the
+single smoke command after the second execution acknowledgement, unsets
+`ANTHROPIC_API_KEY`, captures stdout/stderr, ingests stdout through the same
+live gate, and writes `live_smoke_run_summary.json` with token/cost estimates.
+
 ## Core Files
 
 ```text

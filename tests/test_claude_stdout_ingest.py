@@ -310,6 +310,36 @@ class ClaudeStdoutIngestTests(unittest.TestCase):
                 result.worker_report["failure_record_candidate"]["tags"],
             )
 
+    def test_process_timeout_becomes_non_promotable_worker_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            plan, envelope, envelope_path = self._ready_plan(tmp)
+            stdout_path = self._write_stdout(
+                plan,
+                {
+                    "type": "result",
+                    "subtype": "error_process_timeout",
+                    "is_error": True,
+                    "num_turns": 0,
+                    "result": "",
+                    "total_cost_usd": None,
+                    "permission_denials": [],
+                    "errors": ["Claude CLI process timed out after 1 seconds."],
+                },
+            )
+
+            result = ingest_claude_cli_stdout(
+                stdout_path,
+                envelope,
+                live_plan=plan,
+                envelope_path=envelope_path,
+            )
+
+            self.assertEqual(result.worker_report["status"], "timeout_or_turn_exhausted")
+            self.assertIn(
+                "process_timeout",
+                result.worker_report["failure_record_candidate"]["tags"],
+            )
+
     def test_invalid_inner_result_becomes_invalid_worker_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             plan, envelope, envelope_path = self._ready_plan(tmp)

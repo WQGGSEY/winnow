@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/live_smoke_run_summary.schema.json",
+  "title": "LiveSmokeRunSummary",
+  "type": "object",
+  "required": [
+    "type",
+    "status",
+    "gate_status",
+    "execution_enabled_by_runner",
+    "plan_path",
+    "stdout_path",
+    "stderr_path",
+    "raw_stdout_path",
+    "worker_report_path",
+    "worker_task_result_path",
+    "ingest_metadata_path",
+    "command_returncode",
+    "timeout_seconds",
+    "worker_report_status",
+    "ingest_note",
+    "prompt_bytes",
+    "prompt_words",
+    "usage_estimate",
+    "error"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": ["live_smoke_run_summary"]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "blocked_by_gate",
+        "blocked_by_execution_ack",
+        "completed",
+        "worker_blocked",
+        "runtime_failed",
+        "timeout"
+      ]
+    },
+    "gate_status": { "type": "string" },
+    "execution_enabled_by_runner": { "type": "boolean" },
+    "plan_path": { "type": "string" },
+    "stdout_path": { "type": "string" },
+    "stderr_path": { "type": "string" },
+    "raw_stdout_path": { "type": ["string", "null"] },
+    "worker_report_path": { "type": ["string", "null"] },
+    "worker_task_result_path": { "type": ["string", "null"] },
+    "ingest_metadata_path": { "type": ["string", "null"] },
+    "command_returncode": { "type": ["integer", "null"] },
+    "timeout_seconds": { "type": "integer" },
+    "worker_report_status": { "type": ["string", "null"] },
+    "ingest_note": { "type": ["string", "null"] },
+    "prompt_bytes": { "type": "integer" },
+    "prompt_words": { "type": "integer" },
+    "usage_estimate": { "type": "object" },
+    "error": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}

@@ -27,6 +27,14 @@ Observed runs:
   `--max-budget-usd 0.05`. It stopped with `subtype: error_max_budget_usd` and
   `total_cost_usd: 0.11899725000000001`.
 - A third run was interrupted by the operator before output files were written.
+- Later smoke hardening produced schema-valid `worker_task_result` JSON with
+  `status: completed`, `repaired: false`, and no permission denials.
+- Replacing Claude Code's default system prompt with a minimal bounded JSON
+  system prompt, disabling slash commands, using strict MCP config, and
+  compacting the worker prompt reduced the successful smoke estimate from
+  `cache_creation_input_tokens: 32756`, `output_tokens: 1295`, and
+  `total_cost_usd: 0.142266` to `cache_creation_input_tokens: 1799`,
+  `output_tokens: 165`, and `total_cost_usd: 0.00922725`.
 
 Interpretation:
 
@@ -56,4 +64,7 @@ Current policy:
 - `research_harness.workers.live_gate` returns `blocked_by_billing_guard`
   unless `RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack` is explicitly
   present or a test passes `billing_ack=True`.
-- No live command should be executed automatically by the harness.
+- `research_harness.workers.live_smoke_runner` may execute only the single
+  gated smoke command and requires a second acknowledgement:
+  `RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE=live_smoke_ack` or `--execute-ack`.
+- Tree search must not execute live Claude workers directly.

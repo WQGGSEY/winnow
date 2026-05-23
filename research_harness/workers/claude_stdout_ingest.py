@@ -155,6 +155,10 @@ def _report_from_cli_result(
             status = "timeout_or_turn_exhausted"
             tags = ["claude_cli", "budget_exhausted"]
             note = "budget_exhausted"
+        elif cli_result.get("subtype") == "error_process_timeout":
+            status = "timeout_or_turn_exhausted"
+            tags = ["claude_cli", "process_timeout"]
+            note = "process_timeout"
         return (
             None,
             _blocked_report(

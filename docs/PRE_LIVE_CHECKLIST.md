@@ -39,8 +39,11 @@ backend.
   `stdin_path` for a later operator-controlled live smoke.
 - Live smoke planning must return `blocked_by_billing_guard` unless the operator
   explicitly sets `RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack`.
+- The repeatable smoke runner must also require
+  `RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE=live_smoke_ack` or `--execute-ack`
+  before it invokes Claude Code.
 - Captured Claude CLI stdout must be ingested through
-  `python -B -m research_harness.workers.claude_stdout_ingest --stdout <captured_stdout> --envelope <live_invocation_envelope>`;
+  `python -B -m research_harness.workers.claude_stdout_ingest --stdout <captured_stdout> --envelope <live_invocation_envelope> --plan <manual_live_smoke_plan>`;
   workers must not be trusted to write `worker_report.json` directly.
 - Live workers run with tools disabled; any lessons, baselines, or failure
   retrieval context needed by a worker must be embedded by the orchestrator in
@@ -57,9 +60,10 @@ backend.
 ## Live Backend Still Not Allowed
 
 The current code may construct dry-run and live-smoke command plans, but
-`execution_enabled` must remain `false`. Live Claude execution should not be
-enabled until a human explicitly accepts subscription/API usage risk and runs
-the generated manual command after reviewing the plan.
+`execution_enabled` must remain `false`. Live Claude execution is limited to
+the single smoke command through `research_harness.workers.live_smoke_runner`
+after a human explicitly accepts subscription/API usage risk. Tree search must
+not call `claude_code_live` directly.
 
 ## First Live Smoke Observation
 

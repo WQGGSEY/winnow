@@ -22,6 +22,7 @@ SCHEMA_FILES = {
     "invocation_envelope": "invocation_envelope.schema.json",
     "baseline_dossier": "baseline_dossier.schema.json",
     "manual_live_smoke_plan": "manual_live_smoke_plan.schema.json",
+    "live_smoke_run_summary": "live_smoke_run_summary.schema.json",
     "frontier_item": "frontier_item.schema.json",
     "node_transition": "node_transition.schema.json",
     "search_state": "search_state.schema.json",
