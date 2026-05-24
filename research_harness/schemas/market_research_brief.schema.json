@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/market_research_brief.schema.json",
+  "title": "MarketResearchBrief",
+  "type": "object",
+  "required": [
+    "brief_id",
+    "type",
+    "status",
+    "created_at",
+    "grilling_session_id",
+    "search_query_seed",
+    "sources_used",
+    "papers",
+    "baseline_dossier_id",
+    "baseline_dossier_candidate_path",
+    "baseline_dossier_path",
+    "reference_papers_dir",
+    "brief_path",
+    "baseline_analysis_md_path",
+    "baseline_analysis_source",
+    "usage"
+  ],
+  "properties": {
+    "brief_id": { "type": "string", "minLength": 1 },
+    "type": { "type": "string", "enum": ["market_research_brief"] },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "completed_with_warnings", "blocked", "failed"]
+    },
+    "created_at": { "type": "string", "minLength": 1 },
+    "grilling_session_id": { "type": "string", "minLength": 1 },
+    "search_query_seed": { "type": "string", "minLength": 1 },
+    "sources_used": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["arxiv", "google_scholar", "websearch", "manual"]
+      },
+      "minItems": 1
+    },
+    "papers": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "baseline_dossier_id": { "type": "string", "minLength": 1 },
+    "baseline_dossier_candidate_path": { "type": "string", "minLength": 1 },
+    "baseline_dossier_path": { "type": "string", "minLength": 1 },
+    "reference_papers_dir": { "type": "string", "minLength": 1 },
+    "brief_path": { "type": "string", "minLength": 1 },
+    "baseline_analysis_md_path": { "type": "string", "minLength": 1 },
+    "baseline_analysis_source": {
+      "type": "string",
+      "enum": ["deterministic_metadata", "sonnet_analysis", "sonnet_failed_fallback"]
+    },
+    "baseline_analysis_usage": {
+      "type": "object",
+      "properties": {
+        "cost_usd": { "type": ["number", "null"] },
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "usage": {
+      "type": "object",
+      "required": ["papers_found", "papers_downloaded", "papers_failed", "sources_attempted"],
+      "properties": {
+        "papers_found": { "type": "integer", "minimum": 0 },
+        "papers_downloaded": { "type": "integer", "minimum": 0 },
+        "papers_failed": { "type": "integer", "minimum": 0 },
+        "sources_attempted": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "error": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}

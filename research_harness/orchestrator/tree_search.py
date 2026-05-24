@@ -17,7 +17,9 @@ from research_harness.orchestrator.branch_prior import build_failure_branch_prio
 from research_harness.orchestrator.child_nodes import draft_child_nodes
 from research_harness.orchestrator.demo import _demo_node
 from research_harness.orchestrator.experiment_plan import (
+    FALLBACK_TEMPLATE_ID,
     build_demo_experiment_plan,
+    build_experiment_plan_for_node,
     build_job_manifest_from_experiment_plan,
     validate_experiment_plan,
 )
@@ -36,6 +38,7 @@ from research_harness.schemas.validator import validate_named_schema
 
 ALLOWED_TREE_SEARCH_BACKENDS = {"mock"}
 ExperimentPlanBuilder = Callable[[dict[str, Any], Path], dict[str, Any]]
+CUSTOM_BUILDER_TEMPLATE_ID = "_custom_builder"
 
 
 def run_mock_tree_search(
@@ -44,8 +47,9 @@ def run_mock_tree_search(
     *,
     backend_name: str = "mock",
     max_steps: int | None = None,
-    experiment_plan_builder: ExperimentPlanBuilder = build_demo_experiment_plan,
+    experiment_plan_builder: ExperimentPlanBuilder | None = None,
     record_runner_failures: bool = True,
+    root_node: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if backend_name not in ALLOWED_TREE_SEARCH_BACKENDS:
         raise ValueError(
@@ -53,7 +57,7 @@ def run_mock_tree_search(
         )
     settings = load_settings(repo_root)
     policy = search_policy_from_config(repo_root)
-    root = _demo_node()
+    root = root_node or _demo_node()
     state = initialize_search_state(
         search_id="s_demo_tree",
         root_node=root,
@@ -90,6 +94,7 @@ def run_mock_tree_search(
             experiment_plan_builder=experiment_plan_builder,
             record_failures=record_runner_failures,
         )
+        node["outputs"]["template_used"] = runner_summary["template_used"]
         worker_report = runner_summary["worker_report"]
         validate_named_schema("worker_report", worker_report)
         _write_json(node_run_dir / "worker_report.json", worker_report)
@@ -187,6 +192,7 @@ def run_mock_tree_search(
                 "worker_failure_memory": _failure_memory_summary(worker_failure_memory),
                 "worker_status": worker_report["status"],
                 "next_transition": reduction["next_transition"],
+                "template_used": runner_summary["template_used"],
             }
         )
 
@@ -220,10 +226,16 @@ def _execute_node_runner(
     node_run_dir: Path,
     node: dict[str, Any],
     *,
-    experiment_plan_builder: ExperimentPlanBuilder,
+    experiment_plan_builder: ExperimentPlanBuilder | None,
     record_failures: bool,
 ) -> dict[str, Any]:
-    experiment_plan = experiment_plan_builder(node, run_dir)
+    if experiment_plan_builder is None:
+        experiment_plan, template_used = build_experiment_plan_for_node(
+            repo_root, node, run_dir, settings=settings
+        )
+    else:
+        experiment_plan = experiment_plan_builder(node, run_dir)
+        template_used = CUSTOM_BUILDER_TEMPLATE_ID
     validate_experiment_plan(node, experiment_plan, run_dir)
     experiment_plan_path = node_run_dir / "experiment_plan.json"
     _write_json(experiment_plan_path, experiment_plan)
@@ -271,6 +283,7 @@ def _execute_node_runner(
         "metrics_evidence_paths": evidence_report.metrics_evidence_paths,
         "worker_report": evidence_report.worker_report,
         "runner_failure_memory": _failure_memory_summary(runner_failure_memory),
+        "template_used": template_used,
     }
 
 

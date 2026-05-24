@@ -28,6 +28,8 @@
 ## v3
 
 - Add publication renderers for interactive HTML, HTML slides, markdown paper,
-  and optional final TeX.
+  and optional final TeX. (Interactive HTML, HTML slides, and markdown paper
+  are implemented behind the AC-accept publish dispatcher; TeX still optional
+  and off.)
 - Add calibrated rebuttal scoring and AC policy.
 - Add richer tree visualization and artifact drilldown.

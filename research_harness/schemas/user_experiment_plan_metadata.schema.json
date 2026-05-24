@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/user_experiment_plan_metadata.schema.json",
+  "title": "UserExperimentPlanMetadata",
+  "description": "Subset of experiment_plan.schema.json that the user supplies in <domain>/plan.json. The harness fills in node-derived fields (claim, baselines, success_criteria, disproof, plan_id, node_id, workspace, source_files) before validating against the full experiment_plan schema.",
+  "type": "object",
+  "required": [
+    "task_class",
+    "objective",
+    "entrypoint",
+    "resources",
+    "expected_outputs",
+    "baseline_evidence_requirements"
+  ],
+  "properties": {
+    "plan_id_suffix": { "type": "string", "minLength": 1 },
+    "task_class": {
+      "type": "string",
+      "enum": ["smoke_test", "ablation", "training", "eval", "analysis"]
+    },
+    "objective": { "type": "string", "minLength": 1 },
+    "entrypoint": {
+      "type": "object",
+      "required": ["command", "args"],
+      "properties": {
+        "command": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "resources": {
+      "type": "object",
+      "required": ["timeout_sec"],
+      "properties": {
+        "timeout_sec": { "type": "integer", "minimum": 1 },
+        "gpu": { "type": ["object", "null"] },
+        "cpu": { "type": ["integer", "null"] },
+        "memory_gb": { "type": ["integer", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "inputs": { "type": "object" },
+    "expected_outputs": { "type": "object" },
+    "baseline_evidence_requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "role",
+          "metric_key",
+          "baseline_key",
+          "operator",
+          "margin",
+          "required"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": ["current_best_known", "naive", "random_or_null"]
+          },
+          "metric_key": { "type": "string", "minLength": 1 },
+          "baseline_key": { "type": "string", "minLength": 1 },
+          "operator": {
+            "type": "string",
+            "enum": ["greater_than", "greater_equal", "less_than", "less_equal"]
+          },
+          "margin": { "type": "number", "minimum": 0 },
+          "required": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "guardrails": {
+      "type": "object",
+      "required": ["allowed_write_roots", "forbidden_actions", "scope_policy"],
+      "properties": {
+        "allowed_write_roots": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "forbidden_actions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "scope_policy": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "failure_index_hints": {
+      "type": "object",
+      "properties": {
+        "domain_tags": { "type": "array", "items": { "type": "string" } },
+        "method_tags": { "type": "array", "items": { "type": "string" } },
+        "risk_tags": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "reproducibility": {
+      "type": "object",
+      "required": ["seed", "code_snapshot", "data_snapshot"],
+      "properties": {
+        "seed": {},
+        "code_snapshot": { "type": "string" },
+        "data_snapshot": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

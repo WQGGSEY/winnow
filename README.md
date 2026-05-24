@@ -1,44 +1,257 @@
 # Research Harness
 
-Greenfield-compatible research harness inspired by Sakana AI Scientist-v2, with
+Production-track research harness inspired by Sakana AI Scientist-v2, with
 Claude Code subscription workers treated as bounded runtime tools rather than
-plain completion API calls.
-
-This repository starts from a v0 scaffold. It preserves Sakana-v2-style search
-vocabulary while adding claim contracts, worker envelopes, deterministic critic
-governance, failure/lesson memory, and a rebuttal/AC publication gate.
+plain completion API calls. The current generation adds a user-facing entry
+flow: a grilling agent, a market research agent (PDF retrieval and dossier
+generation), a root-node generator, and a periodic lesson distillation agent.
 
 References:
 
 - Sakana AI Scientist-v2 repository: https://github.com/SakanaAI/AI-Scientist-v2
 - Sakana AI Scientist-v2 BFTS config: https://github.com/SakanaAI/AI-Scientist-v2/blob/main/bfts_config.yaml
 
-## Current v0 Scope
+## Pipeline Overview
 
-Included:
+```text
+user goal
+  -> grilling agent (multi-turn, sonnet) -> grilling_session.json
+  -> market research agent (arXiv + Google Scholar, agent-level not worker)
+        -> reference_papers/ (PDFs + metadata)
+        -> baseline_dossier (memory/baseline_dossiers/)
+  -> root node generator (deterministic) -> root_node.json
+  -> production runner (preflight, mock tree search, rebuttal/AC, publish)
+        -> publication artifacts (interactive_html, slides_html, markdown paper)
+```
 
-- Claim-centered node schema.
-- Runtime envelope and worker report schemas.
+`research_harness.research_runner` is the high-level CLI that drives this. Live
+Claude invocations remain behind explicit billing + execution acknowledgements.
+
+## Included
+
+- Claim-centered node schema and runtime envelope.
 - Baseline dossier structure with current-best, naive, and random/null roles.
 - Always-included one-line lesson memory.
 - Deterministic critic folder routing.
-- Rebuttal packet, rebuttal critic stage, AC decision schema.
-- Dry-run Claude Code invocation envelope and bounded prompt generation.
+- Rebuttal packet, rebuttal critic stage, AC decision.
+- Worker-task contracts that restrict Claude worker output to source patches or
+  observed results; the harness derives worker reports.
 - Deterministic experiment-plan contracts, local runner manifest validation,
   bounded execution, baseline-evidence checks, and source/metrics-evidence
   ingestion into worker reports.
-- Worker-task contracts that restrict Claude worker output to source patches or
-  observed results; the harness derives worker reports.
-- Baseline dossier validation and dry-run resolution report.
-- Dry-run end-to-end pipeline that writes a research state bundle and HTML summary.
+- Live Claude smoke runner + operator-controlled live node dispatch with
+  reduction/memory/rebuttal modules behind approval gates.
+- Production runner that chains preflight, mock tree search, rebuttal/AC, and a
+  publish dispatcher that only renders on AC `accept` and follows
+  `settings.publishing.default_outputs` (`interactive_html`, `slides_html`,
+  optionally `markdown_paper`).
+- **Grilling agent** (`research_harness.agents.grilling`): multi-turn sonnet
+  loop driven by the harness; outputs schema-valid `grilling_session.json`.
+- **Market research agent** (`research_harness.agents.market_research`):
+  agent-level (tools allowed, not a worker). arXiv API + Google Scholar
+  scraping; downloads PDFs; produces a baseline_dossier candidate satisfying
+  full dossier invariants.
+- **Root node generator** (`research_harness.orchestrator.root_node_from_grilling`):
+  deterministic conversion of grilling output into a schema-valid root node;
+  placeholder baseline_dossier_id is replaced after market research.
+- **Lesson distillation agent** (`research_harness.memory.lesson_distillation`):
+  deterministic byte-threshold trigger; live sonnet compresses lessons; old
+  `lessons.yaml` archived under `memory/lessons/archive/`; approval gate
+  required before writing.
 
-Excluded for v0:
+## Still Open
 
-- Live Claude Code execution.
-- Full Sakana-v2 BFTS parity.
-- Real long-running training runner.
-- Automated web baseline resolution.
-- Full camera-ready generation.
+- Sakana-v2 BFTS parity for cross-node search heuristics.
+- Real long-running training runner (slurm/container path).
+- Final TeX renderer (disabled by default per token policy).
+- Richer tree-visualization drilldown.
+
+## Run The Full Research Pipeline
+
+```bash
+# 1. grilling — multi-turn live sonnet interview
+RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack \
+RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE=live_smoke_ack \
+python -B -m research_harness.research_runner grill \
+  --user-goal "your research goal" \
+  --billing-ack --execute-ack \
+  --run-dir runs/grilling/<id>
+
+# 2. research — market research (arXiv + Google Scholar) + root node + production
+python -B -m research_harness.research_runner research \
+  --grilling-session runs/grilling/<id>/grilling_session.json \
+  --run-dir runs/research/<id>
+
+# 3. distill — periodic deterministic distillation (triggered by lesson byte total)
+RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack \
+RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE=live_smoke_ack \
+python -B -m research_harness.research_runner distill --approve
+```
+
+`grill` runs a bounded multi-turn loop against Claude sonnet (each round emits
+either `{"action":"ASK","question":...}` or `{"action":"DONE","extracted":...}`);
+the harness asks the user via stdin between turns. The session is force-extracted
+on max_rounds and persisted as schema-valid `grilling_session.json`.
+
+`research` runs the agent-level market research pass: arXiv API + best-effort
+Google Scholar scrape, downloads PDFs into `reference_papers/`, writes a
+baseline dossier candidate into `memory/baseline_dossiers/`, derives the root
+node, and chains into the production pipeline.
+
+`distill` only triggers when total active-lesson bytes exceed
+`settings.memory.lessons.distillation_token_threshold_bytes`. It calls live
+sonnet, archives the existing `lessons.yaml` under
+`memory/lessons/archive/lessons_<utc>.yaml`, and only rewrites `lessons.yaml`
+after `--approve`.
+
+## Run The Production Pipeline (root node provided)
+
+```bash
+python -B -m research_harness.production_runner
+```
+
+Chains preflight, mock tree search, rebuttal/AC, and the gated publish
+dispatcher in one command. Without a custom root node, uses the demo node.
+Writes `runs/production_run/production_run_summary.json` and, when AC accepts,
+renders the publication artifacts listed in `settings.publishing.default_outputs`.
+Live Claude execution stays outside this chain; operators still drive live nodes
+through `research_harness.orchestrator.live_dispatch` and the existing
+approval-gated modules.
+
+## Experiment Plan Templates (per-domain, directory-based)
+
+Real experiment code lives in user-owned template directories listed in
+`settings.json`:
+
+```json
+"experiment_plan_templates": {
+  "directories": ["experiment_plan_templates", "my_other_templates"]
+}
+```
+
+Each directory contains **one subdirectory per domain**, which is a real
+Python project — not a single file:
+
+```
+experiment_plan_templates/
+  retrieval/
+    plan.json                 # metadata only
+    src/                      # actual project tree, materialized verbatim
+      __init__.py
+      experiment.py           # entrypoint
+      data.py
+      proposed.py
+      baselines/
+        current_best.py
+        naive.py
+        random_baseline.py
+      eval/
+        ndcg.py
+```
+
+The router
+(`research_harness.orchestrator.experiment_plan.build_experiment_plan_for_node`)
+searches the configured directories in order, loads `<domain>/plan.json`,
+walks `<domain>/src/` and embeds every allowed source file into the
+materialized experiment plan, then validates against
+`experiment_plan.schema.json`. The whole `src/` tree is copied into the
+node workspace before the runner executes the entrypoint, so normal
+multi-module Python imports work.
+
+If no directory matches the node's domain, the router falls back to the
+deterministic demo plan and the publish dispatcher refuses to render
+artifacts (`evidence_is_fake` guard).
+
+See `experiment_plan_templates/README.md` for the full authoring contract.
+
+`production_run_summary.json` includes:
+
+```json
+"templates_used": {"n_xxx": "retrieval" | "_fallback_demo" | ...},
+"fallback_node_ids": ["n_yyy", ...],
+"evidence_is_fake": true | false
+```
+
+So you can immediately see whether the metrics you are reading came from
+your real evaluation script or from the demo fallback.
+
+### Grilling agent only emits registered domain names
+
+`research_runner grill` injects the list of available domains (gathered from
+your configured template directories) into the grilling system prompt as a
+required enum. The agent must pick exactly one of them — it cannot invent a
+new domain name. If the LLM ever returns an off-enum domain, the harness
+rejects the session with a clear error rather than silently falling back to
+fake evidence.
+
+### Market research writes a real analysis brief
+
+`research_runner research` runs the market research agent which:
+
+1. Searches arXiv (and optionally Google Scholar) for the grilled query.
+2. Downloads PDFs into `<run>/reference_papers/`.
+3. Writes a deterministic baseline-analysis markdown (or, with
+   `enable_sonnet_analysis=True` + billing/execution ack, an LLM-written
+   markdown brief) at `<run>/baseline_analysis.md`. The markdown identifies
+   the most likely current-best / naive / random baselines with reported
+   metrics and citations.
+4. The path is recorded on the root node under
+   `lineage.inherited_assumptions` so downstream orchestrator / template
+   code can find it.
+
+A starter template for the `retrieval` domain (toy nDCG@10 evaluation) is
+included as an example. See `experiment_plan_templates/README.md` for the
+full authoring contract.
+
+## Per-Agent Model Selection
+
+`settings.json` exposes per-role model selection for every live-Claude
+agent. Defaults to `sonnet` everywhere; override one role at a time:
+
+```json
+"runtime": {
+  "agent_models": {
+    "default": "sonnet",
+    "grilling_agent": "opus",
+    "market_research_agent": "sonnet",
+    "lesson_distillation_agent": "haiku"
+  }
+}
+```
+
+Resolution order (per role): explicit role entry → `default` → live
+backend's `model` → literal `"sonnet"`. All three agents
+(`research_harness.agents.grilling`,
+`research_harness.agents.market_research`,
+`research_harness.memory.lesson_distillation`) call
+`research_harness.config.resolve_agent_model(settings, role)` when
+constructing the live CLI invocation, so changing settings is the only
+thing you need to do.
+
+## Critic Personas
+
+`critics/` is organised by routing (`always/`, `by_node_type/<type>/`,
+`by_domain/<domain>/`, `by_stage/<stage>/`). Current personas:
+
+- `always/invariants_v1` — constitutional rule check.
+- `always/runtime_safety_v1` — runtime envelope and permission policy.
+- `always/senior_quant_researcher_v1` — quantitative rigor: variance,
+  significance, baseline parity. Flags within-noise improvements as
+  non-blocking objections.
+- `always/reproducibility_auditor_v1` — seed / snapshot / artifact
+  reproducibility. Flags missing JSON metrics.
+- `by_node_type/capability/capability_strict_v1` — capability claim depth.
+- `by_node_type/capability/experimental_methodologist_v1` — design controls
+  the variable the claim names.
+- `by_node_type/necessity/...`, `by_node_type/mechanism/...`,
+  `by_node_type/validity/...` — type-specific rigor.
+- `by_stage/rebuttal/whole_case_validity_v1`,
+  `by_stage/rebuttal/overclaim_detector_v1`,
+  `by_stage/rebuttal/publication_readiness_v1`,
+  `by_stage/rebuttal/claim_skeptic_v1` — rebuttal-stage challenges.
+
+Add a persona by dropping a markdown file in the right routing directory
+with `critic_profile_id` frontmatter.
 
 ## Run The Demo
 
@@ -159,22 +372,33 @@ mutation is forbidden.
 ## Core Files
 
 ```text
-settings.json                 Runtime, memory, publishing, and publication-gate knobs.
-configs/harness.yaml           Sakana-like search config plus harness_semantics.
-research_profile.md            Positive research taste and branch-generation priors.
-lessons.yaml                   Active one-line lessons always included in orchestration.
-critics/                       Deterministic critic personas.
-memory/                        Failure, lesson, and baseline dossier indexes.
-research_harness/              Standard-library v0 package.
+settings.json                          Runtime, memory, publishing, publication-gate, distillation knobs.
+configs/harness.yaml                   Sakana-like search config plus harness_semantics.
+research_profile.md                    Positive research taste and branch-generation priors.
+lessons.yaml                           Active one-line lessons always included in orchestration.
+critics/                               Deterministic critic personas.
+memory/                                Failure, lesson, and baseline dossier indexes.
+research_harness/agents/grilling.py    Multi-turn grilling agent (sonnet).
+research_harness/agents/market_research.py  Agent-level paper search and dossier candidate generation.
+research_harness/memory/lesson_distillation.py  Periodic deterministic-trigger distillation.
+research_harness/orchestrator/         Tree search, reduction, live dispatch, root node generator.
+research_harness/production_runner.py  preflight + tree search + rebuttal/AC + publish chain.
+research_harness/research_runner.py    User-facing high-level CLI (grill / research / distill).
 ```
 
 ## Non-Overridable Invariants
 
 - Workers do not own search policy.
 - Workers write only node-local artifacts.
+- **Agents** (grilling, market research, distillation) are conceptually
+  elevated above workers: tools allowed and multi-turn allowed, but still
+  bounded by schema contracts, billing/execution gates, and (for memory-mutating
+  agents) an approval gate.
 - Critics are read-only and selected by deterministic governance.
 - Experiments require claim contracts.
 - Missing mandatory baselines make a claim not evaluable or confounded.
 - Claude Code subscription auth is runtime preflight responsibility.
 - Long-running jobs belong to deterministic runners, not agent sessions.
 - Publication requires rebuttal and AC gating when enabled.
+- `lessons.yaml` and `memory/baseline_dossiers/` mutations require the
+  appropriate approval gate; the existing file is archived before being replaced.

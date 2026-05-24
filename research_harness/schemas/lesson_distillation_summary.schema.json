@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/lesson_distillation_summary.schema.json",
+  "title": "LessonDistillationSummary",
+  "type": "object",
+  "required": [
+    "type",
+    "status",
+    "triggered",
+    "threshold_bytes",
+    "current_bytes",
+    "lesson_count_before",
+    "lesson_count_after",
+    "approval_required",
+    "approved",
+    "summary_path",
+    "lessons_path",
+    "archive_path",
+    "distilled_lessons",
+    "model",
+    "usage",
+    "created_at",
+    "error"
+  ],
+  "properties": {
+    "type": { "type": "string", "enum": ["lesson_distillation_summary"] },
+    "status": {
+      "type": "string",
+      "enum": [
+        "not_triggered",
+        "triggered_blocked_by_gate",
+        "triggered_blocked_by_execution_ack",
+        "triggered_blocked_by_approval",
+        "applied",
+        "failed"
+      ]
+    },
+    "triggered": { "type": "boolean" },
+    "threshold_bytes": { "type": "integer", "minimum": 0 },
+    "current_bytes": { "type": "integer", "minimum": 0 },
+    "lesson_count_before": { "type": "integer", "minimum": 0 },
+    "lesson_count_after": { "type": "integer", "minimum": 0 },
+    "approval_required": { "type": "boolean" },
+    "approved": { "type": "boolean" },
+    "summary_path": { "type": "string", "minLength": 1 },
+    "lessons_path": { "type": "string", "minLength": 1 },
+    "archive_path": { "type": ["string", "null"] },
+    "distilled_lessons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "text", "tags", "evidence_refs"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "text": { "type": "string", "minLength": 1 },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "evidence_refs": { "type": "array", "items": { "type": "string" } },
+          "merges": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": false
+      }
+    },
+    "model": { "type": "string" },
+    "usage": {
+      "type": "object",
+      "required": ["cost_usd", "input_tokens", "output_tokens"],
+      "properties": {
+        "cost_usd": { "type": ["number", "null"] },
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "created_at": { "type": "string", "minLength": 1 },
+    "error": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}

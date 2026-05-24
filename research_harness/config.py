@@ -214,6 +214,36 @@ def load_lessons(repo_root: Path) -> dict[str, Any]:
     return lessons
 
 
+def resolve_agent_model(settings: dict[str, Any], role: str) -> str:
+    """Pick the model name for a given agent role.
+
+    Resolution order:
+      1. settings.runtime.agent_models.<role>
+      2. settings.runtime.agent_models.default
+      3. settings.runtime.worker_backends.claude_code_live.model
+      4. literal "sonnet" as a last-resort default.
+    """
+
+    runtime = settings.get("runtime", {}) if isinstance(settings, dict) else {}
+    agent_models = runtime.get("agent_models", {}) or {}
+    if isinstance(agent_models, dict):
+        explicit = agent_models.get(role)
+        if isinstance(explicit, str) and explicit.strip():
+            return explicit
+        default = agent_models.get("default")
+        if isinstance(default, str) and default.strip():
+            return default
+    live = (
+        runtime.get("worker_backends", {}).get("claude_code_live", {})
+        if isinstance(runtime.get("worker_backends"), dict)
+        else {}
+    )
+    fallback = live.get("model") if isinstance(live, dict) else None
+    if isinstance(fallback, str) and fallback.strip():
+        return fallback
+    return "sonnet"
+
+
 def load_critic_profile(path: Path) -> dict[str, Any]:
     frontmatter, body = split_frontmatter(path)
     if frontmatter.get("override_policy") not in {None, "taste_only"}:

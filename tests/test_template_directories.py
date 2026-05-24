@@ -1,0 +1,308 @@
+from __future__ import annotations
+
+import copy
+import json
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+from research_harness.agents.grilling import GrillingError, run_grilling_session
+from research_harness.config import resolve_agent_model
+from research_harness.orchestrator.experiment_plan import (
+    FALLBACK_TEMPLATE_ID,
+    build_experiment_plan_for_node,
+    list_available_domains,
+    template_directories,
+)
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+_VALID_PLAN = {
+    "task_class": "smoke_test",
+    "objective": "alt domain template",
+    "entrypoint": {"command": ["python"], "args": ["src/experiment.py"]},
+    "resources": {"timeout_sec": 60, "cpu": 1, "memory_gb": 1, "gpu": None},
+    "inputs": {"datasets": [], "snapshots": []},
+    "expected_outputs": {
+        "metrics_files": ["artifacts/metrics.json"],
+        "logs": ["artifacts/run.log"],
+        "artifact_dirs": ["artifacts/"],
+    },
+    "baseline_evidence_requirements": [
+        {"role": "current_best_known", "metric_key": "bounded_worker_success_rate",
+         "baseline_key": "current_best_known", "operator": "greater_than",
+         "margin": 0, "required": True},
+        {"role": "naive", "metric_key": "bounded_worker_success_rate",
+         "baseline_key": "naive_direct_port", "operator": "greater_than",
+         "margin": 0, "required": True},
+        {"role": "random_or_null", "metric_key": "bounded_worker_success_rate",
+         "baseline_key": "random_or_null", "operator": "greater_than",
+         "margin": 0, "required": True},
+    ],
+}
+
+
+_EXPERIMENT_PY = (
+    "import json\n"
+    "from pathlib import Path\n"
+    "art = Path('artifacts'); art.mkdir(exist_ok=True)\n"
+    "(art/'metrics.json').write_text(json.dumps({\n"
+    "    'metrics': {'bounded_worker_success_rate': 0.99},\n"
+    "    'baselines': {'current_best_known': 0.8, 'naive_direct_port': 0.4, 'random_or_null': 0.05},\n"
+    "    'claim_verdict_candidate': 'supported',\n"
+    "    'disproof_conditions_hit': [],\n"
+    "    'unexpected_observations': [],\n"
+    "}, indent=2))\n"
+)
+
+
+def _stage_template(root: Path, dirname: str, domain: str) -> Path:
+    target = root / dirname / domain
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "plan.json").write_text(json.dumps(_VALID_PLAN))
+    src = target / "src"
+    src.mkdir(exist_ok=True)
+    (src / "experiment.py").write_text(_EXPERIMENT_PY)
+    return target
+
+
+def _make_completed(stdout: str) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(args=["claude"], returncode=0, stdout=stdout, stderr="")
+
+
+def _wrap_assistant_text(text: str) -> str:
+    return json.dumps(
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "num_turns": 1,
+            "result": text,
+            "total_cost_usd": 0.001,
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+    )
+
+
+class TemplateDirectoryRouterTests(unittest.TestCase):
+    def test_template_directories_reads_settings(self) -> None:
+        self.assertEqual(template_directories(None), ["experiment_plan_templates"])
+        settings = {
+            "experiment_plan_templates": {
+                "directories": ["my_templates", "shared_templates"]
+            }
+        }
+        self.assertEqual(
+            template_directories(settings),
+            ["my_templates", "shared_templates"],
+        )
+
+    def test_list_available_domains_requires_plan_and_src(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _stage_template(root, "primary", "retrieval")
+            # broken: plan.json only, no src/
+            half = root / "primary" / "halfbaked"
+            half.mkdir(parents=True)
+            (half / "plan.json").write_text(json.dumps(_VALID_PLAN))
+            # secondary directory adds another full template + a duplicate
+            _stage_template(root, "secondary", "rl")
+            _stage_template(root, "secondary", "retrieval")
+            (root / "primary" / "_internal").mkdir()
+            (root / "primary" / "not-a-module").mkdir()
+            settings = {
+                "experiment_plan_templates": {"directories": ["primary", "secondary"]}
+            }
+            domains = list_available_domains(root, settings)
+            self.assertEqual(domains, ["retrieval", "rl"])
+            self.assertNotIn("halfbaked", domains)
+            self.assertNotIn("_internal", domains)
+            self.assertNotIn("not-a-module", domains)
+
+    def test_router_searches_listed_directories_in_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _stage_template(root, "secondary", "altdom")
+            settings = {
+                "experiment_plan_templates": {"directories": ["primary", "secondary"]}
+            }
+            from research_harness.orchestrator.demo import _demo_node
+            import copy as _copy
+            node = _copy.deepcopy(_demo_node())
+            node["domain"] = "altdom"
+            plan, used = build_experiment_plan_for_node(
+                root, node, root / "run", settings=settings
+            )
+            self.assertEqual(used, "altdom")
+            self.assertEqual(plan["objective"], "alt domain template")
+
+
+class GrillingAllowedDomainsTests(unittest.TestCase):
+    def _captured_system_prompt(self, runner_calls: list[dict]) -> str:
+        cmd = runner_calls[0]["cmd"]
+        sys_index = cmd.index("--system-prompt")
+        return cmd[sys_index + 1]
+
+    def test_enum_injected_into_system_prompt(self) -> None:
+        captured = []
+
+        def _runner(cmd, *, input, capture_output, text, timeout, check, env):
+            captured.append({"cmd": cmd})
+            return _make_completed(
+                _wrap_assistant_text(
+                    json.dumps(
+                        {
+                            "action": "DONE",
+                            "extracted": {
+                                "root_goal_id": "rg_x",
+                                "domain": "retrieval",
+                                "node_type": "capability",
+                                "claim_under_test": "x",
+                                "mandatory_baselines": ["a"],
+                                "success_criteria": ["b"],
+                                "disproof_conditions": ["c"],
+                                "goal_facets": [],
+                                "taste_constraints": [],
+                                "search_query_seed": "x",
+                            },
+                        }
+                    )
+                )
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            session = run_grilling_session(
+                REPO_ROOT,
+                user_goal="x",
+                run_dir=Path(tmp),
+                billing_ack=True,
+                execution_ack=True,
+                command_runner=_runner,
+                input_provider=lambda q: "",
+                allowed_domains=["retrieval", "rag"],
+            )
+            self.assertEqual(session["status"], "done")
+            sysp = self._captured_system_prompt(captured)
+            self.assertIn('"retrieval"', sysp)
+            self.assertIn('"rag"', sysp)
+            self.assertIn("MUST be exactly one of", sysp)
+
+    def test_done_with_off_enum_domain_is_rejected(self) -> None:
+        runner_response = _wrap_assistant_text(
+            json.dumps(
+                {
+                    "action": "DONE",
+                    "extracted": {
+                        "root_goal_id": "rg_x",
+                        "domain": "made_up_domain",
+                        "node_type": "capability",
+                        "claim_under_test": "x",
+                        "mandatory_baselines": ["a"],
+                        "success_criteria": ["b"],
+                        "disproof_conditions": ["c"],
+                        "goal_facets": [],
+                        "taste_constraints": [],
+                        "search_query_seed": "x",
+                    },
+                }
+            )
+        )
+
+        def _runner(cmd, *, input, capture_output, text, timeout, check, env):
+            return _make_completed(runner_response)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(GrillingError) as ctx:
+                run_grilling_session(
+                    REPO_ROOT,
+                    user_goal="x",
+                    run_dir=Path(tmp),
+                    billing_ack=True,
+                    execution_ack=True,
+                    command_runner=_runner,
+                    input_provider=lambda q: "",
+                    allowed_domains=["retrieval", "rag"],
+                )
+            self.assertIn("not in the operator-registered domain list", str(ctx.exception))
+
+
+class AgentModelResolveTests(unittest.TestCase):
+    def test_per_role_overrides_default(self) -> None:
+        settings = {
+            "runtime": {
+                "agent_models": {
+                    "default": "haiku",
+                    "grilling_agent": "opus",
+                    "market_research_agent": "sonnet",
+                }
+            }
+        }
+        self.assertEqual(resolve_agent_model(settings, "grilling_agent"), "opus")
+        self.assertEqual(resolve_agent_model(settings, "market_research_agent"), "sonnet")
+        # role with no entry uses default
+        self.assertEqual(resolve_agent_model(settings, "lesson_distillation_agent"), "haiku")
+
+    def test_falls_back_to_live_backend_model(self) -> None:
+        settings = {
+            "runtime": {
+                "worker_backends": {
+                    "claude_code_live": {"model": "sonnet"}
+                }
+            }
+        }
+        self.assertEqual(resolve_agent_model(settings, "grilling_agent"), "sonnet")
+
+    def test_falls_back_to_literal_sonnet_when_nothing_configured(self) -> None:
+        self.assertEqual(resolve_agent_model({}, "grilling_agent"), "sonnet")
+
+    def test_grilling_picks_up_explicit_model_from_settings(self) -> None:
+        # Verify the wiring: grilling agent passes the resolved model to the CLI.
+        captured = []
+
+        def _runner(cmd, *, input, capture_output, text, timeout, check, env):
+            captured.append(cmd)
+            return _make_completed(
+                _wrap_assistant_text(
+                    json.dumps(
+                        {
+                            "action": "DONE",
+                            "extracted": {
+                                "root_goal_id": "rg_x",
+                                "domain": "retrieval",
+                                "node_type": "capability",
+                                "claim_under_test": "x",
+                                "mandatory_baselines": ["a"],
+                                "success_criteria": ["b"],
+                                "disproof_conditions": ["c"],
+                                "goal_facets": [],
+                                "taste_constraints": [],
+                                "search_query_seed": "x",
+                            },
+                        }
+                    )
+                )
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_grilling_session(
+                REPO_ROOT,
+                user_goal="x",
+                run_dir=Path(tmp),
+                billing_ack=True,
+                execution_ack=True,
+                command_runner=_runner,
+                input_provider=lambda q: "",
+                allowed_domains=["retrieval"],
+            )
+            # default settings.json has "grilling_agent": "sonnet"
+            cmd = captured[0]
+            model_index = cmd.index("--model")
+            self.assertEqual(cmd[model_index + 1], "sonnet")
+
+
+if __name__ == "__main__":
+    unittest.main()

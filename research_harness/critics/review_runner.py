@@ -18,6 +18,77 @@ def _missing_baseline_roles(node: dict[str, Any]) -> list[str]:
     return sorted(required - present)
 
 
+def _quant_review(
+    worker_report: dict[str, Any],
+    node: dict[str, Any],
+    scores: dict[str, int],
+    objections: list[dict[str, str]],
+) -> None:
+    metrics = worker_report.get("metrics") or {}
+    baselines = worker_report.get("baselines") or {}
+    if not isinstance(metrics, dict) or not isinstance(baselines, dict):
+        return
+    numeric_metrics = {
+        k: v for k, v in metrics.items() if isinstance(v, (int, float))
+    }
+    current_best_candidates = [
+        v
+        for k, v in baselines.items()
+        if isinstance(v, (int, float))
+        and ("current_best" in k or k == "current_best_known")
+    ]
+    if not numeric_metrics or not current_best_candidates:
+        return
+    main_metric = numeric_metrics[sorted(numeric_metrics.keys())[0]]
+    current_best = current_best_candidates[0]
+    if current_best <= 0:
+        return
+    delta = (main_metric - current_best) / current_best
+    if 0 < delta < 0.01:
+        scores["validity"] = min(scores["validity"], 6)
+        objections.append(
+            {
+                "claim_affected": node["claim_contract"]["claim_under_test"],
+                "objection": (
+                    f"Improvement over current_best is {delta * 100:.2f}% — "
+                    "likely within noise without explicit variance / "
+                    "significance reporting."
+                ),
+                "required_resolution": (
+                    "Report variance across seeds and a significance test "
+                    "before claiming an improvement."
+                ),
+            }
+        )
+
+
+def _reproducibility_review(
+    worker_report: dict[str, Any],
+    node: dict[str, Any],
+    scores: dict[str, int],
+    objections: list[dict[str, str]],
+) -> None:
+    artifacts = worker_report.get("artifacts") or []
+    metrics_present = any(
+        isinstance(a, str) and a.endswith(".json") for a in artifacts
+    )
+    if not metrics_present:
+        scores["reproducibility"] = min(scores["reproducibility"], 5)
+        objections.append(
+            {
+                "claim_affected": node["claim_contract"]["claim_under_test"],
+                "objection": (
+                    "No machine-readable JSON metrics artifact recorded by "
+                    "the worker; reproducibility audit cannot read numbers."
+                ),
+                "required_resolution": (
+                    "Have the experiment write a JSON metrics file under "
+                    "the node workspace artifacts/."
+                ),
+            }
+        )
+
+
 def run_critic_reviews(
     node: dict[str, Any],
     worker_report: dict[str, Any],
@@ -89,6 +160,12 @@ def run_critic_reviews(
         if "runtime_safety" in critic_id or "nested_agent" in critic_id:
             if node["runtime_profile"]["worker_type"] == "experiment_worker":
                 scores["validity"] = min(scores["validity"], 7)
+
+        if "senior_quant" in critic_id:
+            _quant_review(worker_report, node, scores, objections)
+
+        if "reproducibility_auditor" in critic_id:
+            _reproducibility_review(worker_report, node, scores, objections)
 
         lesson_candidates: list[str] = []
         if worker_report.get("unexpected_observations"):

@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/grilling_session.schema.json",
+  "title": "GrillingSession",
+  "type": "object",
+  "required": [
+    "session_id",
+    "status",
+    "user_goal",
+    "max_rounds",
+    "rounds",
+    "extracted",
+    "model",
+    "created_at",
+    "usage_estimate"
+  ],
+  "properties": {
+    "session_id": { "type": "string", "pattern": "^grill_[A-Za-z0-9_\\-]+$" },
+    "status": {
+      "type": "string",
+      "enum": ["in_progress", "done", "max_rounds_reached", "blocked_by_gate", "blocked_by_execution_ack", "aborted"]
+    },
+    "user_goal": { "type": "string", "minLength": 1 },
+    "max_rounds": { "type": "integer", "minimum": 1, "maximum": 50 },
+    "model": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "minLength": 1 },
+    "rounds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["round_index", "question", "user_response"],
+        "properties": {
+          "round_index": { "type": "integer", "minimum": 0 },
+          "question": { "type": "string", "minLength": 1 },
+          "user_response": { "type": "string" },
+          "raw_action": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "extracted": {
+      "type": "object",
+      "required": [
+        "root_goal_id",
+        "domain",
+        "node_type",
+        "claim_under_test",
+        "mandatory_baselines",
+        "success_criteria",
+        "disproof_conditions",
+        "goal_facets",
+        "taste_constraints",
+        "search_query_seed"
+      ],
+      "properties": {
+        "root_goal_id": { "type": "string", "pattern": "^rg_[A-Za-z0-9_\\-]+$" },
+        "domain": { "type": "string", "minLength": 1 },
+        "node_type": {
+          "type": "string",
+          "enum": [
+            "capability",
+            "validity",
+            "necessity",
+            "boundary",
+            "mechanism",
+            "constraint",
+            "taste",
+            "operational"
+          ]
+        },
+        "claim_under_test": { "type": "string", "minLength": 1 },
+        "mandatory_baselines": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "success_criteria": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "disproof_conditions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "goal_facets": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "taste_constraints": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "search_query_seed": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "usage_estimate": {
+      "type": "object",
+      "required": ["rounds_used", "total_cost_usd", "total_input_tokens", "total_output_tokens"],
+      "properties": {
+        "rounds_used": { "type": "integer", "minimum": 0 },
+        "total_cost_usd": { "type": ["number", "null"] },
+        "total_input_tokens": { "type": "integer", "minimum": 0 },
+        "total_output_tokens": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "session_path": { "type": "string" },
+    "error": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}

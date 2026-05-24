@@ -22,6 +22,12 @@
       "ablation": 7200,
       "training": 21600
     },
+    "agent_models": {
+      "default": "sonnet",
+      "grilling_agent": "sonnet",
+      "market_research_agent": "sonnet",
+      "lesson_distillation_agent": "sonnet"
+    },
     "worker_backends": {
       "mock": {
         "required_for_ci": true
@@ -47,7 +53,8 @@
     "lessons": {
       "always_include_active": true,
       "max_chars_per_lesson": 240,
-      "distill_when_count_exceeds": 40
+      "distill_when_count_exceeds": 40,
+      "distillation_token_threshold_bytes": 2000
     }
   },
   "publishing": {
@@ -65,6 +72,12 @@
       "avoid_tex_until_final": true,
       "prefer_structured_artifacts": true
     }
+  },
+  "experiment_plan_templates": {
+    "directories": [
+      "experiment_plan_templates"
+    ],
+    "fallback_template_id": "_fallback_demo"
   },
   "publication_gate": {
     "enabled": true,

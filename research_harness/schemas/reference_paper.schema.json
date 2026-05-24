@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/reference_paper.schema.json",
+  "title": "ReferencePaper",
+  "type": "object",
+  "required": ["id", "source", "title", "authors", "url"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "source": {
+      "type": "string",
+      "enum": ["arxiv", "google_scholar", "manual", "websearch"]
+    },
+    "title": { "type": "string", "minLength": 1 },
+    "authors": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "abstract": { "type": ["string", "null"] },
+    "url": { "type": "string", "minLength": 1 },
+    "pdf_path": { "type": ["string", "null"] },
+    "pdf_bytes": { "type": ["integer", "null"], "minimum": 0 },
+    "year": { "type": ["integer", "null"] },
+    "arxiv_id": { "type": ["string", "null"] },
+    "fetched_at": { "type": ["string", "null"] },
+    "download_status": {
+      "type": "string",
+      "enum": ["downloaded", "skipped", "failed", "not_attempted"]
+    },
+    "download_error": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}
