@@ -117,6 +117,90 @@ def has_placeholder_baseline(node: dict[str, Any]) -> bool:
     return False
 
 
+def build_root_node_from_refined_plan(
+    refined_plan: dict[str, Any],
+    grilling_session: dict[str, Any],
+    *,
+    baseline_dossier_id: str | None = None,
+    candidate_ids: list[str] | None = None,
+    dataset_manifest_path: str | None = None,
+    node_id_suffix: str = "root",
+    runtime_turn_budget: int = 6,
+) -> dict[str, Any]:
+    """Build a root node from the refined_research_plan + the grilling session it
+    came from. The refined claim/baselines/success/disproof override what
+    grilling produced; everything else still comes from grilling.
+    """
+
+    from research_harness.schemas.validator import validate_named_schema
+
+    validate_named_schema("refined_research_plan", refined_plan)
+    validate_named_schema("grilling_session", grilling_session)
+
+    extracted = grilling_session["extracted"]
+    node_id = _build_node_id(extracted["root_goal_id"], node_id_suffix)
+    failure_tags = _collect_failure_tags(extracted, None)
+    dossier_id = baseline_dossier_id or PLACEHOLDER_BASELINE_DOSSIER_ID
+    candidate_ids = list(candidate_ids or [])
+
+    inherited = [
+        "Outer orchestrator owns search policy.",
+        "Workers are bounded tools.",
+        f"refined_research_plan: {refined_plan['plan_id']}",
+    ]
+    plan_file_path = refined_plan.get("plan_path")
+    if plan_file_path:
+        inherited.append(f"refined_research_plan_path: {plan_file_path}")
+    if dataset_manifest_path:
+        inherited.append(f"dataset_manifest_path: {dataset_manifest_path}")
+
+    node = {
+        "id": node_id,
+        "type": extracted["node_type"],
+        "status": "ready",
+        "domain": extracted["domain"],
+        "stage": "promotion",
+        "parent": None,
+        "lineage": {
+            "root_goal_id": extracted["root_goal_id"],
+            "covers_goal_facets": list(extracted.get("goal_facets") or []),
+            "inherited_assumptions": inherited,
+            "introduced_assumptions": [
+                f"Grilling session {grilling_session['session_id']} + refined plan {refined_plan['plan_id']} produced this root node.",
+            ],
+            "taste_constraints_applied": list(extracted.get("taste_constraints") or []),
+        },
+        "claim_contract": {
+            "claim_under_test": refined_plan["claim_under_test"],
+            "mandatory_baselines": list(refined_plan["mandatory_baselines"]),
+            "success_criteria": list(refined_plan["success_criteria"]),
+            "disproof_conditions": list(refined_plan["disproof_conditions"]),
+        },
+        "baseline_refs": [
+            {
+                "baseline_dossier_id": dossier_id,
+                "candidate_ids": candidate_ids,
+                "roles": ["current_best_known", "naive", "random_or_null"],
+            }
+        ],
+        "runtime_profile": {
+            "worker_type": "experiment_worker",
+            "timeout_policy": "task_class_dependent",
+            "turn_budget": int(runtime_turn_budget),
+        },
+        "failure_retrieval": {
+            "query_tags": failure_tags,
+            "selected_fail_files": [],
+        },
+        "outputs": {
+            "artifacts": [],
+            "verdict": None,
+        },
+    }
+    validate_node_invariants(node)
+    return node
+
+
 def attach_market_research_dossier(
     node: dict[str, Any],
     *,

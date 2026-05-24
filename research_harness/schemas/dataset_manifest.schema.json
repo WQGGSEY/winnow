@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/dataset_manifest.schema.json",
+  "title": "DatasetManifest",
+  "description": "Per-node-workspace JSON written by the refiner. Maps dataset_spec.id to its materialized location plus the original spec, so user template code can read absolute paths without re-doing fetches.",
+  "type": "object",
+  "required": ["type", "created_at", "source_plan_id", "datasets"],
+  "properties": {
+    "type": { "type": "string", "enum": ["dataset_manifest"] },
+    "created_at": { "type": "string", "minLength": 1 },
+    "source_plan_id": { "type": "string", "minLength": 1 },
+    "datasets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["spec", "materialized_path", "verified_at", "size_bytes", "fetcher_type"],
+        "properties": {
+          "spec": { "type": "object" },
+          "materialized_path": { "type": ["string", "null"] },
+          "verified_at": { "type": "string", "minLength": 1 },
+          "size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+          "fetcher_type": { "type": "string", "minLength": 1 },
+          "detail": { "type": ["object", "null"] }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

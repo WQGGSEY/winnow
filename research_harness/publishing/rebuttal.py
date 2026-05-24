@@ -5,6 +5,24 @@ from pathlib import Path
 from typing import Any
 
 
+_REFINED_PLAN_PATH_PREFIX = "refined_research_plan_path: "
+
+
+def _load_refined_plan(node: dict[str, Any]) -> dict[str, Any] | None:
+    inherited = ((node.get("lineage") or {}).get("inherited_assumptions")) or []
+    plan_path: str | None = None
+    for line in inherited:
+        if isinstance(line, str) and line.startswith(_REFINED_PLAN_PATH_PREFIX):
+            plan_path = line[len(_REFINED_PLAN_PATH_PREFIX):].strip()
+            break
+    if not plan_path:
+        return None
+    try:
+        return json.loads(Path(plan_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def build_rebuttal_packet(state: dict[str, Any], output_path: Path) -> str:
     node = state["node"]
     report = state["worker_report"]
@@ -104,6 +122,44 @@ def build_rebuttal_packet(state: dict[str, Any], output_path: Path) -> str:
             lines.append(f"- {lesson}")
     else:
         lines.append("- (no lesson candidates accepted)")
+
+    refined_plan = _load_refined_plan(node)
+    if refined_plan is not None:
+        lines.extend(["", "## Refined Research Plan"])
+        lines.append(f"- Plan id: {refined_plan.get('plan_id', 'n/a')}")
+        vp = refined_plan.get("validation_procedure") or {}
+        metric = vp.get("primary_metric") or {}
+        lines.append(
+            f"- Validation: {metric.get('name', 'n/a')} "
+            f"{metric.get('operator', '')} {metric.get('threshold', '')} "
+            f"({(vp.get('statistical_test') or {}).get('name', 'n/a')} "
+            f"alpha={(vp.get('statistical_test') or {}).get('alpha', 'n/a')}, "
+            f"n_seeds={vp.get('n_seeds', 'n/a')})"
+        )
+        dataset_specs = refined_plan.get("dataset_specs") or []
+        if dataset_specs:
+            lines.append(f"- Datasets ({len(dataset_specs)}):")
+            for spec in dataset_specs:
+                lines.append(
+                    f"  - {spec.get('id', '?')} | type={spec.get('type', '?')} | role={spec.get('role', '?')}"
+                )
+        reconciliations = refined_plan.get("sota_reconciliations") or []
+        if reconciliations:
+            lines.append("- SOTA reconciliations:")
+            for entry in reconciliations:
+                lines.append(
+                    f"  - [{entry.get('user_choice', '?')}] {entry.get('conflict', '')}"
+                )
+                resolution = entry.get("resolution")
+                if resolution:
+                    lines.append(f"    → {resolution}")
+        else:
+            lines.append("- SOTA reconciliations: (none recorded)")
+        limitations = refined_plan.get("acknowledged_limitations") or []
+        if limitations:
+            lines.append("- Acknowledged limitations:")
+            for note in limitations:
+                lines.append(f"  - {note}")
 
     lines.extend(
         [

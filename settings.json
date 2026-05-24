@@ -26,6 +26,7 @@
       "default": "sonnet",
       "grilling_agent": "sonnet",
       "market_research_agent": "sonnet",
+      "research_refiner_agent": "sonnet",
       "lesson_distillation_agent": "sonnet"
     },
     "worker_backends": {

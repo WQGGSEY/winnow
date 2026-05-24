@@ -37,6 +37,8 @@ SCHEMA_FILES = {
     "reference_paper": "reference_paper.schema.json",
     "lesson_distillation_summary": "lesson_distillation_summary.schema.json",
     "user_experiment_plan_metadata": "user_experiment_plan_metadata.schema.json",
+    "refined_research_plan": "refined_research_plan.schema.json",
+    "dataset_manifest": "dataset_manifest.schema.json",
 }
 
 

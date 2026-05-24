@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/refined_research_plan.schema.json",
+  "title": "RefinedResearchPlan",
+  "type": "object",
+  "required": [
+    "type",
+    "plan_id",
+    "status",
+    "source_grilling_session_id",
+    "source_market_brief_id",
+    "claim_under_test",
+    "mandatory_baselines",
+    "success_criteria",
+    "disproof_conditions",
+    "validation_procedure",
+    "dataset_specs",
+    "unresolved_dataset_specs",
+    "sota_reconciliations",
+    "acknowledged_limitations",
+    "rounds",
+    "model",
+    "created_at",
+    "usage_estimate",
+    "plan_path",
+    "dataset_manifest_path",
+    "error"
+  ],
+  "properties": {
+    "type": { "type": "string", "enum": ["refined_research_plan"] },
+    "plan_id": { "type": "string", "pattern": "^rrp_[A-Za-z0-9_\\-]+$" },
+    "status": {
+      "type": "string",
+      "enum": [
+        "in_progress",
+        "done",
+        "max_rounds_reached",
+        "blocked_by_gate",
+        "blocked_by_execution_ack",
+        "aborted"
+      ]
+    },
+    "source_grilling_session_id": { "type": "string", "minLength": 1 },
+    "source_market_brief_id": { "type": "string", "minLength": 1 },
+    "claim_under_test": { "type": "string", "minLength": 1 },
+    "mandatory_baselines": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "success_criteria": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "disproof_conditions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "validation_procedure": {
+      "type": "object",
+      "required": [
+        "primary_metric",
+        "splits",
+        "statistical_test",
+        "n_seeds",
+        "decision_rule"
+      ],
+      "properties": {
+        "primary_metric": {
+          "type": "object",
+          "required": ["name", "operator", "threshold"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "operator": {
+              "type": "string",
+              "enum": ["greater_than", "greater_equal", "less_than", "less_equal"]
+            },
+            "threshold": { "type": "number" }
+          },
+          "additionalProperties": false
+        },
+        "splits": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "statistical_test": {
+          "type": "object",
+          "required": ["name", "alpha"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "alpha": { "type": "number", "minimum": 0, "maximum": 1 }
+          },
+          "additionalProperties": false
+        },
+        "n_seeds": { "type": "integer", "minimum": 1 },
+        "decision_rule": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "dataset_specs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "role"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "type": {
+            "type": "string",
+            "enum": [
+              "raw_data",
+              "benchmark",
+              "model_weights",
+              "factor_set",
+              "synthetic",
+              "custom"
+            ]
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "training",
+              "evaluation",
+              "baseline_reference",
+              "baseline_implementation",
+              "other"
+            ]
+          },
+          "name": { "type": ["string", "null"] },
+          "source": { "type": ["string", "null"] },
+          "split": { "type": ["string", "null"] },
+          "revision": { "type": ["string", "null"] },
+          "time_range": {
+            "type": ["array", "null"],
+            "items": { "type": "string" }
+          },
+          "universe": { "type": ["string", "null"] },
+          "synthetic_recipe": { "type": ["object", "null"] },
+          "credentials_required": { "type": ["string", "null"] },
+          "notes": { "type": ["string", "null"] }
+        },
+        "additionalProperties": true
+      }
+    },
+    "unresolved_dataset_specs": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "sota_reconciliations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "conflict",
+          "evidence_paper_url",
+          "user_choice",
+          "resolution",
+          "resolved_at_round"
+        ],
+        "properties": {
+          "conflict": { "type": "string", "minLength": 1 },
+          "evidence_paper_url": { "type": "string" },
+          "user_choice": {
+            "type": "string",
+            "enum": ["narrow_claim", "change_baseline", "acknowledge_limitation"]
+          },
+          "resolution": { "type": "string", "minLength": 1 },
+          "resolved_at_round": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "acknowledged_limitations": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "rounds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["round_index", "action", "payload"],
+        "properties": {
+          "round_index": { "type": "integer", "minimum": 0 },
+          "action": {
+            "type": "string",
+            "enum": ["ASK", "PROPOSE_DATASET", "DONE"]
+          },
+          "payload": { "type": "object" },
+          "user_response": { "type": ["string", "null"] },
+          "materialize_result": { "type": ["object", "null"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "model": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "minLength": 1 },
+    "usage_estimate": {
+      "type": "object",
+      "required": ["rounds_used", "total_cost_usd", "total_input_tokens", "total_output_tokens"],
+      "properties": {
+        "rounds_used": { "type": "integer", "minimum": 0 },
+        "total_cost_usd": { "type": ["number", "null"] },
+        "total_input_tokens": { "type": "integer", "minimum": 0 },
+        "total_output_tokens": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "plan_path": { "type": "string", "minLength": 1 },
+    "dataset_manifest_path": { "type": "string", "minLength": 1 },
+    "error": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}

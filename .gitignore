@@ -17,3 +17,6 @@ venv/
 # Generated local verification artifacts.
 runs/
 
+# Materialized datasets (HF reuses ~/.cache; local/synthetic land here).
+.dataset_cache/
+

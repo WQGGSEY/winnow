@@ -19,10 +19,19 @@ user goal
   -> market research agent (arXiv + Google Scholar, agent-level not worker)
         -> reference_papers/ (PDFs + metadata)
         -> baseline_dossier (memory/baseline_dossiers/)
-  -> root node generator (deterministic) -> root_node.json
+        -> baseline_analysis.md
+  -> research_refiner agent (3-action: ASK | PROPOSE_DATASET | DONE)
+        -> refined_research_plan.json (validation_procedure + dataset_specs
+           + sota_reconciliations + acknowledged_limitations)
+        -> dataset_manifest.json (per-node, type-keyed materializer dispatch)
+  -> root node generator -> root_node.json (reads refined plan when present)
   -> production runner (preflight, mock tree search, rebuttal/AC, publish)
         -> publication artifacts (interactive_html, slides_html, markdown paper)
 ```
+
+See [docs/adr/0001-research-refiner-and-dataset-cache.md](docs/adr/0001-research-refiner-and-dataset-cache.md)
+for the design rationale (research_refiner role, 3-action protocol,
+dataset materializer Protocol, per-node manifest pattern).
 
 `research_harness.research_runner` is the high-level CLI that drives this. Live
 Claude invocations remain behind explicit billing + execution acknowledgements.
@@ -58,6 +67,16 @@ Claude invocations remain behind explicit billing + execution acknowledgements.
   deterministic byte-threshold trigger; live sonnet compresses lessons; old
   `lessons.yaml` archived under `memory/lessons/archive/`; approval gate
   required before writing.
+- **research_refiner agent** (`research_harness.agents.research_refiner`):
+  multi-turn live sonnet between market_research and root_node. 3-action
+  protocol (`ASK | PROPOSE_DATASET | DONE`). PROPOSE_DATASET silently
+  dispatches to the dataset materializer registry and injects the result
+  into the next round. Forces SOTA reconciliation against the market
+  research analysis. Emits `refined_research_plan.json` + `dataset_manifest.json`.
+- **Dataset materializers** (`research_harness.datasets.*`): one Protocol,
+  one class per type. HuggingFace (raw_data / benchmark / model_weights),
+  LocalPath (factor_set / custom), Synthetic (synthetic with generator
+  recipe). Optional dependencies degrade gracefully.
 
 ## Still Open
 
@@ -77,10 +96,20 @@ python -B -m research_harness.research_runner grill \
   --billing-ack --execute-ack \
   --run-dir runs/grilling/<id>
 
-# 2. research — market research (arXiv + Google Scholar) + root node + production
+# 2. research — market research + refiner + root node + production
+#    refiner is live too; pass refiner acks. add --skip-refine for fast prototyping.
+RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack \
+RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE=live_smoke_ack \
 python -B -m research_harness.research_runner research \
   --grilling-session runs/grilling/<id>/grilling_session.json \
+  --refiner-billing-ack --refiner-execute-ack \
   --run-dir runs/research/<id>
+
+# 2b. refine only (when you want to iterate on the refiner alone)
+python -B -m research_harness.research_runner refine \
+  --grilling-session runs/grilling/<id>/grilling_session.json \
+  --market-research-brief runs/research/<id>/market_research/market_research_brief.json \
+  --billing-ack --execute-ack
 
 # 3. distill — periodic deterministic distillation (triggered by lesson byte total)
 RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack \

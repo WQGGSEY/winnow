@@ -152,6 +152,7 @@ class ResearchRunnerCmdTests(unittest.TestCase):
                         max_papers=5,
                         enable_google_scholar=False,
                         publish=True,
+                        skip_refine=True,
                     )
                 finally:
                     runner_module.run_market_research = original
