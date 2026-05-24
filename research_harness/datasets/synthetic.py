@@ -35,6 +35,20 @@ class SyntheticMaterializer:
         spec: dict[str, Any],
         cache_root: Path,
     ) -> MaterializeResult:
+        try:
+            return self._materialize(spec, cache_root)
+        except Exception as exc:
+            return MaterializeResult(
+                status="failed",
+                fetcher_type=self.fetcher_type,
+                error=f"synthetic materializer raised: {type(exc).__name__}: {exc}",
+            )
+
+    def _materialize(
+        self,
+        spec: dict[str, Any],
+        cache_root: Path,
+    ) -> MaterializeResult:
         recipe = spec.get("synthetic_recipe") or {}
         if not isinstance(recipe, dict):
             return MaterializeResult(
@@ -99,6 +113,24 @@ class _RecipeError(ValueError):
     pass
 
 
+def _normalize_columns(columns: list[Any]) -> list[dict[str, Any]]:
+    """Accept either dict columns ({name, distribution, params}) or string
+    shorthand ("x") and coerce to the canonical dict form."""
+
+    normalized: list[dict[str, Any]] = []
+    for index, col in enumerate(columns):
+        if isinstance(col, dict) and col.get("name"):
+            normalized.append(col)
+        elif isinstance(col, str):
+            normalized.append({"name": col, "distribution": "normal", "params": {}})
+        else:
+            raise _RecipeError(
+                f"synthetic_recipe.columns[{index}] must be a dict with 'name' "
+                f"or a string column name; got {type(col).__name__}"
+            )
+    return normalized
+
+
 def _builtin_generate(shape: str, recipe: dict[str, Any], target_dir: Path) -> int:
     rows = int(recipe.get("rows") or 1000)
     if rows < 1:
@@ -120,10 +152,11 @@ def _builtin_generate(shape: str, recipe: dict[str, Any], target_dir: Path) -> i
 def _generate_tabular(
     rows: int,
     seed: int,
-    columns: list[dict[str, Any]],
+    columns: list[Any],
     out_path: Path,
 ) -> int:
     rng = random.Random(seed)
+    columns = _normalize_columns(columns)
     fieldnames = [str(col["name"]) for col in columns]
     with out_path.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)

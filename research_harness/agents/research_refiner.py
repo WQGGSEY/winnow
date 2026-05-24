@@ -579,11 +579,47 @@ def _assemble_plan(
         for spec in (llm_payload.get("unresolved_dataset_specs") or [])
         if isinstance(spec, dict)
     ]
-    plan["sota_reconciliations"] = llm_payload.get("sota_reconciliations") or []
-    plan["acknowledged_limitations"] = list(
-        llm_payload.get("acknowledged_limitations") or []
+    plan["sota_reconciliations"] = _normalize_sota_reconciliations(
+        llm_payload.get("sota_reconciliations") or []
     )
+    plan["acknowledged_limitations"] = [
+        _smart_to_str(item)
+        for item in (llm_payload.get("acknowledged_limitations") or [])
+        if _smart_to_str(item)
+    ]
     return plan
+
+
+_ALLOWED_RECONCILIATION_CHOICES = {"narrow_claim", "change_baseline", "acknowledge_limitation"}
+
+
+def _normalize_sota_reconciliations(items: list[Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for entry in items:
+        if not isinstance(entry, dict):
+            continue
+        choice = str(entry.get("user_choice") or "acknowledge_limitation")
+        if choice not in _ALLOWED_RECONCILIATION_CHOICES:
+            choice = "acknowledge_limitation"
+        try:
+            round_idx = int(entry.get("resolved_at_round") or 0)
+        except (TypeError, ValueError):
+            round_idx = 0
+        out.append(
+            {
+                "conflict": str(entry.get("conflict") or "(unspecified conflict)"),
+                "evidence_paper_url": str(
+                    entry.get("evidence_paper_url")
+                    or entry.get("evidence_url")
+                    or entry.get("paper_url")
+                    or ""
+                ),
+                "user_choice": choice,
+                "resolution": str(entry.get("resolution") or "(unspecified resolution)"),
+                "resolved_at_round": max(0, round_idx),
+            }
+        )
+    return out
 
 
 def _normalize_validation_procedure(vp: dict[str, Any]) -> dict[str, Any]:
@@ -660,7 +696,39 @@ def _normalize_dataset_spec(spec: dict[str, Any]) -> dict[str, Any]:
 def _coerce_list(value: Any, fallback: list[str]) -> list[str]:
     if not isinstance(value, list) or not value:
         return list(fallback)
-    return [str(item) for item in value if str(item).strip()]
+    out: list[str] = []
+    for item in value:
+        text = _smart_to_str(item)
+        if text:
+            out.append(text)
+    return out or list(fallback)
+
+
+_PREFERRED_DICT_KEYS = ("text", "description", "label", "name", "summary", "claim", "title")
+
+
+def _smart_to_str(value: Any) -> str:
+    """Coerce LLM-emitted values to a human-readable single string.
+
+    Sonnet often returns rich dicts where the schema only allows a string
+    (e.g. baselines as {id, label, description, role}). Pulling the first
+    meaningful key gives a much better one-line summary than `str(dict)`.
+    """
+
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        for key in _PREFERRED_DICT_KEYS:
+            v = value.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        parts: list[str] = []
+        if value.get("id"):
+            parts.append(str(value["id"]))
+        if value.get("role"):
+            parts.append(f"({value['role']})")
+        return " ".join(parts) if parts else json.dumps(value, ensure_ascii=False)[:240]
+    return str(value).strip()
 
 
 def _build_manifest(plan_id: str, entries: dict[str, dict[str, Any]]) -> dict[str, Any]:
