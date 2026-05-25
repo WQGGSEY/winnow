@@ -79,4 +79,37 @@ def materialize(
                 "hf://, file://, or rewrite as type=custom"
             ),
         )
+    if spec_type in {"factor_set", "custom"}:
+        # factor_set / custom historically defaulted to LocalPath but agents
+        # often emit specs with public-URL sources (Kenneth French Library,
+        # AQR, Quandl …). Without this guard the materializer reports
+        # "local source does not exist" and the agent has no recourse. Now
+        # we surface a clear needs_user_input message that tells the agent
+        # to either point to a local download or pivot to synthetic.
+        if not source:
+            return MaterializeResult(
+                status="needs_user_input",
+                fetcher_type=fetcher.fetcher_type,
+                error=(
+                    f"{spec_type} requires a source field. Use "
+                    "'file:///abs/path' for a local download, or pivot to "
+                    "type=synthetic if no local data is available."
+                ),
+            )
+        if source.startswith("file://") or source.startswith("/"):
+            return fetcher.try_materialize(spec, repo_cache_root(repo_root))
+        # Any other shape (bare label like "Kenneth French Data Library",
+        # http(s) URL, hf:// for the wrong type, etc.) — refuse with a
+        # clear message instead of pretending it's a local path.
+        return MaterializeResult(
+            status="needs_user_input",
+            fetcher_type=fetcher.fetcher_type,
+            error=(
+                f"{spec_type} source {source!r} is not a local path. The "
+                "built-in fetcher does not download arbitrary URLs. Options: "
+                "(a) the user downloads the file locally and you re-emit "
+                "with 'file:///abs/path' source; (b) pivot to type=synthetic "
+                "with a fully-specified synthetic_recipe."
+            ),
+        )
     return fetcher.try_materialize(spec, repo_cache_root(repo_root))

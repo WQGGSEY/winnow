@@ -199,6 +199,58 @@ class RegistryDispatchTests(unittest.TestCase):
             result = materialize(spec, repo_root=Path(tmp))
             self.assertEqual(result.status, "needs_user_input")
 
+    def test_factor_set_with_bare_label_source_needs_user_input(self) -> None:
+        """Regression: refiner agents sometimes emit factor_set specs with a
+        human-readable source string (e.g. 'Kenneth French Data Library')
+        and a separate url field. The materializer used to dispatch
+        unconditionally to LocalPath which reported the bare label as a
+        missing file. Now we surface a clear needs_user_input message so
+        the agent can pivot."""
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = {
+                "id": "ff_factors_monthly",
+                "type": "factor_set",
+                "role": "calibration_anchor",
+                "source": "Kenneth French Data Library",
+                "url": "https://mba.tuck.dartmouth.edu/...",
+            }
+            result = materialize(spec, repo_root=Path(tmp))
+            self.assertEqual(result.status, "needs_user_input")
+            self.assertIn("not a local path", result.error)
+
+    def test_factor_set_with_http_url_source_needs_user_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = {
+                "id": "f1",
+                "type": "factor_set",
+                "role": "evaluation",
+                "source": "https://example.com/factors.csv",
+            }
+            result = materialize(spec, repo_root=Path(tmp))
+            self.assertEqual(result.status, "needs_user_input")
+
+    def test_factor_set_with_file_url_dispatches_to_local(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            csv = tmp_path / "factors.csv"
+            csv.write_text("a,b\n1,2\n")
+            spec = {
+                "id": "f1",
+                "type": "factor_set",
+                "role": "evaluation",
+                "source": f"file://{csv}",
+            }
+            result = materialize(spec, repo_root=tmp_path)
+            self.assertEqual(result.status, "ok")
+            self.assertEqual(result.fetcher_type, "local_path")
+
+    def test_factor_set_missing_source_needs_user_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = {"id": "f1", "type": "factor_set", "role": "evaluation"}
+            result = materialize(spec, repo_root=Path(tmp))
+            self.assertEqual(result.status, "needs_user_input")
+            self.assertIn("source field", result.error)
+
     def test_repo_cache_root_is_under_repo(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cache = repo_cache_root(Path(tmp))
