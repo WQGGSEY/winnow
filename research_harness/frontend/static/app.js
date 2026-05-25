@@ -114,6 +114,42 @@
     openDialog('execute-ack-dialog');
   });
 
+  // ---- rename + delete thread ---------------------------------
+
+  document.addEventListener('click', async (ev) => {
+    const renameBtn = ev.target.closest('[data-rename-thread]');
+    if (renameBtn) {
+      ev.preventDefault();
+      const tid = renameBtn.dataset.threadId;
+      const current = renameBtn.dataset.currentTitle || '';
+      const next = prompt('Rename thread:', current);
+      if (next == null) return;
+      const trimmed = next.trim();
+      if (!trimmed || trimmed === current) return;
+      try {
+        await postJson(`/api/threads/${tid}/rename`, { title: trimmed });
+        location.reload();
+      } catch (e) { alert(`rename failed: ${e}`); }
+      return;
+    }
+    const deleteBtn = ev.target.closest('[data-delete-thread]');
+    if (deleteBtn) {
+      ev.preventDefault();
+      const tid = deleteBtn.dataset.threadId;
+      const title = deleteBtn.dataset.threadTitle || tid;
+      if (!confirm(
+        `Delete thread "${title}"?\n\n` +
+        'This removes the entire thread directory under runs/threads/ ' +
+        'including all phase artifacts. This cannot be undone.\n\n' +
+        'If the thread is live, click Abandon first.'
+      )) return;
+      try {
+        await postJson(`/api/threads/${tid}/delete`);
+        location.href = '/';
+      } catch (e) { alert(`delete failed: ${e}`); }
+    }
+  });
+
   // ---- abandon button -----------------------------------------
 
   document.addEventListener('click', async (ev) => {

@@ -223,6 +223,34 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
 
     # -------- thread CRUD
 
+    @app.post("/api/threads/{thread_id}/rename")
+    async def rename_thread(thread_id: str, req: Request) -> JSONResponse:
+        _require_thread(s.repo_root, thread_id)
+        body = await _maybe_json(req)
+        title = (body.get("title") or "").strip()
+        if not title:
+            raise HTTPException(400, "title must not be empty")
+        updated = threads.update_thread(s.repo_root, thread_id, title=title)
+        return JSONResponse({"ok": True, "title": updated["title"]})
+
+    @app.post("/api/threads/{thread_id}/delete")
+    async def delete_thread(thread_id: str) -> JSONResponse:
+        _require_thread(s.repo_root, thread_id)
+        # Refuse if this thread holds the live lock — deleting a run dir
+        # out from under a worker mid-write would race. The operator must
+        # Abandon first.
+        if s.lock.holder is not None and s.lock.holder.thread_id == thread_id:
+            raise HTTPException(
+                409,
+                "thread is currently live; click Abandon first to release "
+                "the lock, then delete.",
+            )
+        # Also clean any in-memory session reference (defensive — there
+        # shouldn't be one without lock, but it's cheap to be sure).
+        s.sessions.pop(thread_id, None)
+        threads.delete_thread(s.repo_root, thread_id)
+        return JSONResponse({"ok": True})
+
     @app.post("/api/threads")
     async def create_thread(req: Request) -> HTMLResponse:
         form = await req.form()

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -168,6 +169,27 @@ def update_thread(
     index["updated_at"] = _now()
     _write_index(threads_root(repo_root) / thread_id, index)
     return index
+
+
+def delete_thread(repo_root: Path, thread_id: str) -> None:
+    """Remove a thread directory entirely from disk.
+
+    Safety: callers must ensure the thread is not currently holding the
+    [[single_active_run]] lock; deleting the run dir out from under a
+    live agent worker would race with its file writes. The server route
+    enforces this guard before invoking us.
+    """
+    root = threads_root(repo_root) / thread_id
+    if not root.exists():
+        raise ThreadError(f"thread {thread_id} does not exist at {root}")
+    # Sanity: refuse to delete anything that doesn't look like a thread
+    # directory (e.g. a stray symlink dropped into runs/threads/).
+    if not (root / "thread.json").exists():
+        raise ThreadError(
+            f"refusing to delete {root}: no thread.json marker; this is "
+            "not a recognised thread directory"
+        )
+    shutil.rmtree(root)
 
 
 def phase_dir(repo_root: Path, thread_id: str, phase: str) -> Path:

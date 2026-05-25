@@ -1,5 +1,19 @@
 <header class="thread-head">
-  <h1>{{ active_thread.title }}</h1>
+  <h1>
+    {{ active_thread.title }}
+    <button class="btn small thread-rename"
+            type="button"
+            data-rename-thread
+            data-thread-id="{{ active_thread.thread_id }}"
+            data-current-title="{{ active_thread.title }}"
+            title="Rename thread">✎</button>
+    <button class="btn small thread-delete danger"
+            type="button"
+            data-delete-thread
+            data-thread-id="{{ active_thread.thread_id }}"
+            data-thread-title="{{ active_thread.title }}"
+            title="Delete thread">🗑</button>
+  </h1>
   <div class="thread-head-meta">
     <code>{{ active_thread.thread_id }}</code>
     <span class="phase-tag phase-{{ active_thread.current_phase }}">{{ active_thread.current_phase }}</span>

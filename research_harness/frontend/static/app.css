@@ -137,7 +137,23 @@ code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-
 }
 
 .thread-head { margin-bottom: 18px; }
-.thread-head h1 { font-size: 19px; margin: 0 0 6px; }
+.thread-head h1 {
+  font-size: 19px;
+  margin: 0 0 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.thread-rename, .thread-delete {
+  padding: 2px 7px;
+  font-size: 12px;
+  line-height: 1;
+  vertical-align: middle;
+}
+.thread-rename { opacity: 0.6; }
+.thread-rename:hover { opacity: 1; }
+.thread-delete { opacity: 0.6; }
+.thread-delete:hover { opacity: 1; }
 .thread-head-meta { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
 .thread-head-meta code { background: var(--panel-soft); padding: 1px 5px; border-radius: 3px; }
 

@@ -193,6 +193,65 @@ class ServerSmokeTests(unittest.TestCase):
         finally:
             app_state.lock._holder = None
 
+    def test_rename_thread_updates_title(self) -> None:
+        t = threads.create_thread(self.repo, user_goal="original title")
+        resp = self.client.post(
+            f"/api/threads/{t['thread_id']}/rename",
+            json={"title": "renamed title"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["title"], "renamed title")
+        reloaded = threads.load_thread(self.repo, t["thread_id"])
+        self.assertEqual(reloaded["title"], "renamed title")
+
+    def test_rename_rejects_empty_title(self) -> None:
+        t = threads.create_thread(self.repo, user_goal="x")
+        resp = self.client.post(
+            f"/api/threads/{t['thread_id']}/rename",
+            json={"title": "   "},
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_rename_returns_404_for_missing_thread(self) -> None:
+        resp = self.client.post(
+            "/api/threads/thread_doesnotexist/rename",
+            json={"title": "x"},
+        )
+        self.assertEqual(resp.status_code, 404)
+
+    def test_delete_thread_removes_directory(self) -> None:
+        t = threads.create_thread(self.repo, user_goal="to delete")
+        thread_dir = threads.threads_root(self.repo) / t["thread_id"]
+        self.assertTrue(thread_dir.exists())
+        resp = self.client.post(f"/api/threads/{t['thread_id']}/delete")
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(thread_dir.exists())
+        # Subsequent thread page request 404s.
+        self.assertEqual(
+            self.client.get(f"/threads/{t['thread_id']}").status_code, 404
+        )
+
+    def test_delete_refuses_when_thread_holds_live_lock(self) -> None:
+        from research_harness.frontend.lock import LockHolder
+
+        t = threads.create_thread(self.repo, user_goal="live thread")
+        app_state = self.client.app.state.s
+        app_state.lock._holder = LockHolder(
+            thread_id=t["thread_id"],
+            phase="grilling",
+            acquired_at="2026-05-25T05:00:00Z",
+        )
+        try:
+            resp = self.client.post(f"/api/threads/{t['thread_id']}/delete")
+            self.assertEqual(resp.status_code, 409)
+            self.assertIn("Abandon", resp.text)
+            # Directory is still there.
+            self.assertTrue(
+                (threads.threads_root(self.repo) / t["thread_id"]).exists()
+            )
+        finally:
+            app_state.lock._holder = None
+
     def test_sse_drains_stale_backlog_on_attach(self) -> None:
         """Regression: when a user navigates away mid-grilling and back,
         the agent worker has kept emitting events into the LiveSession's
