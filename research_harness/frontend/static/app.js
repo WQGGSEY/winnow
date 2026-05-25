@@ -302,9 +302,31 @@
     });
   }
 
+  const thinkingTimers = new Map();
+
   function setThinking(threadId, on) {
     const el = document.getElementById(`thinking-${threadId}`);
-    if (el) el.hidden = !on;
+    if (!el) return;
+    el.hidden = !on;
+    // Maintain a per-thread "elapsed seconds since the latest reply"
+    // counter. Honest signal — the agent is alive and we're waiting,
+    // with no fake progress estimate. Resets on each transition into
+    // thinking; stops cleanly on transition out.
+    const prior = thinkingTimers.get(threadId);
+    if (prior) {
+      clearInterval(prior.handle);
+      thinkingTimers.delete(threadId);
+    }
+    if (!on) return;
+    const target = el.querySelector('[data-thinking-elapsed]');
+    if (!target) return;
+    const startedAt = Date.now();
+    target.textContent = '0.0s';
+    const handle = setInterval(() => {
+      const seconds = (Date.now() - startedAt) / 1000;
+      target.textContent = `${seconds.toFixed(1)}s`;
+    }, 100);
+    thinkingTimers.set(threadId, { handle, startedAt });
   }
 
   function escapeHTML(s) {

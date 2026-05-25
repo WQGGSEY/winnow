@@ -268,6 +268,16 @@ code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-
   font-style: italic;
 }
 .chat-thinking[hidden] { display: none; }
+.chat-thinking .thinking-elapsed {
+  margin-left: 6px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  font-style: normal;
+  color: var(--accent);
+  opacity: 0.8;
+  min-width: 36px;
+  display: inline-block;
+}
 .chat-thinking .dot {
   width: 5px;
   height: 5px;
