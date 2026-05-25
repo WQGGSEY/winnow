@@ -408,11 +408,31 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
         await _launch_market(s, index)
         return JSONResponse({"ok": True})
 
+    @app.get("/api/threads/{thread_id}/market/stream")
+    async def market_stream(thread_id: str) -> StreamingResponse:
+        _require_thread(s.repo_root, thread_id)
+        session = s.sessions.get(thread_id)
+        if session is None or session.phase != "market":
+            raise HTTPException(409, "no live market session for this thread")
+        return StreamingResponse(
+            _sse_stream(session), media_type="text/event-stream"
+        )
+
     @app.post("/api/threads/{thread_id}/production/start")
     async def production_start(thread_id: str) -> JSONResponse:
         index = _require_thread(s.repo_root, thread_id)
         await _launch_production(s, index)
         return JSONResponse({"ok": True})
+
+    @app.get("/api/threads/{thread_id}/production/stream")
+    async def production_stream(thread_id: str) -> StreamingResponse:
+        _require_thread(s.repo_root, thread_id)
+        session = s.sessions.get(thread_id)
+        if session is None or session.phase != "production":
+            raise HTTPException(409, "no live production session for this thread")
+        return StreamingResponse(
+            _sse_stream(session), media_type="text/event-stream"
+        )
 
     # -------- settings
 
@@ -759,6 +779,9 @@ async def _launch_refine(
 
 async def _launch_market(s: AppState, index: dict[str, Any]) -> None:
     thread_id = index["thread_id"]
+    if thread_id in s.sessions:
+        # Idempotent: market is already running for this thread.
+        return
     _refuse_if_lock_held_by_other(s, thread_id)
     grilling_path = (
         threads.phase_dir(s.repo_root, thread_id, "grilling")
@@ -768,6 +791,10 @@ async def _launch_market(s: AppState, index: dict[str, Any]) -> None:
         raise HTTPException(409, "market requires grilling to be complete")
     grilling_session = json.loads(grilling_path.read_text(encoding="utf-8"))
     validate_named_schema("grilling_session", grilling_session)
+
+    loop = asyncio.get_running_loop()
+    session = LiveSession(thread_id=thread_id, phase="market", loop=loop)
+    s.sessions[thread_id] = session
 
     threads.update_thread(
         s.repo_root,
@@ -791,15 +818,21 @@ async def _launch_market(s: AppState, index: dict[str, Any]) -> None:
             threads.update_thread(
                 s.repo_root, thread_id, phase_status="complete"
             )
+            await session.emit({"type": "phase_complete"})
         except Exception as exc:  # noqa: BLE001
             LOG.exception("market failed for %s", thread_id)
             threads.update_thread(s.repo_root, thread_id, phase_status="failed")
+            await session.emit({"type": "phase_failed", "error": str(exc)})
+        finally:
+            s.sessions.pop(thread_id, None)
 
-    asyncio.create_task(run_loop())
+    session.task = asyncio.create_task(run_loop())
 
 
 async def _launch_production(s: AppState, index: dict[str, Any]) -> None:
     thread_id = index["thread_id"]
+    if thread_id in s.sessions:
+        return
     _refuse_if_lock_held_by_other(s, thread_id)
     grilling_path = (
         threads.phase_dir(s.repo_root, thread_id, "grilling")
@@ -824,6 +857,10 @@ async def _launch_production(s: AppState, index: dict[str, Any]) -> None:
         if refine_plan_path.exists()
         else None
     )
+
+    loop = asyncio.get_running_loop()
+    session = LiveSession(thread_id=thread_id, phase="production", loop=loop)
+    s.sessions[thread_id] = session
 
     threads.update_thread(
         s.repo_root,
@@ -887,11 +924,15 @@ async def _launch_production(s: AppState, index: dict[str, Any]) -> None:
                 phase_status="complete",
                 outcome=outcome,
             )
+            await session.emit({"type": "phase_complete"})
         except Exception as exc:  # noqa: BLE001
             LOG.exception("production failed for %s", thread_id)
             threads.update_thread(s.repo_root, thread_id, phase_status="failed")
+            await session.emit({"type": "phase_failed", "error": str(exc)})
+        finally:
+            s.sessions.pop(thread_id, None)
 
-    asyncio.create_task(run_loop())
+    session.task = asyncio.create_task(run_loop())
 
 
 def _extract_candidate_ids(market_brief: dict[str, Any]) -> list[str]:

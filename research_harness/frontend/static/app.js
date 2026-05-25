@@ -342,14 +342,18 @@
     openStream(btn.dataset.threadId, btn.dataset.phase || 'grilling');
   });
 
-  // Auto-open stream when chat panel is visible and status is in_progress.
+  // Auto-open stream when any live phase is running. Grilling and refine
+  // use the SSE channel for chat (ask / user_reply / scaffold_*); market
+  // and production use it only to signal phase_complete / phase_failed so
+  // the page reloads automatically instead of requiring a manual refresh.
   document.addEventListener('DOMContentLoaded', () => {
     const accordion = document.querySelector('.accordion');
     if (!accordion) return;
     const threadId = accordion.dataset.threadId;
     const phase = accordion.dataset.currentPhase;
     const status = accordion.dataset.phaseStatus;
-    if (threadId && (phase === 'grilling' || phase === 'refine')
+    const livePhases = new Set(['grilling', 'refine', 'market', 'production']);
+    if (threadId && livePhases.has(phase)
         && (status === 'running' || status === 'awaiting_input')) {
       openStream(threadId, phase);
     }

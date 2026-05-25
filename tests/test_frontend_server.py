@@ -264,6 +264,27 @@ class ServerSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("Resume / reconnect", resp.text)
 
+    def test_market_and_production_streams_404_without_live_session(self) -> None:
+        """Market and production SSE endpoints exist so the page can
+        auto-reload on phase_complete. When there's no live session they
+        cleanly 409 (same as grilling/refine)."""
+        t = threads.create_thread(self.repo, user_goal="no live session")
+        for phase in ("market", "production"):
+            with self.subTest(phase=phase):
+                resp = self.client.get(
+                    f"/api/threads/{t['thread_id']}/{phase}/stream"
+                )
+                self.assertEqual(resp.status_code, 409)
+
+    def test_market_and_production_stream_endpoints_registered(self) -> None:
+        """Smoke: the routes exist (would 404 otherwise) and require
+        a real thread."""
+        for phase in ("market", "production"):
+            resp = self.client.get(
+                f"/api/threads/thread_doesnotexist/{phase}/stream"
+            )
+            self.assertEqual(resp.status_code, 404)
+
     def test_rename_thread_updates_title(self) -> None:
         t = threads.create_thread(self.repo, user_goal="original title")
         resp = self.client.post(
