@@ -135,15 +135,17 @@
           Send
         </button>
       </form>
-      <button class="btn small"
-              type="button"
-              data-execute-ack
-              data-phase="grilling"
-              data-thread-id="{{ thread.thread_id }}"
-              data-endpoint="/api/threads/{{ thread.thread_id }}/grilling/start"
-              data-cost-note="Resume grilling. If the in-process task is still alive this is a no-op; if it died (server restart) it relaunches from the last persisted round.">
-        Resume / reconnect
-      </button>
+      {% if needs_resume %}
+        <button class="btn small"
+                type="button"
+                data-execute-ack
+                data-phase="grilling"
+                data-thread-id="{{ thread.thread_id }}"
+                data-endpoint="/api/threads/{{ thread.thread_id }}/grilling/start"
+                data-cost-note="Resume grilling. The agent task is no longer in memory; this relaunches it seeded from the last persisted round.">
+          Resume / reconnect
+        </button>
+      {% endif %}
       <button class="btn small danger"
               type="button"
               data-abandon

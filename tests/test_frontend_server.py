@@ -193,6 +193,77 @@ class ServerSmokeTests(unittest.TestCase):
         finally:
             app_state.lock._holder = None
 
+    def test_resume_button_hidden_when_live_session_present(self) -> None:
+        """The Resume / reconnect button is only useful post-server-restart
+        (when the in-memory LiveSession is gone). When the agent task is
+        alive, SSE auto-reconnect handles transient drops and the button
+        would just be visual noise."""
+        from research_harness.frontend.server import LiveSession
+
+        t = threads.create_thread(self.repo, user_goal="hide resume when alive")
+        # Drop a synthetic in-progress session so the chat panel renders.
+        phase_dir = threads.phase_dir(self.repo, t["thread_id"], "grilling")
+        phase_dir.mkdir(parents=True, exist_ok=True)
+        session = {
+            "session_id": "grill_alive",
+            "status": "in_progress",
+            "user_goal": "hide resume when alive",
+            "max_rounds": 8,
+            "model": "sonnet",
+            "created_at": "2026-05-25T00:00:00Z",
+            "rounds": [],
+            "extracted": {
+                "root_goal_id": "rg_alive",
+                "domain": "x",
+                "node_type": "capability",
+                "claim_under_test": "x",
+                "mandatory_baselines": ["a"],
+                "success_criteria": ["b"],
+                "disproof_conditions": ["c"],
+                "goal_facets": [],
+                "taste_constraints": [],
+                "search_query_seed": "x",
+            },
+            "usage_estimate": {
+                "rounds_used": 0,
+                "total_cost_usd": 0.0,
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+            },
+        }
+        (phase_dir / "grilling_session.json").write_text(json.dumps(session))
+        threads.update_thread(
+            self.repo, t["thread_id"], phase_status="awaiting_input"
+        )
+        self.client.app.state.s.sessions[t["thread_id"]] = LiveSession(
+            thread_id=t["thread_id"], phase="grilling"
+        )
+        try:
+            resp = self.client.get(f"/threads/{t['thread_id']}")
+            self.assertEqual(resp.status_code, 200)
+            self.assertNotIn("Resume / reconnect", resp.text)
+            # Abandon still available (different concern: bailing out
+            # while alive).
+            self.assertIn("Abandon", resp.text)
+        finally:
+            self.client.app.state.s.sessions.pop(t["thread_id"], None)
+
+    def test_resume_button_visible_when_no_live_session(self) -> None:
+        """Conversely, when the LiveSession is missing (e.g. post-server-
+        restart) and phase is still live, Resume must show."""
+        t = threads.create_thread(self.repo, user_goal="show resume when dead")
+        phase_dir = threads.phase_dir(self.repo, t["thread_id"], "grilling")
+        phase_dir.mkdir(parents=True, exist_ok=True)
+        # No grilling_session.json on disk — but is_live is True via
+        # phase_status, so the chat panel still renders the placeholder
+        # and SHOULD show Resume.
+        threads.update_thread(
+            self.repo, t["thread_id"], phase_status="awaiting_input"
+        )
+        resp = self.client.get(f"/threads/{t['thread_id']}")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("Resume / reconnect", resp.text)
+
     def test_rename_thread_updates_title(self) -> None:
         t = threads.create_thread(self.repo, user_goal="original title")
         resp = self.client.post(
