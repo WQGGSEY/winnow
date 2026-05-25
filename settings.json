@@ -43,7 +43,7 @@
         "billing_ack_env": "RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE",
         "billing_ack_value": "subscription_ack",
         "model": "sonnet",
-        "max_budget_usd": "0.25",
+        "max_budget_usd": "0.5",
         "tools": ""
       }
     }

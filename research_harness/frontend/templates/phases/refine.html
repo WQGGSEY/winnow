@@ -43,14 +43,33 @@
             {% endif %}
           </li>
         {% endfor %}
+        {% if plan.pending_ask %}
+          <li class="refine-round action-ask">
+            <strong>Round {{ plan.rounds|length + 1 }} — ASK (awaiting reply)</strong>
+            <div class="ask">Q: {{ plan.pending_ask.question }}</div>
+          </li>
+        {% endif %}
       </ol>
 
       {% if plan.status == "in_progress" %}
+        {% set needs_resume = not live_session_present %}
+        {% if needs_resume %}
+          <div class="callout chat-needs-resume">
+            <strong>Server was restarted.</strong>
+            The refiner task is no longer in memory. Click
+            <em>Resume / reconnect</em> below to re-attach; previously
+            captured rounds are preserved on disk.
+          </div>
+        {% endif %}
         <form class="chat-reply"
               data-action="refine-reply"
               data-thread-id="{{ thread.thread_id }}">
-          <textarea name="reply" rows="3" placeholder="Reply to the refiner..." required></textarea>
-          <button type="submit" class="btn primary">Send</button>
+          <textarea name="reply" rows="3"
+                    placeholder="{% if needs_resume %}Click Resume / reconnect to re-attach the refiner first…{% else %}Reply to the refiner…{% endif %}"
+                    {% if needs_resume %}disabled{% endif %}
+                    required></textarea>
+          <button type="submit" class="btn primary"
+                  {% if needs_resume %}disabled{% endif %}>Send</button>
         </form>
         <button class="btn small"
                 type="button"

@@ -197,6 +197,24 @@ def run_research_refiner(
                 question = str(call.parsed.get("question", "")).strip()
                 if not question:
                     raise RefinerError("ASK action missing question text")
+                # Persist the pending ASK BEFORE blocking on the user
+                # (mirrors the grilling fix — without this, a user who
+                # navigates away after Q emit but before reply returns to
+                # an empty awaiting_input chat because the question only
+                # existed on the SSE stream).
+                pending_ask = {
+                    "question": question,
+                    "raw_action": call.raw_action_text,
+                    "emitted_at": datetime.now(timezone.utc).isoformat(),
+                }
+                _flush_refiner_in_progress(
+                    plan_path,
+                    base_plan,
+                    rounds,
+                    usage,
+                    verified_dataset_specs,
+                    pending_ask=pending_ask,
+                )
                 user_response = asker(question)
                 rounds.append(
                     {
@@ -208,7 +226,12 @@ def run_research_refiner(
                     }
                 )
                 _flush_refiner_in_progress(
-                    plan_path, base_plan, rounds, usage, verified_dataset_specs
+                    plan_path,
+                    base_plan,
+                    rounds,
+                    usage,
+                    verified_dataset_specs,
+                    pending_ask=None,
                 )
                 continue
 
@@ -792,6 +815,7 @@ def _flush_refiner_in_progress(
     rounds: list[dict[str, Any]],
     usage: dict[str, Any],
     verified_dataset_specs: list[dict[str, Any]],
+    pending_ask: dict[str, Any] | None = None,
 ) -> None:
     """Persist mid-refiner state so a crash never loses user input.
 
@@ -807,10 +831,19 @@ def _flush_refiner_in_progress(
         "usage_estimate": usage,
         "dataset_specs": list(verified_dataset_specs),
         "error": None,
+        # Always set pending_ask (None to clear, dict to surface the
+        # in-flight question to any client that reloads the page).
+        "pending_ask": pending_ask,
     }
     try:
         validate_named_schema("refined_research_plan", snapshot)
-    except SchemaValidationError:
+    except SchemaValidationError as exc:
+        import sys
+
+        sys.stderr.write(
+            f"[refiner] _flush_refiner_in_progress schema validation failed; "
+            f"plan file NOT written. error={exc}\n"
+        )
         return
     import os
     import tempfile

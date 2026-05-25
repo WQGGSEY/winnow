@@ -318,6 +318,75 @@ class RefinerSuccessTests(unittest.TestCase):
             )
 
 
+class RefinerPendingAskTests(unittest.TestCase):
+    """Regression: an emitted refiner ASK used to live only on the SSE
+    stream + worker's local variable. Navigating away between Q-emit and
+    user-reply hid the question forever. Persist to pending_ask on disk
+    so any page reload can show the in-flight question."""
+
+    def test_pending_ask_is_on_disk_when_asker_blocks(self) -> None:
+        captured: dict = {}
+
+        def _spy_asker(question: str) -> str:
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            captured["question"] = (plan.get("pending_ask") or {}).get("question")
+            captured["rounds_at_emit"] = len(plan["rounds"])
+            return "narrow_claim"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            done_payload = {
+                "action": "DONE",
+                "plan": {
+                    "claim_under_test": "x",
+                    "mandatory_baselines": ["a", "b", "c"],
+                    "success_criteria": ["x"],
+                    "disproof_conditions": ["y"],
+                    "validation_procedure": _GOOD_VP,
+                    "dataset_specs": [_SYNTHETIC_SPEC],
+                    "unresolved_dataset_specs": [],
+                    "sota_reconciliations": [
+                        {
+                            "conflict": "c",
+                            "evidence_paper_url": "https://arxiv.org/abs/x",
+                            "user_choice": "narrow_claim",
+                            "resolution": "r",
+                            "resolved_at_round": 0,
+                        }
+                    ],
+                    "acknowledged_limitations": ["x"],
+                },
+            }
+            responses = [
+                _wrap_assistant_text(
+                    json.dumps({"action": "ASK", "question": "narrow or acknowledge?"})
+                ),
+                _wrap_assistant_text(
+                    json.dumps({"action": "PROPOSE_DATASET", "spec": _SYNTHETIC_SPEC})
+                ),
+                _wrap_assistant_text(json.dumps(done_payload)),
+            ]
+            run_dir = tmp_path / "refine"
+            plan_path = run_dir / "refined_research_plan.json"
+            run_research_refiner(
+                REPO_ROOT,
+                grilling_session=_grilling_session(),
+                market_research_brief=_market_brief(tmp_path),
+                run_dir=run_dir,
+                billing_ack=True,
+                execution_ack=True,
+                command_runner=_FakeRunner(responses),
+                input_provider=_spy_asker,
+            )
+            # At the moment asker was called, the pending question was on disk
+            # and rounds was still empty.
+            self.assertEqual(captured["question"], "narrow or acknowledge?")
+            self.assertEqual(captured["rounds_at_emit"], 0)
+            # And after DONE the pending_ask is cleared.
+            final = json.loads(plan_path.read_text(encoding="utf-8"))
+            self.assertIsNone(final.get("pending_ask"))
+
+
 class RefinerErrorTests(unittest.TestCase):
     def test_unsupported_action_aborts_with_schema_valid_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -417,6 +417,130 @@ class GrillingPersistenceTests(unittest.TestCase):
             )
             self.assertIsNone(load_resumable_session(Path(tmp) / "grilling_session.json"))
 
+    def test_pending_ask_is_persisted_before_user_reply(self) -> None:
+        """Regression: an emitted ASK used to live only on the SSE stream
+        and in the worker's local variable. If the user navigated away to
+        another thread between ASK emit and user reply, the question was
+        gone forever — returning to the thread showed an empty
+        awaiting_input chat. After the fix, the question is flushed to
+        ``grilling_session.json.pending_ask`` immediately before the agent
+        blocks on user input."""
+
+        # The asker captures the on-disk pending_ask at the moment it is
+        # called — i.e., right when the question would be presented to the
+        # user. That snapshot must contain the question.
+        captured: dict = {}
+
+        def _spy_asker(question: str) -> str:
+            session = json.loads(session_path.read_text(encoding="utf-8"))
+            captured["question_in_session"] = (session.get("pending_ask") or {}).get(
+                "question"
+            )
+            captured["rounds_at_emit"] = len(session["rounds"])
+            return "answer"
+
+        extracted = {
+            "root_goal_id": "rg_pending",
+            "domain": "x",
+            "node_type": "capability",
+            "claim_under_test": "x",
+            "mandatory_baselines": ["a"],
+            "success_criteria": ["b"],
+            "disproof_conditions": ["c"],
+            "goal_facets": [],
+            "taste_constraints": [],
+            "search_query_seed": "x",
+        }
+        responses = [
+            _wrap_assistant_text(
+                json.dumps({"action": "ASK", "question": "what would falsify the claim?"})
+            ),
+            _wrap_assistant_text(json.dumps({"action": "DONE", "extracted": extracted})),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            session_path = tmp_path / "grilling_session.json"
+            run_grilling_session(
+                REPO_ROOT,
+                user_goal="x",
+                run_dir=tmp_path,
+                billing_ack=True,
+                execution_ack=True,
+                command_runner=FakeClaudeRunner(responses),
+                input_provider=_spy_asker,
+                allowed_domains=[],
+            )
+            # While the user was deciding what to type, the question was
+            # present on disk and rounds was still empty (no reply yet).
+            self.assertEqual(
+                captured["question_in_session"],
+                "what would falsify the claim?",
+            )
+            self.assertEqual(captured["rounds_at_emit"], 0)
+            # And after the loop completed (DONE), pending_ask is cleared.
+            final = json.loads(session_path.read_text(encoding="utf-8"))
+            self.assertIsNone(final.get("pending_ask"))
+            self.assertEqual(len(final["rounds"]), 1)
+
+    def test_non_ascii_user_goal_still_persists_rounds(self) -> None:
+        """Regression: a Korean (or any non-ASCII) user_goal used to make
+        ``_slugify`` emit a root_goal_id containing Hangul, which the
+        grilling_session schema regex ``^rg_[A-Za-z0-9_\\-]+$`` rejects.
+        That made ``_flush_in_progress`` swallow every flush silently, so
+        the on-disk session never reflected any rounds — from the user's
+        view, grilling appeared to "lose" all answers after a server
+        restart or page reload."""
+        extracted = {
+            "root_goal_id": "rg_korean_alpha",
+            "domain": "alpha_factor_combo",
+            "node_type": "capability",
+            "claim_under_test": "Korean claim",
+            "mandatory_baselines": ["a"],
+            "success_criteria": ["b"],
+            "disproof_conditions": ["c"],
+            "goal_facets": [],
+            "taste_constraints": [],
+            "search_query_seed": "x",
+        }
+        responses = [
+            _wrap_assistant_text(json.dumps({"action": "ASK", "question": "Q1?"})),
+            _wrap_assistant_text(json.dumps({"action": "DONE", "extracted": extracted})),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            run_grilling_session(
+                REPO_ROOT,
+                user_goal="나는 머신 알파의 강건성 검증을 제안하고 싶어",
+                run_dir=tmp_path,
+                billing_ack=True,
+                execution_ack=True,
+                command_runner=FakeClaudeRunner(responses),
+                input_provider=lambda q: "answer",
+                allowed_domains=["alpha_factor_combo"],
+            )
+            session_path = tmp_path / "grilling_session.json"
+            # The critical check: file exists with rounds preserved.
+            self.assertTrue(session_path.exists(), "session JSON must be written")
+            session = json.loads(session_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(session["rounds"]), 1)
+            self.assertEqual(session["rounds"][0]["user_response"], "answer")
+            self.assertEqual(session["status"], "done")
+            # And the slug is ASCII-only.
+            self.assertTrue(
+                session["extracted"]["root_goal_id"].startswith("rg_"),
+            )
+            self.assertTrue(
+                session["extracted"]["root_goal_id"].isascii(),
+                f"root_goal_id should be ASCII, got {session['extracted']['root_goal_id']!r}",
+            )
+
+    def test_slugify_is_ascii_only_for_hangul(self) -> None:
+        """Direct unit test of the slug filter."""
+        from research_harness.agents.grilling import _slugify
+        slug = _slugify("나는 머신 알파 my alpha test")
+        self.assertTrue(slug.isascii())
+        self.assertIn("my_alpha_test", slug)
+
     def test_load_resumable_returns_none_when_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIsNone(load_resumable_session(Path(tmp) / "grilling_session.json"))

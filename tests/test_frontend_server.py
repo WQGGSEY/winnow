@@ -129,26 +129,39 @@ class ServerSmokeTests(unittest.TestCase):
         the phase directory exists but grilling_session.json does not. The
         thread page rendered for the running thread used to crash with
         UndefinedError accessing session.session_id."""
+        from research_harness.frontend.server import LiveSession
+
         t = threads.create_thread(self.repo, user_goal="race-condition test")
         # Simulate the post-launch / pre-flush state: phase dir exists,
-        # thread status is "running", but no grilling_session.json yet.
+        # thread status is "running", but no grilling_session.json yet —
+        # and the LiveSession DOES exist in memory (launcher just created
+        # it, the agent task hasn't reached the first flush yet).
         threads.phase_dir(self.repo, t["thread_id"], "grilling").mkdir(
             parents=True, exist_ok=True
         )
         threads.update_thread(
             self.repo, t["thread_id"], phase_status="running"
         )
-        resp = self.client.get(f"/threads/{t['thread_id']}")
-        self.assertEqual(resp.status_code, 200)
-        # The chat panel should pre-render with a disabled reply form, the
-        # "agent is contacting Claude" placeholder, and the chat list ready
-        # for SSE-driven population — so the user sees progress instead of
-        # a 500 or an empty "not yet run" state.
-        self.assertIn("agent is contacting Claude", resp.text)
-        self.assertIn(f'id="chat-{t["thread_id"]}"', resp.text)
-        self.assertIn("Waiting for the first question", resp.text)
-        # And critically — the reply form is present but disabled.
-        self.assertIn('disabled', resp.text)
+        self.client.app.state.s.sessions[t["thread_id"]] = LiveSession(
+            thread_id=t["thread_id"], phase="grilling"
+        )
+        try:
+            resp = self.client.get(f"/threads/{t['thread_id']}")
+            self.assertEqual(resp.status_code, 200)
+            # The chat panel should pre-render with a disabled reply form, the
+            # "agent is contacting Claude" placeholder, and the chat list
+            # ready for SSE-driven population — so the user sees progress
+            # instead of a 500 or an empty "not yet run" state.
+            self.assertIn("agent is contacting Claude", resp.text)
+            self.assertIn(f'id="chat-{t["thread_id"]}"', resp.text)
+            self.assertIn("Waiting for the first question", resp.text)
+            # And critically — the reply form is present but disabled
+            # (because no ASK has arrived yet, NOT because the server
+            # restarted).
+            self.assertIn("disabled", resp.text)
+            self.assertNotIn("Server was restarted", resp.text)
+        finally:
+            self.client.app.state.s.sessions.pop(t["thread_id"], None)
 
     def test_launch_refuses_when_another_thread_holds_lock(self) -> None:
         """Regression: clicking Start grilling on thread B while thread A is
@@ -178,6 +191,73 @@ class ServerSmokeTests(unittest.TestCase):
             self.assertNotIn(t["thread_id"], app_state.sessions)
         finally:
             app_state.lock._holder = None
+
+    def test_post_restart_page_blocks_reply_form_with_resume_banner(self) -> None:
+        """Regression: after server restart, the on-disk grilling_session.json
+        still has prior rounds and thread.json says phase_status='awaiting_input',
+        but app.state.s.sessions has no LiveSession yet. The reply form used
+        to render as enabled — a user typing into it submitted, got 409,
+        and concluded their grilling history was "lost". The page must
+        instead surface a clear "click Resume" banner and disable the form."""
+        import json as _json
+
+        t = threads.create_thread(self.repo, user_goal="post-restart UX")
+        # Drop a synthetic in-progress session with rounds saved.
+        phase_dir = threads.phase_dir(self.repo, t["thread_id"], "grilling")
+        phase_dir.mkdir(parents=True, exist_ok=True)
+        session = {
+            "session_id": "grill_restart001",
+            "status": "in_progress",
+            "user_goal": "post-restart UX",
+            "max_rounds": 8,
+            "model": "sonnet",
+            "created_at": "2026-05-25T07:00:00Z",
+            "rounds": [
+                {
+                    "round_index": 0,
+                    "action": "ASK",
+                    "question": "first question",
+                    "user_response": "first answer",
+                    "raw_action": "{}",
+                }
+            ],
+            "extracted": {
+                "root_goal_id": "rg_restart",
+                "domain": "x",
+                "node_type": "capability",
+                "claim_under_test": "x",
+                "mandatory_baselines": ["a"],
+                "success_criteria": ["b"],
+                "disproof_conditions": ["c"],
+                "goal_facets": [],
+                "taste_constraints": [],
+                "search_query_seed": "x",
+            },
+            "usage_estimate": {
+                "rounds_used": 1,
+                "total_cost_usd": 0.02,
+                "total_input_tokens": 100,
+                "total_output_tokens": 30,
+            },
+        }
+        (phase_dir / "grilling_session.json").write_text(_json.dumps(session))
+        threads.update_thread(
+            self.repo, t["thread_id"], phase_status="awaiting_input"
+        )
+        # In-memory s.sessions is empty (no LiveSession for this thread).
+        resp = self.client.get(f"/threads/{t['thread_id']}")
+        self.assertEqual(resp.status_code, 200)
+        # Prior rounds still visible.
+        self.assertIn("first answer", resp.text)
+        self.assertIn("first question", resp.text)
+        # Resume banner present.
+        self.assertIn("Server was restarted", resp.text)
+        self.assertIn("Resume / reconnect", resp.text)
+        # Form is disabled (placeholder reflects the gating).
+        self.assertIn(
+            "Click Resume / reconnect to re-attach the agent first",
+            resp.text,
+        )
 
     def test_thread_json_round_trip_includes_domain_state(self) -> None:
         t = threads.create_thread(self.repo, user_goal="domain state field")

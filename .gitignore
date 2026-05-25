@@ -26,4 +26,7 @@ settings.local.json
 # Editable-install metadata.
 *.egg-info/
 
+# Claude Code local session state.
+.claude/
+
 .gstack/

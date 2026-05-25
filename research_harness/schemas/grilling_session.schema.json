@@ -66,6 +66,16 @@
         "additionalProperties": false
       }
     },
+    "pending_ask": {
+      "type": ["object", "null"],
+      "required": ["question"],
+      "properties": {
+        "question": { "type": "string", "minLength": 1 },
+        "raw_action": { "type": "string" },
+        "emitted_at": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
     "scaffold_state": {
       "type": ["object", "null"],
       "required": ["active"],

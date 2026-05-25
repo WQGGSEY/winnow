@@ -181,11 +181,19 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
             raise HTTPException(404, str(exc))
         thread_list = threads.list_threads(s.repo_root)
         phase_data = _collect_phase_data(s.repo_root, thread_id)
+        # Tell templates whether this thread currently has an in-memory
+        # live session — needed to distinguish "agent is alive, just
+        # waiting on user input" from "phase_status is awaiting_input on
+        # disk but the agent task is dead post-restart and the operator
+        # needs to click Resume". Without this signal the reply form
+        # looks usable but submits 409 — that's exactly what made grilling
+        # appear to "lose" the conversation across restarts.
         return render(
             "base.html",
             thread_list=thread_list,
             active_thread=active,
             phase_data=phase_data,
+            live_session_present=thread_id in s.sessions,
         )
 
     # -------- partials
@@ -210,6 +218,7 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
             thread=active,
             phase=phase,
             p=data.get(phase, {}),
+            live_session_present=thread_id in s.sessions,
         )
 
     # -------- thread CRUD

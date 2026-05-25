@@ -236,6 +236,12 @@ code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-
 .domain-tag.domain-null { color: var(--muted); }
 .thread-domain.scaffolding { color: #854d0e; }
 
+.chat-needs-resume {
+  margin: 8px 0;
+  font-size: 12.5px;
+}
+.chat-needs-resume strong { color: #713f12; }
+
 .chat-thinking {
   display: flex;
   align-items: center;

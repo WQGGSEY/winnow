@@ -52,6 +52,9 @@
             {% if r.user_response %}
               <li class="msg reply"><strong>A{{ r.round_index + 1 }}</strong><div>{{ r.user_response }}</div></li>
             {% endif %}
+            {# pending_ask handled below the loop — but if the agent
+               somehow appended a half-round (question without reply)
+               we already rendered it above. #}
           {% elif action == "PROPOSE_FILE" %}
             {% set fr = r.file_result or {} %}
             <li class="msg propose-file file-{{ fr.status or 'unknown' }}">
@@ -89,26 +92,46 @@
             </li>
           {% endif %}
         {% endfor %}
+        {# pending_ask is the in-flight question the agent emitted but the
+           user hasn't replied to yet. Without rendering this, navigating
+           away mid-round and back would hide the current Q entirely
+           (it only exists on the SSE stream, which closed on navigation). #}
+        {% if session.pending_ask %}
+          {% set next_q_index = session.rounds|length + 1 %}
+          <li class="msg ask"><strong>Q{{ next_q_index }}</strong><div>{{ session.pending_ask.question }}</div></li>
+        {% endif %}
       {% endif %}
     </ol>
 
     {% set in_progress = (session and session.status == "in_progress") or (not session and is_live) %}
     {% if in_progress %}
+      {% set needs_resume = is_live and not live_session_present %}
+      {% if needs_resume %}
+        <div class="callout chat-needs-resume">
+          <strong>Server was restarted.</strong>
+          The agent task is no longer in memory. Your previous rounds are
+          preserved on disk — click <em>Resume / reconnect</em> below to
+          re-attach the agent (it will pick up exactly where it left off
+          and emit a fresh question). Sending a message without resuming
+          would be rejected because there's no live agent to receive it.
+        </div>
+      {% endif %}
       <div class="chat-thinking" id="thinking-{{ thread.thread_id }}"
            {% if session and session.rounds and not session.rounds[-1].user_response %}{% else %}hidden{% endif %}>
         <span class="dot"></span><span class="dot"></span><span class="dot"></span>
         Agent is thinking…
       </div>
+      {% set form_disabled = needs_resume or (not session or thread.phase_status != "awaiting_input") %}
       <form class="chat-reply"
             data-action="grilling-reply"
             data-thread-id="{{ thread.thread_id }}"
-            {% if not session or thread.phase_status != "awaiting_input" %}data-await-first-ask{% endif %}>
+            {% if form_disabled %}data-await-first-ask{% endif %}>
         <textarea name="reply" rows="3"
-                  placeholder="{% if thread.phase_status == 'awaiting_input' %}Reply to the agent's question…{% else %}Waiting for the first question…{% endif %}"
-                  {% if not session or thread.phase_status != "awaiting_input" %}disabled{% endif %}
+                  placeholder="{% if needs_resume %}Click Resume / reconnect to re-attach the agent first…{% elif thread.phase_status == 'awaiting_input' %}Reply to the agent's question…{% else %}Waiting for the first question…{% endif %}"
+                  {% if form_disabled %}disabled{% endif %}
                   required></textarea>
         <button type="submit" class="btn primary"
-                {% if not session or thread.phase_status != "awaiting_input" %}disabled{% endif %}>
+                {% if form_disabled %}disabled{% endif %}>
           Send
         </button>
       </form>

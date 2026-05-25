@@ -355,6 +355,25 @@ def run_grilling_session(
             question = str(call.parsed.get("question", "")).strip()
             if not question:
                 raise GrillingError("grilling agent emitted ASK without question")
+            # Persist the pending ASK BEFORE blocking on the user. Without
+            # this the question only existed in the SSE event + agent's
+            # local variable, so a browser that navigated away after Q3
+            # emit but before the reply would return to find an empty
+            # awaiting_input chat (the question was unreachable).
+            pending_ask = {
+                "question": question,
+                "raw_action": call.raw_action_text,
+                "emitted_at": datetime.now(timezone.utc).isoformat(),
+            }
+            _flush_in_progress(
+                session_path,
+                base_session,
+                rounds,
+                usage,
+                extracted,
+                scaffold_state,
+                pending_ask=pending_ask,
+            )
             user_response = asker(question)
             rounds.append(
                 {
@@ -369,6 +388,7 @@ def run_grilling_session(
             # so the agent has room for the deep interview + manifest loop.
             if _user_opted_into_scaffolding(question, user_response):
                 effective_max_rounds = max(effective_max_rounds, SCAFFOLD_MAX_ROUNDS)
+            # Clear pending_ask: the reply has been captured into rounds.
             _flush_in_progress(
                 session_path,
                 base_session,
@@ -376,6 +396,7 @@ def run_grilling_session(
                 usage,
                 extracted,
                 scaffold_state,
+                pending_ask=None,
             )
             index += 1
         else:
@@ -767,9 +788,18 @@ def _placeholder_extracted(user_goal: str) -> dict[str, Any]:
 
 
 def _slugify(text: str) -> str:
-    out = []
+    """ASCII-only slug. The downstream schema regex
+    ``^rg_[A-Za-z0-9_\\-]+$`` rejects non-ASCII, and Python's
+    ``str.isalnum()`` is *unicode-aware* — it returns True for Hangul,
+    CJK, accented Latin, etc. Without the explicit ``isascii`` filter,
+    a Korean user_goal would produce a root_goal_id like ``rg_나는_머신``
+    that fails schema validation, which in turn causes
+    ``_flush_in_progress`` to silently swallow the write and the user's
+    grilling appears to "lose" every round.
+    """
+    out: list[str] = []
     for char in text.lower():
-        if char.isalnum():
+        if char.isascii() and char.isalnum():
             out.append(char)
         elif char in {" ", "-", "_"}:
             out.append("_")
@@ -796,6 +826,7 @@ def _flush_in_progress(
     usage: dict[str, Any],
     extracted: dict[str, Any] | None,
     scaffold_state: dict[str, Any] | None = None,
+    pending_ask: dict[str, Any] | None = None,
 ) -> None:
     """Persist mid-grilling state so a server crash never loses user input.
 
@@ -814,9 +845,23 @@ def _flush_in_progress(
     }
     if scaffold_state is not None:
         snapshot["scaffold_state"] = scaffold_state
+    # pending_ask is intentionally written even when None — clearing it
+    # after a user reply is part of the contract (otherwise the page would
+    # show a stale ASK that was already answered).
+    snapshot["pending_ask"] = pending_ask
     try:
         validate_named_schema("grilling_session", snapshot)
-    except SchemaValidationError:
+    except SchemaValidationError as exc:
+        # Surface the failure on stderr so silent flush-loss never goes
+        # unnoticed again. Past silent failures (e.g. a non-ASCII root_goal_id
+        # rejected by the schema regex) made grilling appear to "lose" all
+        # the user's rounds because the file was never written at all.
+        import sys
+
+        sys.stderr.write(
+            f"[grilling] _flush_in_progress schema validation failed; "
+            f"session file NOT written. error={exc}\n"
+        )
         return
     _atomic_write_json(session_path, snapshot)
 

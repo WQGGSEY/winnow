@@ -208,7 +208,17 @@
     },
     "plan_path": { "type": "string", "minLength": 1 },
     "dataset_manifest_path": { "type": "string", "minLength": 1 },
-    "error": { "type": ["string", "null"] }
+    "error": { "type": ["string", "null"] },
+    "pending_ask": {
+      "type": ["object", "null"],
+      "required": ["question"],
+      "properties": {
+        "question": { "type": "string", "minLength": 1 },
+        "raw_action": { "type": "string" },
+        "emitted_at": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }
