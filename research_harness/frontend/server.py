@@ -1015,7 +1015,16 @@ async def _launch_production(s: AppState, index: dict[str, Any]) -> None:
                     root_node=root_node,
                 )
             outcome = None
-            ac = (summary or {}).get("ac_decision") or {}
+            # ac_decision is nested under rebuttal_summary on the
+            # production_run_summary, not at the top level. (Reading the
+            # top-level key here was returning None and leaving thread
+            # outcome unset even on a clean accept.)
+            ac = (
+                ((summary or {}).get("rebuttal_summary") or {}).get(
+                    "ac_decision"
+                )
+                or {}
+            )
             if ac.get("decision") == "accept":
                 outcome = "accept"
             elif ac.get("decision") == "reject":
@@ -1095,10 +1104,19 @@ def _read_phase_artifacts(
         if sp.exists():
             with contextlib.suppress(json.JSONDecodeError, OSError):
                 result["summary"] = json.loads(sp.read_text(encoding="utf-8"))
-        if (pdir / "interactive_summary.html").exists():
-            result["interactive_html_url"] = (
-                f"/files/{thread_id}/production/interactive_summary.html"
-            )
+        # interactive_summary.html is emitted into publication/ by the
+        # publish dispatcher, not into the production root.
+        candidates = [
+            pdir / "publication" / "interactive_summary.html",
+            pdir / "interactive_summary.html",  # legacy / fallback
+        ]
+        for cand in candidates:
+            if cand.exists():
+                rel = cand.relative_to(pdir).as_posix()
+                result["interactive_html_url"] = (
+                    f"/files/{thread_id}/production/{rel}"
+                )
+                break
     return result
 
 

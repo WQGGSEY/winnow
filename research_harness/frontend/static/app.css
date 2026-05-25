@@ -354,6 +354,22 @@ code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-
 .ac-card.decision-accept { background: var(--accent-soft); border-color: var(--accent); }
 .ac-card.decision-reject { background: #fde7df; border-color: var(--warn); }
 .ac-card.decision-revise { background: #fef9c3; border-color: #ca8a04; }
+.ac-card.decision-unknown { background: var(--panel-soft); }
+.ac-card .score-summary {
+  width: auto;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 12px;
+}
+.ac-card .score-summary th, .ac-card .score-summary td {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  text-align: center;
+}
+.ac-card .score-summary th { color: var(--muted); font-weight: 500; }
+.ac-card ul { margin: 4px 0 8px; padding-left: 20px; }
+.published-artifacts ul { padding-left: 20px; margin: 6px 0; }
 .meta-badges { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; font-size: 11px; }
 .interactive-iframe {
   width: 100%; height: 720px;

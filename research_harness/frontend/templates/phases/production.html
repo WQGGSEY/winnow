@@ -22,11 +22,42 @@
   {% set summary = p.summary %}
   <section class="production-view">
     {% if summary %}
-      {% set ac = summary.ac_decision or {} %}
+      {# ac_decision lives under rebuttal_summary on disk; pull it from
+         there, not from the top level. #}
+      {% set rebuttal = summary.rebuttal_summary or {} %}
+      {% set ac = rebuttal.ac_decision or {} %}
       <section class="ac-card decision-{{ ac.decision or 'unknown' }}">
-        <h3>AC decision: <strong>{{ ac.decision or "unknown" }}</strong></h3>
-        {% if ac.reasoning %}
-          <p>{{ ac.reasoning|truncate_chars(400) }}</p>
+        <h3>AC decision: <strong>{{ ac.decision or "unknown" }}</strong>
+          {% if ac.confidence %}
+            <small style="font-weight: normal; color: var(--muted);">
+              ({{ ac.confidence }} confidence)
+            </small>
+          {% endif %}
+        </h3>
+        {% if ac.score_summary %}
+          <table class="score-summary">
+            <thead><tr>
+              {% for k, _ in ac.score_summary.items() %}<th>{{ k }}</th>{% endfor %}
+            </tr></thead>
+            <tbody><tr>
+              {% for _, v in ac.score_summary.items() %}<td>{{ v }}</td>{% endfor %}
+            </tr></tbody>
+          </table>
+        {% endif %}
+        {% if ac.blocking_reasons %}
+          <div><strong>Blocking reasons:</strong>
+            <ul>{% for r in ac.blocking_reasons %}<li>{{ r }}</li>{% endfor %}</ul>
+          </div>
+        {% endif %}
+        {% if ac.camera_ready_conditions %}
+          <div><strong>Camera-ready conditions:</strong>
+            <ul>{% for c in ac.camera_ready_conditions %}<li>{{ c }}</li>{% endfor %}</ul>
+          </div>
+        {% endif %}
+        {% if ac.required_next_search_nodes %}
+          <div><strong>Required next search nodes:</strong>
+            <ul>{% for n in ac.required_next_search_nodes %}<li>{{ n }}</li>{% endfor %}</ul>
+          </div>
         {% endif %}
         <div class="meta-badges">
           <span class="badge">templates_used: {{ summary.templates_used|pretty_json|truncate_chars(80) }}</span>
@@ -36,6 +67,25 @@
           </span>
         </div>
       </section>
+
+      {% set dispatch = summary.publication_dispatch or {} %}
+      {% set rendered = dispatch.rendered_artifacts or [] %}
+      {% if rendered %}
+        <section class="published-artifacts">
+          <h3>Published artifacts</h3>
+          <ul>
+            {% for art in rendered %}
+              <li>
+                <strong>{{ art.output }}</strong>:
+                <a href="/files/{{ thread.thread_id }}/production/publication/{{ art.artifact_path.split('/')|last }}"
+                   target="_blank">
+                  {{ art.artifact_path.split('/')|last }}
+                </a>
+              </li>
+            {% endfor %}
+          </ul>
+        </section>
+      {% endif %}
 
       {% if p.interactive_html_url %}
         <section class="interactive-card">

@@ -264,6 +264,83 @@ class ServerSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("Resume / reconnect", resp.text)
 
+    def test_production_panel_reads_ac_decision_from_rebuttal_summary(self) -> None:
+        """Regression: AC decision sits under summary.rebuttal_summary.ac_decision,
+        not at the top level. The production panel used to look at
+        summary.ac_decision directly and render "unknown" for every clean
+        accept."""
+        t = threads.create_thread(self.repo, user_goal="production ac decision")
+        prod_dir = threads.phase_dir(self.repo, t["thread_id"], "production")
+        prod_dir.mkdir(parents=True, exist_ok=True)
+        summary = {
+            "type": "production_run_summary",
+            "backend": "mock",
+            "preflight_status": "passed",
+            "tree_search_status": "ok",
+            "node_count": 1,
+            "promoted_node_ids": ["n_root"],
+            "templates_used": {"n_root": "alpha_factor_combo"},
+            "fallback_node_ids": [],
+            "evidence_is_fake": False,
+            "rebuttal_summary": {
+                "ac_decision": {
+                    "decision": "accept",
+                    "confidence": "high",
+                    "blocking_reasons": [],
+                    "camera_ready_conditions": ["Disclose AI assistance."],
+                    "required_next_search_nodes": [],
+                    "score_summary": {
+                        "validity": 8,
+                        "necessity": 7,
+                        "reproducibility": 7,
+                        "taste_alignment": 8,
+                        "clarity": 7,
+                        "novelty": 7,
+                    },
+                },
+            },
+            "publication_dispatch": {
+                "decision": "accept",
+                "evidence_is_fake": False,
+                "rendered_artifacts": [
+                    {
+                        "output": "interactive_html",
+                        "artifact_path": str(
+                            prod_dir / "publication" / "interactive_summary.html"
+                        ),
+                    },
+                ],
+                "requested_outputs": ["interactive_html"],
+                "skipped_outputs": [],
+                "type": "publication_dispatch",
+            },
+        }
+        (prod_dir / "production_run_summary.json").write_text(json.dumps(summary))
+        (prod_dir / "publication").mkdir(parents=True, exist_ok=True)
+        (prod_dir / "publication" / "interactive_summary.html").write_text(
+            "<h1>x</h1>"
+        )
+        threads.update_thread(
+            self.repo,
+            t["thread_id"],
+            current_phase="production",
+            phase_status="complete",
+            domain="alpha_factor_combo",
+            outcome="accept",
+        )
+        resp = self.client.get(f"/threads/{t['thread_id']}")
+        self.assertEqual(resp.status_code, 200)
+        # AC decision should show "accept", not "unknown"
+        self.assertIn("AC decision:", resp.text)
+        self.assertNotIn(">unknown<", resp.text)
+        self.assertIn(">accept<", resp.text)
+        # Score summary table
+        self.assertIn("validity", resp.text)
+        # Published artifacts list
+        self.assertIn("interactive_html", resp.text)
+        # interactive_html_url points to the publication/ subfolder
+        self.assertIn("publication/interactive_summary.html", resp.text)
+
     def test_refine_panel_handles_synthetic_spec_without_source(self) -> None:
         """Regression: a refined plan with a synthetic dataset_spec (which
         has synthetic_recipe but no source field) used to 500 the entire
