@@ -29,6 +29,7 @@ from typing import Any, Callable
 from research_harness.config import (
     load_settings,
     resolve_agent_budget,
+    resolve_agent_max_rounds,
     resolve_agent_model,
 )
 from research_harness.datasets import materialize
@@ -46,6 +47,8 @@ EXECUTION_ACK_VALUE = "live_smoke_ack"
 DEFAULT_MAX_ROUNDS = 12
 DEFAULT_ROUND_TIMEOUT_SECONDS = 240
 MAX_BASELINE_MD_CHARS = 6000
+# Hard ceiling for "unlimited" refine mode — see grilling.py for rationale.
+UNLIMITED_SAFETY_CAP = 10_000
 
 
 CommandRunner = Callable[..., subprocess.CompletedProcess]
@@ -71,7 +74,7 @@ def run_research_refiner(
     grilling_session: dict[str, Any],
     market_research_brief: dict[str, Any],
     run_dir: Path | None = None,
-    max_rounds: int = DEFAULT_MAX_ROUNDS,
+    max_rounds: int | None = DEFAULT_MAX_ROUNDS,
     plan_id: str | None = None,
     claude_path: str | None = None,
     billing_ack: bool | None = None,
@@ -81,12 +84,18 @@ def run_research_refiner(
     input_provider: InputProvider | None = None,
     allowed_domains: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Drive the 3-action loop and emit refined_research_plan + dataset_manifest."""
+    """Drive the 3-action loop and emit refined_research_plan + dataset_manifest.
+
+    ``max_rounds=None`` means unlimited: agent owns DONE, harness does
+    no force-finalize, loop bounded only by ``UNLIMITED_SAFETY_CAP``.
+    """
 
     validate_named_schema("grilling_session", grilling_session)
     validate_named_schema("market_research_brief", market_research_brief)
-    if max_rounds < 1 or max_rounds > 50:
-        raise RefinerError("max_rounds must be between 1 and 50")
+    if max_rounds is not None and (max_rounds < 1 or max_rounds > UNLIMITED_SAFETY_CAP):
+        raise RefinerError(
+            f"max_rounds must be between 1 and {UNLIMITED_SAFETY_CAP} or None for unlimited"
+        )
 
     repo_root = repo_root.resolve()
     settings = load_settings(repo_root)
@@ -97,6 +106,10 @@ def run_research_refiner(
     )
     model = resolve_agent_model(settings, "research_refiner_agent")
     max_budget = resolve_agent_budget(settings, "research_refiner_agent")
+    if max_rounds == DEFAULT_MAX_ROUNDS:
+        max_rounds = resolve_agent_max_rounds(
+            settings, "research_refiner_agent", fallback=DEFAULT_MAX_ROUNDS
+        )
 
     if allowed_domains is None:
         try:
@@ -178,8 +191,14 @@ def run_research_refiner(
         plan_path, base_plan, rounds, usage, verified_dataset_specs
     )
 
+    # Effective loop cap. Unlimited mode (max_rounds=None) uses the
+    # safety cap so the loop is always bounded — see UNLIMITED_SAFETY_CAP.
+    effective_max_rounds = (
+        max_rounds if max_rounds is not None else UNLIMITED_SAFETY_CAP
+    )
+
     try:
-        for index in range(max_rounds):
+        for index in range(effective_max_rounds):
             call = _call_refiner_round(
                 runner=runner,
                 claude_path=detected_claude,
@@ -290,6 +309,17 @@ def run_research_refiner(
 
             raise RefinerError(f"unsupported refiner action: {action_type!r}")
         else:
+            # Loop exhausted. Unlimited mode skips force-finalize (the
+            # user explicitly said "agent owns DONE"); reaching here in
+            # unlimited mode means we hit the safety cap and the session
+            # is broken, not "ready to finalize".
+            if max_rounds is None:
+                raise RefinerError(
+                    f"unlimited refiner exhausted the safety cap of "
+                    f"{UNLIMITED_SAFETY_CAP} rounds without DONE — the "
+                    "agent appears to be looping. Review the transcript "
+                    "and retry or tighten the inputs."
+                )
             final = _call_refiner_round(
                 runner=runner,
                 claude_path=detected_claude,

@@ -17,6 +17,7 @@ from typing import Any, Callable
 from research_harness.config import (
     load_settings,
     resolve_agent_budget,
+    resolve_agent_max_rounds,
     resolve_agent_model,
 )
 from research_harness.orchestrator.experiment_plan import list_available_domains
@@ -32,6 +33,10 @@ EXECUTION_ACK_ENV = "RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE"
 EXECUTION_ACK_VALUE = "live_smoke_ack"
 DEFAULT_MAX_ROUNDS = 8
 DEFAULT_ROUND_TIMEOUT_SECONDS = 180
+# Hard ceiling for "unlimited" mode — a runaway grilling session past
+# this many rounds is broken, not "thorough". Aborts cleanly rather
+# than burning subscription minutes forever.
+UNLIMITED_SAFETY_CAP = 10_000
 
 # Scaffold mode (see ADR 0004): activated when no existing domain matches.
 SCAFFOLD_MAX_ROUNDS = 30
@@ -82,7 +87,7 @@ def run_grilling_session(
     *,
     user_goal: str,
     run_dir: Path | None = None,
-    max_rounds: int = DEFAULT_MAX_ROUNDS,
+    max_rounds: int | None = DEFAULT_MAX_ROUNDS,
     session_id: str | None = None,
     claude_path: str | None = None,
     billing_ack: bool | None = None,
@@ -96,12 +101,20 @@ def run_grilling_session(
     created_at_override: str | None = None,
     event_emitter: EventEmitter | None = None,
 ) -> dict[str, Any]:
-    """Drive a multi-turn grilling loop and emit a grilling_session.json."""
+    """Drive a multi-turn grilling loop and emit a grilling_session.json.
+
+    ``max_rounds=None`` means unlimited: the agent owns the DONE
+    decision, the harness applies no force-extract, and the loop is
+    only bounded by the internal ``UNLIMITED_SAFETY_CAP`` to keep a
+    runaway session from burning subscription minutes forever.
+    """
 
     if not user_goal or not user_goal.strip():
         raise GrillingError("user_goal must be a non-empty string")
-    if max_rounds < 1 or max_rounds > 50:
-        raise GrillingError("max_rounds must be between 1 and 50")
+    if max_rounds is not None and (max_rounds < 1 or max_rounds > UNLIMITED_SAFETY_CAP):
+        raise GrillingError(
+            f"max_rounds must be between 1 and {UNLIMITED_SAFETY_CAP} or None for unlimited"
+        )
 
     repo_root = repo_root.resolve()
     settings = load_settings(repo_root)
@@ -112,6 +125,12 @@ def run_grilling_session(
     )
     model = resolve_agent_model(settings, "grilling_agent")
     max_budget = resolve_agent_budget(settings, "grilling_agent")
+    # If the caller passed the default sentinel, let settings.json
+    # override it (including the "unlimited" option which maps to None).
+    if max_rounds == DEFAULT_MAX_ROUNDS:
+        max_rounds = resolve_agent_max_rounds(
+            settings, "grilling_agent", fallback=DEFAULT_MAX_ROUNDS
+        )
 
     if allowed_domains is None:
         try:
@@ -180,7 +199,12 @@ def run_grilling_session(
     scaffold_state: dict[str, Any] | None = None
     status = "in_progress"
     error: str | None = None
-    effective_max_rounds = max_rounds
+    # ``effective_max_rounds`` is what the loop actually checks against.
+    # In unlimited mode (max_rounds=None) we use the safety cap so the
+    # loop is still bounded — see UNLIMITED_SAFETY_CAP for the rationale.
+    effective_max_rounds = (
+        max_rounds if max_rounds is not None else UNLIMITED_SAFETY_CAP
+    )
 
     _flush_in_progress(
         session_path, base_session, rounds, usage, extracted, scaffold_state
@@ -404,10 +428,28 @@ def run_grilling_session(
             )
             index += 1
         else:
-            # Loop exhausted max_rounds. In scaffold mode, force-extracting
-            # a placeholder claim contract would leave a half-built domain
-            # on disk; treat this as scaffold_failed instead.
-            if scaffold_state and scaffold_state.get("active") and not scaffold_state.get(
+            # Loop exhausted max_rounds. Three sub-cases:
+            #   (a) unlimited mode (no harness cap): user asked the agent
+            #       to own DONE. Reaching here means we hit the safety
+            #       cap — abort instead of force-extracting placeholder
+            #       contract, which would silently hide that the agent
+            #       went runaway.
+            #   (b) scaffold mode mid-flight: force-extracting would
+            #       leave a half-built domain on disk; mark
+            #       scaffold_failed and keep staging for inspection.
+            #   (c) normal mode: force-extract the best claim contract
+            #       from the transcript so the user still has something
+            #       to inspect.
+            if max_rounds is None:
+                status = "aborted"
+                error = (
+                    f"unlimited grilling exhausted the safety cap of "
+                    f"{UNLIMITED_SAFETY_CAP} rounds without a DONE; the "
+                    "agent appears to be looping — review the transcript "
+                    "and either retry or tighten the user_goal."
+                )
+                extracted = _placeholder_extracted(user_goal)
+            elif scaffold_state and scaffold_state.get("active") and not scaffold_state.get(
                 "finalized"
             ):
                 status = "max_rounds_reached"

@@ -36,6 +36,12 @@
       "research_refiner_agent": "1.0",
       "lesson_distillation_agent": "0.25"
     },
+    "agent_max_rounds": {
+      "default": 8,
+      "grilling_agent": 8,
+      "research_refiner_agent": 12,
+      "_comment": "Use a positive integer (capped at 10000) or the string 'unlimited' / null. Unlimited means the agent owns the DONE decision with no harness-side force-extract."
+    },
     "worker_backends": {
       "mock": {
         "required_for_ci": true

@@ -21,7 +21,11 @@
       "enum": ["in_progress", "done", "max_rounds_reached", "blocked_by_gate", "blocked_by_execution_ack", "aborted"]
     },
     "user_goal": { "type": "string", "minLength": 1 },
-    "max_rounds": { "type": "integer", "minimum": 1, "maximum": 50 },
+    "max_rounds": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Hard cap on the number of agent rounds. Null = unlimited (agent owns DONE)."
+    },
     "model": { "type": "string", "minLength": 1 },
     "created_at": { "type": "string", "minLength": 1 },
     "rounds": {

@@ -279,6 +279,78 @@ def resolve_agent_budget(settings: dict[str, Any], role: str) -> str:
     return "0.25"
 
 
+class _NotSet:  # sentinel: "value resolution couldn't extract a usable value"
+    ...
+
+
+_NOT_SET = _NotSet()
+
+
+def resolve_agent_max_rounds(
+    settings: dict[str, Any], role: str, *, fallback: int = 8
+) -> int | None:
+    """Pick the max_rounds cap for an agent role.
+
+    Returns either a positive integer (the cap) or ``None`` (unlimited —
+    the agent owns the DONE decision and the harness does no
+    force-extract).
+
+    Resolution order:
+      1. settings.runtime.agent_max_rounds.<role>
+      2. settings.runtime.agent_max_rounds.default
+      3. the caller-supplied ``fallback`` (per-agent hard-coded default,
+         e.g. 8 for grilling, 12 for refine)
+
+    Recognised value shapes for the entries:
+      - positive integer N → N
+      - the string "unlimited" / "none" / "infinity" / "inf" (case-
+        insensitive) → None
+      - JSON null → None
+      - anything else → raise ConfigError
+    """
+
+    def _coerce(value: Any, *, source: str) -> int | None | _NotSet:
+        if value is None:
+            return None  # explicit "unlimited"
+        if isinstance(value, bool):
+            # bool is a subclass of int — reject before the int branch
+            raise ConfigError(
+                f"{source}: max_rounds must be a positive integer or 'unlimited', got bool"
+            )
+        if isinstance(value, int):
+            if value < 1:
+                raise ConfigError(f"{source}: max_rounds must be >= 1, got {value}")
+            return value
+        if isinstance(value, str):
+            stripped = value.strip().lower()
+            if stripped in {"unlimited", "none", "infinity", "inf"}:
+                return None
+            try:
+                n = int(stripped)
+            except ValueError:
+                raise ConfigError(
+                    f"{source}: max_rounds string must be 'unlimited' or a "
+                    f"positive integer, got {value!r}"
+                ) from None
+            if n < 1:
+                raise ConfigError(f"{source}: max_rounds must be >= 1, got {n}")
+            return n
+        return _NOT_SET  # unknown shape — skip and try fallback
+
+    runtime = settings.get("runtime", {}) if isinstance(settings, dict) else {}
+    section = runtime.get("agent_max_rounds", {}) or {}
+    if isinstance(section, dict):
+        if role in section:
+            result = _coerce(section[role], source=f"agent_max_rounds.{role}")
+            if result is not _NOT_SET:
+                return result
+        if "default" in section:
+            result = _coerce(section["default"], source="agent_max_rounds.default")
+            if result is not _NOT_SET:
+                return result
+    return fallback
+
+
 def load_critic_profile(path: Path) -> dict[str, Any]:
     frontmatter, body = split_frontmatter(path)
     if frontmatter.get("override_policy") not in {None, "taste_only"}:

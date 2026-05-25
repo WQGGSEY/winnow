@@ -9,7 +9,12 @@ import unittest
 from pathlib import Path
 
 from research_harness.agents.grilling import GrillingError, run_grilling_session
-from research_harness.config import resolve_agent_budget, resolve_agent_model
+from research_harness.config import (
+    resolve_agent_budget,
+    resolve_agent_max_rounds,
+    resolve_agent_model,
+)
+from research_harness.config import ConfigError
 from research_harness.orchestrator.experiment_plan import (
     FALLBACK_TEMPLATE_ID,
     build_experiment_plan_for_node,
@@ -302,6 +307,59 @@ class AgentBudgetResolveTests(unittest.TestCase):
         }
         self.assertEqual(resolve_agent_budget(settings, "grilling_agent"), "0.5")
         self.assertEqual(resolve_agent_budget(settings, "market_research_agent"), "0.25")
+
+
+class AgentMaxRoundsResolveTests(unittest.TestCase):
+    def test_per_role_overrides_default(self) -> None:
+        settings = {
+            "runtime": {
+                "agent_max_rounds": {
+                    "default": 8,
+                    "grilling_agent": 5,
+                    "research_refiner_agent": 20,
+                }
+            }
+        }
+        self.assertEqual(resolve_agent_max_rounds(settings, "grilling_agent"), 5)
+        self.assertEqual(resolve_agent_max_rounds(settings, "research_refiner_agent"), 20)
+        # role with no entry uses default
+        self.assertEqual(resolve_agent_max_rounds(settings, "market_research_agent"), 8)
+
+    def test_unlimited_string_returns_none(self) -> None:
+        for token in ("unlimited", "UNLIMITED", "Unlimited", "none", "inf", "infinity"):
+            with self.subTest(token=token):
+                settings = {"runtime": {"agent_max_rounds": {"grilling_agent": token}}}
+                self.assertIsNone(resolve_agent_max_rounds(settings, "grilling_agent"))
+
+    def test_json_null_returns_none(self) -> None:
+        settings = {"runtime": {"agent_max_rounds": {"grilling_agent": None}}}
+        self.assertIsNone(resolve_agent_max_rounds(settings, "grilling_agent"))
+
+    def test_string_integer_coerced(self) -> None:
+        settings = {"runtime": {"agent_max_rounds": {"grilling_agent": "15"}}}
+        self.assertEqual(resolve_agent_max_rounds(settings, "grilling_agent"), 15)
+
+    def test_falls_back_to_caller_default(self) -> None:
+        self.assertEqual(
+            resolve_agent_max_rounds({}, "grilling_agent", fallback=12), 12
+        )
+
+    def test_invalid_shape_raises(self) -> None:
+        bad_values = [
+            {"value": 0, "label": "zero"},
+            {"value": -1, "label": "negative"},
+            {"value": True, "label": "bool"},
+            {"value": "garbage", "label": "non-numeric string"},
+        ]
+        for case in bad_values:
+            with self.subTest(label=case["label"]):
+                settings = {
+                    "runtime": {
+                        "agent_max_rounds": {"grilling_agent": case["value"]}
+                    }
+                }
+                with self.assertRaises(ConfigError):
+                    resolve_agent_max_rounds(settings, "grilling_agent")
 
     def test_grilling_picks_up_explicit_model_from_settings(self) -> None:
         # Verify the wiring: grilling agent passes the resolved model to the CLI.
