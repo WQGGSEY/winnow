@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/paper_section.schema.json",
+  "title": "PaperSection",
+  "type": "object",
+  "required": [
+    "thread_id",
+    "section_id",
+    "prose_html",
+    "mental_model_link",
+    "evidence_anchors"
+  ],
+  "properties": {
+    "thread_id": { "type": "string" },
+    "section_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]+$",
+      "description": "Must match a section_id from the submitted paper_outline."
+    },
+    "prose_html": {
+      "type": "string",
+      "minLength": 200,
+      "description": "Section body as safe HTML fragment. Allowed tags: <p>, <h3>, <h4>, <ul>, <ol>, <li>, <strong>, <em>, <code>, <pre>, <table>, <thead>, <tbody>, <tr>, <th>, <td>, <figure>, <figcaption>, <img>, <a>. Other tags stripped at render time. Figure embeds use <img src='figures/{figure_id}.png'> referencing registered figure_ids."
+    },
+    "mental_model_link": {
+      "type": "string",
+      "minLength": 30,
+      "description": "One sentence connecting this section back to the paper's mental_model_statement. Required so no section drifts into a results dump."
+    },
+    "evidence_anchors": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Same shape as critic_review.evidence_anchors: pointers into worker_report / baseline / rebuttal that back this section's prose. Can be empty for the introduction, but must be non-empty for method / experiments / discussion."
+    },
+    "embedded_figure_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "figure_ids the section's prose embeds. Cross-checked against registered figures at render time."
+    },
+    "embedded_table_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

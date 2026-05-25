@@ -1,4 +1,5 @@
 ---
+persona_voice: practitioner
 critic_profile_id: experimental_methodologist_v1
 role: experiment_design
 applies_to:

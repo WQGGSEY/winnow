@@ -80,6 +80,56 @@ GRAD_STUDENT_CONTRACT = (
 )
 
 
+PRACTITIONER_REVIEWER_CONTRACT = (
+    "You are an EXTREME PRACTITIONER reviewer wearing one specific critic "
+    "hat (validity, reproducibility, mechanism, taste, etc. — the critic_id "
+    "tells you which). The persona contract is enforced by schema: every "
+    "review you submit MUST populate the five practitioner fields or it is "
+    "rejected:\n"
+    "  • so_what — 2-4 sentences in operator language. What does this "
+    "evidence actually teach us about the world?\n"
+    "  • next_actions — concrete things to do in 1-4 weeks. Each item: "
+    "{action, owner_role, eta_weeks, prerequisite_evidence}. \"Consider X\" "
+    "and \"investigate Y\" are NOT acceptable.\n"
+    "  • practitioner_take — would YOU commit resources on this evidence "
+    "today? If yes, what guard rails? If no, what cheapest experiment "
+    "flips your call?\n"
+    "  • evidence_anchors — specific pointers into worker_report / "
+    "baselines / dialog entries that justify your scores. No anchors → "
+    "the review is opinion, rejected.\n"
+    "  • direct_methodology_for_user — does this evidence give the "
+    "ORIGINAL user (intake submitter) a direct methodology they can apply? "
+    "{verdict: provides|partial|absent, methodology_summary, gap_to_close}. "
+    "A technically-strong claim that doesn't help the user act must "
+    "LOWER scores — proving a claim ≠ helping the user.\n"
+    "Read critics/PRACTITIONER_PERSONA.md and the per-critic body before "
+    "writing. prepare_rebuttal_packet surfaces both, plus the original "
+    "user intake so you can judge methodology fit."
+)
+
+
+AC_CONTRACT = (
+    "You are the Area Chair (AC). You have read every rebuttal-stage critic "
+    "review and the full rebuttal packet. Your job is NOT to compute a "
+    "threshold mean — that is rejected as fake. You synthesize the rebuttal "
+    "conversation and tell the Professor what the camera-ready manuscript "
+    "must look like. Even an 'accept' MUST emit camera_ready_directives — "
+    "rebuttal-surfaced insights that the Professor will fold into the "
+    "camera-ready. An accept with zero directives is rejected: if the "
+    "evidence is so clean that no rebuttal added anything, the AC must "
+    "still name the boundary condition or scope sharpening that the "
+    "rebuttal made explicit. Every directive must cite origin_critic_ids "
+    "and target a specific paper section. "
+    "You must ALSO synthesize a methodology_assessment in rebuttal_synthesis: "
+    "every reviewer scored direct_methodology_for_user against the ORIGINAL "
+    "user intake. Aggregate those verdicts and decide whether the body of "
+    "evidence as a whole hands the original problem-asker a usable methodology. "
+    "If aggregate_verdict ≠ 'provides', at least one camera_ready_directive "
+    "MUST address the methodology gap — a paper that proves the reshaped "
+    "claim but leaves the user stuck does not earn camera-ready."
+)
+
+
 TOOL_DEFINITIONS = [
     {
         "name": "get_research_state",
@@ -378,6 +428,233 @@ TOOL_DEFINITIONS = [
                 "advisor_message": {"type": "string"},
                 "missing_axes": {"type": "array", "items": {"type": "string"}},
             },
+        },
+    },
+    {
+        "name": "prepare_rebuttal_packet",
+        "description": (
+            "Build the rebuttal packet markdown deterministically and return "
+            "(1) the packet text, (2) the routed critic list with each "
+            "critic's full body (so you can role-play each one in turn), "
+            "(3) the practitioner persona contract text, and (4) the worker "
+            "report + baselines for the promoted node. After this call, "
+            "loop through the returned critic_list and call "
+            "submit_rebuttal_critic_review once per critic_id. The packet "
+            "itself contains NO synthesized critic scores — those come from "
+            "you via submit_rebuttal_critic_review."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "promoted_node_id": {
+                    "type": "string",
+                    "description": "Optional. Defaults to the first promoted node closest to root.",
+                },
+            },
+        },
+    },
+    {
+        "name": "submit_rebuttal_critic_review",
+        "description": (
+            f"{PRACTITIONER_REVIEWER_CONTRACT}\n\n"
+            "Submit ONE critic's review of the promoted node's rebuttal "
+            "packet. Idempotent: re-submitting with the same critic_id "
+            "overwrites the previous review. Schema validation runs before "
+            "the file is persisted; missing so_what / next_actions / "
+            "practitioner_take / evidence_anchors fields cause rejection."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "review"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "review": {
+                    "type": "object",
+                    "description": "Full CriticReview object — see critic_review.schema.json.",
+                },
+            },
+        },
+    },
+    {
+        "name": "submit_orchestrator_reduction",
+        "description": (
+            f"{PROFESSOR_CONTRACT}\n\n"
+            "After all rebuttal-stage critics have submitted, the Professor "
+            "submits a single orchestrator-level reduction for the promoted "
+            "node. This is the final per-node verdict that the AC will read. "
+            "Synthesize the rebuttal critics' practitioner takes; do NOT "
+            "average scores. Field final_verdict must be one of: supported, "
+            "supported_with_scope_narrowing, contradicted, "
+            "confounded_or_not_evaluable, taste_rejected_local_branch, "
+            "blocked_by_operational_issue."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": [
+                "thread_id", "node_id", "final_verdict",
+                "research_status", "score_summary", "synthesis_message",
+            ],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "node_id": {"type": "string"},
+                "final_verdict": {"type": "string"},
+                "research_status": {"type": "string"},
+                "score_summary": {
+                    "type": "object",
+                    "properties": {
+                        "validity": {"type": "integer"},
+                        "necessity": {"type": "integer"},
+                        "reproducibility": {"type": "integer"},
+                        "taste_alignment": {"type": "integer"},
+                    },
+                },
+                "synthesis_message": {"type": "string", "minLength": 60},
+                "blocking_objections": {"type": "array", "items": {"type": "string"}},
+                "accepted_lesson_candidates": {"type": "array", "items": {"type": "string"}},
+                "next_transition": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "submit_ac_decision",
+        "description": (
+            f"{AC_CONTRACT}\n\n"
+            "Submit the final Area-Chair decision after reading all rebuttal "
+            "critic reviews + the orchestrator reduction. camera_ready_"
+            "directives is REQUIRED to be non-empty even on accept — every "
+            "rebuttal exchange produces at least one camera-ready insight "
+            "worth folding in. If you cannot name even one, you have not "
+            "read the rebuttal carefully enough."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "ac_decision"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "ac_decision": {
+                    "type": "object",
+                    "description": "Full ACDecision object — see ac_decision.schema.json.",
+                },
+            },
+        },
+    },
+    {
+        "name": "submit_camera_ready_revision",
+        "description": (
+            f"{PROFESSOR_CONTRACT}\n\n"
+            "The AC has decided (accept or revise) and emitted "
+            "camera_ready_directives. The Professor responds: address every "
+            "directive (accepted_fully / accepted_with_modification / "
+            "escalated_back_to_ac), state the revised scope, AND state the "
+            "single good mental_model_statement this research gives the "
+            "reader. A research without a mental model is a list of "
+            "results, not a paper — empty / vague mental_model_statement "
+            "is rejected."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "camera_ready_revision"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "camera_ready_revision": {
+                    "type": "object",
+                    "description": "Full CameraReadyRevision object — see camera_ready_revision.schema.json.",
+                },
+            },
+        },
+    },
+    {
+        "name": "prepare_paper_writing_context",
+        "description": (
+            "Return the full context the paper writer needs: state bundle, "
+            "rebuttal reviews, AC decision, camera-ready revision, mental "
+            "model statement, plus the data keys available for figures "
+            "(metric keys, LOCO cells, baselines, ablation rows). Reading "
+            "this, you will draft the paper_outline (title + mental_model + "
+            "section_outline + figure_specs + table_specs) and submit it "
+            "via submit_paper_outline."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id"],
+            "properties": {"thread_id": {"type": "string"}},
+        },
+    },
+    {
+        "name": "submit_paper_outline",
+        "description": (
+            "Submit the paper's title, mental_model_statement, and section "
+            "outline. The mental_model_statement is REQUIRED and must be "
+            "concrete — 'this paper gives the reader a mental model of "
+            "<X>' such that a non-expert can grasp <X> in 30 seconds. "
+            "After this, call register_paper_figure for each figure_spec "
+            "and submit_paper_section for each section_id in order."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "outline"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "outline": {"type": "object", "description": "PaperOutline object."},
+            },
+        },
+    },
+    {
+        "name": "submit_paper_section",
+        "description": (
+            "Submit one section's prose (HTML fragment). Must reference at "
+            "least one figure/table from the outline OR provide evidence "
+            "anchors. Each section must include mental_model_link — one "
+            "sentence connecting back to the paper's mental model — so no "
+            "section drifts into a results dump."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "section"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "section": {"type": "object", "description": "PaperSection object."},
+            },
+        },
+    },
+    {
+        "name": "register_paper_figure",
+        "description": (
+            "Ask the server to render a figure using matplotlib. The "
+            "available figure_type values are: loco_heatmap, baseline_bars, "
+            "ablation_drops, lift_ci_forest, score_radar, "
+            "claim_tree_status, metric_table. The server pulls data from "
+            "the worker_report / rebuttal_synthesis via data_spec keys, "
+            "draws the figure, and writes it to "
+            "production/publication/figures/{figure_id}.png. After this "
+            "you can embed it in any submit_paper_section via "
+            "<img src='figures/{figure_id}.png'>."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "figure_request"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "figure_request": {"type": "object", "description": "PaperFigureRequest object."},
+            },
+        },
+    },
+    {
+        "name": "render_final_paper",
+        "description": (
+            "Assemble all submitted sections + registered figures + tables + "
+            "the mental_model_statement into the final Sakana-v2-style ICML "
+            "two-column HTML paper at production/publication/paper.html, "
+            "regenerate interactive_summary.html and slides_summary.html "
+            "alongside it, and write production_run_summary.json so the "
+            "frontend production panel populates."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id"],
+            "properties": {"thread_id": {"type": "string"}},
         },
     },
 ]
@@ -1537,6 +1814,566 @@ def handle_decide_publication_readiness(args: dict[str, Any]) -> dict[str, Any]:
     return {"status": "recorded"}
 
 
+# --- LLM-driven rebuttal + paper writer (Phase C / D) -------------------- #
+
+
+def _rebuttal_dir(tid: str) -> Path:
+    return _thread_dir(tid) / "production" / "rebuttal"
+
+
+def _publication_dir(tid: str) -> Path:
+    return _thread_dir(tid) / "production" / "publication"
+
+
+def _figures_dir(tid: str) -> Path:
+    return _publication_dir(tid) / "figures"
+
+
+def _resolve_promoted_node(tid: str, override_id: str | None = None) -> dict[str, Any]:
+    state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
+    state = _read_json(state_path)
+    if not state:
+        raise ValueError("search_state.json missing — production not initialized")
+    promoted = state.get("promoted_node_ids") or []
+    if not promoted:
+        raise ValueError("no promoted nodes yet — rebuttal requires a promoted root")
+    target = override_id or next(
+        (pid for pid in promoted
+         if next((n for n in state["nodes"] if n["id"] == pid), {}).get("parent") is None),
+        promoted[0],
+    )
+    node = next((n for n in state["nodes"] if n["id"] == target), None)
+    if not node:
+        raise ValueError(f"promoted node {target} missing from search_state")
+    return {"state": state, "node": node, "promoted_id": target}
+
+
+def handle_prepare_rebuttal_packet(args: dict[str, Any]) -> dict[str, Any]:
+    """Build packet + critic list + practitioner persona text. NO LLM here."""
+    from research_harness.critics.governance import select_critics
+    from research_harness.publishing.rebuttal import build_rebuttal_packet
+    from research_harness.config import load_settings as _ls
+
+    tid = args["thread_id"]
+    repo = _repo_root()
+    ctx = _resolve_promoted_node(tid, args.get("promoted_node_id"))
+    node = ctx["node"]
+    promoted_id = ctx["promoted_id"]
+
+    node_dir = _thread_dir(tid) / "production" / "tree" / "nodes" / promoted_id
+    worker_report = _read_json(node_dir / "worker_report.json") or {}
+    if not worker_report:
+        return {"status": "rejected", "reason": "worker_report missing for promoted node"}
+    promotion_critic_reviews = _read_json(node_dir / "critic_reviews.json") or []
+
+    rebuttal_node = dict(node)
+    rebuttal_node["stage"] = "rebuttal"
+    routing = select_critics(repo, rebuttal_node, _ls(repo))
+
+    rebuttal_dir = _rebuttal_dir(tid)
+    rebuttal_dir.mkdir(parents=True, exist_ok=True)
+
+    packet_state = {
+        "node": node,
+        "worker_report": worker_report,
+        "critic_reviews": promotion_critic_reviews,
+        "critic_routing": routing,
+        "orchestrator_reduction": {
+            "node_id": promoted_id,
+            "final_verdict": "pending_llm_reduction",
+            "research_status": "pending_llm_reduction",
+            "next_transition": "pending",
+            "score_summary": {},
+            "blocking_objections": [],
+            "accepted_lesson_candidates": [],
+            "failure_branch_prior": {
+                "source": "failure_memory", "query_tags": [],
+                "selected_failure_files": [], "risk_controls": [], "branch_suggestions": [],
+            },
+            "child_branch_suggestions": [],
+        },
+    }
+    packet_path = rebuttal_dir / "rebuttal_packet.md"
+    build_rebuttal_packet(packet_state, packet_path)
+
+    # Persist routing so subsequent submissions can validate critic_id is in scope.
+    (rebuttal_dir / "rebuttal_routing.json").write_text(
+        json.dumps(routing, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    # Load each critic's body so the LLM can role-play one at a time.
+    critic_list: list[dict[str, Any]] = []
+    for crit in routing["applied_critics"]:
+        crit_path = (repo / crit["path"]) if not Path(crit["path"]).is_absolute() else Path(crit["path"])
+        if crit_path.exists():
+            critic_body = crit_path.read_text(encoding="utf-8")
+        else:
+            critic_body = ""
+        critic_list.append({
+            "critic_id": crit["critic_id"],
+            "route": crit["route"],
+            "path": crit["path"],
+            "body": critic_body,
+        })
+
+    persona_path = repo / "critics" / "PRACTITIONER_PERSONA.md"
+    practitioner_persona = persona_path.read_text(encoding="utf-8") if persona_path.exists() else ""
+
+    # Surface the ORIGINAL user problem (intake) and the Professor's reshaped
+    # claim. Critics need both to judge direct_methodology_for_user: the
+    # paper may have proved the reshaped claim but still leave the original
+    # user without an actionable methodology.
+    intake_dialog = _read_json(
+        _thread_dir(tid) / "production" / "intake_to_claim_dialog.json"
+    ) or {}
+    original_user_problem = (
+        intake_dialog.get("original_contract", {}).get("claim_under_test")
+        or intake_dialog.get("original_user_problem")
+        or ""
+    )
+    reshaped_claim = (
+        intake_dialog.get("new_contract", {}).get("claim_under_test")
+        or node.get("claim_contract", {}).get("claim_under_test")
+        or ""
+    )
+
+    return {
+        "status": "ok",
+        "thread_id": tid,
+        "promoted_node_id": promoted_id,
+        "rebuttal_packet_path": str(packet_path),
+        "rebuttal_packet_markdown": packet_path.read_text(encoding="utf-8"),
+        "critic_list": critic_list,
+        "practitioner_persona": practitioner_persona,
+        "worker_report": worker_report,
+        "node": node,
+        "original_user_problem": original_user_problem,
+        "reshaped_claim_under_test": reshaped_claim,
+        "methodology_fit_reminder": (
+            "When writing direct_methodology_for_user, judge fit to "
+            "original_user_problem (not reshaped_claim_under_test). The "
+            "Professor's claim may be proved while the user is still stuck."
+        ),
+        "next_step": (
+            "Loop through critic_list and call submit_rebuttal_critic_review "
+            "for each critic_id. After all submitted, call "
+            "submit_orchestrator_reduction, then submit_ac_decision, then "
+            "submit_camera_ready_revision."
+        ),
+    }
+
+
+def handle_submit_rebuttal_critic_review(args: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.schemas.validator import validate_named_schema
+
+    tid = args["thread_id"]
+    review = args["review"]
+    routing = _read_json(_rebuttal_dir(tid) / "rebuttal_routing.json")
+    if not routing:
+        return {"status": "rejected", "reason": "prepare_rebuttal_packet must run first"}
+    allowed_ids = {c["critic_id"] for c in routing["applied_critics"]}
+    critic_id = review.get("critic_id")
+    if critic_id not in allowed_ids:
+        return {
+            "status": "rejected",
+            "reason": f"critic_id {critic_id!r} is not in this thread's routing. allowed: {sorted(allowed_ids)}",
+        }
+    try:
+        validate_named_schema("critic_review", review)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
+
+    reviews_dir = _rebuttal_dir(tid) / "rebuttal_reviews"
+    reviews_dir.mkdir(parents=True, exist_ok=True)
+    (reviews_dir / f"{critic_id}.json").write_text(
+        json.dumps(review, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    submitted = sorted(p.stem for p in reviews_dir.glob("*.json"))
+    pending = sorted(allowed_ids - set(submitted))
+    return {
+        "status": "ok",
+        "submitted_critic_id": critic_id,
+        "submitted_so_far": submitted,
+        "pending_critic_ids": pending,
+        "next_step": (
+            "Continue with the next critic_id" if pending else
+            "All rebuttal critics submitted — call submit_orchestrator_reduction next."
+        ),
+    }
+
+
+def handle_submit_orchestrator_reduction(args: dict[str, Any]) -> dict[str, Any]:
+    tid = args["thread_id"]
+    node_id = args["node_id"]
+    ctx = _resolve_promoted_node(tid, node_id)
+    if ctx["promoted_id"] != node_id:
+        return {"status": "rejected", "reason": f"node_id {node_id} is not the promoted node"}
+
+    # Require all routed critics to have submitted before reduction.
+    routing = _read_json(_rebuttal_dir(tid) / "rebuttal_routing.json") or {}
+    required = {c["critic_id"] for c in routing.get("applied_critics", [])}
+    reviews_dir = _rebuttal_dir(tid) / "rebuttal_reviews"
+    submitted = {p.stem for p in reviews_dir.glob("*.json")} if reviews_dir.exists() else set()
+    missing = sorted(required - submitted)
+    if missing:
+        return {
+            "status": "rejected",
+            "reason": f"orchestrator_reduction requires every routed critic to submit first. missing: {missing}",
+        }
+
+    final_verdict = args.get("final_verdict") or ""
+    allowed_verdicts = {
+        "supported", "supported_with_scope_narrowing", "contradicted",
+        "confounded_or_not_evaluable", "taste_rejected_local_branch",
+        "blocked_by_operational_issue",
+    }
+    if final_verdict not in allowed_verdicts:
+        return {"status": "rejected", "reason": f"final_verdict must be one of {sorted(allowed_verdicts)}"}
+    if len((args.get("synthesis_message") or "").strip()) < 60:
+        return {"status": "rejected", "reason": "synthesis_message must be >= 60 chars (operator-language synthesis, not a label)"}
+
+    reduction = {
+        "node_id": node_id,
+        "final_verdict": final_verdict,
+        "research_status": args.get("research_status", final_verdict),
+        "next_transition": args.get("next_transition", "promoted"),
+        "score_summary": args.get("score_summary", {}),
+        "synthesis_message": args["synthesis_message"],
+        "blocking_objections": args.get("blocking_objections", []),
+        "accepted_lesson_candidates": args.get("accepted_lesson_candidates", []),
+        "failure_branch_prior": {
+            "source": "rebuttal_synthesis", "query_tags": [],
+            "selected_failure_files": [], "risk_controls": [], "branch_suggestions": [],
+        },
+        "child_branch_suggestions": [],
+    }
+    (_rebuttal_dir(tid) / "orchestrator_reduction.json").write_text(
+        json.dumps(reduction, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return {"status": "ok", "next_step": "Call submit_ac_decision next."}
+
+
+def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.schemas.validator import validate_named_schema
+
+    tid = args["thread_id"]
+    decision = args["ac_decision"]
+
+    # Require orchestrator_reduction to exist.
+    reduction = _read_json(_rebuttal_dir(tid) / "orchestrator_reduction.json")
+    if not reduction:
+        return {"status": "rejected", "reason": "submit_orchestrator_reduction must run before submit_ac_decision"}
+
+    try:
+        validate_named_schema("ac_decision", decision)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
+
+    # Extra guard: even on accept, camera_ready_directives must be non-empty.
+    if not decision.get("camera_ready_directives"):
+        return {
+            "status": "rejected",
+            "reason": "camera_ready_directives must be non-empty even on accept. "
+                      "If the rebuttal truly added nothing, name the scope-sharpening it made explicit.",
+        }
+
+    (_rebuttal_dir(tid) / "ac_decision.json").write_text(
+        json.dumps(decision, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    next_step = (
+        "Call submit_camera_ready_revision next — the Professor must address every directive."
+        if decision["decision"] in {"accept", "revise"}
+        else "AC rejected. Call revise_root_after_reject to propose a stronger claim."
+    )
+    return {"status": "ok", "decision": decision["decision"], "next_step": next_step}
+
+
+def handle_submit_camera_ready_revision(args: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.schemas.validator import validate_named_schema
+
+    tid = args["thread_id"]
+    revision = args["camera_ready_revision"]
+    ac = _read_json(_rebuttal_dir(tid) / "ac_decision.json")
+    if not ac:
+        return {"status": "rejected", "reason": "submit_ac_decision must run before submit_camera_ready_revision"}
+    if ac.get("decision") not in {"accept", "revise"}:
+        return {"status": "rejected", "reason": f"camera-ready is not applicable when AC decision is {ac.get('decision')!r}"}
+
+    try:
+        validate_named_schema("camera_ready_revision", revision)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
+
+    # Every directive must be addressed by index.
+    directives = ac.get("camera_ready_directives", [])
+    addressed = {r.get("directive_index") for r in revision.get("responses_to_directives", [])}
+    missing = sorted(set(range(len(directives))) - addressed)
+    if missing:
+        return {
+            "status": "rejected",
+            "reason": f"every camera_ready_directive must be addressed. missing indices: {missing}",
+        }
+
+    (_rebuttal_dir(tid) / "camera_ready_revision.json").write_text(
+        json.dumps(revision, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "status": "ok",
+        "next_step": "Call prepare_paper_writing_context, then submit_paper_outline → register_paper_figure → submit_paper_section → render_final_paper.",
+    }
+
+
+# --- Paper writer tools (Phase D) ---------------------------------------- #
+
+
+def _paper_dir(tid: str) -> Path:
+    return _publication_dir(tid) / "_drafts"
+
+
+def handle_prepare_paper_writing_context(args: dict[str, Any]) -> dict[str, Any]:
+    tid = args["thread_id"]
+    ctx = _resolve_promoted_node(tid)
+    rebuttal_dir = _rebuttal_dir(tid)
+    reviews_dir = rebuttal_dir / "rebuttal_reviews"
+    reviews = []
+    if reviews_dir.exists():
+        for p in sorted(reviews_dir.glob("*.json")):
+            reviews.append(_read_json(p))
+    ac = _read_json(rebuttal_dir / "ac_decision.json")
+    revision = _read_json(rebuttal_dir / "camera_ready_revision.json")
+    reduction = _read_json(rebuttal_dir / "orchestrator_reduction.json")
+    if not (ac and revision and reduction and reviews):
+        return {
+            "status": "rejected",
+            "reason": "paper writing requires AC decision, camera-ready revision, orchestrator reduction, "
+                      "and at least one rebuttal review — finish the rebuttal flow first.",
+        }
+    node_dir = _thread_dir(tid) / "production" / "tree" / "nodes" / ctx["promoted_id"]
+    worker_report = _read_json(node_dir / "worker_report.json") or {}
+
+    # Surface keys available for figure data_spec lookups.
+    metric_keys = sorted((worker_report.get("metrics") or {}).keys())
+    baseline_keys = sorted((worker_report.get("baselines") or {}).keys())
+
+    return {
+        "status": "ok",
+        "thread_id": tid,
+        "promoted_node_id": ctx["promoted_id"],
+        "node": ctx["node"],
+        "worker_report": worker_report,
+        "rebuttal_reviews": reviews,
+        "orchestrator_reduction": reduction,
+        "ac_decision": ac,
+        "camera_ready_revision": revision,
+        "mental_model_statement": revision.get("mental_model_statement"),
+        "available_metric_keys": metric_keys,
+        "available_baseline_keys": baseline_keys,
+        "supported_figure_types": [
+            "loco_heatmap", "baseline_bars", "ablation_drops",
+            "lift_ci_forest", "score_radar", "claim_tree_status", "metric_table",
+        ],
+    }
+
+
+def handle_submit_paper_outline(args: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.schemas.validator import validate_named_schema
+    tid = args["thread_id"]
+    outline = args["outline"]
+    try:
+        validate_named_schema("paper_outline", outline)
+        for spec in outline.get("figure_specs", []):
+            validate_named_schema("paper_figure_request", spec)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
+
+    paper_dir = _paper_dir(tid)
+    paper_dir.mkdir(parents=True, exist_ok=True)
+    (paper_dir / "outline.json").write_text(
+        json.dumps(outline, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "status": "ok",
+        "section_ids_expected": [s["section_id"] for s in outline["section_outline"]],
+        "figure_ids_expected": [f["figure_id"] for f in outline["figure_specs"]],
+        "next_step": "Call register_paper_figure for each figure_spec, then submit_paper_section per section.",
+    }
+
+
+def handle_register_paper_figure(args: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.schemas.validator import validate_named_schema
+    from research_harness.publishing.figures import render_figure, FigureRenderError
+
+    tid = args["thread_id"]
+    req = args["figure_request"]
+    try:
+        validate_named_schema("paper_figure_request", req)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
+
+    outline = _read_json(_paper_dir(tid) / "outline.json") or {}
+    expected_ids = {f["figure_id"] for f in outline.get("figure_specs", [])}
+    if expected_ids and req["figure_id"] not in expected_ids:
+        return {
+            "status": "rejected",
+            "reason": f"figure_id {req['figure_id']!r} not in submitted outline. expected: {sorted(expected_ids)}",
+        }
+
+    ctx = _resolve_promoted_node(tid)
+    node_dir = _thread_dir(tid) / "production" / "tree" / "nodes" / ctx["promoted_id"]
+    worker_report = _read_json(node_dir / "worker_report.json") or {}
+    ac = _read_json(_rebuttal_dir(tid) / "ac_decision.json") or {}
+
+    figures_dir = _figures_dir(tid)
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        artifact_path = render_figure(
+            figure_id=req["figure_id"],
+            figure_type=req["figure_type"],
+            caption=req["caption"],
+            data_spec=req.get("data_spec", {}),
+            worker_report=worker_report,
+            ac_decision=ac,
+            output_dir=figures_dir,
+        )
+    except FigureRenderError as exc:
+        return {"status": "rejected", "reason": f"figure render failed: {exc}"}
+
+    # Record registration.
+    registry_path = _paper_dir(tid) / "figures.json"
+    registry = _read_json(registry_path) or {}
+    registry[req["figure_id"]] = {**req, "artifact_path": str(artifact_path)}
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    registry_path.write_text(json.dumps(registry, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    return {
+        "status": "ok",
+        "figure_id": req["figure_id"],
+        "artifact_path": str(artifact_path),
+        "embed_html": f"<figure><img src='figures/{req['figure_id']}.png' alt='{req.get('alt_text') or req['caption']}'><figcaption>{req['caption']}</figcaption></figure>",
+    }
+
+
+def handle_submit_paper_section(args: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.schemas.validator import validate_named_schema
+    tid = args["thread_id"]
+    section = args["section"]
+    try:
+        validate_named_schema("paper_section", section)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
+
+    outline = _read_json(_paper_dir(tid) / "outline.json")
+    if not outline:
+        return {"status": "rejected", "reason": "submit_paper_outline must run before submit_paper_section"}
+    expected = {s["section_id"] for s in outline["section_outline"]}
+    if section["section_id"] not in expected:
+        return {
+            "status": "rejected",
+            "reason": f"section_id {section['section_id']!r} not in outline. expected: {sorted(expected)}",
+        }
+    # Method / experiments / discussion sections require evidence anchors.
+    if section["section_id"] in {"method", "experiments", "discussion"} and not section.get("evidence_anchors"):
+        return {
+            "status": "rejected",
+            "reason": f"section {section['section_id']!r} requires non-empty evidence_anchors",
+        }
+
+    sections_dir = _paper_dir(tid) / "sections"
+    sections_dir.mkdir(parents=True, exist_ok=True)
+    (sections_dir / f"{section['section_id']}.json").write_text(
+        json.dumps(section, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    submitted = sorted(p.stem for p in sections_dir.glob("*.json"))
+    pending = sorted(expected - set(submitted))
+    return {
+        "status": "ok",
+        "submitted_so_far": submitted,
+        "pending_section_ids": pending,
+        "next_step": "Continue with next section" if pending else "All sections submitted — call render_final_paper.",
+    }
+
+
+def handle_render_final_paper(args: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.publishing.sakana_paper import render_sakana_paper, SakanaPaperError
+
+    tid = args["thread_id"]
+    paper_dir = _paper_dir(tid)
+    outline = _read_json(paper_dir / "outline.json")
+    if not outline:
+        return {"status": "rejected", "reason": "submit_paper_outline missing"}
+    sections_dir = paper_dir / "sections"
+    section_files = sorted(sections_dir.glob("*.json")) if sections_dir.exists() else []
+    expected = {s["section_id"] for s in outline["section_outline"]}
+    submitted = {p.stem for p in section_files}
+    missing = sorted(expected - submitted)
+    if missing:
+        return {"status": "rejected", "reason": f"missing sections: {missing}"}
+    sections = {p.stem: _read_json(p) for p in section_files}
+    figures_registry = _read_json(paper_dir / "figures.json") or {}
+
+    rebuttal_dir = _rebuttal_dir(tid)
+    ac = _read_json(rebuttal_dir / "ac_decision.json") or {}
+    revision = _read_json(rebuttal_dir / "camera_ready_revision.json") or {}
+    reduction = _read_json(rebuttal_dir / "orchestrator_reduction.json") or {}
+    reviews_dir = rebuttal_dir / "rebuttal_reviews"
+    reviews = [_read_json(p) for p in sorted(reviews_dir.glob("*.json"))] if reviews_dir.exists() else []
+
+    ctx = _resolve_promoted_node(tid)
+    node_dir = _thread_dir(tid) / "production" / "tree" / "nodes" / ctx["promoted_id"]
+    worker_report = _read_json(node_dir / "worker_report.json") or {}
+
+    publication_dir = _publication_dir(tid)
+    publication_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        outputs = render_sakana_paper(
+            outline=outline,
+            sections=sections,
+            figures_registry=figures_registry,
+            ac_decision=ac,
+            camera_ready_revision=revision,
+            orchestrator_reduction=reduction,
+            rebuttal_reviews=reviews,
+            node=ctx["node"],
+            worker_report=worker_report,
+            output_dir=publication_dir,
+        )
+    except SakanaPaperError as exc:
+        return {"status": "rejected", "reason": f"paper render failed: {exc}"}
+
+    # Build minimal production_run_summary.json so the frontend panel populates.
+    summary = {
+        "type": "production_run_summary",
+        "repo_root": str(_repo_root()),
+        "run_dir": str(_thread_dir(tid) / "production"),
+        "backend": "mcp",
+        "preflight_status": "passed",
+        "tree_search_status": "completed",
+        "promoted_node_ids": [ctx["promoted_id"]],
+        "fallback_node_ids": [],
+        "evidence_is_fake": False,
+        "rebuttal_summary": {
+            "promoted_node_id": ctx["promoted_id"],
+            "ac_decision": ac,
+            "mental_model_statement": revision.get("mental_model_statement"),
+            "advisor_message_to_professor": ac.get("advisor_message_to_professor"),
+            "camera_ready_directives": ac.get("camera_ready_directives", []),
+        },
+        "publication_dispatch": outputs,
+    }
+    (_thread_dir(tid) / "production" / "production_run_summary.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return {"status": "ok", "publication_dispatch": outputs, "summary_path": str(_thread_dir(tid) / "production" / "production_run_summary.json")}
+
+
 # --- JSON-RPC stdio loop -------------------------------------------------- #
 
 
@@ -1589,6 +2426,26 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_revise_root_after_reject(args, settings)
             elif name == "decide_publication_readiness":
                 result = handle_decide_publication_readiness(args)
+            elif name == "prepare_rebuttal_packet":
+                result = handle_prepare_rebuttal_packet(args)
+            elif name == "submit_rebuttal_critic_review":
+                result = handle_submit_rebuttal_critic_review(args)
+            elif name == "submit_orchestrator_reduction":
+                result = handle_submit_orchestrator_reduction(args)
+            elif name == "submit_ac_decision":
+                result = handle_submit_ac_decision(args)
+            elif name == "submit_camera_ready_revision":
+                result = handle_submit_camera_ready_revision(args)
+            elif name == "prepare_paper_writing_context":
+                result = handle_prepare_paper_writing_context(args)
+            elif name == "submit_paper_outline":
+                result = handle_submit_paper_outline(args)
+            elif name == "register_paper_figure":
+                result = handle_register_paper_figure(args)
+            elif name == "submit_paper_section":
+                result = handle_submit_paper_section(args)
+            elif name == "render_final_paper":
+                result = handle_render_final_paper(args)
             else:
                 return {
                     "jsonrpc": "2.0",

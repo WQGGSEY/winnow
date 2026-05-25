@@ -1,4 +1,5 @@
 ---
+persona_voice: practitioner
 critic_profile_id: publication_readiness_v1
 role: paper_story
 applies_to:

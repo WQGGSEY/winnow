@@ -99,7 +99,8 @@ class MCPServerTests(unittest.TestCase):
     def test_tools_list_exposes_all_expected_tools(self) -> None:
         r = srv._handle_request({"id": 1, "method": "tools/list"}, {})
         names = {t["name"] for t in r["result"]["tools"]}
-        expected = {
+        # Pre-Phase-A baseline tools (deterministic pipeline).
+        baseline_expected = {
             "get_research_state",
             "get_next_admissible_node",
             "resume_production_state",
@@ -113,7 +114,20 @@ class MCPServerTests(unittest.TestCase):
             "revise_root_after_reject",
             "decide_publication_readiness",
         }
-        self.assertEqual(expected, names)
+        # Phase C/D additions: LLM-driven rebuttal loop + paper writer.
+        practitioner_expected = {
+            "prepare_rebuttal_packet",
+            "submit_rebuttal_critic_review",
+            "submit_orchestrator_reduction",
+            "submit_ac_decision",
+            "submit_camera_ready_revision",
+            "prepare_paper_writing_context",
+            "submit_paper_outline",
+            "submit_paper_section",
+            "register_paper_figure",
+            "render_final_paper",
+        }
+        self.assertEqual(baseline_expected | practitioner_expected, names)
 
     def test_selector_returns_resume_for_midstate_node(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

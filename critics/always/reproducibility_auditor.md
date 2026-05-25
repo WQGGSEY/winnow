@@ -1,4 +1,5 @@
 ---
+persona_voice: practitioner
 critic_profile_id: reproducibility_auditor_v1
 role: reproducibility
 applies_to:

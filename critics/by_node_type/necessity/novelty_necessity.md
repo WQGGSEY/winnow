@@ -1,4 +1,5 @@
 ---
+persona_voice: practitioner
 critic_profile_id: novelty_necessity_v1
 role: necessity
 applies_to:

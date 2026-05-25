@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/camera_ready_revision.schema.json",
+  "title": "CameraReadyRevision",
+  "type": "object",
+  "required": [
+    "thread_id",
+    "promoted_node_id",
+    "responses_to_directives",
+    "scope_statement",
+    "mental_model_statement",
+    "limitations_added",
+    "advisor_acknowledgement"
+  ],
+  "properties": {
+    "thread_id": { "type": "string" },
+    "promoted_node_id": { "type": "string" },
+    "responses_to_directives": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One entry per AC camera_ready_directives item. The Professor must address every directive — explicitly accepting, partially accepting with rationale, or escalating back to AC with reasons. No silent skipping.",
+      "items": {
+        "type": "object",
+        "required": ["directive_index", "status", "section_changes", "professor_reply"],
+        "properties": {
+          "directive_index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Zero-based index into ac_decision.camera_ready_directives."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["accepted_fully", "accepted_with_modification", "escalated_back_to_ac"]
+          },
+          "section_changes": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["section", "change_summary"],
+              "properties": {
+                "section": { "type": "string" },
+                "change_summary": { "type": "string", "minLength": 10 }
+              },
+              "additionalProperties": false
+            }
+          },
+          "professor_reply": {
+            "type": "string",
+            "minLength": 30,
+            "description": "Professor's natural-language reply to the AC directive — what was added/changed and why."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "scope_statement": {
+      "type": "string",
+      "minLength": 60,
+      "description": "Revised scope statement reflecting load-bearing objections that survived rebuttal. Plain prose. Anchors the camera-ready paper's claim under test."
+    },
+    "mental_model_statement": {
+      "type": "string",
+      "minLength": 80,
+      "description": "The single good mental model this research gives the reader. Required field — a paper without one is a list of results, not a paper. Plain prose, 2-4 sentences, operator language."
+    },
+    "limitations_added": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Limitations section additions sourced from rebuttal_synthesis.minority_dissent + load_bearing_objections."
+    },
+    "advisor_acknowledgement": {
+      "type": "string",
+      "minLength": 30,
+      "description": "Professor's reply to the AC's advisor_message_to_professor. Acknowledges what was internalized."
+    }
+  },
+  "additionalProperties": false
+}

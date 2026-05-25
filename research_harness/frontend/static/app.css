@@ -679,3 +679,33 @@ code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-
 .graph-link-row .graph-link {
   margin-left: 0;
 }
+
+/* Mental-model + methodology + camera-ready cards on production panel */
+.mental-model-card-front {
+  background: #eef3ff; border: 2px solid #2845a8; border-radius: 6px;
+  padding: 14px 18px; margin: 14px 0;
+}
+.mental-model-card-front h3 { color: #2845a8; margin: 0 0 6px 0; }
+.mental-model-card-front p { font-size: 14px; margin: 0; line-height: 1.5; }
+.methodology-card-front {
+  border-radius: 6px; padding: 12px 16px; margin: 12px 0;
+}
+.methodology-card-front.verdict-provides { background: #f0fbf0; border: 1px solid #5fa05f; }
+.methodology-card-front.verdict-partial  { background: #fff7e0; border: 1px solid #c89a30; }
+.methodology-card-front.verdict-absent   { background: #fbeeee; border: 1px solid #c25450; }
+.methodology-card-front .verdict-pill {
+  font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px;
+  background: rgba(0,0,0,0.08); margin-left: 8px; text-transform: uppercase;
+}
+.advisor-message {
+  background: #f8f8f8; border-left: 3px solid #2845a8;
+  padding: 8px 12px; margin: 8px 0; font-size: 13px;
+}
+.camera-ready-directives-front summary { cursor: pointer; padding: 4px 0; }
+.camera-ready-directives-front table {
+  width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 12.5px;
+}
+.camera-ready-directives-front th,
+.camera-ready-directives-front td {
+  border: 1px solid #ddd; padding: 5px 7px; vertical-align: top; text-align: left;
+}

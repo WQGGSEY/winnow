@@ -173,6 +173,26 @@ def run_critic_reviews(
                 "In agent-harness ports, runtime envelopes are often the necessity claim, not an implementation detail."
             )
 
+        # Deterministic critics emit schema-compliant practitioner-field
+        # defaults so legacy code paths still produce valid critic_review
+        # records under the post-Phase-A schema. Real practitioner judgment
+        # comes from the LLM-driven path (submit_rebuttal_critic_review).
+        # These placeholders are honest about what they are: deterministic
+        # stubs, not practitioner opinion.
+        metric_summary = ", ".join(
+            f"{k}={v}" for k, v in (worker_report.get("metrics") or {}).items() if k in {"auc_overall", "lift_over_naive_auc"}
+        ) or "no_headline_metric"
+        deterministic_so_what = (
+            f"DETERMINISTIC STUB ({critic_id}). Worker status={worker_report.get('status')}. "
+            f"Metrics={metric_summary}. The LLM-driven submit_rebuttal_critic_review path produces real "
+            f"so_what judgments; this stub is emitted only to keep the schema valid for legacy callers."
+        )
+        deterministic_take = (
+            f"DETERMINISTIC STUB. No practitioner opinion — this review was emitted by the legacy "
+            f"deterministic review_runner. Re-run via the LLM-driven rebuttal loop to get a real "
+            f"practitioner take with deploy/no-deploy reasoning."
+        )
+        deterministic_methodology_verdict = "partial" if verdict == "supported" else "absent"
         reviews.append(
             {
                 "critic_id": critic_id,
@@ -183,6 +203,26 @@ def run_critic_reviews(
                 "objections": objections,
                 "lesson_candidates": lesson_candidates,
                 "failure_record_candidate": None,
+                "so_what": deterministic_so_what,
+                "next_actions": [{
+                    "action": "Re-run rebuttal under the LLM-driven submit_rebuttal_critic_review path for a real practitioner judgment.",
+                    "owner_role": "operator",
+                    "eta_weeks": 0,
+                    "prerequisite_evidence": "none",
+                }],
+                "practitioner_take": deterministic_take,
+                "evidence_anchors": [
+                    f"worker_report.status={worker_report.get('status')}",
+                    f"node.id={node['id']}",
+                ],
+                "direct_methodology_for_user": {
+                    "verdict": deterministic_methodology_verdict,
+                    "methodology_summary": (
+                        "Deterministic stub — see practitioner_take. The LLM path emits a real "
+                        "methodology assessment grounded in the intake problem."
+                    ),
+                    "gap_to_close": "Run the LLM rebuttal loop to surface the real methodology fit.",
+                },
             }
         )
     return reviews

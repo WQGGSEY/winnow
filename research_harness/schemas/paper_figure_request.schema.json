@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/paper_figure_request.schema.json",
+  "title": "PaperFigureRequest",
+  "type": "object",
+  "required": ["figure_id", "figure_type", "caption", "data_spec"],
+  "properties": {
+    "figure_id": {
+      "type": "string",
+      "pattern": "^f_[a-z0-9_]+$",
+      "description": "Stable identifier referenced by paper_section.prose_html via <img src='figures/{figure_id}.png'>."
+    },
+    "figure_type": {
+      "type": "string",
+      "enum": [
+        "loco_heatmap",
+        "baseline_bars",
+        "ablation_drops",
+        "lift_ci_forest",
+        "score_radar",
+        "claim_tree_status",
+        "metric_table"
+      ]
+    },
+    "caption": {
+      "type": "string",
+      "minLength": 20,
+      "description": "Operator-language caption. Reader should grasp the figure's takeaway from caption alone."
+    },
+    "data_spec": {
+      "type": "object",
+      "description": "Per-figure-type data references. Keys depend on figure_type. Examples: { 'metric_key': 'loco_auc_per_cell', 'cells_key': 'loco_cells' }. The figure renderer validates required keys before drawing.",
+      "additionalProperties": true
+    },
+    "alt_text": {
+      "type": "string",
+      "description": "Accessibility alt text. Defaults to caption if omitted."
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,4 +1,5 @@
 ---
+persona_voice: practitioner
 critic_profile_id: capability_strict_v1
 role: domain
 applies_to:

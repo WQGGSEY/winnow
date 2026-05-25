@@ -351,12 +351,30 @@ def resolve_agent_max_rounds(
     return fallback
 
 
+PRACTITIONER_VOICE_MARKER = "# Practitioner Lens override"
+
+
 def load_critic_profile(path: Path) -> dict[str, Any]:
     frontmatter, body = split_frontmatter(path)
     if frontmatter.get("override_policy") not in {None, "taste_only"}:
         raise ConfigError(f"critic override_policy must be taste_only: {path}")
     if not frontmatter.get("critic_profile_id"):
         raise ConfigError(f"critic requires critic_profile_id: {path}")
+    # Practitioner-voice contract: a critic profile is only loadable if it
+    # either declares persona_voice: practitioner in frontmatter or includes
+    # an explicit "# Practitioner Lens override" section in its body that
+    # acknowledges the so_what / next_actions contract from
+    # critics/PRACTITIONER_PERSONA.md. This blocks silently re-introducing
+    # purely-academic reviewers that would bypass the operator-decision gate.
+    persona_voice = (frontmatter.get("persona_voice") or "").strip().lower()
+    has_override_section = PRACTITIONER_VOICE_MARKER in body
+    if persona_voice != "practitioner" and not has_override_section:
+        raise ConfigError(
+            "critic must inherit practitioner voice: set 'persona_voice: practitioner' "
+            f"in frontmatter or include a '{PRACTITIONER_VOICE_MARKER}' section in the "
+            f"body explaining how the so_what / next_actions contract maps to this "
+            f"critic's specialty. Offender: {path}"
+        )
     frontmatter["body"] = body
     frontmatter["path"] = str(path)
     return frontmatter

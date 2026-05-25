@@ -9,7 +9,10 @@
     "score_summary",
     "blocking_reasons",
     "required_next_search_nodes",
-    "camera_ready_conditions"
+    "camera_ready_conditions",
+    "camera_ready_directives",
+    "advisor_message_to_professor",
+    "rebuttal_synthesis"
   ],
   "properties": {
     "decision": { "type": "string", "enum": ["accept", "revise", "reject"] },
@@ -45,8 +48,93 @@
     "camera_ready_conditions": {
       "type": "array",
       "items": { "type": "string" }
+    },
+    "camera_ready_directives": {
+      "type": "array",
+      "minItems": 1,
+      "description": "MANDATORY even on accept. The AC has read the entire rebuttal exchange and tells the Professor exactly which rebuttal-surfaced insights must be folded into the camera-ready manuscript. Empty list is not allowed — if an accept truly required no additions, the AC must still emit at least one directive (e.g., 'tighten the scope statement to explicitly name the boundary condition surfaced by critic X').",
+      "items": {
+        "type": "object",
+        "required": ["directive", "origin_critic_ids", "must_appear_in_section", "rationale"],
+        "properties": {
+          "directive": {
+            "type": "string",
+            "minLength": 20,
+            "description": "What the Professor must add / change / sharpen in the camera-ready. Concrete: 'Add explicit footprint-leakage 0.090 ablation result to Method §4.2 with the rebuttal critic's framing of feature-block leakage as a per-deployment risk.'"
+          },
+          "origin_critic_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" },
+            "description": "Which critic(s) raised the rebuttal point this directive comes from."
+          },
+          "must_appear_in_section": {
+            "type": "string",
+            "description": "Which paper section must carry the addition (e.g., 'abstract', 'method.4.2', 'discussion.scope', 'limitations')."
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 20,
+            "description": "Why this rebuttal point is load-bearing for camera-ready quality, in operator terms."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "advisor_message_to_professor": {
+      "type": "string",
+      "minLength": 60,
+      "description": "Single advisor-voice message the Professor will read first when revising. Synthesises the rebuttal mood. Plain prose, not a directive list."
+    },
+    "rebuttal_synthesis": {
+      "type": "object",
+      "required": [
+        "strongest_supporting_evidence",
+        "load_bearing_objections",
+        "minority_dissent",
+        "methodology_assessment"
+      ],
+      "properties": {
+        "strongest_supporting_evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "description": "Specific evidence anchors (across reviews) that most strongly supported the decision."
+        },
+        "load_bearing_objections": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Objections that survived rebuttal and must shape the camera-ready scope statement (empty list allowed only on full accept with no surviving objections — rare)."
+        },
+        "minority_dissent": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Disagreements between reviewers worth surfacing in the limitations section so the reader sees the room of disagreement."
+        },
+        "methodology_assessment": {
+          "type": "object",
+          "required": ["aggregate_verdict", "methodology_for_user", "remaining_gap"],
+          "description": "Aggregate of every critic's direct_methodology_for_user. The AC reads all reviewer methodology verdicts and synthesizes whether the BODY OF EVIDENCE gives the original problem-asker a usable methodology — not just whether the reshaped claim was proved.",
+          "properties": {
+            "aggregate_verdict": {
+              "type": "string",
+              "enum": ["provides", "partial", "absent"]
+            },
+            "methodology_for_user": {
+              "type": "string",
+              "minLength": 30,
+              "description": "If provides: state the methodology the user can apply tomorrow. If partial: state what IS usable + what's missing. If absent: state explicitly that the user is still stuck and what the camera-ready must add to fix that."
+            },
+            "remaining_gap": {
+              "type": "string",
+              "description": "Any gap left to close, even when aggregate_verdict=provides. Empty string if truly nothing remains."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false
 }
-

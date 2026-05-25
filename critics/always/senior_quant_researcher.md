@@ -1,4 +1,5 @@
 ---
+persona_voice: practitioner
 critic_profile_id: senior_quant_researcher_v1
 role: numerical_rigor
 applies_to:

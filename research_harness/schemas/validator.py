@@ -39,6 +39,10 @@ SCHEMA_FILES = {
     "user_experiment_plan_metadata": "user_experiment_plan_metadata.schema.json",
     "refined_research_plan": "refined_research_plan.schema.json",
     "dataset_manifest": "dataset_manifest.schema.json",
+    "camera_ready_revision": "camera_ready_revision.schema.json",
+    "paper_outline": "paper_outline.schema.json",
+    "paper_section": "paper_section.schema.json",
+    "paper_figure_request": "paper_figure_request.schema.json",
 }
 
 
@@ -120,6 +124,8 @@ def _validate(schema: dict[str, Any], data: Any, path: str) -> None:
     if isinstance(data, str):
         if "minLength" in schema and len(data) < schema["minLength"]:
             raise SchemaValidationError(f"{path}: string shorter than minLength")
+        if "maxLength" in schema and len(data) > schema["maxLength"]:
+            raise SchemaValidationError(f"{path}: string longer than maxLength")
         if "pattern" in schema and re.search(schema["pattern"], data) is None:
             raise SchemaValidationError(f"{path}: does not match {schema['pattern']!r}")
 

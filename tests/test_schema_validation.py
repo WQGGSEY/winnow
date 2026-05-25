@@ -59,6 +59,25 @@ class SchemaValidationTests(unittest.TestCase):
             "blocking_reasons": [],
             "required_next_search_nodes": [],
             "camera_ready_conditions": [],
+            "camera_ready_directives": [{
+                "directive": "Add a deterministic stub directive for bounds-only test.",
+                "origin_critic_ids": ["x"],
+                "must_appear_in_section": "method",
+                "rationale": "Required because schema mandates non-empty directives.",
+            }],
+            "advisor_message_to_professor": (
+                "Bounds-only test fixture — score 11 is out of range and must be rejected before any other validation."
+            ),
+            "rebuttal_synthesis": {
+                "strongest_supporting_evidence": ["x"],
+                "load_bearing_objections": [],
+                "minority_dissent": [],
+                "methodology_assessment": {
+                    "aggregate_verdict": "partial",
+                    "methodology_for_user": "Bounds-only test fixture; no real methodology synthesis.",
+                    "remaining_gap": "n/a",
+                },
+            },
         }
 
         with self.assertRaisesRegex(SchemaValidationError, "above maximum"):

@@ -1,4 +1,5 @@
 ---
+persona_voice: practitioner
 critic_profile_id: validity_strict_v1
 role: safety_validity
 applies_to:

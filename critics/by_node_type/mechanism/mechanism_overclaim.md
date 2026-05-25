@@ -1,4 +1,5 @@
 ---
+persona_voice: practitioner
 critic_profile_id: mechanism_overclaim_v1
 role: domain
 applies_to:

@@ -1,4 +1,5 @@
 ---
+persona_voice: practitioner
 critic_profile_id: overclaim_detector_v1
 role: necessity
 applies_to:

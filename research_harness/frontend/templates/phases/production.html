@@ -61,6 +61,24 @@
          there, not from the top level. #}
       {% set rebuttal = summary.rebuttal_summary or {} %}
       {% set ac = rebuttal.ac_decision or {} %}
+      {% if rebuttal.mental_model_statement %}
+        <section class="mental-model-card-front">
+          <h3>📐 Mental model this research gives you</h3>
+          <p>{{ rebuttal.mental_model_statement }}</p>
+        </section>
+      {% endif %}
+      {% set methodology = (ac.rebuttal_synthesis or {}).get('methodology_assessment') if ac.rebuttal_synthesis else None %}
+      {% if methodology %}
+        <section class="methodology-card-front verdict-{{ methodology.aggregate_verdict }}">
+          <h3>🎯 Methodology for the original user
+            <span class="verdict-pill">{{ methodology.aggregate_verdict }}</span>
+          </h3>
+          <p>{{ methodology.methodology_for_user }}</p>
+          {% if methodology.remaining_gap %}
+            <p class="muted"><strong>Remaining gap:</strong> {{ methodology.remaining_gap }}</p>
+          {% endif %}
+        </section>
+      {% endif %}
       <section class="ac-card decision-{{ ac.decision or 'unknown' }}">
         <h3>AC decision: <strong>{{ ac.decision or "unknown" }}</strong>
           {% if ac.confidence %}
@@ -69,6 +87,30 @@
             </small>
           {% endif %}
         </h3>
+        {% if ac.advisor_message_to_professor %}
+          <blockquote class="advisor-message">
+            <strong>AC → Professor:</strong> {{ ac.advisor_message_to_professor }}
+          </blockquote>
+        {% endif %}
+        {% if rebuttal.camera_ready_directives %}
+          <details open class="camera-ready-directives-front">
+            <summary><strong>Camera-ready directives</strong>
+              ({{ rebuttal.camera_ready_directives|length }})</summary>
+            <table>
+              <thead><tr><th>#</th><th>Directive</th><th>Section</th><th>Origin</th></tr></thead>
+              <tbody>
+                {% for d in rebuttal.camera_ready_directives %}
+                  <tr>
+                    <td>{{ loop.index }}</td>
+                    <td>{{ d.directive }}</td>
+                    <td><code>{{ d.must_appear_in_section }}</code></td>
+                    <td><code>{{ d.origin_critic_ids|join(', ') }}</code></td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </details>
+        {% endif %}
         {% if ac.score_summary %}
           <table class="score-summary">
             <thead><tr>

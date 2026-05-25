@@ -49,6 +49,25 @@ def decide_acceptance(
         decision = "accept"
         confidence = "medium"
 
+    # Deterministic camera_ready_directives: the legacy AC must still emit
+    # a non-empty list to satisfy the schema, even though real directives
+    # come from the LLM-driven submit_ac_decision path. We emit one honest
+    # stub directive that names the deterministic origin.
+    deterministic_directives = [
+        {
+            "directive": (
+                "DETERMINISTIC STUB — re-run the AC under the LLM-driven "
+                "submit_ac_decision path so the camera-ready directives come "
+                "from a real synthesis of the rebuttal conversation."
+            ),
+            "origin_critic_ids": [r["critic_id"] for r in critic_reviews] or ["deterministic_ac"],
+            "must_appear_in_section": "limitations",
+            "rationale": (
+                "Deterministic AC has no rebuttal-derived insight to fold in. "
+                "The LLM path produces real per-section directives grounded in critic objections."
+            ),
+        }
+    ]
     return {
         "decision": decision,
         "confidence": confidence,
@@ -75,4 +94,23 @@ def decide_acceptance(
         ]
         if not blocking_reasons
         else [],
+        "camera_ready_directives": deterministic_directives,
+        "advisor_message_to_professor": (
+            "DETERMINISTIC STUB advisor message. The legacy AC averaged critic scores against "
+            "thresholds and did not synthesize a real rebuttal narrative — re-run via the "
+            "LLM-driven submit_ac_decision path for an actual advisor message."
+        ),
+        "rebuttal_synthesis": {
+            "strongest_supporting_evidence": ["deterministic_stub:see_critic_reviews"],
+            "load_bearing_objections": blocking_reasons,
+            "minority_dissent": [],
+            "methodology_assessment": {
+                "aggregate_verdict": "partial" if decision == "accept" else "absent",
+                "methodology_for_user": (
+                    "DETERMINISTIC STUB methodology assessment. The LLM AC produces a real "
+                    "operator-language summary of what the user can apply tomorrow."
+                ),
+                "remaining_gap": "Run the LLM rebuttal loop for a real methodology assessment.",
+            },
+        },
     }

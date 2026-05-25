@@ -1,4 +1,5 @@
 ---
+persona_voice: practitioner
 critic_profile_id: claim_skeptic_v1
 role: claim_critique
 applies_to:
