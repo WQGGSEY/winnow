@@ -12,7 +12,6 @@ from research_harness.orchestrator.experiment_plan import (
     FALLBACK_TEMPLATE_ID,
     build_experiment_plan_for_node,
 )
-from research_harness.production_runner import run_production_pipeline
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -153,24 +152,6 @@ class ExperimentPlanRouterTests(unittest.TestCase):
                 Path(tmp), node, Path(tmp) / "run", settings=None
             )
             self.assertEqual(used, FALLBACK_TEMPLATE_ID)
-
-
-class ProductionRunnerTemplateSurfacingTests(unittest.TestCase):
-    def test_production_summary_uses_professor_template_by_default(self) -> None:
-        """With the LLM orchestrator enabled (the new default), the Professor
-        materializes a thread-specific template on demand — there is no
-        falling-back-to-demo case. templates_used should reflect that."""
-        with tempfile.TemporaryDirectory() as tmp:
-            run_dir = Path(tmp) / "run"
-            summary = run_production_pipeline(REPO_ROOT, run_dir, publish=False)
-            self.assertIn("templates_used", summary)
-            self.assertIn("n_demo_001", summary["templates_used"])
-            self.assertEqual(
-                summary["templates_used"]["n_demo_001"], "professor_generated"
-            )
-            # Professor-generated templates are real code (no fallback flag).
-            self.assertEqual(summary["fallback_node_ids"], [])
-            self.assertFalse(summary["evidence_is_fake"])
 
 
 if __name__ == "__main__":

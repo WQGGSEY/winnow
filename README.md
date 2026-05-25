@@ -25,8 +25,8 @@ user goal
            + sota_reconciliations + acknowledged_limitations)
         -> dataset_manifest.json (per-node, type-keyed materializer dispatch)
   -> root node generator -> root_node.json (reads refined plan when present)
-  -> production runner (preflight, mock tree search, rebuttal/AC, publish)
-        -> publication artifacts (interactive_html, slides_html, markdown paper)
+  -> MCP server (Claude Code interactive drives production via tools)
+        -> publication artifacts (paper.html, interactive_summary.html, slides_summary.html)
 ```
 
 See [docs/adr/0001-research-refiner-and-dataset-cache.md](docs/adr/0001-research-refiner-and-dataset-cache.md)
@@ -50,10 +50,14 @@ Claude invocations remain behind explicit billing + execution acknowledgements.
   ingestion into worker reports.
 - Live Claude smoke runner + operator-controlled live node dispatch with
   reduction/memory/rebuttal modules behind approval gates.
-- Production runner that chains preflight, mock tree search, rebuttal/AC, and a
-  publish dispatcher that only renders on AC `accept` and follows
-  `settings.publishing.default_outputs` (`interactive_html`, `slides_html`,
-  optionally `markdown_paper`).
+- MCP-driven production pipeline (`research_harness.mcp_server`): Claude
+  Code interactive calls per-stage tools (`prepare_rebuttal_packet`,
+  `submit_rebuttal_critic_review`, `submit_orchestrator_reduction`,
+  `submit_ac_decision`, `submit_camera_ready_revision`,
+  `prepare_paper_writing_context`, `submit_paper_outline`,
+  `register_paper_figure`, `submit_paper_section`, `render_final_paper`) to
+  produce a real Sakana-v2 ICML paper with practitioner-reviewed
+  evidence and camera-ready directives. See `docs/MCP_OPERATIONS.md`.
 - **Grilling agent** (`research_harness.agents.grilling`): multi-turn sonnet
   loop driven by the harness; outputs schema-valid `grilling_session.json`.
 - **Market research agent** (`research_harness.agents.market_research`):
@@ -147,16 +151,8 @@ python -B -m research_harness.research_runner grill \
   --billing-ack --execute-ack \
   --run-dir runs/grilling/<id>
 
-# 2. research — market research + refiner + root node + production
-#    refiner is live too; pass refiner acks. add --skip-refine for fast prototyping.
-RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack \
-RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE=live_smoke_ack \
-python -B -m research_harness.research_runner research \
-  --grilling-session runs/grilling/<id>/grilling_session.json \
-  --refiner-billing-ack --refiner-execute-ack \
-  --run-dir runs/research/<id>
-
-# 2b. refine only (when you want to iterate on the refiner alone)
+# 2. refine — iterate on the research_refiner alone against an existing
+#    grilling session + market brief.
 python -B -m research_harness.research_runner refine \
   --grilling-session runs/grilling/<id>/grilling_session.json \
   --market-research-brief runs/research/<id>/market_research/market_research_brief.json \
@@ -173,30 +169,19 @@ either `{"action":"ASK","question":...}` or `{"action":"DONE","extracted":...}`)
 the harness asks the user via stdin between turns. The session is force-extracted
 on max_rounds and persisted as schema-valid `grilling_session.json`.
 
-`research` runs the agent-level market research pass: arXiv API + best-effort
-Google Scholar scrape, downloads PDFs into `reference_papers/`, writes a
-baseline dossier candidate into `memory/baseline_dossiers/`, derives the root
-node, and chains into the production pipeline.
-
 `distill` only triggers when total active-lesson bytes exceed
 `settings.memory.lessons.distillation_token_threshold_bytes`. It calls live
 sonnet, archives the existing `lessons.yaml` under
 `memory/lessons/archive/lessons_<utc>.yaml`, and only rewrites `lessons.yaml`
 after `--approve`.
 
-## Run The Production Pipeline (root node provided)
+## Run The Production Pipeline
 
-```bash
-python -B -m research_harness.production_runner
-```
-
-Chains preflight, mock tree search, rebuttal/AC, and the gated publish
-dispatcher in one command. Without a custom root node, uses the demo node.
-Writes `runs/production_run/production_run_summary.json` and, when AC accepts,
-renders the publication artifacts listed in `settings.publishing.default_outputs`.
-Live Claude execution stays outside this chain; operators still drive live nodes
-through `research_harness.orchestrator.live_dispatch` and the existing
-approval-gated modules.
+Production is driven by Claude Code interactive via the MCP server, not by
+a one-shot CLI. Start the operator frontend, advance a thread through
+grilling and market research, then click "Advance to production →" to copy
+the MCP handoff command and run it in a separate `claude` terminal. See
+`docs/MCP_OPERATIONS.md` for the full hand-off + tool catalog.
 
 ## Experiment Plan Templates (per-domain, directory-based)
 
@@ -266,7 +251,8 @@ fake evidence.
 
 ### Market research writes a real analysis brief
 
-`research_runner research` runs the market research agent which:
+The market-research agent (used by the operator frontend during the
+"market" phase) runs:
 
 1. Searches arXiv (and optionally Google Scholar) for the grilled query.
 2. Downloads PDFs into `<run>/reference_papers/`.
@@ -462,8 +448,9 @@ research_harness/agents/grilling.py    Multi-turn grilling agent (sonnet).
 research_harness/agents/market_research.py  Agent-level paper search and dossier candidate generation.
 research_harness/memory/lesson_distillation.py  Periodic deterministic-trigger distillation.
 research_harness/orchestrator/         Tree search, reduction, live dispatch, root node generator.
-research_harness/production_runner.py  preflight + tree search + rebuttal/AC + publish chain.
-research_harness/research_runner.py    User-facing high-level CLI (grill / research / distill).
+research_harness/mcp_server.py         MCP server — Claude Code interactive drives production.
+research_harness/publishing/sakana_paper.py  Sakana-v2 ICML paper assembler (LLM-written sections).
+research_harness/research_runner.py    User-facing CLI (grill / refine / distill).
 ```
 
 ## Non-Overridable Invariants

@@ -50,12 +50,6 @@ from research_harness.config import load_settings
 # the real claim contract at production entry instead.
 from research_harness.frontend import acks, threads
 from research_harness.frontend.lock import LockBusyError, SingleActiveRunLock
-from research_harness.orchestrator.root_node_from_grilling import (
-    attach_market_research_dossier,
-    build_root_node_from_grilling,
-    has_placeholder_baseline,
-)
-from research_harness.production_runner import run_production_pipeline
 from research_harness.schemas.validator import validate_named_schema
 
 LOG = logging.getLogger("research_harness.frontend")
@@ -882,193 +876,21 @@ async def _launch_market(s: AppState, index: dict[str, Any]) -> None:
 
 
 async def _launch_production(s: AppState, index: dict[str, Any]) -> None:
-    thread_id = index["thread_id"]
-    # MCP-mode hard guard: in mcp mode reasoning happens inside Claude Code
-    # interactive via the MCP server, NOT inside production_runner. If we
-    # let the frontend launch the pipeline here, build_llm_client would
-    # fall back to MockLLMClient and silently produce a mock-driven run —
-    # exactly what the operator does NOT want when they chose mcp.
-    try:
-        settings = load_settings(s.repo_root)
-    except (OSError, ValueError, json.JSONDecodeError):
-        settings = {}
-    backend = (
-        settings.get("runtime", {})
-        .get("llm_orchestrator", {})
-        .get("backend", "")
+    """Production launch is always refused from the frontend.
+
+    Reasoning happens inside Claude Code interactive via the MCP server.
+    The operator copies the handoff command from the 'Advance to
+    production →' modal and runs it in a separate terminal. The legacy
+    in-process production_runner path has been removed.
+    """
+    del s, index  # parameters kept for API compatibility with the route caller
+    raise HTTPException(
+        409,
+        "Production launch is disabled from the frontend. Reasoning happens "
+        "inside Claude Code interactive via the MCP server. Use the "
+        "'Advance to production →' modal to copy the MCP handoff command, "
+        "then run it in a separate terminal.",
     )
-    if backend == "mcp":
-        raise HTTPException(
-            409,
-            "production launch is disabled in mcp mode. Reasoning happens "
-            "inside Claude Code interactive via the MCP server. Use the "
-            "'Advance to production →' modal to copy the Claude Code command, "
-            "or switch settings.runtime.llm_orchestrator.backend to "
-            "'anthropic' / 'claude_cli' / 'mock' if you actually want the "
-            "frontend to drive the run.",
-        )
-    if thread_id in s.sessions:
-        return
-    _refuse_if_lock_held_by_other(s, thread_id)
-    grilling_path = (
-        threads.phase_dir(s.repo_root, thread_id, "grilling")
-        / "grilling_session.json"
-    )
-    market_brief_path = (
-        threads.phase_dir(s.repo_root, thread_id, "market")
-        / "market_research_brief.json"
-    )
-    if not grilling_path.exists() or not market_brief_path.exists():
-        raise HTTPException(
-            409, "production requires grilling and market_research"
-        )
-    grilling_session = json.loads(grilling_path.read_text(encoding="utf-8"))
-    market_brief = json.loads(market_brief_path.read_text(encoding="utf-8"))
-
-    loop = asyncio.get_running_loop()
-    session = LiveSession(thread_id=thread_id, phase="production", loop=loop)
-    s.sessions[thread_id] = session
-
-    threads.update_thread(
-        s.repo_root,
-        thread_id,
-        current_phase="production",
-        phase_status="running",
-    )
-    run_dir = threads.phase_dir(s.repo_root, thread_id, "production")
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    def build_root_node() -> dict[str, Any]:
-        # Refine step is gone: root node is built directly from grilling
-        # output. The Professor (LLM orchestrator) replaces placeholder
-        # claim/baselines/success/disproof at production entry — see
-        # production_runner._professor_design_claim_if_placeholder.
-        baseline_dossier_id = market_brief["baseline_dossier_id"]
-        candidate_ids = _extract_candidate_ids(market_brief)
-        node = build_root_node_from_grilling(grilling_session)
-        if has_placeholder_baseline(node):
-            node = attach_market_research_dossier(
-                node,
-                baseline_dossier_id=baseline_dossier_id,
-                candidate_ids=candidate_ids,
-                baseline_analysis_md_path=market_brief.get(
-                    "baseline_analysis_md_path"
-                ),
-            )
-        return node
-
-    async def run_loop():
-        try:
-            async with s.lock.acquire(thread_id, "production"):
-                root_node = await asyncio.to_thread(build_root_node)
-                summary = await asyncio.to_thread(
-                    run_production_pipeline,
-                    s.repo_root,
-                    run_dir,
-                    publish=True,
-                    root_node=root_node,
-                )
-            outcome = None
-            # ac_decision is nested under rebuttal_summary on the
-            # production_run_summary, not at the top level. (Reading the
-            # top-level key here was returning None and leaving thread
-            # outcome unset even on a clean accept.)
-            ac = (
-                ((summary or {}).get("rebuttal_summary") or {}).get(
-                    "ac_decision"
-                )
-                or {}
-            )
-            if ac.get("decision") == "accept":
-                outcome = "accept"
-            elif ac.get("decision") == "reject":
-                outcome = "reject"
-            elif ac.get("decision"):
-                outcome = "inconclusive"
-            threads.update_thread(
-                s.repo_root,
-                thread_id,
-                phase_status="complete",
-                outcome=outcome,
-            )
-            await session.emit({"type": "phase_complete"})
-        except Exception as exc:  # noqa: BLE001
-            LOG.exception("production failed for %s", thread_id)
-            # Surface a friendly diagnostic instead of bare repr(exc) — the
-            # most common production failure is anthropic SDK / env var
-            # misconfiguration, which used to leave the operator staring at
-            # an empty archived attempt dir.
-            friendly = _friendly_production_error(exc)
-            error_payload = {
-                "type": "phase_failed",
-                "error": str(exc),
-                "diagnosis": friendly,
-            }
-            # Persist the diagnosis where the operator can see it post-
-            # restart — phase_status alone doesn't carry the reason.
-            try:
-                run_dir.mkdir(parents=True, exist_ok=True)
-                (run_dir / "launch_error.txt").write_text(
-                    f"{friendly}\n\n--- raw exception ---\n{type(exc).__name__}: {exc}\n",
-                    encoding="utf-8",
-                )
-            except OSError:
-                pass
-            threads.update_thread(s.repo_root, thread_id, phase_status="failed")
-            await session.emit(error_payload)
-        finally:
-            s.sessions.pop(thread_id, None)
-
-    session.task = asyncio.create_task(run_loop())
-
-
-def _friendly_production_error(exc: Exception) -> str:
-    """Translate common production-launch failures into actionable diagnoses."""
-    msg = f"{type(exc).__name__}: {exc}"
-    if "No module named 'anthropic'" in msg:
-        return (
-            "Anthropic SDK is not installed. Either run "
-            "`pip install anthropic` (option A), or switch "
-            "settings.json → runtime.llm_orchestrator.backend to 'claude_cli' "
-            "to use the operator's subscription via the claude CLI (option C, "
-            "free until 2026-06-15)."
-        )
-    if "billing_ack" in msg or "execution_ack" in msg:
-        return (
-            "LLM orchestrator requires both ack env vars before launching:\n"
-            "  export anthropic_orchestrator_billing_ack='I_authorize_anthropic_API_charges'\n"
-            "  export anthropic_live_orchestrator_ack='I_understand_costs'\n"
-            "Then restart the frontend (these are read at startup)."
-        )
-    if "ANTHROPIC_API_KEY" in msg:
-        return (
-            "Anthropic SDK needs ANTHROPIC_API_KEY in the environment. "
-            "Set it before launching the frontend, or switch to backend "
-            "'claude_cli' which uses subscription OAuth instead."
-        )
-    if "Professor template" in msg or "ExperimentPlanError" in msg:
-        return (
-            "Professor's experiment-design call failed validation. Check the "
-            "node's claim_contract — placeholder baselines/success/disproof "
-            "should have been replaced at production entry by "
-            "_professor_design_claim_if_placeholder."
-        )
-    if "GrillingError" in msg or "grilling" in msg.lower():
-        return (
-            "Grilling output is missing required fields. Re-run the grilling "
-            "phase (Retry button) or inspect grilling_session.json."
-        )
-    return (
-        "Production launch raised before any artifact could be written. "
-        "Check the frontend server stderr for the full traceback."
-    )
-
-
-def _extract_candidate_ids(market_brief: dict[str, Any]) -> list[str]:
-    raw = market_brief.get("baseline_dossier_candidates_index")
-    if isinstance(raw, list):
-        return [c["id"] for c in raw if isinstance(c, dict) and c.get("id")]
-    return []
 
 
 # --------------------------------------------------------------- phase data

@@ -110,7 +110,6 @@ class MCPServerTests(unittest.TestCase):
             "run_critic_reviews",
             "submit_grad_student_review",
             "submit_professor_decision",
-            "run_rebuttal_and_publish",
             "revise_root_after_reject",
             "decide_publication_readiness",
         }

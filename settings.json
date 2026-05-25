@@ -70,7 +70,7 @@
     "runner_timeouts": {
       "smoke_test": 60,
       "analysis": 300,
-      "eval": 900,
+      "eval": 1800,
       "ablation": 7200,
       "training": 21600
     },

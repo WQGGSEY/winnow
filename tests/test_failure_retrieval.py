@@ -40,7 +40,18 @@ class FailureRetrievalTests(unittest.TestCase):
             self.assertIn("invalid_experiment", formatted)
 
     def test_explicit_selected_file_is_included_first(self) -> None:
-        selected = "invalid_experiment/n_demo_001__invalid_experiment__509089f891.md"
+        # Pick whichever invalid_experiment file the repo currently has on
+        # disk — the demo failure files used to be hard-coded into this
+        # test, but the harness regenerates them during test runs, so the
+        # exact filename drifts. We just need any indexed file.
+        import yaml as _yaml
+        index = _yaml.safe_load(
+            (REPO_ROOT / "memory" / "failures" / "index.yaml").read_text()
+        )
+        invalid_files = index["categories"]["invalid_experiment"]["files"]
+        if not invalid_files:
+            self.skipTest("no indexed invalid_experiment files to select against")
+        selected = invalid_files[0]
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._temp_repo(tmp)
 

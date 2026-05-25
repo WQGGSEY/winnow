@@ -358,29 +358,6 @@ TOOL_DEFINITIONS = [
         },
     },
     {
-        "name": "run_rebuttal_and_publish",
-        "description": (
-            f"{PROFESSOR_CONTRACT}\n\n"
-            "Trigger the rebuttal stage and publication for a promoted "
-            "root-or-near-root node. Runs the rebuttal critic pack, the AC "
-            "decision (deterministic threshold-based), and the renderers "
-            "(interactive_html, slides_html, paper_html). If the AC "
-            "decides 'reject', use revise_root_after_reject to propose a "
-            "stronger claim and restart."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["thread_id"],
-            "properties": {
-                "thread_id": {"type": "string"},
-                "promoted_node_id": {
-                    "type": "string",
-                    "description": "Optional. Defaults to the first promoted node closest to root.",
-                },
-            },
-        },
-    },
-    {
         "name": "revise_root_after_reject",
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
@@ -1377,143 +1354,6 @@ def handle_run_critic_reviews(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def handle_run_rebuttal_and_publish(args: dict[str, Any]) -> dict[str, Any]:
-    """Build rebuttal, run AC decision, render publication artifacts."""
-    from research_harness.config import load_settings as _ls
-    from research_harness.critics.governance import select_critics
-    from research_harness.critics.review_runner import run_critic_reviews as _run
-    from research_harness.publishing.ac import decide_acceptance
-    from research_harness.publishing.publish import publish_state_bundle
-    from research_harness.publishing.rebuttal import (
-        build_orchestrator_rebuttal,
-        build_rebuttal_packet,
-    )
-    from research_harness.schemas.validator import validate_named_schema
-
-    tid = args["thread_id"]
-    repo = _repo_root()
-    settings_local = _ls(repo)
-    state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
-    state = _read_json(state_path)
-    if not state:
-        return {"status": "rejected", "reason": "search_state.json missing"}
-    promoted_ids = state.get("promoted_node_ids") or []
-    if not promoted_ids:
-        return {"status": "rejected", "reason": "no promoted nodes yet"}
-    promoted_id = args.get("promoted_node_id") or next(
-        (pid for pid in promoted_ids
-         if next((n for n in state["nodes"] if n["id"] == pid), {}).get("parent") is None),
-        promoted_ids[0],
-    )
-    node = next((n for n in state["nodes"] if n["id"] == promoted_id), None)
-    if not node:
-        return {"status": "rejected", "reason": f"promoted node {promoted_id} missing"}
-    node_dir = _thread_dir(tid) / "production" / "tree" / "nodes" / promoted_id
-    worker_report = _read_json(node_dir / "worker_report.json")
-    critic_reviews = _read_json(node_dir / "critic_reviews.json") or []
-    if not worker_report:
-        return {"status": "rejected", "reason": "worker_report missing for promoted node"}
-
-    rebuttal_dir = _thread_dir(tid) / "production" / "rebuttal"
-    rebuttal_dir.mkdir(parents=True, exist_ok=True)
-    node_critic_routing = select_critics(repo, node)
-    state_bundle: dict[str, Any] = {
-        "node": node,
-        "worker_report": worker_report,
-        "critic_reviews": critic_reviews,
-        "critic_routing": node_critic_routing,
-        "orchestrator_reduction": {
-            "node_id": promoted_id,
-            "final_verdict": "supported_with_scope_narrowing",
-            "research_status": "supported_with_scope_narrowing",
-            "next_transition": "promoted",
-            "score_summary": {"validity": 8, "necessity": 7, "reproducibility": 7, "taste_alignment": 8},
-            "blocking_objections": [],
-            "accepted_lesson_candidates": [],
-            "failure_branch_prior": {
-                "source": "failure_memory", "query_tags": [],
-                "selected_failure_files": [], "risk_controls": [], "branch_suggestions": [],
-            },
-            "child_branch_suggestions": [],
-        },
-    }
-    build_rebuttal_packet(state_bundle, rebuttal_dir / "rebuttal_packet.md")
-    build_orchestrator_rebuttal(state_bundle, rebuttal_dir / "orchestrator_rebuttal.md")
-
-    rebuttal_node = dict(node); rebuttal_node["stage"] = "rebuttal"
-    validate_named_schema("node", rebuttal_node)
-    rebuttal_routing = select_critics(repo, rebuttal_node)
-    rebuttal_reviews = _run(rebuttal_node, worker_report, rebuttal_routing)
-    for review in rebuttal_reviews:
-        validate_named_schema("critic_review", review)
-    (rebuttal_dir / "rebuttal_critic_bundle.json").write_text(
-        json.dumps({"routing": rebuttal_routing, "reviews": rebuttal_reviews},
-                   indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-
-    ac_decision = decide_acceptance(rebuttal_reviews, settings_local)
-    validate_named_schema("ac_decision", ac_decision)
-    (rebuttal_dir / "ac_decision.json").write_text(
-        json.dumps(ac_decision, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    state_bundle["rebuttal_critic_reviews"] = rebuttal_reviews
-    state_bundle["ac_decision"] = ac_decision
-    state_bundle["evidence_is_fake"] = False
-    (rebuttal_dir / "research_state_bundle.json").write_text(
-        json.dumps(state_bundle, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-    publication_dir = _thread_dir(tid) / "production" / "publication"
-    dispatch = publish_state_bundle(state_bundle, settings_local, publication_dir)
-
-    # Production run summary so the frontend production panel populates.
-    summary = {
-        "type": "production_run_summary",
-        "repo_root": str(repo),
-        "run_dir": str(_thread_dir(tid) / "production"),
-        "backend": "mcp",
-        "preflight_status": "passed",
-        "tree_search_status": state.get("status", "running"),
-        "node_count": len(state.get("nodes", [])),
-        "promoted_node_ids": promoted_ids,
-        "templates_used": {
-            n["id"]: (n.get("outputs", {}) or {}).get("template_used", "professor_generated")
-            for n in state.get("nodes", [])
-        },
-        "fallback_node_ids": [],
-        "evidence_is_fake": False,
-        "tree_search_state_path": str(state_path),
-        "tree_search_summary_path": str(state_path.with_name("tree_search_summary.json")),
-        "research_state_bundle_path": str(rebuttal_dir / "research_state_bundle.json"),
-        "rebuttal_summary": {
-            "promoted_node_id": promoted_id,
-            "rebuttal_packet_path": str(rebuttal_dir / "rebuttal_packet.md"),
-            "orchestrator_rebuttal_path": str(rebuttal_dir / "orchestrator_rebuttal.md"),
-            "rebuttal_critic_bundle_path": str(rebuttal_dir / "rebuttal_critic_bundle.json"),
-            "ac_decision_path": str(rebuttal_dir / "ac_decision.json"),
-            "research_state_bundle_path": str(rebuttal_dir / "research_state_bundle.json"),
-            "ac_decision": ac_decision,
-        },
-        "publication_dispatch": dispatch,
-        "live_execution": "MCP-driven production run.",
-    }
-    (_thread_dir(tid) / "production" / "production_run_summary.json").write_text(
-        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    return {
-        "status": "ok",
-        "ac_decision": ac_decision["decision"],
-        "ac_confidence": ac_decision.get("confidence"),
-        "publication_outputs": [a["output"] for a in dispatch.get("rendered_artifacts", [])],
-        "paper_html_path": next(
-            (a["artifact_path"] for a in dispatch.get("rendered_artifacts", [])
-             if a["output"] == "paper_html"), None
-        ),
-    }
-
-
 def handle_revise_root_after_reject(
     args: dict[str, Any], settings: dict[str, Any]
 ) -> dict[str, Any]:
@@ -2447,8 +2287,6 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_submit_grad_student_review(args, settings)
             elif name == "submit_professor_decision":
                 result = handle_submit_professor_decision(args, settings)
-            elif name == "run_rebuttal_and_publish":
-                result = handle_run_rebuttal_and_publish(args)
             elif name == "revise_root_after_reject":
                 result = handle_revise_root_after_reject(args, settings)
             elif name == "decide_publication_readiness":
