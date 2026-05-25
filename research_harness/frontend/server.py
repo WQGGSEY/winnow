@@ -122,13 +122,29 @@ def _build_jinja_env() -> Environment:
         enable_async=False,
     )
 
+    from jinja2 import Undefined
+
     def _pretty_json(value: Any) -> str:
-        return json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False)
+        # Defensive: Jinja's Undefined fires when a template touches an
+        # absent dict key (e.g. ds.source on a synthetic-type dataset_spec
+        # that has no source field). Without this guard json.dumps raises
+        # TypeError and the entire thread page 500s.
+        if isinstance(value, Undefined) or value is None:
+            return ""
+        try:
+            return json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False)
+        except TypeError:
+            return str(value)
+
+    def _truncate_chars(s: Any, n: int = 80) -> Any:
+        if isinstance(s, Undefined) or s is None:
+            return ""
+        if isinstance(s, str) and len(s) > n:
+            return s[: n - 1] + "…"
+        return s
 
     env.filters["pretty_json"] = _pretty_json
-    env.filters["truncate_chars"] = lambda s, n=80: (
-        (s[: n - 1] + "…") if isinstance(s, str) and len(s) > n else s
-    )
+    env.filters["truncate_chars"] = _truncate_chars
     return env
 
 

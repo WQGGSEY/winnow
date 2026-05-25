@@ -149,7 +149,16 @@
                   <td><code>{{ ds.id }}</code></td>
                   <td>{{ ds.type }}</td>
                   <td>{{ ds.role }}</td>
-                  <td>{{ ds.source|pretty_json|truncate_chars(120) }}</td>
+                  <td>
+                    {% if ds.source is defined and ds.source %}
+                      {{ ds.source|pretty_json|truncate_chars(120) }}
+                    {% elif ds.synthetic_recipe is defined %}
+                      <em>synthetic_recipe</em>:
+                      {{ ds.synthetic_recipe|pretty_json|truncate_chars(120) }}
+                    {% else %}
+                      <em>—</em>
+                    {% endif %}
+                  </td>
                 </tr>
               {% endfor %}
             </tbody>

@@ -264,6 +264,84 @@ class ServerSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("Resume / reconnect", resp.text)
 
+    def test_refine_panel_handles_synthetic_spec_without_source(self) -> None:
+        """Regression: a refined plan with a synthetic dataset_spec (which
+        has synthetic_recipe but no source field) used to 500 the entire
+        thread page because `pretty_json` filter raised TypeError on
+        Jinja's Undefined. Now the filter no-ops on Undefined and the
+        template falls back to rendering the synthetic_recipe."""
+        t = threads.create_thread(self.repo, user_goal="synthetic spec render")
+        refine_dir = threads.phase_dir(self.repo, t["thread_id"], "refine")
+        refine_dir.mkdir(parents=True, exist_ok=True)
+        plan = {
+            "type": "refined_research_plan",
+            "plan_id": "rrp_synth_render",
+            "status": "done",
+            "source_grilling_session_id": "grill_x",
+            "source_market_brief_id": "mrb_x",
+            "claim_under_test": "x",
+            "mandatory_baselines": ["a"],
+            "success_criteria": ["b"],
+            "disproof_conditions": ["c"],
+            "validation_procedure": {
+                "primary_metric": {
+                    "name": "ndcg_at_10",
+                    "operator": "greater_than",
+                    "threshold": 0.03,
+                },
+                "splits": {"train": "x", "eval": "y"},
+                "statistical_test": {"name": "paired_t_test", "alpha": 0.05},
+                "n_seeds": 5,
+                "decision_rule": "all_baselines_beaten",
+            },
+            "dataset_specs": [
+                {
+                    "id": "ds_synth_render",
+                    "type": "synthetic",
+                    "role": "evaluation",
+                    # no `source` field at all — this is what triggered the 500
+                    "synthetic_recipe": {
+                        "shape": "tabular",
+                        "rows": 100,
+                        "seed": 7,
+                        "columns": [
+                            {"name": "x", "distribution": "normal", "params": {"mu": 0, "sigma": 1}},
+                        ],
+                    },
+                }
+            ],
+            "unresolved_dataset_specs": [],
+            "sota_reconciliations": [],
+            "acknowledged_limitations": [],
+            "rounds": [],
+            "model": "sonnet",
+            "created_at": "2026-05-25T00:00:00Z",
+            "usage_estimate": {
+                "rounds_used": 1,
+                "total_cost_usd": 0.01,
+                "total_input_tokens": 50,
+                "total_output_tokens": 30,
+            },
+            "plan_path": "/tmp/x",
+            "dataset_manifest_path": "/tmp/y",
+            "error": None,
+            "pending_ask": None,
+        }
+        (refine_dir / "refined_research_plan.json").write_text(json.dumps(plan))
+        threads.update_thread(
+            self.repo,
+            t["thread_id"],
+            current_phase="refine",
+            phase_status="complete",
+            domain="x",
+        )
+        resp = self.client.get(f"/threads/{t['thread_id']}")
+        self.assertEqual(resp.status_code, 200)
+        # synthetic_recipe fallback rendered
+        self.assertIn("synthetic_recipe", resp.text)
+        # No 500 trace bleeding through
+        self.assertNotIn("TypeError", resp.text)
+
     def test_refine_panel_renders_thinking_indicator(self) -> None:
         """The refiner panel should expose the same 'Refiner is thinking…'
         indicator the grilling panel has, so the user gets the same
