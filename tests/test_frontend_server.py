@@ -264,6 +264,90 @@ class ServerSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("Resume / reconnect", resp.text)
 
+    def test_retry_requires_failed_status(self) -> None:
+        t = threads.create_thread(self.repo, user_goal="retry guard")
+        # phase_status defaults to idle — retry should refuse
+        resp = self.client.post(
+            f"/api/threads/{t['thread_id']}/market/retry"
+        )
+        self.assertEqual(resp.status_code, 409)
+        self.assertIn("phase_status", resp.text)
+
+    def test_retry_archives_failed_phase_dir_and_resets(self) -> None:
+        t = threads.create_thread(self.repo, user_goal="retry archive")
+        thread_dir = threads.threads_root(self.repo) / t["thread_id"]
+        # Simulate a failed market phase with some files
+        market = thread_dir / "market"
+        market.mkdir()
+        (market / "market_research_brief.json").write_text(
+            '{"brief_id":"old","papers":[]}'
+        )
+        threads.update_thread(
+            self.repo,
+            t["thread_id"],
+            current_phase="market",
+            phase_status="failed",
+        )
+        # We need a grilling_session.json so _launch_market would proceed
+        # (but we don't want it to actually fire claude / arxiv during test).
+        # Patch _launch_market via override.
+        from research_harness.frontend import server as srv
+
+        called: dict = {}
+
+        async def fake_launch_market(s, index):
+            called["thread_id"] = index["thread_id"]
+
+        original = srv._launch_market
+        srv._launch_market = fake_launch_market
+        try:
+            resp = self.client.post(
+                f"/api/threads/{t['thread_id']}/market/retry"
+            )
+        finally:
+            srv._launch_market = original
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["archived_attempt"], 1)
+        # Original market dir archived as market.attempt1
+        self.assertFalse(market.exists())
+        self.assertTrue((thread_dir / "market.attempt1").exists())
+        self.assertTrue(
+            (thread_dir / "market.attempt1" / "market_research_brief.json").exists()
+        )
+        # phase_status reset
+        reloaded = threads.load_thread(self.repo, t["thread_id"])
+        self.assertEqual(reloaded["phase_status"], "running")
+        # Launcher was invoked
+        self.assertEqual(called["thread_id"], t["thread_id"])
+
+    def test_retry_refuses_unknown_phase(self) -> None:
+        t = threads.create_thread(self.repo, user_goal="x")
+        threads.update_thread(
+            self.repo,
+            t["thread_id"],
+            phase_status="failed",
+        )
+        resp = self.client.post(
+            f"/api/threads/{t['thread_id']}/bogus_phase/retry"
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_retry_refuses_when_current_phase_doesnt_match(self) -> None:
+        """If user clicks retry on the wrong phase row (e.g. retry market
+        when current_phase is production) we should refuse so we don't
+        archive the wrong directory."""
+        t = threads.create_thread(self.repo, user_goal="x")
+        threads.update_thread(
+            self.repo,
+            t["thread_id"],
+            current_phase="production",
+            phase_status="failed",
+        )
+        resp = self.client.post(
+            f"/api/threads/{t['thread_id']}/market/retry"
+        )
+        self.assertEqual(resp.status_code, 409)
+
     def test_market_and_production_streams_404_without_live_session(self) -> None:
         """Market and production SSE endpoints exist so the page can
         auto-reload on phase_complete. When there's no live session they

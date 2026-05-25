@@ -13,6 +13,28 @@
       Start grilling
     </button>
   </div>
+{% elif thread.current_phase == "grilling" and (
+  thread.phase_status == "failed"
+  or (session and session.status == "aborted" and not live_session_present)
+) %}
+  <div class="phase-empty">
+    <p><strong>Grilling failed.</strong>
+       {% if session and session.error %}<br>Error: <code>{{ session.error|truncate_chars(200) }}</code>{% endif %}
+    </p>
+    <button class="btn primary"
+            type="button"
+            data-execute-ack
+            data-phase="grilling"
+            data-thread-id="{{ thread.thread_id }}"
+            data-endpoint="/api/threads/{{ thread.thread_id }}/grilling/retry"
+            data-cost-note="Retry grilling. Failed attempt archived as grilling.attempt<N>/ — prior rounds preserved for inspection.">
+      Retry grilling
+    </button>
+    <details class="raw-json">
+      <summary>Failed session JSON</summary>
+      <pre>{{ session|pretty_json if session else "(no session)" }}</pre>
+    </details>
+  </div>
 {% else %}
   <section class="grilling-chat" data-thread-id="{{ thread.thread_id }}">
     <header class="chat-header">

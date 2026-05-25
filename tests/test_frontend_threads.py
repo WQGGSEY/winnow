@@ -81,6 +81,34 @@ class ThreadsCrudTests(unittest.TestCase):
             reloaded = threads.load_thread(repo, t["thread_id"])
             self.assertEqual(reloaded["phase_status"], "awaiting_input")
 
+    def test_boot_repair_demotes_orphan_aborted_to_failed(self) -> None:
+        """When the previous launcher couldn't write phase_status=failed
+        before the server died, the thread is left in awaiting_input but
+        the on-disk artifact has status=aborted. boot_repair should flip
+        it to failed so the Retry button lights up."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            t = threads.create_thread(repo, user_goal="orphan repro")
+            tid = t["thread_id"]
+            # Simulate orphan: phase_status=awaiting_input + plan aborted.
+            refine_dir = threads.phase_dir(repo, tid, "refine")
+            refine_dir.mkdir(parents=True, exist_ok=True)
+            (refine_dir / "refined_research_plan.json").write_text(
+                json.dumps(
+                    {"status": "aborted", "error": "claude reported error"}
+                )
+            )
+            threads.update_thread(
+                repo,
+                tid,
+                current_phase="refine",
+                phase_status="awaiting_input",
+            )
+            repaired = threads.boot_repair(repo)
+            self.assertEqual(repaired, [tid])
+            reloaded = threads.load_thread(repo, tid)
+            self.assertEqual(reloaded["phase_status"], "failed")
+
     def test_append_execute_ack_audit_record(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)

@@ -14,7 +14,11 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from research_harness.config import load_settings, resolve_agent_model
+from research_harness.config import (
+    load_settings,
+    resolve_agent_budget,
+    resolve_agent_model,
+)
 from research_harness.memory.baseline_dossier import validate_baseline_dossier
 from research_harness.schemas.validator import validate_named_schema
 
@@ -439,7 +443,7 @@ def _generate_baseline_analysis_md(
     detected_claude = claude_path or shutil.which("claude") or "claude"
     cmd_runner = runner or subprocess.run
     model = resolve_agent_model(settings, "market_research_agent")
-    max_budget = str(live_backend.get("max_budget_usd", "0.25"))
+    max_budget = resolve_agent_budget(settings, "market_research_agent")
 
     try:
         md_text, usage = _call_sonnet_for_baseline_md(

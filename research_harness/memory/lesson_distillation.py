@@ -10,7 +10,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from research_harness.config import load_lessons, load_settings, resolve_agent_model
+from research_harness.config import (
+    load_lessons,
+    load_settings,
+    resolve_agent_budget,
+    resolve_agent_model,
+)
 from research_harness.schemas.validator import validate_named_schema
 
 
@@ -86,7 +91,7 @@ def run_lesson_distillation(
         .get("claude_code_live", {})
     )
     model = resolve_agent_model(settings, "lesson_distillation_agent")
-    max_budget = str(live_backend.get("max_budget_usd", "0.25"))
+    max_budget = resolve_agent_budget(settings, "lesson_distillation_agent")
 
     base = {
         "type": "lesson_distillation_summary",

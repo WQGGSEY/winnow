@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 from research_harness.agents.grilling import GrillingError, run_grilling_session
-from research_harness.config import resolve_agent_model
+from research_harness.config import resolve_agent_budget, resolve_agent_model
 from research_harness.orchestrator.experiment_plan import (
     FALLBACK_TEMPLATE_ID,
     build_experiment_plan_for_node,
@@ -258,6 +258,50 @@ class AgentModelResolveTests(unittest.TestCase):
 
     def test_falls_back_to_literal_sonnet_when_nothing_configured(self) -> None:
         self.assertEqual(resolve_agent_model({}, "grilling_agent"), "sonnet")
+
+
+class AgentBudgetResolveTests(unittest.TestCase):
+    def test_per_role_overrides_default(self) -> None:
+        settings = {
+            "runtime": {
+                "agent_budgets": {
+                    "default": "0.5",
+                    "grilling_agent": "0.25",
+                    "research_refiner_agent": "1.0",
+                }
+            }
+        }
+        self.assertEqual(resolve_agent_budget(settings, "grilling_agent"), "0.25")
+        self.assertEqual(resolve_agent_budget(settings, "research_refiner_agent"), "1.0")
+        # role with no entry uses default
+        self.assertEqual(resolve_agent_budget(settings, "market_research_agent"), "0.5")
+
+    def test_falls_back_to_live_backend_max_budget(self) -> None:
+        settings = {
+            "runtime": {
+                "worker_backends": {
+                    "claude_code_live": {"max_budget_usd": "0.5"}
+                }
+            }
+        }
+        self.assertEqual(resolve_agent_budget(settings, "grilling_agent"), "0.5")
+
+    def test_falls_back_to_literal_default_when_nothing_configured(self) -> None:
+        self.assertEqual(resolve_agent_budget({}, "grilling_agent"), "0.25")
+
+    def test_accepts_numeric_values_and_coerces_to_string(self) -> None:
+        """settings.json may declare budgets as either "0.5" or 0.5; both
+        flow through to the Claude CLI as a string."""
+        settings = {
+            "runtime": {
+                "agent_budgets": {
+                    "grilling_agent": 0.5,  # number, not string
+                    "default": 0.25,
+                }
+            }
+        }
+        self.assertEqual(resolve_agent_budget(settings, "grilling_agent"), "0.5")
+        self.assertEqual(resolve_agent_budget(settings, "market_research_agent"), "0.25")
 
     def test_grilling_picks_up_explicit_model_from_settings(self) -> None:
         # Verify the wiring: grilling agent passes the resolved model to the CLI.

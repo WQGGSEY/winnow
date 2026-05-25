@@ -2,6 +2,22 @@
   <div class="phase-empty">
     <p>Market research has not been run for this thread.</p>
   </div>
+{% elif thread.current_phase == "market" and thread.phase_status == "failed" %}
+  <div class="phase-empty">
+    <p><strong>Market research failed.</strong>
+       Check server logs for the exception; common causes are network
+       failures during arXiv search or PDF download.
+    </p>
+    <button class="btn primary"
+            type="button"
+            data-execute-ack
+            data-phase="market"
+            data-thread-id="{{ thread.thread_id }}"
+            data-endpoint="/api/threads/{{ thread.thread_id }}/market/retry"
+            data-cost-note="Retry market research. Failed attempt archived as market.attempt<N>/.">
+      Retry market research
+    </button>
+  </div>
 {% else %}
   {% set brief = p.brief %}
   <section class="market-view">

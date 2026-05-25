@@ -29,6 +29,13 @@
       "research_refiner_agent": "sonnet",
       "lesson_distillation_agent": "sonnet"
     },
+    "agent_budgets": {
+      "default": "0.5",
+      "grilling_agent": "0.5",
+      "market_research_agent": "0.5",
+      "research_refiner_agent": "1.0",
+      "lesson_distillation_agent": "0.25"
+    },
     "worker_backends": {
       "mock": {
         "required_for_ci": true

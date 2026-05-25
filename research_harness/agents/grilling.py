@@ -14,7 +14,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from research_harness.config import load_settings, resolve_agent_model
+from research_harness.config import (
+    load_settings,
+    resolve_agent_budget,
+    resolve_agent_model,
+)
 from research_harness.orchestrator.experiment_plan import list_available_domains
 from research_harness.schemas.validator import (
     SchemaValidationError,
@@ -107,7 +111,7 @@ def run_grilling_session(
         .get("claude_code_live", {})
     )
     model = resolve_agent_model(settings, "grilling_agent")
-    max_budget = str(live_backend.get("max_budget_usd", "0.25"))
+    max_budget = resolve_agent_budget(settings, "grilling_agent")
 
     if allowed_domains is None:
         try:

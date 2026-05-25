@@ -14,6 +14,28 @@
       </button>
     {% endif %}
   </div>
+{% elif thread.current_phase == "refine" and (
+  thread.phase_status == "failed"
+  or (p.plan and p.plan.status == "aborted" and not live_session_present)
+) %}
+  <div class="phase-empty">
+    <p><strong>Refiner failed.</strong>
+       {% if p.plan and p.plan.error %}<br>Error: <code>{{ p.plan.error|truncate_chars(200) }}</code>{% endif %}
+    </p>
+    <button class="btn primary"
+            type="button"
+            data-execute-ack
+            data-phase="refine"
+            data-thread-id="{{ thread.thread_id }}"
+            data-endpoint="/api/threads/{{ thread.thread_id }}/refine/retry"
+            data-cost-note="Retry refiner. The failed attempt will be archived as refine.attempt<N>/ for inspection; a fresh attempt starts from scratch.">
+      Retry refiner
+    </button>
+    <details class="raw-json">
+      <summary>Failed plan JSON</summary>
+      <pre>{{ p.plan|pretty_json if p.plan else "(no plan)" }}</pre>
+    </details>
+  </div>
 {% else %}
   {% set plan = p.plan %}
   <section class="refine-view" data-thread-id="{{ thread.thread_id }}">

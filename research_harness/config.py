@@ -244,6 +244,41 @@ def resolve_agent_model(settings: dict[str, Any], role: str) -> str:
     return "sonnet"
 
 
+def resolve_agent_budget(settings: dict[str, Any], role: str) -> str:
+    """Pick the per-call USD budget cap for a given agent role.
+
+    Resolution order (mirrors ``resolve_agent_model``):
+      1. settings.runtime.agent_budgets.<role>
+      2. settings.runtime.agent_budgets.default
+      3. settings.runtime.worker_backends.claude_code_live.max_budget_usd
+      4. literal "0.25" as a last-resort default.
+
+    Returns the value as a string because that's what the Claude CLI's
+    ``--max-budget-usd`` flag expects. Values in settings may be either
+    strings ("0.50") or numbers (0.5); both are coerced to str here so
+    callers don't need to care.
+    """
+
+    runtime = settings.get("runtime", {}) if isinstance(settings, dict) else {}
+    agent_budgets = runtime.get("agent_budgets", {}) or {}
+    if isinstance(agent_budgets, dict):
+        explicit = agent_budgets.get(role)
+        if explicit is not None and str(explicit).strip():
+            return str(explicit)
+        default = agent_budgets.get("default")
+        if default is not None and str(default).strip():
+            return str(default)
+    live = (
+        runtime.get("worker_backends", {}).get("claude_code_live", {})
+        if isinstance(runtime.get("worker_backends"), dict)
+        else {}
+    )
+    fallback = live.get("max_budget_usd") if isinstance(live, dict) else None
+    if fallback is not None and str(fallback).strip():
+        return str(fallback)
+    return "0.25"
+
+
 def load_critic_profile(path: Path) -> dict[str, Any]:
     frontmatter, body = split_frontmatter(path)
     if frontmatter.get("override_policy") not in {None, "taste_only"}:

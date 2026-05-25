@@ -2,6 +2,22 @@
   <div class="phase-empty">
     <p>Production has not been run for this thread.</p>
   </div>
+{% elif thread.current_phase == "production" and thread.phase_status == "failed" %}
+  <div class="phase-empty">
+    <p><strong>Production failed.</strong>
+       Inspect tree/, rebuttal/, and any partial production_run_summary.json
+       in the archived attempt to localize the failure.
+    </p>
+    <button class="btn primary"
+            type="button"
+            data-execute-ack
+            data-phase="production"
+            data-thread-id="{{ thread.thread_id }}"
+            data-endpoint="/api/threads/{{ thread.thread_id }}/production/retry"
+            data-cost-note="Retry production. Failed attempt archived as production.attempt<N>/.">
+      Retry production
+    </button>
+  </div>
 {% else %}
   {% set summary = p.summary %}
   <section class="production-view">

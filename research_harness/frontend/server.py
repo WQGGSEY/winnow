@@ -304,6 +304,78 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
         await session.emit({"type": "user_reply", "text": reply})
         return JSONResponse({"ok": True})
 
+    @app.post("/api/threads/{thread_id}/{phase}/retry")
+    async def phase_retry(thread_id: str, phase: str, req: Request) -> JSONResponse:
+        """Re-run a phase that ended in ``phase_status == "failed"``.
+
+        Archives the failed phase directory to a sibling
+        ``<phase>.attempt<N>/`` so the operator can still inspect what
+        went wrong, then re-launches the phase fresh. Works for any
+        phase including upstream failures we can't anticipate
+        (Claude API blips, rate limits, content-policy hits, network
+        drops). Without this the only escape from a failed phase was to
+        hand-edit thread.json or delete the thread entirely.
+        """
+        if phase not in threads.PHASES:
+            raise HTTPException(400, f"unknown phase {phase!r}")
+        index = _require_thread(s.repo_root, thread_id)
+        # Retry is allowed in two cases:
+        #   (1) phase_status == "failed" — clean failure, the launcher's
+        #       except block ran and marked it.
+        #   (2) phase_status in {running, awaiting_input} AND no in-memory
+        #       LiveSession — orphan state, typically caused by a server
+        #       crash between the agent raising and the launcher's except
+        #       block writing phase_status=failed. The on-disk artifact is
+        #       genuinely dead and there's no point trying to Resume.
+        live = thread_id in s.sessions
+        retryable = (
+            index["phase_status"] == "failed"
+            or (index["phase_status"] in {"running", "awaiting_input"} and not live)
+        )
+        if not retryable:
+            raise HTTPException(
+                409,
+                f"retry is only available when the phase is failed or "
+                f"orphaned (running/awaiting_input with no in-memory "
+                f"session). current phase_status = {index['phase_status']!r}, "
+                f"live_session_present = {live}",
+            )
+        # Refuse to retry a phase the operator hasn't started yet — that
+        # would be a launch, not a retry.
+        if index["current_phase"] != phase:
+            raise HTTPException(
+                409,
+                f"thread's current_phase is {index['current_phase']!r}, "
+                f"not {phase!r}; retry the actual failed phase instead",
+            )
+        # Archive the failed phase dir to a numbered sibling.
+        pdir = threads.phase_dir(s.repo_root, thread_id, phase)
+        attempt_idx: int | None = None
+        if pdir.exists():
+            attempt_idx = _next_attempt_number(pdir.parent, phase)
+            archive = pdir.parent / f"{phase}.attempt{attempt_idx}"
+            pdir.rename(archive)
+        # Reset phase status to running and re-launch.
+        threads.update_thread(
+            s.repo_root, thread_id, phase_status="running"
+        )
+        # Live phases need their ack/mode; market and production don't.
+        if phase in ("grilling", "refine"):
+            body = await _maybe_json(req)
+            mode = body.get("mode") or (
+                "auto" if acks.full_auto_mode(s.repo_root) else "manual"
+            )
+            _require_subscription_ack(s.repo_root)
+            if phase == "grilling":
+                await _launch_grilling(s, index, mode=mode)
+            else:
+                await _launch_refine(s, index, mode=mode)
+        elif phase == "market":
+            await _launch_market(s, index)
+        else:  # production
+            await _launch_production(s, index)
+        return JSONResponse({"ok": True, "archived_attempt": attempt_idx})
+
     @app.post("/api/threads/{thread_id}/grilling/abandon")
     async def grilling_abandon(thread_id: str) -> JSONResponse:
         """Bail out of a stuck live phase. Cancels the running task,
@@ -482,6 +554,22 @@ def _require_thread(repo_root: Path, thread_id: str) -> dict[str, Any]:
         return threads.load_thread(repo_root, thread_id)
     except threads.ThreadError as exc:
         raise HTTPException(404, str(exc))
+
+
+def _next_attempt_number(thread_root: Path, phase: str) -> int:
+    """Return N such that ``<thread_root>/<phase>.attempt<N>/`` is unused.
+
+    Scans for existing ``<phase>.attempt<digit>`` siblings to pick the
+    next free index. Starts at 1.
+    """
+    existing: list[int] = []
+    prefix = f"{phase}.attempt"
+    for child in thread_root.iterdir():
+        if child.is_dir() and child.name.startswith(prefix):
+            suffix = child.name[len(prefix) :]
+            if suffix.isdigit():
+                existing.append(int(suffix))
+    return (max(existing) + 1) if existing else 1
 
 
 def _refuse_if_lock_held_by_other(s: AppState, thread_id: str) -> None:

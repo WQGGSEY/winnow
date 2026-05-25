@@ -199,24 +199,68 @@ def phase_dir(repo_root: Path, thread_id: str, phase: str) -> Path:
 
 
 def boot_repair(repo_root: Path) -> list[str]:
-    """Run on server start: demote any ``running`` thread to ``awaiting_input``.
+    """Run on server start: heal threads that died mid-flight.
 
-    The frontend server cannot have left any phase truly running across a
-    restart (the in-process loop died with the process). The repair
-    transition lets the user resume the multi-turn session without
-    holding a stale "running" badge forever. Returns the list of thread
-    ids that were repaired so the caller can log it.
+    Two transitions:
+
+    1. ``phase_status == "running"`` and the on-disk artifact is still
+       ``in_progress`` → demote to ``awaiting_input``. The agent task
+       died with the process; surfacing a Resume button lets the
+       operator pick the conversation back up.
+    2. ``phase_status in {running, awaiting_input}`` and the on-disk
+       artifact is ``aborted`` (or the artifact is missing entirely on
+       a non-grilling phase) → demote to ``failed``. The previous
+       launcher couldn't write phase_status=failed before the server
+       went down, leaving the thread in a confusing orphan state with
+       no path forward; flipping to failed lights up the Retry button.
+
+    Returns the list of thread ids that were repaired.
     """
     repaired: list[str] = []
     for index in list_threads(repo_root):
-        if index.get("phase_status") == "running":
-            update_thread(
-                repo_root,
-                index["thread_id"],
-                phase_status="awaiting_input",
-            )
-            repaired.append(index["thread_id"])
+        tid = index["thread_id"]
+        phase = index.get("current_phase")
+        ps = index.get("phase_status")
+        if ps not in {"running", "awaiting_input"}:
+            continue
+        artifact_status = _read_phase_artifact_status(
+            repo_root, tid, phase
+        ) if phase else None
+        if artifact_status == "aborted":
+            update_thread(repo_root, tid, phase_status="failed")
+            repaired.append(tid)
+        elif ps == "running":
+            # Default running→awaiting_input case (in_progress artifact).
+            update_thread(repo_root, tid, phase_status="awaiting_input")
+            repaired.append(tid)
     return repaired
+
+
+def _read_phase_artifact_status(
+    repo_root: Path, thread_id: str, phase: str
+) -> str | None:
+    """Best-effort read of the ``status`` field on the phase's primary
+    artifact. Returns None if the file is missing or unreadable.
+
+    Currently only grilling and refine have a status field. Market and
+    production indicate success via the presence of their summary
+    artifact, not a status field — for those phases boot_repair only
+    handles the simple running→awaiting_input transition.
+    """
+    primary = {
+        "grilling": "grilling_session.json",
+        "refine": "refined_research_plan.json",
+    }.get(phase)
+    if primary is None:
+        return None
+    pdir = threads_root(repo_root) / thread_id / phase
+    fp = pdir / primary
+    if not fp.exists():
+        return None
+    try:
+        return json.loads(fp.read_text(encoding="utf-8")).get("status")
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 # ---------------------------------------------------------------- helpers
