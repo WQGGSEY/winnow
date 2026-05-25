@@ -5,7 +5,7 @@
 //   - Settings dialog (subscription_ack / full_auto_mode)
 //   - New-thread dialog
 //   - Execute-ack modal that wraps "Start grilling / Advance to X" buttons
-//   - SSE connection for live grilling and refine chat
+//   - SSE connection for live grilling chat
 //   - Reply form submission (POSTs JSON, echoes into transcript)
 
 (function () {
@@ -172,11 +172,11 @@
   // ---- chat reply form ----------------------------------------
 
   document.addEventListener('submit', async (ev) => {
-    const form = ev.target.closest('[data-action="grilling-reply"], [data-action="refine-reply"]');
+    const form = ev.target.closest('[data-action="grilling-reply"]');
     if (!form) return;
     ev.preventDefault();
     const threadId = form.dataset.threadId;
-    const phase = form.dataset.action === 'refine-reply' ? 'refine' : 'grilling';
+    const phase = 'grilling';
     const fd = new FormData(form);
     const reply = (fd.get('reply') || '').toString().trim();
     if (!reply) return;
@@ -363,10 +363,274 @@
     const threadId = accordion.dataset.threadId;
     const phase = accordion.dataset.currentPhase;
     const status = accordion.dataset.phaseStatus;
-    const livePhases = new Set(['grilling', 'refine', 'market', 'production']);
+    const livePhases = new Set(['grilling', 'market', 'production']);
     if (threadId && livePhases.has(phase)
         && (status === 'running' || status === 'awaiting_input')) {
       openStream(threadId, phase);
     }
   });
+})();
+
+/* === Claim tree + per-node dialog renderer (production phase) ============ */
+(function () {
+  function buildTree(rootContainer, state, dialogs) {
+    const nodes = state.nodes || [];
+    if (!nodes.length) {
+      rootContainer.innerHTML = "<p class='muted'>(no nodes)</p>";
+      return;
+    }
+    // Build parent → children map.
+    const byParent = new Map();
+    let root = null;
+    for (const n of nodes) {
+      if (n.parent == null) {
+        root = root || n; // first orphan
+        continue;
+      }
+      if (!byParent.has(n.parent)) byParent.set(n.parent, []);
+      byParent.get(n.parent).push(n);
+    }
+    if (!root) {
+      // Fallback: pick any.
+      root = nodes[0];
+    }
+    const ul = document.createElement("ul");
+    ul.appendChild(renderNode(root, byParent, dialogs, rootContainer));
+    rootContainer.innerHTML = "";
+    rootContainer.appendChild(ul);
+  }
+
+  function renderNode(node, byParent, dialogs, rootContainer) {
+    const li = document.createElement("li");
+    const row = document.createElement("div");
+    row.className = "tree-node status-" + (node.status || "unknown");
+    row.dataset.nodeId = node.id;
+
+    const dot = document.createElement("span");
+    dot.className = "dot dot-" + (node.status || "ready");
+    row.appendChild(dot);
+
+    const typeBadge = document.createElement("span");
+    typeBadge.className = "type-badge chip-" + (node.type || "");
+    typeBadge.textContent = node.type || "?";
+    row.appendChild(typeBadge);
+
+    const idSpan = document.createElement("span");
+    idSpan.textContent = " " + node.id;
+    idSpan.style.fontWeight = "500";
+    row.appendChild(idSpan);
+
+    const claim = document.createElement("span");
+    claim.className = "node-claim";
+    claim.title = node.claim_under_test || "";
+    claim.textContent = " — " + (node.claim_under_test || "(no claim)");
+    row.appendChild(claim);
+
+    row.addEventListener("click", function (ev) {
+      ev.stopPropagation();
+      // Mark selection.
+      rootContainer
+        .querySelectorAll(".tree-node.selected")
+        .forEach((el) => el.classList.remove("selected"));
+      row.classList.add("selected");
+      // Render dialog panel.
+      renderDialogPanel(node, dialogs);
+    });
+    li.appendChild(row);
+
+    const children = byParent.get(node.id) || [];
+    if (children.length) {
+      const childUl = document.createElement("ul");
+      for (const c of children) {
+        childUl.appendChild(renderNode(c, byParent, dialogs, rootContainer));
+      }
+      li.appendChild(childUl);
+    }
+    return li;
+  }
+
+  function renderDialogPanel(node, dialogs) {
+    const panel = document.querySelector(
+      "[id^='dialog-panel-']"
+    );
+    if (!panel) return;
+    const entries = (dialogs || {})[node.id] || [];
+    if (!entries.length) {
+      panel.innerHTML =
+        "<p class='muted'>" +
+        node.id +
+        ": (no dialog recorded for this node)</p>";
+      return;
+    }
+    let html =
+      "<h4 style='margin:0 0 8px 0;font-size:13px;'>" +
+      node.id +
+      "</h4>";
+    for (const e of entries) {
+      const speakerClass = "speaker-" + e.speaker;
+      const speakerLabel =
+        e.speaker === "professor" ? "교수님" : "대학원생";
+      html +=
+        "<div class='dialog-entry'>" +
+        "<span class='" +
+        speakerClass +
+        "'>" +
+        speakerLabel +
+        "</span>" +
+        "<span class='dialog-intent'>" +
+        (e.intent || "") +
+        "</span>" +
+        "<div class='dialog-text'>" +
+        escapeHtml(e.text || "") +
+        "</div>" +
+        "</div>";
+    }
+    panel.innerHTML = html;
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function init() {
+    document.querySelectorAll(".claim-tree[data-tree-state]").forEach((el) => {
+      let state, dialogs;
+      try {
+        state = JSON.parse(el.dataset.treeState);
+        dialogs = JSON.parse(el.dataset.nodeDialogs || "{}");
+      } catch (err) {
+        el.innerHTML = "<p class='muted'>(tree state parse error)</p>";
+        return;
+      }
+      buildTree(el, state, dialogs);
+    });
+  }
+
+  document.addEventListener("DOMContentLoaded", init);
+  // HTMX swaps may re-render the production panel; rebind on every after-swap.
+  document.body.addEventListener("htmx:afterSwap", init);
+})();
+
+/* === MCP handoff modal — replaces the direct production launch ============ */
+(function () {
+  function currentModelFor(tid) {
+    const picker = document.querySelector(
+      `.mcp-model-picker[data-thread-id="${tid}"] select[data-mcp-model-select]`
+    );
+    return picker ? picker.value : "";
+  }
+  function modal(tid) {
+    const model = currentModelFor(tid) || "claude-opus-4-7";
+    // Each step is ONE single-line command to type by hand. macOS Terminal
+    // mangles multi-line paste; assume the operator types each line.
+    const step1 = `claude mcp add research_harness -- python -m research_harness.mcp_server --repo-root $(pwd)`;
+    const step2 = `claude --model ${model}`;
+    // Step 3 is the natural-language message to TYPE INSIDE Claude Code.
+    // No slash command — MCP tools are invoked by Claude Code reasoning,
+    // not by /commands.
+    const step3 = `Start the research_harness production run for thread ${tid}. Use the research_harness MCP tools: call get_research_state once to load context, then loop — get_next_admissible_node, design_experiment_template if no _lib yet, submit_grad_student_review, execute_node_experiment, run_critic_reviews, submit_professor_decision — one node at a time. When decide_publication_readiness returns submit=true, call run_rebuttal_and_publish. If the AC rejects, call revise_root_after_reject with a stronger honest claim and restart the loop.`;
+    const wrap = document.createElement("dialog");
+    wrap.className = "settings-dialog mcp-handoff-dialog";
+    wrap.innerHTML = `
+      <form method="dialog" class="settings-form">
+        <h2>Hand off to Claude Code (MCP mode)</h2>
+        <p style="font-size: 13px; line-height: 1.5;">
+          Production reasoning runs inside your Claude Code interactive
+          session — free in the subscription pool, unaffected by the
+          2026-06-15 policy change. macOS Terminal mangles multi-line paste,
+          so each step below is ONE line. Type each one yourself; do not
+          paste several lines at once.
+        </p>
+
+        <h3 style="margin-top:14px; font-size:12.5px;">① One-time only (skip if already done): register the MCP server</h3>
+        <pre data-mcp-line>${escape(step1)}</pre>
+
+        <h3 style="margin-top:14px; font-size:12.5px;">② Open Claude Code with this thread's model</h3>
+        <pre data-mcp-line>${escape(step2)}</pre>
+
+        <h3 style="margin-top:14px; font-size:12.5px;">③ Inside Claude Code, type this as a single chat message (NOT a slash command)</h3>
+        <pre data-mcp-line style="white-space:pre-wrap;">${escape(step3)}</pre>
+        <p style="font-size: 11.5px; color: #5a5a5a; margin-top:2px;">
+          Claude Code reads the MCP tool descriptions and invokes them from
+          the prompt automatically. Persona violations (lazy/safe claims,
+          placeholder baselines, market-ignoring baselines, …) are rejected
+          at the MCP boundary so Claude Code retries on its own. Progress
+          shows up live in this panel.
+        </p>
+
+        <div class="settings-actions">
+          <button type="button" class="btn primary" data-mcp-close>Got it</button>
+        </div>
+      </form>`;
+    document.body.appendChild(wrap);
+    wrap.showModal();
+    wrap.querySelector("[data-mcp-close]").addEventListener("click", () => {
+      wrap.close();
+      wrap.remove();
+    });
+  }
+  function escape(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+  document.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-mcp-handoff]");
+    if (!btn) return;
+    ev.preventDefault();
+    modal(btn.dataset.threadId);
+  });
+})();
+
+/* === Per-thread MCP model selector ====================================== */
+(function () {
+  document.addEventListener("change", async (ev) => {
+    const sel = ev.target.closest("select[data-mcp-model-select]");
+    if (!sel) return;
+    const wrap = sel.closest(".mcp-model-picker");
+    if (!wrap) return;
+    const tid = wrap.dataset.threadId;
+    const model = sel.value;
+    try {
+      const resp = await fetch(`/api/threads/${tid}/mcp_model`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mcp_model: model }),
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        alert("Failed to save model selection: " + text.slice(0, 200));
+      }
+    } catch (err) {
+      alert("Network error saving model selection: " + err);
+    }
+  });
+})();
+
+/* === "last MCP commit Xs ago" relative-time updater ===================== */
+(function () {
+  function rel(mtime) {
+    const dt = Date.now() / 1000 - mtime;
+    if (dt < 0) return "just now";
+    if (dt < 60) return `${Math.floor(dt)}s ago`;
+    if (dt < 3600) return `${Math.floor(dt / 60)}m ${Math.floor(dt % 60)}s ago`;
+    if (dt < 86400) return `${Math.floor(dt / 3600)}h ago`;
+    return `${Math.floor(dt / 86400)}d ago`;
+  }
+  function refresh() {
+    document.querySelectorAll("[data-mcp-since]").forEach((el) => {
+      const mtime = parseFloat(el.dataset.mcpSince);
+      if (!Number.isFinite(mtime)) return;
+      el.textContent = rel(mtime);
+    });
+  }
+  document.addEventListener("DOMContentLoaded", refresh);
+  document.body.addEventListener("htmx:afterSwap", refresh);
+  setInterval(refresh, 1000);
 })();

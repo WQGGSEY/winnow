@@ -21,13 +21,25 @@
     {% if active_thread.outcome %}
       <span class="outcome-tag outcome-{{ active_thread.outcome }}">{{ active_thread.outcome }}</span>
     {% endif %}
-    {% set ds = active_thread.domain_state %}
-    {% if ds == "scaffolding" %}
-      <span class="domain-tag domain-scaffolding">✎ scaffolding</span>
-    {% elif active_thread.domain %}
-      <span class="domain-tag domain-{{ ds or 'matched' }}">domain: {{ active_thread.domain }}</span>
+    {# Domain is now a free-form metadata tag (Professor generates code at
+       production entry); we just display it for context, no scaffolding state. #}
+    {% if active_thread.domain %}
+      <span class="domain-tag domain-matched">domain: {{ active_thread.domain }}</span>
     {% else %}
       <span class="domain-tag domain-null">domain: —</span>
+    {% endif %}
+    {% if llm_backend == "mcp" and mcp_allowed_models %}
+      {% set selected_model = active_thread.mcp_model or mcp_default_model %}
+      <label class="mcp-model-picker"
+             data-thread-id="{{ active_thread.thread_id }}"
+             title="Which model Claude Code should use for this thread's MCP reasoning. Per-thread override.">
+        <span>model:</span>
+        <select data-mcp-model-select>
+          {% for m in mcp_allowed_models %}
+            <option value="{{ m }}"{% if m == selected_model %} selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+        </select>
+      </label>
     {% endif %}
   </div>
   <details class="raw-json">
@@ -43,7 +55,6 @@
   {% set phases = [
     ("grilling", "Grilling"),
     ("market",   "Market research"),
-    ("refine",   "Refiner"),
     ("production","Production"),
   ] %}
   {% for slug, label in phases %}
@@ -51,7 +62,6 @@
     {% set is_done = phase_data[slug].present and (
       (slug == "grilling" and phase_data[slug].session and phase_data[slug].session.status in ["done", "max_rounds_reached"])
       or (slug == "market" and phase_data[slug].brief is defined)
-      or (slug == "refine" and phase_data[slug].plan and phase_data[slug].plan.status in ["done", "max_rounds_reached"])
       or (slug == "production" and phase_data[slug].summary is defined)
     ) %}
     {% set open_now = is_current or (is_current and active_thread.phase_status in ["running", "awaiting_input", "complete"]) %}

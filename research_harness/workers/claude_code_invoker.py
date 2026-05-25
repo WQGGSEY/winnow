@@ -201,7 +201,7 @@ class ClaudeCodeInvoker:
                 "args": [
                     "-p",
                     "--model",
-                    str(live_backend.get("model", "sonnet")),
+                    str(live_backend.get("model", "claude-sonnet-4-6")),
                     "--permission-mode",
                     "dontAsk",
                     "--tools",

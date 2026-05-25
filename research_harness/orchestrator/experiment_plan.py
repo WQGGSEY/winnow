@@ -87,16 +87,51 @@ def build_experiment_plan_for_node(
     run_dir: Path,
     settings: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str]:
-    """Route to a domain template directory if one exists, else fall back to demo.
+    """Route to the Professor-generated thread template, falling back to a
+    legacy domain template only when the LLM orchestrator is disabled.
 
-    For each directory configured under settings.experiment_plan_templates.directories
-    we look for ``<dirname>/<node.domain>/plan.json`` plus a ``src/`` tree. If
-    found, we load the metadata, materialize the source tree into a
-    fully-populated experiment_plan dict (filling in node-derived fields),
-    validate, and return (plan, domain). Otherwise we return the fallback
-    demo plan with template_used ``_fallback_demo``.
+    The thread-specific Professor lib lives at::
+
+        <run_dir>/../professor_templates/_lib/   ← shared reusable modules
+        <run_dir>/../professor_templates/<node_id>/  ← per-node experiment.py
+
+    Resolution order:
+      1. If a per-node template dir already exists with plan.json + src,
+         materialize from it (cached output from a previous design call).
+      2. If the LLM orchestrator is enabled, call Professor.design_experiment,
+         write its files to disk, then materialize.
+      3. Else (legacy / orchestrator disabled): fall back to the old
+         experiment_plan_templates/<domain>/ lookup, and finally demo plan.
     """
 
+    template_root = _professor_template_root(run_dir)
+    node_dir = template_root / _safe_node_dirname(node["id"])
+    if (node_dir / PLAN_METADATA_FILENAME).is_file() and (node_dir / SRC_DIRNAME).is_dir():
+        return _build_plan_from_professor_template(
+            template_dir=node_dir,
+            template_root=template_root,
+            node=node,
+            run_dir=run_dir,
+        )
+
+    llm_cfg = (settings or {}).get("runtime", {}).get("llm_orchestrator", {}) or {}
+    if llm_cfg.get("enabled", False):
+        _materialize_professor_template(
+            repo_root=repo_root,
+            template_root=template_root,
+            node_dir=node_dir,
+            node=node,
+            settings=settings or {},
+        )
+        return _build_plan_from_professor_template(
+            template_dir=node_dir,
+            template_root=template_root,
+            node=node,
+            run_dir=run_dir,
+        )
+
+    # Legacy fallback: keep old domain-template routing intact for callers
+    # who haven't enabled the LLM orchestrator yet.
     domain = str(node.get("domain") or "").strip()
     if domain and _is_safe_module_name(domain):
         for dirname in template_directories(settings):
@@ -118,6 +153,207 @@ def build_experiment_plan_for_node(
                     ) from exc
                 return plan, domain
     return build_demo_experiment_plan(node, run_dir), FALLBACK_TEMPLATE_ID
+
+
+def _professor_template_root(run_dir: Path) -> Path:
+    """The Professor's per-thread template directory.
+
+    `run_dir` here is the production/tree run dir (e.g.
+    `runs/threads/<tid>/production/tree`); the templates live in a sibling
+    directory `professor_templates/` under the production phase root so
+    they survive across retries.
+    """
+    return run_dir.resolve().parent / "professor_templates"
+
+
+def _safe_node_dirname(node_id: str) -> str:
+    """Coerce a node id into a filesystem-safe directory name."""
+    safe = "".join(c if c.isalnum() or c in {"_", "-"} else "_" for c in node_id)
+    return safe or "node"
+
+
+def _materialize_professor_template(
+    *,
+    repo_root: Path,
+    template_root: Path,
+    node_dir: Path,
+    node: dict[str, Any],
+    settings: dict[str, Any],
+) -> None:
+    """Call Professor.design_experiment and write its output to disk.
+
+    Files prefixed with `_lib/` go to the thread-wide shared lib; everything
+    else lands in `node_dir/`. Re-emitted shared files are skipped silently
+    (idempotent — successor claims that "decide" to add the same shared
+    helper don't clobber an earlier version).
+    """
+    from research_harness.orchestrator.llm_orchestrator import (
+        MockLLMClient,
+        Professor,
+        build_llm_client,
+    )
+    from research_harness.orchestrator.llm_orchestrator.mock_handlers import (
+        register_default_mock_handlers,
+    )
+
+    client = build_llm_client(settings, role="professor")
+    if isinstance(client, MockLLMClient):
+        register_default_mock_handlers(client)
+    professor = Professor(client)
+    lib_dir = template_root / "_lib"
+    shared_modules: list[str] = []
+    if lib_dir.is_dir():
+        for p in lib_dir.rglob("*.py"):
+            shared_modules.append(p.relative_to(lib_dir).as_posix())
+    plan_meta, _dialog = professor.design_experiment(
+        node=node,
+        shared_lib_modules=shared_modules,
+        shared_lib_module_name="_lib" if shared_modules else None,
+    )
+
+    node_dir.mkdir(parents=True, exist_ok=True)
+    src_dir = node_dir / SRC_DIRNAME
+    src_dir.mkdir(parents=True, exist_ok=True)
+
+    plan_metadata_payload = {
+        k: v for k, v in plan_meta.items() if k != "source_files"
+    }
+    # Drop legacy 'inputs' if it leaked in — user_experiment_plan_metadata
+    # already has it as optional and we want to keep this clean.
+    (node_dir / PLAN_METADATA_FILENAME).write_text(
+        __import_json().dumps(plan_metadata_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    for sf in plan_meta.get("source_files") or []:
+        rel = sf.get("path", "")
+        content = sf.get("content", "")
+        if not rel or not content:
+            continue
+        if rel.startswith("_lib/"):
+            target = template_root / rel
+        else:
+            target = node_dir / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() and rel.startswith("_lib/"):
+            # Idempotent: never overwrite an existing shared lib file.
+            continue
+        target.write_text(content, encoding="utf-8")
+
+
+def __import_json():
+    import json as _json
+    return _json
+
+
+def _build_plan_from_professor_template(
+    *,
+    template_dir: Path,
+    template_root: Path,
+    node: dict[str, Any],
+    run_dir: Path,
+) -> tuple[dict[str, Any], str]:
+    """Materialize a Professor-generated template into an experiment_plan."""
+    metadata = _load_user_metadata(
+        template_dir / PLAN_METADATA_FILENAME, node["id"]
+    )
+    workspace = (run_dir / "nodes" / node["id"] / "workspace").resolve()
+
+    # Collect source files from BOTH the per-node dir and the shared _lib.
+    source_files: list[dict[str, str]] = []
+    seen: set[str] = set()
+    node_src = template_dir / SRC_DIRNAME
+    if node_src.is_dir():
+        for entry in _collect_source_files(node_src, node["id"]):
+            source_files.append(entry)
+            seen.add(entry["path"])
+    lib_dir = template_root / "_lib"
+    if lib_dir.is_dir():
+        for entry in _collect_lib_files(lib_dir):
+            if entry["path"] in seen:
+                continue
+            source_files.append(entry)
+            seen.add(entry["path"])
+
+    plan_id_suffix = str(metadata.get("plan_id_suffix") or metadata["task_class"])
+    contract = node["claim_contract"]
+    plan: dict[str, Any] = {
+        "plan_id": f"plan_{node['id']}_{plan_id_suffix}",
+        "node_id": node["id"],
+        "claim_under_test": contract["claim_under_test"],
+        "objective": metadata["objective"],
+        "task_class": metadata["task_class"],
+        "workspace": str(workspace),
+        "source_files": source_files,
+        "entrypoint": metadata["entrypoint"],
+        "resources": metadata["resources"],
+        "inputs": metadata.get("inputs") or {"datasets": [], "snapshots": []},
+        "expected_outputs": metadata["expected_outputs"],
+        "baseline_evidence_requirements": metadata["baseline_evidence_requirements"],
+        "mandatory_baselines": list(contract["mandatory_baselines"]),
+        "success_criteria": list(contract["success_criteria"]),
+        "disproof_conditions": list(contract["disproof_conditions"]),
+        "guardrails": metadata.get("guardrails") or {
+            "allowed_write_roots": ["workspace"],
+            "forbidden_actions": [
+                "scope_expansion",
+                "baseline_changes",
+                "shared_memory_write",
+                "critic_routing_changes",
+                "publication_gate_changes",
+            ],
+            "scope_policy": "orchestrator_owned_search_policy",
+        },
+        "failure_index_hints": metadata.get("failure_index_hints") or {
+            "domain_tags": ["professor_generated"],
+            "method_tags": ["professor_template"],
+            "risk_tags": list(node["failure_retrieval"].get("query_tags") or []),
+        },
+        "reproducibility": metadata.get("reproducibility") or {
+            "seed": 0,
+            "code_snapshot": f"professor_templates/{node['id']}",
+            "data_snapshot": "professor_generated",
+        },
+    }
+    _validate_entrypoint_args_resolve_to_source(
+        plan["entrypoint"], source_files, node["id"]
+    )
+    try:
+        validate_named_schema("experiment_plan", plan)
+    except SchemaValidationError as exc:
+        raise ExperimentPlanError(
+            f"Professor template for {node['id']} produced schema-invalid plan: {exc}"
+        ) from exc
+    return plan, "professor_generated"
+
+
+def _collect_lib_files(lib_dir: Path) -> list[dict[str, str]]:
+    """Collect files under the thread-wide `_lib/` and prefix paths so they
+    materialize at `<workspace>/_lib/...` next to `src/`."""
+    files: list[dict[str, str]] = []
+    lib_root = lib_dir.resolve()
+    for p in sorted(lib_dir.rglob("*")):
+        if not p.is_file():
+            continue
+        if p.suffix not in ALLOWED_SOURCE_SUFFIXES:
+            continue
+        relative = p.resolve().relative_to(lib_root)
+        if any(part in IGNORED_DIR_NAMES for part in relative.parts):
+            continue
+        try:
+            content = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if not content:
+            content = "\n"
+        files.append(
+            {
+                "path": (Path("_lib") / relative).as_posix(),
+                "purpose": "Professor-generated shared lib module",
+                "content": content,
+            }
+        )
+    return files
 
 
 def _is_safe_module_name(name: str) -> bool:

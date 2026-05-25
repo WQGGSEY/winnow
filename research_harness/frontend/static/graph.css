@@ -1,0 +1,155 @@
+/* Standalone full-page graph view of the claim tree.
+ * Vanilla SVG + JS, no CDN. */
+
+html, body { height: 100%; margin: 0; padding: 0; }
+body.graph-page {
+  font-family: -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  color: #1a1a1a; background: #f6f7fa; display: flex; flex-direction: column;
+}
+
+.graph-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 18px; background: #fff; border-bottom: 1px solid #d8dde7;
+  flex: 0 0 auto;
+}
+.graph-topbar h1 { margin: 0 8px 0 0; font-size: 16px; font-weight: 600; }
+.graph-topbar-left, .graph-topbar-right { display: flex; align-items: center; gap: 12px; }
+.graph-back { color: #2845a8; text-decoration: none; font-size: 13px; }
+.graph-back:hover { text-decoration: underline; }
+.muted { color: #6a6f80; font-size: 12px; }
+
+.graph-main {
+  flex: 1 1 auto; display: grid;
+  grid-template-columns: 1fr 380px;
+  min-height: 0;
+}
+.graph-canvas-wrap {
+  position: relative;
+  background:
+    radial-gradient(circle at center, #ecf0f9 1px, transparent 1px) 0 0 / 28px 28px,
+    #f6f7fa;
+  overflow: hidden;
+}
+#claim-graph { width: 100%; height: 100%; cursor: grab; user-select: none; display: block; }
+#claim-graph.panning { cursor: grabbing; }
+
+.graph-edge {
+  fill: none; stroke: #98a3c4; stroke-width: 1.5;
+  transition: stroke 0.15s ease, stroke-width 0.15s ease;
+}
+.graph-edge.kind-parent { stroke: #b2bbd6; }
+.graph-edge.kind-followup { stroke: #2845a8; stroke-dasharray: 4 3; }
+.graph-edge:hover, .graph-edge.hovered {
+  stroke: #2845a8; stroke-width: 2.5;
+}
+
+.graph-node {
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+.graph-node .node-circle {
+  fill: #fff; stroke: #4a5278; stroke-width: 2;
+  transition: stroke 0.15s ease, fill 0.15s ease, r 0.12s ease;
+}
+.graph-node:hover .node-circle,
+.graph-node.selected .node-circle {
+  stroke: #2845a8; stroke-width: 3;
+}
+.graph-node .node-type-label {
+  font-size: 10px; font-weight: 600; text-anchor: middle; pointer-events: none;
+  fill: #1a1a1a;
+}
+.graph-node .node-id-label {
+  font-size: 9.5px; text-anchor: middle; pointer-events: none;
+  fill: #4a5278; dominant-baseline: hanging;
+}
+
+/* Fill by node type — same palette as the inline tree. */
+.graph-node[data-type="capability"] .node-circle  { fill: #ddeaff; }
+.graph-node[data-type="validity"]   .node-circle  { fill: #ffe8d4; }
+.graph-node[data-type="necessity"]  .node-circle  { fill: #d9efe0; }
+.graph-node[data-type="mechanism"]  .node-circle  { fill: #f0d7ff; }
+.graph-node[data-type="boundary"]   .node-circle  { fill: #d4e8ff; }
+.graph-node[data-type="constraint"] .node-circle  { fill: #ffe2e2; }
+.graph-node[data-type="taste"]      .node-circle  { fill: #fff4c2; }
+.graph-node[data-type="operational"].node-circle  { fill: #e6e6e6; }
+
+/* Outline by status. */
+.graph-node[data-status="promoted"] .node-circle  { stroke: #1f7a4d; }
+.graph-node[data-status="pruned"]   .node-circle  { stroke: #a82828; stroke-dasharray: 4 3; }
+.graph-node[data-status="running"]  .node-circle  { stroke: #b6850b; }
+.graph-node[data-status="failed"]   .node-circle  { stroke: #a82828; }
+.graph-node[data-status="ready"]    .node-circle  { stroke: #6a6f80; }
+
+.graph-inspector {
+  background: #fff; border-left: 1px solid #d8dde7;
+  overflow-y: auto; padding: 16px 18px;
+}
+.inspector-header h2 { margin: 0 0 4px 0; font-size: 15px; }
+.inspector-header .muted { font-size: 12px; }
+.inspector-body { font-size: 13px; }
+.inspector-body h3 { font-size: 12.5px; margin: 16px 0 6px 0; color: #2845a8; }
+.inspector-body pre {
+  background: #f6f7fa; border: 1px solid #d8dde7; border-radius: 4px;
+  padding: 6px 8px; font-size: 11.5px; white-space: pre-wrap;
+  word-break: break-word;
+}
+.coverage-list, .readiness-list { list-style: none; padding-left: 0; margin: 0; }
+.readiness-entry { padding: 5px 0; border-bottom: 1px dashed #e0e3ee; font-size: 12px; }
+.readiness-entry:last-child { border-bottom: none; }
+.readiness-entry .badge {
+  display: inline-block; min-width: 56px; padding: 2px 6px;
+  background: #eef0f8; font-size: 10.5px; border-radius: 3px; margin-right: 6px;
+}
+.readiness-entry.submit-True strong { color: #1f7a4d; }
+.readiness-entry.submit-False strong { color: #b6850b; }
+
+.chip {
+  display: inline-block; padding: 2px 9px; border-radius: 11px;
+  background: #eef0f8; font-size: 11px; margin-right: 6px;
+}
+.chip-capability { background: #ddeaff; }
+.chip-validity { background: #ffe8d4; }
+.chip-necessity { background: #d9efe0; }
+.chip-mechanism { background: #f0d7ff; }
+.chip-boundary { background: #d4e8ff; }
+.chip-constraint { background: #ffe2e2; }
+.chip-taste { background: #fff4c2; }
+.chip-operational { background: #e6e6e6; }
+
+/* Per-node detail card inside the inspector. */
+.inspector-node-detail .node-meta {
+  display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px;
+  font-size: 12px; margin-bottom: 10px;
+}
+.inspector-node-detail .node-meta dt { color: #6a6f80; }
+.inspector-node-detail .claim-text {
+  background: #f6f7fa; border: 1px solid #d8dde7; border-radius: 4px;
+  padding: 8px 10px; font-size: 12.5px; line-height: 1.45;
+}
+.dialog-entry {
+  margin: 8px 0; padding: 7px 9px; border-radius: 4px; background: #f6f7fa;
+}
+.dialog-entry .speaker-professor { color: #2845a8; font-weight: 600; }
+.dialog-entry .speaker-grad_student { color: #1f7a4d; font-weight: 600; }
+.dialog-entry .intent {
+  font-size: 11px; color: #6a6f80; margin-left: 6px;
+}
+.dialog-entry .text { font-size: 12.5px; margin-top: 3px; white-space: pre-wrap; }
+.dialog-entry .mock-tag {
+  display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 3px;
+  background: #fff7e0; color: #5a4a00; font-size: 10px;
+}
+
+/* Edge tooltip (small, follows cursor). */
+.edge-tooltip {
+  position: fixed; z-index: 10; pointer-events: none;
+  background: #1a1a1a; color: #fff; padding: 6px 9px; border-radius: 4px;
+  font-size: 11.5px; max-width: 280px; line-height: 1.4;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+@media (max-width: 900px) {
+  .graph-main { grid-template-columns: 1fr; }
+  .graph-inspector { max-height: 38vh; border-left: none; border-top: 1px solid #d8dde7; }
+}

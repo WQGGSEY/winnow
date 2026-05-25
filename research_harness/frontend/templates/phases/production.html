@@ -1,6 +1,41 @@
+{# Auto-refresh wrapper: while production is not complete, poll the
+   partial endpoint every 4s so Claude Code's MCP commits show up live in
+   the browser. Stops polling once phase_status == "complete". #}
+<div class="production-panel-poll"
+     {% if thread.phase_status != "complete" %}
+       hx-get="/partials/thread/{{ thread.thread_id }}/phase/production"
+       hx-trigger="every 4s"
+       hx-swap="outerHTML"
+     {% endif %}>
+{# Always-visible graph link — the graph page itself polls and shows an
+   empty-state message until the first node lands, so it's safe to surface
+   the link the moment a thread exists. #}
+<p class="graph-link-row">
+  <a class="graph-link" href="/threads/{{ thread.thread_id }}/graph"
+     target="_blank" rel="noopener">
+    🌐 Open live claim graph (new tab, auto-updates as Claude Code expands the tree)
+  </a>
+</p>
+
 {% if not p.present %}
   <div class="phase-empty">
     <p>Production has not been run for this thread.</p>
+    {% if thread.phase_status != "complete" %}
+      <p class="muted" style="font-size:11.5px;">
+        <span class="poll-pulse">●</span>
+        Auto-refreshing every 4 seconds. When Claude Code commits its first
+        MCP decision, this panel will populate without a reload.
+      </p>
+    {% endif %}
+    {% if p.llm_backend == "mcp" %}
+      <p class="muted" style="font-size:12.5px;">
+        Backend: <code>mcp</code>. Reasoning runs inside your Claude Code
+        interactive session. Open the Market panel and click "Advance to
+        production →" to get the handoff command, then run it in a separate
+        terminal. The frontend won't launch production directly while
+        <code>backend: "mcp"</code> is set.
+      </p>
+    {% endif %}
   </div>
 {% elif thread.current_phase == "production" and thread.phase_status == "failed" %}
   <div class="phase-empty">
@@ -87,6 +122,146 @@
         </section>
       {% endif %}
 
+      {% if p.in_progress_nodes %}
+        <section class="now-processing-card">
+          <h3>
+            <span class="poll-pulse">●</span>
+            Now processing
+            <span class="muted" style="font-weight:normal;font-size:12px;">
+              ({{ p.in_progress_nodes|length }} node{{ 's' if p.in_progress_nodes|length != 1 else '' }})
+            </span>
+          </h3>
+          <ul class="now-processing-list">
+            {% for ip in p.in_progress_nodes %}
+              <li>
+                <span class="chip chip-{{ ip.node_type }}">{{ ip.node_type }}</span>
+                <code>{{ ip.node_id|truncate_chars(48) }}</code>
+                <span class="now-status-badge status-{{ ip.status }}">{{ ip.status }}</span>
+                <span class="muted">→ next: <code>{{ ip.next_tool }}</code></span>
+                <div class="claim-snippet">{{ ip.claim_under_test|truncate_chars(220) }}</div>
+              </li>
+            {% endfor %}
+          </ul>
+          {% if p.last_activity_mtime %}
+            <p class="muted" style="font-size:11.5px;margin-top:6px;">
+              last MCP commit: <span data-mcp-since="{{ p.last_activity_mtime }}">computing…</span>
+            </p>
+          {% endif %}
+        </section>
+      {% elif p.tree_state and not p.summary %}
+        <section class="now-processing-card idle">
+          <h3>
+            <span class="muted">●</span>
+            Idle — waiting for Claude Code
+          </h3>
+          <p class="muted" style="font-size:12.5px;">
+            No node is currently being processed. The selector will hand the
+            next admissible claim to Claude Code on its next get_next_admissible_node call.
+          </p>
+          {% if p.last_activity_mtime %}
+            <p class="muted" style="font-size:11.5px;">
+              last MCP commit: <span data-mcp-since="{{ p.last_activity_mtime }}">computing…</span>
+            </p>
+          {% endif %}
+        </section>
+      {% endif %}
+
+      {% if p.intake_to_claim %}
+        <section class="intake-handoff-card">
+          <h3>정출연 → 교수님 hand-off</h3>
+          <p class="muted">사용자(정출연)는 문제만 제출했고, 교수님이 strong+honest claim으로 변환했습니다.</p>
+          <details>
+            <summary>placeholder claim (intake)</summary>
+            <pre>{{ p.intake_to_claim.original_contract.claim_under_test }}</pre>
+          </details>
+          <details open>
+            <summary>교수님이 디자인한 새 claim</summary>
+            <pre>{{ p.intake_to_claim.new_contract.claim_under_test }}</pre>
+            <p><strong>Baselines:</strong></p>
+            <ul>{% for b in p.intake_to_claim.new_contract.mandatory_baselines %}<li>{{ b }}</li>{% endfor %}</ul>
+            <p><strong>Success criteria:</strong></p>
+            <ul>{% for s in p.intake_to_claim.new_contract.success_criteria %}<li>{{ s }}</li>{% endfor %}</ul>
+            <p><strong>Disproof:</strong></p>
+            <ul>{% for d in p.intake_to_claim.new_contract.disproof_conditions %}<li>{{ d }}</li>{% endfor %}</ul>
+          </details>
+        </section>
+      {% endif %}
+
+      {% if p.mcp_progress %}
+        <section class="mcp-progress-card">
+          <h3>MCP — recent Claude Code decisions</h3>
+          <table>
+            <thead><tr><th>node</th><th>transition</th><th>verdict</th><th>follow-ups</th></tr></thead>
+            <tbody>
+              {% for row in p.mcp_progress[:8] %}
+                <tr>
+                  <td><code>{{ row.node_id|truncate_chars(36) }}</code></td>
+                  <td><span class="verdict-{{ row.transition }}">{{ row.transition }}</span></td>
+                  <td>{{ row.final_verdict or '—' }}</td>
+                  <td>{{ row.follow_up_count }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </section>
+      {% endif %}
+
+      {% if p.coverage_by_node_type %}
+        <section class="coverage-card">
+          <h3>Coverage by claim axis</h3>
+          <div class="coverage-chips">
+            {% for ntype, ids in p.coverage_by_node_type.items() %}
+              <span class="chip chip-{{ ntype }}" title="{{ ids|length }} promoted">
+                {{ ntype }} · {{ ids|length }}
+              </span>
+            {% endfor %}
+          </div>
+        </section>
+      {% endif %}
+
+      {% if p.readiness_history %}
+        <section class="readiness-card">
+          <h3>교수님 publication readiness 결정</h3>
+          <ol class="readiness-list">
+            {% for r in p.readiness_history %}
+              <li class="readiness-entry submit-{{ r.submit }}">
+                <span class="badge">cycle {{ r.cycle }}</span>
+                <strong>{{ 'SUBMIT' if r.submit else 'KEEP WORKING' }}</strong>
+                <span class="muted">— {{ r.message }}</span>
+              </li>
+            {% endfor %}
+          </ol>
+        </section>
+      {% endif %}
+
+      {% if p.tree_state %}
+        <section class="claim-tree-card">
+          <h3>
+            Claim tree
+            <a class="graph-link" href="/threads/{{ thread.thread_id }}/graph"
+               target="_blank" rel="noopener">Open as graph ↗</a>
+          </h3>
+          {% set sample_dialog = (p.node_dialogs or {}).values()|list %}
+          {% if sample_dialog and sample_dialog[0] and sample_dialog[0][0].metadata.is_mock %}
+            <div class="mock-banner">
+              <strong>⚠ Mock LLM mode.</strong> 아래 대화는 LLM이 진짜로 추론한 게
+              아니라 결정론적 스텁이 만든 placeholder입니다. 진짜 반박/추론을 보려면
+              <code>settings.json → runtime.llm_orchestrator.backend = "anthropic"</code>
+              + <code>billing_ack</code> / <code>execution_ack</code> 환경변수를 켜세요.
+            </div>
+          {% endif %}
+          <p class="muted">노드 색상: <span class="dot dot-promoted"></span> promoted ·
+            <span class="dot dot-pruned"></span> pruned ·
+            <span class="dot dot-running"></span> running ·
+            <span class="dot dot-ready"></span> ready. 노드 클릭 시 교수님 ↔ 대학원생 대화 표시.</p>
+          <div class="claim-tree" data-tree-state='{{ p.tree_state|tojson }}'
+               data-node-dialogs='{{ (p.node_dialogs or {})|tojson }}'></div>
+          <div class="dialog-panel" id="dialog-panel-{{ thread.thread_id }}">
+            <p class="muted">노드를 선택하세요.</p>
+          </div>
+        </section>
+      {% endif %}
+
       {% if p.interactive_html_url %}
         <section class="interactive-card">
           <h3>interactive_summary.html</h3>
@@ -105,3 +280,5 @@
     </details>
   </section>
 {% endif %}
+</div>
+

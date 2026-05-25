@@ -464,3 +464,218 @@ code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-
 }
 .settings-form .hint { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
 .settings-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
+/* === Claim-tree + dialog viewer (production phase) ============================ */
+.intake-handoff-card {
+  margin: 16px 0; padding: 14px 16px;
+  background: #f8f9ff; border: 1px solid #cdd3ee; border-radius: 8px;
+}
+.intake-handoff-card h3 { margin: 0 0 6px 0; }
+.intake-handoff-card details { margin-top: 8px; }
+.intake-handoff-card summary { cursor: pointer; font-weight: 600; }
+.intake-handoff-card pre {
+  white-space: pre-wrap; word-break: break-word;
+  background: #fff; padding: 8px; border: 1px solid #e3e7f6; border-radius: 4px;
+  font-size: 12.5px;
+}
+
+.coverage-card, .readiness-card, .claim-tree-card {
+  margin: 16px 0; padding: 14px 16px;
+  background: #fff; border: 1px solid var(--line, #d8dde7); border-radius: 8px;
+}
+.coverage-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip {
+  display: inline-block; padding: 3px 10px; border-radius: 12px;
+  background: #eef0f8; color: #1a1a1a; font-size: 12px;
+}
+.chip-capability { background: #ddeaff; }
+.chip-validity { background: #ffe8d4; }
+.chip-necessity { background: #d9efe0; }
+.chip-mechanism { background: #f0d7ff; }
+.chip-boundary { background: #d4e8ff; }
+.chip-constraint { background: #ffe2e2; }
+.chip-taste { background: #fff4c2; }
+.chip-operational { background: #e0e0e0; }
+
+.readiness-list { list-style: none; padding-left: 0; margin: 0; }
+.readiness-entry { padding: 6px 0; border-bottom: 1px dashed #e0e3ee; }
+.readiness-entry:last-child { border-bottom: none; }
+.readiness-entry .badge {
+  display: inline-block; min-width: 56px; padding: 2px 6px;
+  background: #eef0f8; color: #1a1a1a; font-size: 11px;
+  border-radius: 3px; margin-right: 6px;
+}
+.readiness-entry.submit-True strong { color: #1f7a4d; }
+.readiness-entry.submit-False strong { color: #b6850b; }
+
+.claim-tree {
+  margin-top: 8px; padding: 8px;
+  background: #fafbfd; border: 1px solid #e0e4ee; border-radius: 6px;
+  max-height: 360px; overflow: auto; font-size: 12.5px; line-height: 1.5;
+}
+.claim-tree ul { list-style: none; padding-left: 18px; margin: 0; }
+.claim-tree .tree-node {
+  padding: 3px 6px; margin: 1px 0; border-radius: 3px;
+  cursor: pointer; display: flex; align-items: center; gap: 6px;
+}
+.claim-tree .tree-node:hover { background: #f0f3fb; }
+.claim-tree .tree-node.selected { background: #dfe6f5; }
+.claim-tree .tree-node .type-badge {
+  font-size: 10px; padding: 1px 5px; border-radius: 8px;
+  background: #eef0f8; color: #1a1a1a;
+}
+.claim-tree .tree-node.status-promoted { color: #1f7a4d; font-weight: 600; }
+.claim-tree .tree-node.status-pruned { color: #a82828; text-decoration: line-through; }
+.claim-tree .tree-node.status-running { color: #b6850b; }
+.claim-tree .tree-node.status-ready { color: #555; }
+.claim-tree .node-claim {
+  font-size: 11.5px; color: #5a5a5a;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1 1 auto;
+}
+.dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  vertical-align: middle;
+}
+.dot-promoted { background: #1f7a4d; }
+.dot-pruned { background: #a82828; }
+.dot-running { background: #b6850b; }
+.dot-ready { background: #888; }
+
+.dialog-panel {
+  margin-top: 10px; padding: 10px 12px;
+  background: #f6f7fa; border: 1px solid #e0e4ee; border-radius: 6px;
+  max-height: 320px; overflow: auto;
+}
+.dialog-panel .dialog-entry {
+  margin-bottom: 8px; padding-bottom: 8px;
+  border-bottom: 1px dashed #d8dde7;
+}
+.dialog-panel .dialog-entry:last-child { border-bottom: none; }
+.dialog-panel .speaker-professor { color: #2845a8; font-weight: 600; }
+.dialog-panel .speaker-grad_student { color: #1f7a4d; font-weight: 600; }
+.dialog-panel .dialog-intent {
+  font-size: 11px; color: #777; margin-left: 6px;
+}
+.dialog-panel .dialog-text {
+  font-size: 12.5px; margin-top: 4px; white-space: pre-wrap;
+}
+
+.mock-banner {
+  margin: 0 0 10px 0; padding: 8px 12px;
+  background: #fff7e0; border: 1px solid #e3d18f; border-radius: 6px;
+  font-size: 12.5px; color: #5a4a00;
+}
+.mock-banner code {
+  background: #fff; padding: 0 4px; border-radius: 3px; font-size: 12px;
+}
+
+.graph-link {
+  font-size: 12px; font-weight: 500; margin-left: 10px;
+  color: #2845a8; text-decoration: none;
+  padding: 2px 8px; border: 1px solid #cdd3ee; border-radius: 12px;
+  background: #f8f9ff;
+}
+.graph-link:hover { background: #eef0f8; text-decoration: underline; }
+
+/* Market research panel: prevent long URLs / paper titles / authors from
+   blowing out the right edge of the card. */
+.market-view, .market-view * {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.market-view table { table-layout: fixed; width: 100%; }
+.market-view td, .market-view th {
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+.market-view pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.mcp-model-picker {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-left: 8px; font-size: 12px;
+}
+.mcp-model-picker > span { color: #5a5a5a; }
+.mcp-model-picker select {
+  font-size: 12px; padding: 2px 6px; border: 1px solid #c8cbe0;
+  border-radius: 4px; background: #fdfdfd; cursor: pointer;
+}
+.mcp-model-picker select:focus { outline: 1px solid #2845a8; }
+.mcp-handoff-dialog pre { user-select: all; }
+
+.mcp-progress-card {
+  margin: 16px 0; padding: 14px 16px;
+  background: #fff; border: 1px solid #d8dde7; border-radius: 8px;
+}
+.mcp-progress-card table { font-size: 12px; }
+.mcp-progress-card code { font-size: 11.5px; }
+
+.mcp-handoff-dialog pre[data-mcp-line] {
+  background: #f4f5fb; padding: 8px 10px; border-radius: 4px;
+  font-size: 12px; font-family: 'SF Mono', Menlo, Consolas, monospace;
+  user-select: text;          /* triple-click selects the whole line */
+  overflow-x: auto;
+  margin: 4px 0 0 0;
+  border: 1px solid #d8dde7;
+}
+.mcp-handoff-dialog h3 { color: #2845a8; margin-bottom: 2px; }
+
+.poll-pulse {
+  color: #1f7a4d; font-weight: bold;
+  animation: poll-pulse-anim 1.4s ease-in-out infinite;
+}
+@keyframes poll-pulse-anim {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+.now-processing-card {
+  margin: 16px 0; padding: 14px 16px;
+  background: #fffbe7; border: 1px solid #e6c95b; border-radius: 8px;
+}
+.now-processing-card.idle { background: #f6f7fa; border-color: #d8dde7; }
+.now-processing-card h3 { margin: 0 0 8px 0; display: flex; align-items: center; gap: 6px; }
+.now-processing-list { list-style: none; padding: 0; margin: 0; }
+.now-processing-list li {
+  padding: 8px 0; border-bottom: 1px dashed #e0d09a;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+}
+.now-processing-list li:last-child { border-bottom: none; }
+.now-status-badge {
+  display: inline-block; padding: 2px 7px; border-radius: 11px;
+  background: #1a1a1a; color: #fff; font-size: 10.5px; letter-spacing: 0.02em;
+}
+.now-status-badge.status-running { background: #b6850b; }
+.now-status-badge.status-completed_worker_report { background: #2845a8; }
+.now-status-badge.status-critic_reviewed { background: #5e3ca0; }
+.now-status-badge.status-orchestrator_reduced { background: #1f7a4d; }
+.claim-snippet {
+  width: 100%; font-size: 12px; color: #4a4a4a; padding-left: 4px;
+  font-style: italic;
+}
+
+/* Make the claim-tree inline view highlight running nodes the same way. */
+.claim-tree .tree-node.status-running {
+  background: linear-gradient(90deg, #fffbe7, #fff8d0);
+  animation: tree-running-pulse 1.8s ease-in-out infinite;
+}
+@keyframes tree-running-pulse {
+  0%, 100% { background-color: #fffbe7; }
+  50% { background-color: #ffe8a0; }
+}
+
+.graph-link-row {
+  margin: 0 0 12px 0;
+  padding: 8px 12px;
+  background: #eef0f8; border: 1px solid #cdd3ee; border-radius: 6px;
+  font-size: 13px;
+}
+.graph-link-row .graph-link {
+  margin-left: 0;
+}

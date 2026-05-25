@@ -14,9 +14,7 @@
             <span class="outcome-tag outcome-{{ t.outcome }}">{{ t.outcome }}</span>
           {% endif %}
         </div>
-        {% if t.domain_state == "scaffolding" %}
-          <div class="thread-domain scaffolding"><em>✎ scaffolding</em></div>
-        {% elif t.domain %}
+        {% if t.domain %}
           <div class="thread-domain">{{ t.domain }}</div>
         {% endif %}
       </a>

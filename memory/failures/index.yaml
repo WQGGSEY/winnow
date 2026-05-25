@@ -4,6 +4,24 @@ categories:
     files:
       - "invalid_experiment/n_demo_001__invalid_experiment__90e4fb0d8b.md"
       - "invalid_experiment/n_demo_001__invalid_experiment__509089f891.md"
+      - "invalid_experiment/n_demo_001__invalid_experiment__d065b09d71.md"
+      - "invalid_experiment/n_demo_001_b01__invalid_experiment__d78564b004.md"
+      - "invalid_experiment/n_demo_001_b01_b01__invalid_experiment__fc877bbcf6.md"
+      - "invalid_experiment/n_demo_001_b01_b01_b01__invalid_experiment__5584b11765.md"
+      - "invalid_experiment/n_demo_001_b01_b01_b01_b01__invalid_experiment__009aab07f3.md"
+      - "invalid_experiment/n_demo_001_b01_b01_b01_b01_b01__invalid_experiment__6e9b4b788d.md"
+      - "invalid_experiment/n_demo_001_b01__invalid_experiment__562937ce4d.md"
+      - "invalid_experiment/n_demo_001_b01_b01__invalid_experiment__74250ab076.md"
+      - "invalid_experiment/n_demo_001_b01_b01_b01__invalid_experiment__c2c56e57fa.md"
+      - "invalid_experiment/n_demo_001_b01_b01_b01_b01__invalid_experiment__8e2ef93d75.md"
+      - "invalid_experiment/n_demo_001_b01_b01_b01_b01_b01__invalid_experiment__6ab62095c3.md"
+      - "invalid_experiment/n_demo_001__invalid_experiment__ae100009f3.md"
+      - "invalid_experiment/n_demo_001__invalid_experiment__01330e757f.md"
+      - "invalid_experiment/n_demo_001_b01__invalid_experiment__544d46585c.md"
+      - "invalid_experiment/n_demo_001_b01_b01__invalid_experiment__6d30d54253.md"
+      - "invalid_experiment/n_demo_001_b01_b01_b01__invalid_experiment__3c6cd3867b.md"
+      - "invalid_experiment/n_demo_001_b01_b01_b01_b01__invalid_experiment__dea1dd8477.md"
+      - "invalid_experiment/n_demo_001_b01_b01_b01_b01_b01__invalid_experiment__4e2b53a427.md"
   implementation_failure:
     description: "The idea was not evaluated because implementation failed."
     files: []
@@ -15,7 +33,8 @@ categories:
     files: []
   confounded_result:
     description: "Leakage, missing baseline, evaluation flaw, or uncontrolled variable blocks interpretation."
-    files: []
+    files:
+      - "confounded_result/n_demo_001__confounded_result__ec1d2b89fe.md"
   duplicate_failure:
     description: "The failure repeats a known pattern."
     files: []

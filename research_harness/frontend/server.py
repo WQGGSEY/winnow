@@ -13,7 +13,7 @@ Routes are grouped:
 - Live grilling: ``POST /api/threads/{tid}/grilling/start``,
   ``POST /api/threads/{tid}/grilling/reply``,
   ``GET /api/threads/{tid}/grilling/stream`` (SSE)
-- Live refine: same shape as grilling
+  (refine phase removed; Professor replaces placeholders at production entry)
 - Background phases: ``POST /api/threads/{tid}/market/start``,
   ``POST /api/threads/{tid}/production/start``
 - Settings: ``POST /api/settings/subscription_ack[/revoke]``,
@@ -45,13 +45,14 @@ from research_harness.agents.grilling import (
     run_grilling_session,
 )
 from research_harness.agents.market_research import run_market_research
-from research_harness.agents.research_refiner import run_research_refiner
+from research_harness.config import load_settings
+# research_refiner removed from the frontend pipeline — Professor designs
+# the real claim contract at production entry instead.
 from research_harness.frontend import acks, threads
 from research_harness.frontend.lock import LockBusyError, SingleActiveRunLock
 from research_harness.orchestrator.root_node_from_grilling import (
     attach_market_research_dossier,
     build_root_node_from_grilling,
-    build_root_node_from_refined_plan,
     has_placeholder_baseline,
 )
 from research_harness.production_runner import run_production_pipeline
@@ -69,7 +70,7 @@ STATIC_DIR = PACKAGE_DIR / "static"
 
 @dataclass
 class LiveSession:
-    """In-flight multi-turn agent session (grilling or refine).
+    """In-flight multi-turn agent session (grilling).
 
     The agent loop runs on a worker thread (via ``asyncio.to_thread``)
     because the agent code is sync. The ``input_provider`` it receives
@@ -77,7 +78,7 @@ class LiveSession:
     """
 
     thread_id: str
-    phase: str  # "grilling" | "refine"
+    phase: str  # "grilling" | "market" | "production"
     out_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
     pending_reply: asyncio.Future | None = None
     task: asyncio.Task | None = None
@@ -204,12 +205,72 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
         # needs to click Resume". Without this signal the reply form
         # looks usable but submits 409 — that's exactly what made grilling
         # appear to "lose" the conversation across restarts.
+        # MCP model selection: surface the allowed list + the thread's
+        # current choice so the dropdown can render server-side.
+        try:
+            settings = load_settings(s.repo_root)
+        except (OSError, ValueError, json.JSONDecodeError):
+            settings = {}
+        mcp_cfg = (
+            settings.get("runtime", {})
+            .get("llm_orchestrator", {})
+            .get("mcp", {})
+        )
         return render(
             "base.html",
             thread_list=thread_list,
             active_thread=active,
             phase_data=phase_data,
             live_session_present=thread_id in s.sessions,
+            mcp_allowed_models=mcp_cfg.get("allowed_models") or [],
+            mcp_default_model=mcp_cfg.get("default_model") or "",
+            llm_backend=(
+                settings.get("runtime", {})
+                .get("llm_orchestrator", {})
+                .get("backend", "mock")
+            ),
+        )
+
+    @app.get("/api/threads/{thread_id}/graph_data")
+    async def graph_data(thread_id: str) -> JSONResponse:
+        """JSON snapshot of the production claim graph for live polling.
+        The standalone graph page polls this and re-renders incrementally
+        when nodes / dialogs / coverage change on disk."""
+        _require_thread(s.repo_root, thread_id)
+        p = _read_phase_artifacts(s.repo_root, thread_id, "production")
+        return JSONResponse(
+            {
+                "tree_state": p.get("tree_state") or {"nodes": []},
+                "node_dialogs": p.get("node_dialogs") or {},
+                "coverage_by_node_type": p.get("coverage_by_node_type") or {},
+                "readiness_history": p.get("readiness_history") or [],
+                "in_progress_nodes": p.get("in_progress_nodes") or [],
+                "last_activity_mtime": p.get("last_activity_mtime") or 0,
+            }
+        )
+
+    @app.get("/threads/{thread_id}/graph", response_class=HTMLResponse)
+    async def thread_graph_page(thread_id: str) -> HTMLResponse:
+        """Standalone full-page graph view of the production claim tree.
+
+        Read-only. Pulls the production phase artifacts (tree_state +
+        per-node dialogs) and ships them to a vanilla-SVG renderer in a
+        new tab so the operator can pan / zoom / hover the actual research
+        graph without giving up the existing thread page.
+        """
+        try:
+            active = threads.load_thread(s.repo_root, thread_id)
+        except threads.ThreadError as exc:
+            raise HTTPException(404, str(exc))
+        production = _read_phase_artifacts(s.repo_root, thread_id, "production")
+        return render(
+            "graph.html",
+            active_thread=active,
+            tree_state=production.get("tree_state") or {"nodes": []},
+            node_dialogs=production.get("node_dialogs") or {},
+            coverage_by_node_type=production.get("coverage_by_node_type") or {},
+            readiness_history=production.get("readiness_history") or [],
+            intake_to_claim=production.get("intake_to_claim"),
         )
 
     # -------- partials
@@ -248,6 +309,48 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
             raise HTTPException(400, "title must not be empty")
         updated = threads.update_thread(s.repo_root, thread_id, title=title)
         return JSONResponse({"ok": True, "title": updated["title"]})
+
+    @app.post("/api/threads/{thread_id}/mcp_model")
+    async def set_thread_mcp_model(thread_id: str, req: Request) -> JSONResponse:
+        """Per-thread MCP model selection. Validates against settings's
+        allowed_models list so the dropdown can't smuggle an arbitrary model
+        name through."""
+        _require_thread(s.repo_root, thread_id)
+        body = await _maybe_json(req)
+        model = (body.get("mcp_model") or "").strip()
+        if not model:
+            raise HTTPException(400, "mcp_model must not be empty")
+        try:
+            settings = load_settings(s.repo_root)
+        except (OSError, ValueError, json.JSONDecodeError):
+            settings = {}
+        allowed = (
+            settings.get("runtime", {})
+            .get("llm_orchestrator", {})
+            .get("mcp", {})
+            .get("allowed_models", [])
+        )
+        # Strict: model MUST be in allowed_models (no free-form input).
+        # Free-form would let typos through and silently send Claude Code a
+        # nonexistent model id. Operators expand allowed_models in
+        # settings.json when a new model ships.
+        if not allowed:
+            raise HTTPException(
+                500,
+                "settings.runtime.llm_orchestrator.mcp.allowed_models is "
+                "empty; cannot accept any model. Populate the list with "
+                "valid Claude model ids.",
+            )
+        if model not in allowed:
+            raise HTTPException(
+                400,
+                f"model {model!r} is not in allowed_models {allowed}. Edit "
+                "settings.json to add it.",
+            )
+        updated = threads.update_thread(
+            s.repo_root, thread_id, mcp_model=model
+        )
+        return JSONResponse({"ok": True, "mcp_model": updated.get("mcp_model")})
 
     @app.post("/api/threads/{thread_id}/delete")
     async def delete_thread(thread_id: str) -> JSONResponse:
@@ -375,17 +478,14 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
         threads.update_thread(
             s.repo_root, thread_id, phase_status="running"
         )
-        # Live phases need their ack/mode; market and production don't.
-        if phase in ("grilling", "refine"):
+        # Live phase (grilling) needs ack/mode; market and production don't.
+        if phase == "grilling":
             body = await _maybe_json(req)
             mode = body.get("mode") or (
                 "auto" if acks.full_auto_mode(s.repo_root) else "manual"
             )
             _require_subscription_ack(s.repo_root)
-            if phase == "grilling":
-                await _launch_grilling(s, index, mode=mode)
-            else:
-                await _launch_refine(s, index, mode=mode)
+            await _launch_grilling(s, index, mode=mode)
         elif phase == "market":
             await _launch_market(s, index)
         else:  # production
@@ -419,71 +519,12 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
         threads.update_thread(s.repo_root, thread_id, phase_status="failed")
         return JSONResponse({"ok": True})
 
-    @app.post("/api/threads/{thread_id}/refine/abandon")
-    async def refine_abandon(thread_id: str) -> JSONResponse:
-        _require_thread(s.repo_root, thread_id)
-        session = s.sessions.pop(thread_id, None)
-        if session and session.task and not session.task.done():
-            session.task.cancel()
-            if session.pending_reply and not session.pending_reply.done():
-                session.pending_reply.set_exception(
-                    asyncio.CancelledError("abandoned by operator")
-                )
-        if s.lock.holder is not None and s.lock.holder.thread_id == thread_id:
-            s.lock._holder = None
-            if s.lock._lock.locked():
-                try:
-                    s.lock._lock.release()
-                except RuntimeError:
-                    pass
-        threads.update_thread(s.repo_root, thread_id, phase_status="failed")
-        return JSONResponse({"ok": True})
-
     @app.get("/api/threads/{thread_id}/grilling/stream")
     async def grilling_stream(thread_id: str) -> StreamingResponse:
         _require_thread(s.repo_root, thread_id)
         session = s.sessions.get(thread_id)
         if session is None or session.phase != "grilling":
             raise HTTPException(409, "no live grilling session for this thread")
-        return StreamingResponse(
-            _sse_stream(session), media_type="text/event-stream"
-        )
-
-    # -------- refine (same shape; reuses LiveSession)
-
-    @app.post("/api/threads/{thread_id}/refine/start")
-    async def refine_start(thread_id: str, req: Request) -> JSONResponse:
-        index = _require_thread(s.repo_root, thread_id)
-        _require_subscription_ack(s.repo_root)
-        body = await _maybe_json(req)
-        mode = body.get("mode") or (
-            "auto" if acks.full_auto_mode(s.repo_root) else "manual"
-        )
-        await _launch_refine(s, index, mode=mode)
-        return JSONResponse({"ok": True, "thread_id": thread_id})
-
-    @app.post("/api/threads/{thread_id}/refine/reply")
-    async def refine_reply(thread_id: str, req: Request) -> JSONResponse:
-        _require_thread(s.repo_root, thread_id)
-        session = s.sessions.get(thread_id)
-        if session is None or session.phase != "refine":
-            raise HTTPException(409, "no live refine session for this thread")
-        form = await req.form()
-        reply = (form.get("reply") or "").strip()
-        if not reply:
-            raise HTTPException(400, "reply must not be empty")
-        accepted = session.submit_reply(reply)
-        if not accepted:
-            raise HTTPException(409, "no pending question awaiting reply")
-        await session.emit({"type": "user_reply", "text": reply})
-        return JSONResponse({"ok": True})
-
-    @app.get("/api/threads/{thread_id}/refine/stream")
-    async def refine_stream(thread_id: str) -> StreamingResponse:
-        _require_thread(s.repo_root, thread_id)
-        session = s.sessions.get(thread_id)
-        if session is None or session.phase != "refine":
-            raise HTTPException(409, "no live refine session for this thread")
         return StreamingResponse(
             _sse_stream(session), media_type="text/event-stream"
         )
@@ -788,99 +829,6 @@ async def _launch_grilling(
     session.task = asyncio.create_task(run_loop())
 
 
-async def _launch_refine(
-    s: AppState, index: dict[str, Any], *, mode: str
-) -> None:
-    thread_id = index["thread_id"]
-    if thread_id in s.sessions:
-        # Idempotent (see _launch_grilling for rationale).
-        return
-    _refuse_if_lock_held_by_other(s, thread_id)
-
-    grilling_path = (
-        threads.phase_dir(s.repo_root, thread_id, "grilling")
-        / "grilling_session.json"
-    )
-    market_brief_path = (
-        threads.phase_dir(s.repo_root, thread_id, "market")
-        / "market_research_brief.json"
-    )
-    if not grilling_path.exists() or not market_brief_path.exists():
-        raise HTTPException(
-            409, "refine requires both grilling and market_research to be complete"
-        )
-    grilling_session = json.loads(grilling_path.read_text(encoding="utf-8"))
-    market_brief = json.loads(market_brief_path.read_text(encoding="utf-8"))
-    validate_named_schema("grilling_session", grilling_session)
-    validate_named_schema("market_research_brief", market_brief)
-
-    loop = asyncio.get_running_loop()
-    session = LiveSession(thread_id=thread_id, phase="refine", loop=loop)
-    s.sessions[thread_id] = session
-
-    threads.update_thread(
-        s.repo_root,
-        thread_id,
-        current_phase="refine",
-        phase_status="running",
-        append_execute_ack=acks.make_execute_ack_record("refine", mode=mode),
-    )
-
-    run_dir = threads.phase_dir(s.repo_root, thread_id, "refine")
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    def sync_input_provider(question: str) -> str:
-        asyncio.run_coroutine_threadsafe(
-            session.out_queue.put({"type": "ask", "question": question}),
-            loop,
-        ).result()
-        threads.update_thread(
-            s.repo_root, thread_id, phase_status="awaiting_input"
-        )
-        fut = asyncio.run_coroutine_threadsafe(session.wait_for_reply(), loop)
-        reply = fut.result()
-        threads.update_thread(s.repo_root, thread_id, phase_status="running")
-        return reply
-
-    async def run_loop():
-        try:
-            async with s.lock.acquire(thread_id, "refine"):
-                result = await asyncio.to_thread(
-                    run_research_refiner,
-                    s.repo_root,
-                    grilling_session=grilling_session,
-                    market_research_brief=market_brief,
-                    run_dir=run_dir,
-                    billing_ack=True,
-                    execution_ack=True,
-                    input_provider=sync_input_provider,
-                    command_runner=s.command_runner_override,
-                )
-            if result["status"] in {"done", "max_rounds_reached"}:
-                threads.update_thread(
-                    s.repo_root, thread_id, phase_status="complete"
-                )
-                await session.emit({"type": "phase_complete"})
-            else:
-                threads.update_thread(
-                    s.repo_root, thread_id, phase_status="failed"
-                )
-                await session.emit(
-                    {"type": "phase_failed", "error": result.get("error")}
-                )
-        except LockBusyError as exc:
-            threads.update_thread(s.repo_root, thread_id, phase_status="idle")
-            await session.emit({"type": "phase_failed", "error": str(exc)})
-        except Exception as exc:  # noqa: BLE001
-            LOG.exception("refine failed for %s", thread_id)
-            threads.update_thread(s.repo_root, thread_id, phase_status="failed")
-            await session.emit({"type": "phase_failed", "error": str(exc)})
-        finally:
-            s.sessions.pop(thread_id, None)
-
-    session.task = asyncio.create_task(run_loop())
-
-
 async def _launch_market(s: AppState, index: dict[str, Any]) -> None:
     thread_id = index["thread_id"]
     if thread_id in s.sessions:
@@ -935,6 +883,30 @@ async def _launch_market(s: AppState, index: dict[str, Any]) -> None:
 
 async def _launch_production(s: AppState, index: dict[str, Any]) -> None:
     thread_id = index["thread_id"]
+    # MCP-mode hard guard: in mcp mode reasoning happens inside Claude Code
+    # interactive via the MCP server, NOT inside production_runner. If we
+    # let the frontend launch the pipeline here, build_llm_client would
+    # fall back to MockLLMClient and silently produce a mock-driven run —
+    # exactly what the operator does NOT want when they chose mcp.
+    try:
+        settings = load_settings(s.repo_root)
+    except (OSError, ValueError, json.JSONDecodeError):
+        settings = {}
+    backend = (
+        settings.get("runtime", {})
+        .get("llm_orchestrator", {})
+        .get("backend", "")
+    )
+    if backend == "mcp":
+        raise HTTPException(
+            409,
+            "production launch is disabled in mcp mode. Reasoning happens "
+            "inside Claude Code interactive via the MCP server. Use the "
+            "'Advance to production →' modal to copy the Claude Code command, "
+            "or switch settings.runtime.llm_orchestrator.backend to "
+            "'anthropic' / 'claude_cli' / 'mock' if you actually want the "
+            "frontend to drive the run.",
+        )
     if thread_id in s.sessions:
         return
     _refuse_if_lock_held_by_other(s, thread_id)
@@ -946,21 +918,12 @@ async def _launch_production(s: AppState, index: dict[str, Any]) -> None:
         threads.phase_dir(s.repo_root, thread_id, "market")
         / "market_research_brief.json"
     )
-    refine_plan_path = (
-        threads.phase_dir(s.repo_root, thread_id, "refine")
-        / "refined_research_plan.json"
-    )
     if not grilling_path.exists() or not market_brief_path.exists():
         raise HTTPException(
-            409, "production requires grilling and market_research at minimum"
+            409, "production requires grilling and market_research"
         )
     grilling_session = json.loads(grilling_path.read_text(encoding="utf-8"))
     market_brief = json.loads(market_brief_path.read_text(encoding="utf-8"))
-    refined_plan = (
-        json.loads(refine_plan_path.read_text(encoding="utf-8"))
-        if refine_plan_path.exists()
-        else None
-    )
 
     loop = asyncio.get_running_loop()
     session = LiveSession(thread_id=thread_id, phase="production", loop=loop)
@@ -976,21 +939,12 @@ async def _launch_production(s: AppState, index: dict[str, Any]) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     def build_root_node() -> dict[str, Any]:
+        # Refine step is gone: root node is built directly from grilling
+        # output. The Professor (LLM orchestrator) replaces placeholder
+        # claim/baselines/success/disproof at production entry — see
+        # production_runner._professor_design_claim_if_placeholder.
         baseline_dossier_id = market_brief["baseline_dossier_id"]
         candidate_ids = _extract_candidate_ids(market_brief)
-        if refined_plan and refined_plan.get("status") in {
-            "done",
-            "max_rounds_reached",
-        }:
-            return build_root_node_from_refined_plan(
-                refined_plan,
-                grilling_session,
-                baseline_dossier_id=baseline_dossier_id,
-                candidate_ids=candidate_ids,
-                dataset_manifest_path=refined_plan.get(
-                    "dataset_manifest_path"
-                ),
-            )
         node = build_root_node_from_grilling(grilling_session)
         if has_placeholder_baseline(node):
             node = attach_market_research_dossier(
@@ -1040,12 +994,74 @@ async def _launch_production(s: AppState, index: dict[str, Any]) -> None:
             await session.emit({"type": "phase_complete"})
         except Exception as exc:  # noqa: BLE001
             LOG.exception("production failed for %s", thread_id)
+            # Surface a friendly diagnostic instead of bare repr(exc) — the
+            # most common production failure is anthropic SDK / env var
+            # misconfiguration, which used to leave the operator staring at
+            # an empty archived attempt dir.
+            friendly = _friendly_production_error(exc)
+            error_payload = {
+                "type": "phase_failed",
+                "error": str(exc),
+                "diagnosis": friendly,
+            }
+            # Persist the diagnosis where the operator can see it post-
+            # restart — phase_status alone doesn't carry the reason.
+            try:
+                run_dir.mkdir(parents=True, exist_ok=True)
+                (run_dir / "launch_error.txt").write_text(
+                    f"{friendly}\n\n--- raw exception ---\n{type(exc).__name__}: {exc}\n",
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass
             threads.update_thread(s.repo_root, thread_id, phase_status="failed")
-            await session.emit({"type": "phase_failed", "error": str(exc)})
+            await session.emit(error_payload)
         finally:
             s.sessions.pop(thread_id, None)
 
     session.task = asyncio.create_task(run_loop())
+
+
+def _friendly_production_error(exc: Exception) -> str:
+    """Translate common production-launch failures into actionable diagnoses."""
+    msg = f"{type(exc).__name__}: {exc}"
+    if "No module named 'anthropic'" in msg:
+        return (
+            "Anthropic SDK is not installed. Either run "
+            "`pip install anthropic` (option A), or switch "
+            "settings.json → runtime.llm_orchestrator.backend to 'claude_cli' "
+            "to use the operator's subscription via the claude CLI (option C, "
+            "free until 2026-06-15)."
+        )
+    if "billing_ack" in msg or "execution_ack" in msg:
+        return (
+            "LLM orchestrator requires both ack env vars before launching:\n"
+            "  export anthropic_orchestrator_billing_ack='I_authorize_anthropic_API_charges'\n"
+            "  export anthropic_live_orchestrator_ack='I_understand_costs'\n"
+            "Then restart the frontend (these are read at startup)."
+        )
+    if "ANTHROPIC_API_KEY" in msg:
+        return (
+            "Anthropic SDK needs ANTHROPIC_API_KEY in the environment. "
+            "Set it before launching the frontend, or switch to backend "
+            "'claude_cli' which uses subscription OAuth instead."
+        )
+    if "Professor template" in msg or "ExperimentPlanError" in msg:
+        return (
+            "Professor's experiment-design call failed validation. Check the "
+            "node's claim_contract — placeholder baselines/success/disproof "
+            "should have been replaced at production entry by "
+            "_professor_design_claim_if_placeholder."
+        )
+    if "GrillingError" in msg or "grilling" in msg.lower():
+        return (
+            "Grilling output is missing required fields. Re-run the grilling "
+            "phase (Retry button) or inspect grilling_session.json."
+        )
+    return (
+        "Production launch raised before any artifact could be written. "
+        "Check the frontend server stderr for the full traceback."
+    )
 
 
 def _extract_candidate_ids(market_brief: dict[str, Any]) -> list[str]:
@@ -1063,6 +1079,20 @@ def _collect_phase_data(repo_root: Path, thread_id: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for phase in threads.PHASES:
         out[phase] = _read_phase_artifacts(repo_root, thread_id, phase)
+    # Tell every phase template which orchestrator backend is configured so
+    # they can surface mcp-mode banners and disable direct launch affordances.
+    try:
+        settings = load_settings(repo_root)
+    except (OSError, ValueError, json.JSONDecodeError):
+        settings = {}
+    backend = (
+        settings.get("runtime", {})
+        .get("llm_orchestrator", {})
+        .get("backend", "mock")
+    )
+    for phase_data in out.values():
+        if isinstance(phase_data, dict):
+            phase_data["llm_backend"] = backend
     return out
 
 
@@ -1090,15 +1120,6 @@ def _read_phase_artifacts(
         if md.exists():
             with contextlib.suppress(OSError):
                 result["baseline_md"] = md.read_text(encoding="utf-8")
-    elif phase == "refine":
-        rp = pdir / "refined_research_plan.json"
-        if rp.exists():
-            with contextlib.suppress(json.JSONDecodeError, OSError):
-                result["plan"] = json.loads(rp.read_text(encoding="utf-8"))
-        mp = pdir / "dataset_manifest.json"
-        if mp.exists():
-            with contextlib.suppress(json.JSONDecodeError, OSError):
-                result["manifest"] = json.loads(mp.read_text(encoding="utf-8"))
     elif phase == "production":
         sp = pdir / "production_run_summary.json"
         if sp.exists():
@@ -1117,7 +1138,122 @@ def _read_phase_artifacts(
                     f"/files/{thread_id}/production/{rel}"
                 )
                 break
+        # NEW: claim-tree + per-node dialog so the operator can see the
+        # search structure and the natural-language back-and-forth between
+        # the Professor and the GradStudent.
+        tree_state_path = pdir / "tree" / "search_state.json"
+        if tree_state_path.exists():
+            with contextlib.suppress(json.JSONDecodeError, OSError):
+                state = json.loads(tree_state_path.read_text(encoding="utf-8"))
+                result["tree_state"] = _summarize_tree_state(state)
+        tree_summary_path = pdir / "tree" / "tree_search_summary.json"
+        if tree_summary_path.exists():
+            with contextlib.suppress(json.JSONDecodeError, OSError):
+                ts = json.loads(tree_summary_path.read_text(encoding="utf-8"))
+                result["readiness_history"] = ts.get("readiness_history", [])
+                result["coverage_by_node_type"] = ts.get(
+                    "coverage_by_node_type", {}
+                )
+                result["stage_history"] = ts.get("stage_history", [])
+        intake_path = pdir / "intake_to_claim_dialog.json"
+        if intake_path.exists():
+            with contextlib.suppress(json.JSONDecodeError, OSError):
+                result["intake_to_claim"] = json.loads(
+                    intake_path.read_text(encoding="utf-8")
+                )
+        # Per-node dialog files keyed by node_id, for the UI to render
+        # on-click.
+        node_dialogs: dict[str, list[dict[str, Any]]] = {}
+        for dp in sorted((pdir / "tree" / "nodes").glob("*/dialog.json")):
+            with contextlib.suppress(json.JSONDecodeError, OSError):
+                d = json.loads(dp.read_text(encoding="utf-8"))
+                node_dialogs[dp.parent.name] = d.get("entries", [])
+        if node_dialogs:
+            result["node_dialogs"] = node_dialogs
+        # In-progress nodes — anything Claude Code is mid-way through.
+        # Mirrors the resume-aware selector in mcp_server so the operator
+        # sees the same state machine.
+        mid_states = {
+            "running": "execute_node_experiment",
+            "completed_worker_report": "run_critic_reviews",
+            "critic_reviewed": "submit_professor_decision",
+            "orchestrator_reduced": "submit_professor_decision",
+        }
+        in_progress: list[dict[str, Any]] = []
+        for n in (result.get("tree_state") or {}).get("nodes", []):
+            if n.get("status") in mid_states:
+                in_progress.append(
+                    {
+                        "node_id": n["id"],
+                        "node_type": n.get("type"),
+                        "status": n["status"],
+                        "next_tool": mid_states[n["status"]],
+                        "claim_under_test": n.get("claim_under_test", ""),
+                    }
+                )
+        if in_progress:
+            result["in_progress_nodes"] = in_progress
+        # Last-activity timestamp across all MCP commits so the UI can
+        # show "last update Xs ago" honestly.
+        last_activity = 0.0
+        for cand in [
+            pdir / "tree" / "search_state.json",
+            pdir / "intake_to_claim_dialog.json",
+            pdir / "production_run_summary.json",
+        ]:
+            if cand.exists():
+                last_activity = max(last_activity, cand.stat().st_mtime)
+        for dp in (pdir / "tree" / "nodes").glob("*/*.json"):
+            if dp.is_file():
+                last_activity = max(last_activity, dp.stat().st_mtime)
+        if last_activity:
+            result["last_activity_mtime"] = last_activity
+        # MCP-mode progress: list per-node MCP decision files + their
+        # mtimes so the operator can see Claude Code's last action.
+        mcp_progress: list[dict[str, Any]] = []
+        for dp in sorted((pdir / "tree" / "nodes").glob("*/mcp_professor_decision.json")):
+            with contextlib.suppress(OSError, json.JSONDecodeError):
+                d = json.loads(dp.read_text(encoding="utf-8"))
+                mcp_progress.append(
+                    {
+                        "node_id": dp.parent.name,
+                        "transition": d.get("next_transition"),
+                        "final_verdict": d.get("final_verdict"),
+                        "follow_up_count": len(d.get("follow_up_children") or []),
+                        "updated_at": dp.stat().st_mtime,
+                    }
+                )
+        if mcp_progress:
+            result["mcp_progress"] = sorted(
+                mcp_progress, key=lambda x: x["updated_at"], reverse=True
+            )
     return result
+
+
+def _summarize_tree_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Compact view of search_state for the frontend tree visualizer."""
+    nodes = []
+    for n in state.get("nodes", []):
+        nodes.append(
+            {
+                "id": n["id"],
+                "type": n.get("type"),
+                "status": n.get("status"),
+                "parent": n.get("parent"),
+                "claim_under_test": (
+                    n.get("claim_contract", {}) or {}
+                ).get("claim_under_test", "")[:240],
+                "verdict": (n.get("outputs", {}) or {}).get("verdict"),
+            }
+        )
+    return {
+        "search_id": state.get("search_id"),
+        "status": state.get("status"),
+        "nodes": nodes,
+        "promoted_node_ids": state.get("promoted_node_ids", []),
+        "pruned_node_ids": state.get("pruned_node_ids", []),
+        "completed_node_ids": state.get("completed_node_ids", []),
+    }
 
 
 # --------------------------------------------------------------- file serving

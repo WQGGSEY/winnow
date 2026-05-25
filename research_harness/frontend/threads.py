@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-PHASES: tuple[str, ...] = ("grilling", "market", "refine", "production")
+PHASES: tuple[str, ...] = ("grilling", "market", "production")
 PHASE_STATUSES: tuple[str, ...] = (
     "idle",
     "running",
@@ -140,6 +140,7 @@ def update_thread(
     outcome: str | None = None,
     domain: str | None = None,
     domain_state: str | None = None,
+    mcp_model: str | None = None,
     append_execute_ack: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Apply a partial update to thread.json. Returns the new index."""
@@ -164,6 +165,10 @@ def update_thread(
         if domain_state not in DOMAIN_STATES:
             raise ThreadError(f"unknown domain_state {domain_state!r}")
         index["domain_state"] = domain_state
+    if mcp_model is not None:
+        if not mcp_model.strip():
+            raise ThreadError("mcp_model must not be empty")
+        index["mcp_model"] = mcp_model.strip()
     if append_execute_ack is not None:
         index.setdefault("execute_acks", []).append(append_execute_ack)
     index["updated_at"] = _now()
@@ -221,19 +226,51 @@ def boot_repair(repo_root: Path) -> list[str]:
         tid = index["thread_id"]
         phase = index.get("current_phase")
         ps = index.get("phase_status")
-        if ps not in {"running", "awaiting_input"}:
-            continue
         artifact_status = _read_phase_artifact_status(
             repo_root, tid, phase
         ) if phase else None
-        if artifact_status == "aborted":
+        # Case 1: thread says running/awaiting_input but the artifact says
+        # aborted — demote to failed so the Retry button lights up.
+        if ps in {"running", "awaiting_input"} and artifact_status == "aborted":
             update_thread(repo_root, tid, phase_status="failed")
             repaired.append(tid)
-        elif ps == "running":
-            # Default running→awaiting_input case (in_progress artifact).
+            continue
+        # Case 2: thread says running but the artifact is still in_progress —
+        # the launcher died between create_task and the worker writing
+        # complete. Demote to awaiting_input so the Resume button surfaces.
+        if ps == "running":
             update_thread(repo_root, tid, phase_status="awaiting_input")
             repaired.append(tid)
+            continue
+        # Case 3: thread says idle/complete/failed but the artifact is still
+        # in_progress and has a pending_ask. This happens when a prior bug
+        # set phase_status=idle (e.g. spurious LockBusyError) while the
+        # session was alive. Promote to awaiting_input so the operator can
+        # Resume / reconnect instead of being stuck without any button.
+        if ps in {"idle", "complete", "failed"} and artifact_status == "in_progress":
+            if _phase_artifact_has_pending(repo_root, tid, phase):
+                update_thread(repo_root, tid, phase_status="awaiting_input")
+                repaired.append(tid)
     return repaired
+
+
+def _phase_artifact_has_pending(
+    repo_root: Path, thread_id: str, phase: str | None
+) -> bool:
+    """Check whether the phase artifact has a pending_ask waiting for reply."""
+    if not phase:
+        return False
+    primary = {"grilling": "grilling_session.json"}.get(phase)
+    if primary is None:
+        return False
+    fp = threads_root(repo_root) / thread_id / phase / primary
+    if not fp.exists():
+        return False
+    try:
+        data = json.loads(fp.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return bool(data.get("pending_ask"))
 
 
 def _read_phase_artifact_status(
@@ -242,14 +279,13 @@ def _read_phase_artifact_status(
     """Best-effort read of the ``status`` field on the phase's primary
     artifact. Returns None if the file is missing or unreadable.
 
-    Currently only grilling and refine have a status field. Market and
-    production indicate success via the presence of their summary
-    artifact, not a status field — for those phases boot_repair only
-    handles the simple running→awaiting_input transition.
+    Currently only grilling has a status field. Market and production
+    indicate success via the presence of their summary artifact, not a
+    status field — for those phases boot_repair only handles the simple
+    running→awaiting_input transition.
     """
     primary = {
         "grilling": "grilling_session.json",
-        "refine": "refined_research_plan.json",
     }.get(phase)
     if primary is None:
         return None

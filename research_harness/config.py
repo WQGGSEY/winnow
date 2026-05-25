@@ -221,7 +221,7 @@ def resolve_agent_model(settings: dict[str, Any], role: str) -> str:
       1. settings.runtime.agent_models.<role>
       2. settings.runtime.agent_models.default
       3. settings.runtime.worker_backends.claude_code_live.model
-      4. literal "sonnet" as a last-resort default.
+      4. literal "claude-sonnet-4-6" as a last-resort default.
     """
 
     runtime = settings.get("runtime", {}) if isinstance(settings, dict) else {}
@@ -241,7 +241,7 @@ def resolve_agent_model(settings: dict[str, Any], role: str) -> str:
     fallback = live.get("model") if isinstance(live, dict) else None
     if isinstance(fallback, str) and fallback.strip():
         return fallback
-    return "sonnet"
+    return "claude-sonnet-4-6"
 
 
 def resolve_agent_budget(settings: dict[str, Any], role: str) -> str:

@@ -20,7 +20,7 @@ class LockTests(unittest.IsolatedAsyncioTestCase):
         lock = SingleActiveRunLock()
         async with lock.acquire("a", "grilling"):
             with self.assertRaises(LockBusyError):
-                async with lock.acquire("b", "refine"):
+                async with lock.acquire("b", "market"):
                     self.fail("should not have acquired")
 
     async def test_release_after_exception(self) -> None:
@@ -30,7 +30,7 @@ class LockTests(unittest.IsolatedAsyncioTestCase):
                 raise RuntimeError("boom")
         # Lock should be released even after an exception inside the with-block.
         self.assertFalse(lock.held())
-        async with lock.acquire("b", "refine"):
+        async with lock.acquire("b", "market"):
             self.assertTrue(lock.held())
 
 

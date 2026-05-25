@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claim graph — {{ active_thread.title or active_thread.thread_id }}</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/graph.css">
+</head>
+<body class="graph-page">
+<header class="graph-topbar">
+  <div class="graph-topbar-left">
+    <a class="graph-back" href="/threads/{{ active_thread.thread_id }}">← back to thread</a>
+    <h1>{{ active_thread.title or active_thread.thread_id }}</h1>
+    <span class="muted">— claim graph</span>
+  </div>
+  <div class="graph-topbar-right">
+    <span class="muted">drag to pan · wheel to zoom · hover to inspect</span>
+    <button id="graph-reset" class="btn small" type="button">Reset view</button>
+  </div>
+</header>
+
+<main class="graph-main">
+  <section class="graph-canvas-wrap">
+    <svg id="claim-graph" xmlns="http://www.w3.org/2000/svg"
+         data-tree='{{ tree_state|tojson }}'
+         data-dialogs='{{ node_dialogs|tojson }}'
+         data-live-url="/api/threads/{{ active_thread.thread_id }}/graph_data"
+         data-poll-interval-ms="4000">
+      <defs>
+        <marker id="arrowhead" viewBox="0 0 10 10" refX="8" refY="5"
+                markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 Z" fill="#7a87b8"/>
+        </marker>
+        <marker id="arrowhead-prof" viewBox="0 0 10 10" refX="8" refY="5"
+                markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 Z" fill="#2845a8"/>
+        </marker>
+      </defs>
+      <g id="graph-viewport">
+        <g id="graph-edges"></g>
+        <g id="graph-nodes"></g>
+      </g>
+    </svg>
+  </section>
+
+  <aside class="graph-inspector" id="graph-inspector">
+    <div class="inspector-header">
+      <h2 id="inspector-title">Inspector</h2>
+      <p class="muted" id="inspector-subtitle">Hover a node or edge.</p>
+    </div>
+    <div class="inspector-body" id="inspector-body">
+      <p class="muted">Hover or click a node to see its claim and the
+        교수님 ↔ 대학원생 dialog. Hover an edge to see the relationship
+        between parent and child.</p>
+      {% if coverage_by_node_type %}
+        <h3>Coverage</h3>
+        <ul class="coverage-list">
+          {% for ntype, ids in coverage_by_node_type.items() %}
+            <li><span class="chip chip-{{ ntype }}">{{ ntype }}</span> · {{ ids|length }} promoted</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+      {% if readiness_history %}
+        <h3>Readiness decisions</h3>
+        <ol class="readiness-list">
+          {% for r in readiness_history %}
+            <li class="readiness-entry submit-{{ r.submit }}">
+              <span class="badge">cycle {{ r.cycle }}</span>
+              <strong>{{ 'SUBMIT' if r.submit else 'KEEP WORKING' }}</strong>
+              — {{ r.message }}
+            </li>
+          {% endfor %}
+        </ol>
+      {% endif %}
+      {% if intake_to_claim %}
+        <h3>정출연 → 교수님 hand-off</h3>
+        <details>
+          <summary>Original problem statement</summary>
+          <pre>{{ intake_to_claim.original_contract.claim_under_test }}</pre>
+        </details>
+        <details open>
+          <summary>Professor's strong+honest claim</summary>
+          <pre>{{ intake_to_claim.new_contract.claim_under_test }}</pre>
+        </details>
+      {% endif %}
+    </div>
+  </aside>
+</main>
+
+<div id="edge-tooltip" class="edge-tooltip" hidden></div>
+
+<script src="/static/graph.js" defer></script>
+</body>
+</html>

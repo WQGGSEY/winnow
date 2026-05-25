@@ -152,7 +152,11 @@ class GrillingAllowedDomainsTests(unittest.TestCase):
         sys_index = cmd.index("--system-prompt")
         return cmd[sys_index + 1]
 
-    def test_enum_injected_into_system_prompt(self) -> None:
+    def test_domain_is_free_form_in_system_prompt(self) -> None:
+        """The harness no longer pre-registers domains. Grilling treats the
+        domain field as a free-form snake_case tag derived from the
+        problem statement; the Professor designs experiment code at
+        production entry."""
         captured = []
 
         def _runner(cmd, *, input, capture_output, text, timeout, check, env):
@@ -164,7 +168,7 @@ class GrillingAllowedDomainsTests(unittest.TestCase):
                             "action": "DONE",
                             "extracted": {
                                 "root_goal_id": "rg_x",
-                                "domain": "retrieval",
+                                "domain": "machine_alpha_robustness",
                                 "node_type": "capability",
                                 "claim_under_test": "x",
                                 "mandatory_baselines": ["a"],
@@ -191,48 +195,11 @@ class GrillingAllowedDomainsTests(unittest.TestCase):
                 allowed_domains=["retrieval", "rag"],
             )
             self.assertEqual(session["status"], "done")
+            # Free-form domains are accepted even if not in allowed_domains.
+            self.assertEqual(session["extracted"]["domain"], "machine_alpha_robustness")
             sysp = self._captured_system_prompt(captured)
-            self.assertIn('"retrieval"', sysp)
-            self.assertIn('"rag"', sysp)
-            self.assertIn("MUST be exactly one of", sysp)
-
-    def test_done_with_off_enum_domain_is_rejected(self) -> None:
-        runner_response = _wrap_assistant_text(
-            json.dumps(
-                {
-                    "action": "DONE",
-                    "extracted": {
-                        "root_goal_id": "rg_x",
-                        "domain": "made_up_domain",
-                        "node_type": "capability",
-                        "claim_under_test": "x",
-                        "mandatory_baselines": ["a"],
-                        "success_criteria": ["b"],
-                        "disproof_conditions": ["c"],
-                        "goal_facets": [],
-                        "taste_constraints": [],
-                        "search_query_seed": "x",
-                    },
-                }
-            )
-        )
-
-        def _runner(cmd, *, input, capture_output, text, timeout, check, env):
-            return _make_completed(runner_response)
-
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(GrillingError) as ctx:
-                run_grilling_session(
-                    REPO_ROOT,
-                    user_goal="x",
-                    run_dir=Path(tmp),
-                    billing_ack=True,
-                    execution_ack=True,
-                    command_runner=_runner,
-                    input_provider=lambda q: "",
-                    allowed_domains=["retrieval", "rag"],
-                )
-            self.assertIn("not in the operator-registered domain list", str(ctx.exception))
+            self.assertNotIn("MUST be exactly one of", sysp)
+            self.assertIn("free-form", sysp)
 
 
 class AgentModelResolveTests(unittest.TestCase):
@@ -262,7 +229,9 @@ class AgentModelResolveTests(unittest.TestCase):
         self.assertEqual(resolve_agent_model(settings, "grilling_agent"), "sonnet")
 
     def test_falls_back_to_literal_sonnet_when_nothing_configured(self) -> None:
-        self.assertEqual(resolve_agent_model({}, "grilling_agent"), "sonnet")
+        self.assertEqual(
+            resolve_agent_model({}, "grilling_agent"), "claude-sonnet-4-6"
+        )
 
 
 class AgentBudgetResolveTests(unittest.TestCase):
@@ -400,10 +369,16 @@ class AgentMaxRoundsResolveTests(unittest.TestCase):
                 input_provider=lambda q: "",
                 allowed_domains=["retrieval"],
             )
-            # default settings.json has "grilling_agent": "sonnet"
+            # Whatever grilling_agent model is configured in settings.json
+            # must be propagated as `--model <value>` to the CLI verbatim.
+            from research_harness.config import load_settings, resolve_agent_model
+
+            expected_model = resolve_agent_model(
+                load_settings(REPO_ROOT), "grilling_agent"
+            )
             cmd = captured[0]
             model_index = cmd.index("--model")
-            self.assertEqual(cmd[model_index + 1], "sonnet")
+            self.assertEqual(cmd[model_index + 1], expected_model)
 
 
 if __name__ == "__main__":

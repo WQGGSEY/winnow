@@ -90,10 +90,10 @@ class ThreadsCrudTests(unittest.TestCase):
             repo = Path(tmp)
             t = threads.create_thread(repo, user_goal="orphan repro")
             tid = t["thread_id"]
-            # Simulate orphan: phase_status=awaiting_input + plan aborted.
-            refine_dir = threads.phase_dir(repo, tid, "refine")
-            refine_dir.mkdir(parents=True, exist_ok=True)
-            (refine_dir / "refined_research_plan.json").write_text(
+            # Simulate orphan: phase_status=awaiting_input + session aborted.
+            grilling_dir = threads.phase_dir(repo, tid, "grilling")
+            grilling_dir.mkdir(parents=True, exist_ok=True)
+            (grilling_dir / "grilling_session.json").write_text(
                 json.dumps(
                     {"status": "aborted", "error": "claude reported error"}
                 )
@@ -101,7 +101,7 @@ class ThreadsCrudTests(unittest.TestCase):
             threads.update_thread(
                 repo,
                 tid,
-                current_phase="refine",
+                current_phase="grilling",
                 phase_status="awaiting_input",
             )
             repaired = threads.boot_repair(repo)

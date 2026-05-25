@@ -53,19 +53,8 @@
       <li class="msg user-goal"><strong>User goal</strong>
         <div>{{ session.user_goal if session else thread.user_goal }}</div>
       </li>
-      {% if session and session.scaffold_state and session.scaffold_state.active %}
-        <li class="msg system">
-          <strong>Domain scaffolding mode</strong>
-          <div>
-            No existing domain matched. The agent is interviewing for a new
-            domain (<code>{{ session.scaffold_state.domain_slug or "tbd" }}</code>)
-            and will propose every file. Each file is syntax-checked before
-            staging. Manifest progress:
-            <strong>{{ session.scaffold_state.manifest_staged|length }} /
-              {{ session.scaffold_state.manifest_required|length }}</strong>.
-          </div>
-        </li>
-      {% endif %}
+      {# Domain scaffolding (deep-interview file proposal) is removed —
+         Professor designs experiment code at production entry instead. #}
       {% if session %}
         {% for r in session.rounds %}
           {% set action = r.action or "ASK" %}

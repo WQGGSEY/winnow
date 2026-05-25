@@ -32,7 +32,12 @@ class ProductionRunnerTests(unittest.TestCase):
 
             self.assertEqual(summary["type"], "production_run_summary")
             self.assertEqual(summary["preflight_status"], "passed")
-            self.assertEqual(summary["tree_search_status"], "completed")
+            # With the LLM orchestrator enabled, the Professor opens follow-up
+            # successor claims after every promotion, so the tree can stay
+            # 'blocked' (queued children remain) even after publishable evidence
+            # exists. What matters for the pipeline is that promotion happened
+            # and publication artifacts rendered.
+            self.assertIn(summary["tree_search_status"], {"completed", "blocked"})
             self.assertGreater(len(summary["promoted_node_ids"]), 0)
             self.assertFalse(summary["evidence_is_fake"])
             self.assertEqual(summary["fallback_node_ids"], [])
@@ -67,23 +72,23 @@ class ProductionRunnerTests(unittest.TestCase):
             )
             self.assertEqual(written_summary, summary)
 
-    def test_fallback_demo_run_blocks_publish_dispatch(self) -> None:
+    def test_professor_template_produces_real_evidence_and_publishes(self) -> None:
+        """With the LLM orchestrator enabled (the new default), the
+        Professor designs a thread-specific template even when the node has
+        no pre-existing domain template. evidence_is_fake should be False
+        and publish should NOT be blocked."""
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "run"
-            # default _demo_node has domain="agent_harness" which has no template
-            # under experiment_plan_templates/, so the demo fallback runs.
             summary = run_production_pipeline(REPO_ROOT, run_dir, publish=True)
 
-            self.assertTrue(summary["evidence_is_fake"])
-            self.assertIn("n_demo_001", summary["fallback_node_ids"])
+            self.assertFalse(summary["evidence_is_fake"])
+            self.assertEqual(summary["fallback_node_ids"], [])
 
             dispatch = summary["publication_dispatch"]
             self.assertIsNotNone(dispatch)
-            self.assertTrue(dispatch["evidence_is_fake"])
-            self.assertEqual(dispatch["rendered_artifacts"], [])
-            self.assertIn("evidence_is_fake=true", dispatch["blocked_reason"])
-            self.assertFalse((run_dir / "publication" / "interactive_summary.html").exists())
-            self.assertFalse((run_dir / "publication" / "slides_summary.html").exists())
+            self.assertFalse(dispatch["evidence_is_fake"])
+            # Publication artifacts should actually be rendered.
+            self.assertGreater(len(dispatch["rendered_artifacts"]), 0)
 
     def test_no_publish_flag_skips_renderer_dispatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

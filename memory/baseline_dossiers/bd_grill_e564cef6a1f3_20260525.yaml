@@ -1,0 +1,94 @@
+id: bd_grill_e564cef6a1f3_20260525
+created_at: "2026-05-25"
+query: "machine-generated alpha robustness signal vs overfitting validation methodology"
+problem_scope:
+  domain: "machine_alpha_signal_validity"
+  node_type: "validity"
+  claim_under_test: "It is possible to solve the problem of designing a methodology that determines whether a machine-generated alpha (produced by ML, genetic algorithms, random expression search, or any other automated alpha-discovery process) has actually captured a genuine latent signal in the data that explains returns, versus having merely overfit to noise through highly nonlinear transformations."
+selected:
+  method: "AlgoXpert Alpha Research Framework. A Rigorous IS WFA OOS Protocol for Mitigating Overfitting in Quantitative Strategies"
+  role: current_best_known
+  candidate_id: c_arxiv_260309219v1
+  one_paragraph_reason: "Top-ranked search result for the grilled claim."
+  evidence_tags:
+    - "automated_market_research"
+    - "arxiv"
+  risk_tags:
+    - "operator_should_review"
+candidates_index:
+  - id: c_arxiv_260309219v1
+    method: "AlgoXpert Alpha Research Framework. A Rigorous IS WFA OOS Protocol for Mitigating Overfitting in Quantitative Strategies"
+    decision: selected
+    reason_tags:
+      - "automated_market_research"
+      - "current_best_known"
+    detail_file: candidates/c_arxiv_260309219v1.md
+  - id: c_naive_placeholder
+    method: "naive: TBD (Professor will design)"
+    decision: selected_as_naive
+    reason_tags:
+      - "operator_review_required"
+      - "naive"
+    detail_file: candidates/c_naive_placeholder.md
+  - id: c_null_placeholder
+    method: "random_or_null: TBD (Professor will design)"
+    decision: selected_as_random_or_null
+    reason_tags:
+      - "operator_review_required"
+      - "random_or_null"
+    detail_file: candidates/c_null_placeholder.md
+source_index:
+  - id: s1
+    url: "https://arxiv.org/abs/2603.09219v1"
+    accessed_at: "2026-05-25"
+    supports:
+      - "arxiv_2603.09219v1"
+  - id: s2
+    url: "https://arxiv.org/abs/2210.08488v1"
+    accessed_at: "2026-05-25"
+    supports:
+      - "arxiv_2210.08488v1"
+  - id: s3
+    url: "https://arxiv.org/abs/2109.11885v1"
+    accessed_at: "2026-05-25"
+    supports:
+      - "arxiv_2109.11885v1"
+  - id: s4
+    url: "https://arxiv.org/abs/2209.02043v1"
+    accessed_at: "2026-05-25"
+    supports:
+      - "arxiv_2209.02043v1"
+  - id: s5
+    url: "https://arxiv.org/abs/2003.10767v2"
+    accessed_at: "2026-05-25"
+    supports:
+      - "arxiv_2003.10767v2"
+  - id: s6
+    url: "https://arxiv.org/abs/2508.21412v1"
+    accessed_at: "2026-05-25"
+    supports:
+      - "arxiv_2508.21412v1"
+  - id: s7
+    url: "https://arxiv.org/abs/2210.08204v1"
+    accessed_at: "2026-05-25"
+    supports:
+      - "arxiv_2210.08204v1"
+  - id: s8
+    url: "https://arxiv.org/abs/1306.5993v4"
+    accessed_at: "2026-05-25"
+    supports:
+      - "arxiv_1306.5993v4"
+  - id: s9
+    url: "https://arxiv.org/abs/2501.07215v1"
+    accessed_at: "2026-05-25"
+    supports:
+      - "arxiv_2501.07215v1"
+  - id: s10
+    url: "https://arxiv.org/abs/2004.12510v1"
+    accessed_at: "2026-05-25"
+    supports:
+      - "arxiv_2004.12510v1"
+refresh_policy:
+  required_before:
+    - "final_claim_promotion"
+    - "external_writeup"

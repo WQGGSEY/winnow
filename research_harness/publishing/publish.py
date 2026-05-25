@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from research_harness.publishing.html import render_interactive_html
+from research_harness.publishing.paper_html import render_paper_html
 from research_harness.publishing.slides_html import render_slides_html
 
 
@@ -61,6 +62,7 @@ RENDERERS: dict[str, tuple[Renderer, str]] = {
     "interactive_html": (render_interactive_html, "interactive_summary.html"),
     "slides_html": (render_slides_html, "slides_summary.html"),
     "markdown_paper": (_render_markdown_paper, "paper.md"),
+    "paper_html": (render_paper_html, "paper.html"),
 }
 
 

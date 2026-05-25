@@ -54,9 +54,11 @@ class ServerSmokeTests(unittest.TestCase):
         t = threads.create_thread(self.repo, user_goal="thread for accordion")
         resp = self.client.get(f"/threads/{t['thread_id']}")
         self.assertEqual(resp.status_code, 200)
-        # Accordion must list all four phases.
-        for phase in ("Grilling", "Market research", "Refiner", "Production"):
+        # Accordion lists the three phases (refine removed; Professor
+        # designs the real claim contract at production entry instead).
+        for phase in ("Grilling", "Market research", "Production"):
             self.assertIn(phase, resp.text)
+        self.assertNotIn("Refiner", resp.text)
 
     def test_thread_page_404_for_missing(self) -> None:
         resp = self.client.get("/threads/thread_doesnotexist")
@@ -341,156 +343,6 @@ class ServerSmokeTests(unittest.TestCase):
         # interactive_html_url points to the publication/ subfolder
         self.assertIn("publication/interactive_summary.html", resp.text)
 
-    def test_refine_panel_handles_synthetic_spec_without_source(self) -> None:
-        """Regression: a refined plan with a synthetic dataset_spec (which
-        has synthetic_recipe but no source field) used to 500 the entire
-        thread page because `pretty_json` filter raised TypeError on
-        Jinja's Undefined. Now the filter no-ops on Undefined and the
-        template falls back to rendering the synthetic_recipe."""
-        t = threads.create_thread(self.repo, user_goal="synthetic spec render")
-        refine_dir = threads.phase_dir(self.repo, t["thread_id"], "refine")
-        refine_dir.mkdir(parents=True, exist_ok=True)
-        plan = {
-            "type": "refined_research_plan",
-            "plan_id": "rrp_synth_render",
-            "status": "done",
-            "source_grilling_session_id": "grill_x",
-            "source_market_brief_id": "mrb_x",
-            "claim_under_test": "x",
-            "mandatory_baselines": ["a"],
-            "success_criteria": ["b"],
-            "disproof_conditions": ["c"],
-            "validation_procedure": {
-                "primary_metric": {
-                    "name": "ndcg_at_10",
-                    "operator": "greater_than",
-                    "threshold": 0.03,
-                },
-                "splits": {"train": "x", "eval": "y"},
-                "statistical_test": {"name": "paired_t_test", "alpha": 0.05},
-                "n_seeds": 5,
-                "decision_rule": "all_baselines_beaten",
-            },
-            "dataset_specs": [
-                {
-                    "id": "ds_synth_render",
-                    "type": "synthetic",
-                    "role": "evaluation",
-                    # no `source` field at all — this is what triggered the 500
-                    "synthetic_recipe": {
-                        "shape": "tabular",
-                        "rows": 100,
-                        "seed": 7,
-                        "columns": [
-                            {"name": "x", "distribution": "normal", "params": {"mu": 0, "sigma": 1}},
-                        ],
-                    },
-                }
-            ],
-            "unresolved_dataset_specs": [],
-            "sota_reconciliations": [],
-            "acknowledged_limitations": [],
-            "rounds": [],
-            "model": "sonnet",
-            "created_at": "2026-05-25T00:00:00Z",
-            "usage_estimate": {
-                "rounds_used": 1,
-                "total_cost_usd": 0.01,
-                "total_input_tokens": 50,
-                "total_output_tokens": 30,
-            },
-            "plan_path": "/tmp/x",
-            "dataset_manifest_path": "/tmp/y",
-            "error": None,
-            "pending_ask": None,
-        }
-        (refine_dir / "refined_research_plan.json").write_text(json.dumps(plan))
-        threads.update_thread(
-            self.repo,
-            t["thread_id"],
-            current_phase="refine",
-            phase_status="complete",
-            domain="x",
-        )
-        resp = self.client.get(f"/threads/{t['thread_id']}")
-        self.assertEqual(resp.status_code, 200)
-        # synthetic_recipe fallback rendered
-        self.assertIn("synthetic_recipe", resp.text)
-        # No 500 trace bleeding through
-        self.assertNotIn("TypeError", resp.text)
-
-    def test_refine_panel_renders_thinking_indicator(self) -> None:
-        """The refiner panel should expose the same 'Refiner is thinking…'
-        indicator the grilling panel has, so the user gets the same
-        elapsed-seconds progress signal between reply submit and the
-        next ASK."""
-        t = threads.create_thread(self.repo, user_goal="refine thinking")
-        # Synthesize a refine state with plan.status=in_progress so the
-        # in_progress branch renders.
-        refine_dir = threads.phase_dir(self.repo, t["thread_id"], "refine")
-        refine_dir.mkdir(parents=True, exist_ok=True)
-        plan = {
-            "type": "refined_research_plan",
-            "plan_id": "rrp_thinking_test",
-            "status": "in_progress",
-            "source_grilling_session_id": "grill_test",
-            "source_market_brief_id": "mrb_test",
-            "claim_under_test": "x",
-            "mandatory_baselines": ["a"],
-            "success_criteria": ["b"],
-            "disproof_conditions": ["c"],
-            "validation_procedure": {
-                "primary_metric": {
-                    "name": "ndcg_at_10",
-                    "operator": "greater_than",
-                    "threshold": 0.03,
-                },
-                "splits": {"train": "x", "eval": "y"},
-                "statistical_test": {"name": "paired_t_test", "alpha": 0.05},
-                "n_seeds": 5,
-                "decision_rule": "all_baselines_beaten",
-            },
-            "dataset_specs": [],
-            "unresolved_dataset_specs": [],
-            "sota_reconciliations": [],
-            "acknowledged_limitations": [],
-            "rounds": [],
-            "model": "sonnet",
-            "created_at": "2026-05-25T00:00:00Z",
-            "usage_estimate": {
-                "rounds_used": 0,
-                "total_cost_usd": 0.0,
-                "total_input_tokens": 0,
-                "total_output_tokens": 0,
-            },
-            "plan_path": "/tmp/x",
-            "dataset_manifest_path": "/tmp/y",
-            "error": None,
-            "pending_ask": None,
-        }
-        (refine_dir / "refined_research_plan.json").write_text(json.dumps(plan))
-        threads.update_thread(
-            self.repo,
-            t["thread_id"],
-            current_phase="refine",
-            phase_status="awaiting_input",
-            domain="x",
-        )
-        # Need an in-memory session so needs_resume = False, and the
-        # in_progress chat panel renders fully.
-        from research_harness.frontend.server import LiveSession
-
-        self.client.app.state.s.sessions[t["thread_id"]] = LiveSession(
-            thread_id=t["thread_id"], phase="refine"
-        )
-        try:
-            resp = self.client.get(f"/threads/{t['thread_id']}")
-            self.assertEqual(resp.status_code, 200)
-            self.assertIn("Refiner is thinking", resp.text)
-            self.assertIn("data-thinking-elapsed", resp.text)
-            self.assertIn(f'id="thinking-{t["thread_id"]}"', resp.text)
-        finally:
-            self.client.app.state.s.sessions.pop(t["thread_id"], None)
 
     def test_retry_requires_failed_status(self) -> None:
         t = threads.create_thread(self.repo, user_goal="retry guard")
@@ -775,15 +627,6 @@ class ServerSmokeTests(unittest.TestCase):
         reloaded = threads.load_thread(self.repo, t["thread_id"])
         self.assertEqual(reloaded["domain"], "new_scaffolded_domain")
         self.assertEqual(reloaded["domain_state"], "scaffold_complete")
-
-    def test_thread_page_renders_scaffolding_badge(self) -> None:
-        t = threads.create_thread(self.repo, user_goal="badge render")
-        threads.update_thread(
-            self.repo, t["thread_id"], domain_state="scaffolding"
-        )
-        resp = self.client.get(f"/threads/{t['thread_id']}")
-        self.assertEqual(resp.status_code, 200)
-        self.assertIn("✎ scaffolding", resp.text)
 
     def test_thread_page_renders_matched_domain_badge(self) -> None:
         t = threads.create_thread(self.repo, user_goal="matched render")

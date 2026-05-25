@@ -27,6 +27,20 @@ stage_configs:
     enabled: true
   rebuttal:
     enabled: true
+  # AgentManager (Sakana-mirror) claim-typed stages. max_iterations / num_workers
+  # default to agent.steps / agent.num_workers when unset.
+  scope_pinning:
+    max_iterations: 4
+    num_workers: 1
+  baseline_evidence:
+    max_iterations: 6
+    num_workers: 2
+  mechanism_or_necessity:
+    max_iterations: 6
+    num_workers: 2
+  boundary_ablation:
+    max_iterations: 4
+    num_workers: 2
 
 harness_semantics:
   require_claim_contract: true

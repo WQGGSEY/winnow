@@ -604,81 +604,77 @@ def _grilling_system_prompt(
     allowed_domains: list[str], *, scaffold_active: bool = False
 ) -> str:
     base = (
-        "You are a research-grilling agent. Your role is to interview the user "
-        "until you can extract a complete claim contract. "
+        # ===== PERSONA =====
+        # You are NOT a research advisor. You are an intake assistant whose only "
+        # "job is to clarify a problem statement that the user (think: a grant "
+        # "agency / 정출연) is bringing in. The user is NOT a researcher and "
+        # "should NOT be asked for research ideas, methods, baselines, success "
+        # "criteria, or disproof conditions. They state a problem; the lab "
+        # "(Professor + grad students) will design the research.\n\n"
+        "You are a research-intake agent. Treat the user as a research funder "
+        "who is describing a problem they want solved. They are NOT the "
+        "researcher; do NOT ask them for methods, baselines, success metrics, "
+        "disproof conditions, or experiment ideas. Those are the Professor's "
+        "job downstream. Your only role is to make the PROBLEM STATEMENT itself "
+        "unambiguous — if a phrase is vague (\"machine alpha\", \"robustness\", "
+        "\"works well\"), ask one short, specific question to clarify what they "
+        "mean. When you BELIEVE the problem is crisp enough that a Professor "
+        "could pick it up and design experiments, you MUST first ASK the user "
+        "'추가하실 말씀이 있으신가요? 더 짚어야 할 부분이 있다면 지금 말씀해주세요.' "
+        "(or an English equivalent) and wait for their reply. Only after the "
+        "user explicitly says they have nothing more to add may you emit DONE. "
+        "Never DONE without that final confirmation round — non-negotiable.\n\n"
         "Each turn you output exactly one JSON object and nothing else. "
         "No markdown, no prose, no code fences. "
         "Allowed actions: "
-        '{"action":"ASK","question":"<one specific probing question>"}, '
+        '{"action":"ASK","question":"<one short clarification question>"}, '
         '{"action":"PROPOSE_FILE","file":{"relative_path":"<slug>/...","purpose":"...","content":"..."}}, '
         'or {"action":"DONE","extracted":{...}}. '
         "PROPOSE_FILE is only valid during deep-interview scaffolding mode "
-        "(see below). Use ASK while information is missing. Use DONE only when "
-        "you can fill every extracted field with concrete content drawn from "
-        "the user. extracted must include: root_goal_id (slug like rg_xxx), "
-        "domain, node_type (one of capability|validity|necessity|boundary|"
-        "mechanism|constraint|taste|operational), claim_under_test (single "
-        "sentence), mandatory_baselines (>=1 strings, ideally one current-"
-        "best, one naive, one random/null), success_criteria (>=1 "
-        "measurable), disproof_conditions (>=1), goal_facets (e.g. "
-        "performance, efficiency, simplicity, interpretability), "
-        "taste_constraints, and search_query_seed (string used to drive "
-        "paper search). Probe necessity, baselines, and disproof conditions "
-        "hard."
+        "(see below). Use ASK ONLY for ambiguity in the problem statement; do "
+        "NOT use ASK to request methods, baselines, metrics, or hypotheses. "
+        "Use DONE ONLY after the user has explicitly confirmed in a final "
+        "ASK round that they have nothing more to add. extracted MUST include: "
+        "root_goal_id (slug like rg_xxx), domain, node_type (one of capability|"
+        "validity|necessity|boundary|mechanism|constraint|taste|operational — "
+        "default to 'validity' if you cannot tell, since validating that the "
+        "problem is real is always a fine starting axis), claim_under_test "
+        "(MUST be the problem statement itself in the form 'It is possible to "
+        "solve <problem>'; you are NOT designing the claim — the Professor will "
+        "rewrite this downstream), mandatory_baselines (you MAY fill with the "
+        "placeholder list ['current_best: TBD (Professor will design)', 'naive: "
+        "TBD (Professor will design)', 'random_or_null: TBD (Professor will "
+        "design)'] — do NOT extract real baselines from the user), "
+        "success_criteria (placeholder: ['Professor must define measurable "
+        "success criteria once the research design is fixed']), "
+        "disproof_conditions (placeholder: ['Professor must define what would "
+        "refute the eventual solution']), goal_facets (extract from the "
+        "problem: e.g. ['robustness', 'interpretability']), taste_constraints "
+        "(empty list unless the user volunteered them), search_query_seed "
+        "(short phrase summarizing the problem for paper search). DO NOT ask "
+        "the user what success criteria, disproof conditions, or baselines "
+        "should be. The Professor will replace those placeholder strings with "
+        "real ones before any node is dispatched."
+    )
+    # NOTE: The harness no longer routes by pre-existing domain templates —
+    # the Professor designs a thread-specific template at production entry.
+    # Domain is now just a free-form tag (still required by the schema).
+    # If the user did not name a domain, use a snake_case slug derived from
+    # the problem statement. Do NOT prompt the user to pick a domain.
+    base += (
+        " The domain field is a free-form snake_case label like "
+        "'machine_alpha_robustness' or 'retrieval_calibration'. Derive it "
+        "from the user's problem statement; do not ask them to pick one. "
+        "Domain is a metadata tag only — code generation is the Professor's "
+        "job downstream."
     )
     if allowed_domains:
-        domains_json = json.dumps(allowed_domains)
-        base += (
-            " IMPORTANT: the domain field MUST be exactly one of "
-            f"{domains_json}. Do not invent new domain names. "
-            "Pick the closest fit, or ASK the user to clarify which of these "
-            "domains their work belongs to. If absolutely none fit, ASK the "
-            "user whether to scaffold a NEW domain (do NOT just invent one)."
-        )
-    base += (
-        " === DOMAIN SCAFFOLDING (deep interview mode) === "
-        "If the user explicitly opts into scaffolding a new domain (because "
-        "none of the registered domains fit), enter deep interview mode. "
-        "REQUIRED CHECKLIST — collect via ASK rounds BEFORE any PROPOSE_FILE: "
-        "[1] domain_slug (snake_case, ascii, e.g. 'summarization_factscore'). "
-        "[2] task_class (one of smoke_test | ablation | training | eval | "
-        "analysis). [3] data_source (kind: synthetic | local_file | "
-        "huggingface | torch_hub | s3_internal; plus shape/seed for "
-        "synthetic, identifier+split+schema for external). [4] "
-        "proposed_method_spec (inputs, outputs, one-paragraph pseudocode). "
-        "[5] baseline_specs for current_best / naive / random_baseline "
-        "(concrete algorithm or formula for each). [6] metric_spec (name "
-        "like ndcg_at_10, formula or library reference, comparison "
-        "operator vs baselines, margin threshold). [7] resource_budget "
-        "(timeout_sec, gpu bool, cpu, memory_gb). [8] expected_outputs "
-        "(default artifacts/metrics.json plus any extras). After each "
-        "answer, summarize what you captured so the user can correct "
-        "misinterpretation. "
-        "PROPOSE_FILE order (bottom-up dependency, easier to localize "
-        "import failures): plan.json → src/__init__.py → "
-        "src/eval/__init__.py → src/eval/<metric>.py → "
-        "src/baselines/__init__.py → src/baselines/random_baseline.py → "
-        "src/baselines/naive.py → src/baselines/current_best.py → "
-        "src/data.py → src/proposed.py → src/experiment.py. "
-        "Every PROPOSE_FILE.relative_path MUST start with the domain_slug "
-        "as its first path segment (e.g. 'summarization_factscore/plan.json'). "
-        "The harness validates each file (syntax for .py, schema for "
-        "plan.json) and injects the result into the next round; fix on "
-        "failure by emitting another PROPOSE_FILE for the same path. "
-        "On DONE the harness dry-imports the staged src/ tree and rejects "
-        "DONE if any required file is missing or import fails — you'll see "
-        "the rejection in the next round and must emit more PROPOSE_FILE "
-        "to repair. Required manifest (exact path tails, all required): "
-        + json.dumps(list(REQUIRED_MANIFEST_TEMPLATE))
-        + ". You may propose additional optional files (e.g. README.md)."
-    )
-    if scaffold_active:
-        base += (
-            " === MODE STATUS === Scaffolding mode is ACTIVE. The slug is "
-            "fixed. Continue with the checklist (if incomplete) or "
-            "PROPOSE_FILE (if checklist done) until all required manifest "
-            "files are staged, then emit DONE."
-        )
+        # Kept for legacy callers but no longer enforced; ignored.
+        pass
+    # Domain scaffolding (deep-interview mode that asked the user for methods /
+    # baselines / metrics) is fully disabled. The Professor designs experiment
+    # code at production entry; intake never asks the user for research design.
+    # PROPOSE_FILE is not used by the new flow.
     return base
 
 
@@ -793,12 +789,10 @@ def _coerce_extracted(
         extracted["root_goal_id"] = "rg_" + _slugify(user_goal)[:40]
     if not extracted.get("domain"):
         extracted["domain"] = "unspecified_domain"
-    if allowed_domains and extracted["domain"] not in allowed_domains:
-        raise GrillingError(
-            f"extracted.domain {extracted['domain']!r} is not in the "
-            f"operator-registered domain list {allowed_domains!r}; the "
-            "grilling agent must pick exactly one of those."
-        )
+    # Domain is free-form now (Professor designs experiment code at production
+    # entry — there is no longer a pre-registered template per domain).
+    # Legacy callers may still pass allowed_domains; ignore the list rather
+    # than reject mismatching extractions.
     if not extracted.get("node_type"):
         extracted["node_type"] = "capability"
     if not extracted.get("claim_under_test"):

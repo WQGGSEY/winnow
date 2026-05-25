@@ -1,0 +1,94 @@
+id: bd_grill_ebcab9462de9_20260526
+created_at: "2026-05-26"
+query: "detecting data mining vs genuine nonlinear predictive signal in machine-generated alpha factors pre out-of-sample"
+problem_scope:
+  domain: "machine_alpha_signal_vs_datamining_discrimination"
+  node_type: "validity"
+  claim_under_test: "It is possible to solve the problem of pre-OOS discrimination of whether a given machine-generated alpha (produced by ML, genetic programming, random expression dumping, or any other automated alpha-search procedure over the WorldQuant data universe of millions of daily features across multiple regions and asset classes) has captured a genuine nonlinear future-return signal latent in the input data, versus being a data-mining artifact that only appears strong in-sample, by inspecting the alpha itself (its expression/model, the data it uses, and its IS performance) and producing a verdict/score \u2014 without relying on distribution-shift considerations, which are out of scope."
+selected:
+  method: "Data Mining and Electronic Health Records: Selecting Optimal Clinical Treatments in Practice"
+  role: current_best_known
+  candidate_id: c_arxiv_11121668v1
+  one_paragraph_reason: "Top-ranked search result for the grilled claim."
+  evidence_tags:
+    - "automated_market_research"
+    - "arxiv"
+  risk_tags:
+    - "operator_should_review"
+candidates_index:
+  - id: c_arxiv_11121668v1
+    method: "Data Mining and Electronic Health Records: Selecting Optimal Clinical Treatments in Practice"
+    decision: selected
+    reason_tags:
+      - "automated_market_research"
+      - "current_best_known"
+    detail_file: candidates/c_arxiv_11121668v1.md
+  - id: c_naive_placeholder
+    method: "naive: TBD (Professor will design)"
+    decision: selected_as_naive
+    reason_tags:
+      - "operator_review_required"
+      - "naive"
+    detail_file: candidates/c_naive_placeholder.md
+  - id: c_null_placeholder
+    method: "random_or_null: TBD (Professor will design)"
+    decision: selected_as_random_or_null
+    reason_tags:
+      - "operator_review_required"
+      - "random_or_null"
+    detail_file: candidates/c_null_placeholder.md
+source_index:
+  - id: s1
+    url: "https://arxiv.org/abs/1112.1668v1"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_1112.1668v1"
+  - id: s2
+    url: "https://arxiv.org/abs/1306.1334v1"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_1306.1334v1"
+  - id: s3
+    url: "https://arxiv.org/abs/1907.02664v2"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_1907.02664v2"
+  - id: s4
+    url: "https://arxiv.org/abs/2005.07866v1"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_2005.07866v1"
+  - id: s5
+    url: "https://arxiv.org/abs/2411.15497v3"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_2411.15497v3"
+  - id: s6
+    url: "https://arxiv.org/abs/1502.05911v1"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_1502.05911v1"
+  - id: s7
+    url: "https://arxiv.org/abs/1110.5626v1"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_1110.5626v1"
+  - id: s8
+    url: "https://arxiv.org/abs/2510.21391v1"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_2510.21391v1"
+  - id: s9
+    url: "https://arxiv.org/abs/2001.11324v1"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_2001.11324v1"
+  - id: s10
+    url: "https://arxiv.org/abs/1108.5592v1"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_1108.5592v1"
+refresh_policy:
+  required_before:
+    - "final_claim_promotion"
+    - "external_writeup"

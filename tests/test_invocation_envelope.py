@@ -62,7 +62,10 @@ class InvocationEnvelopeTests(unittest.TestCase):
             self.assertIn("--system-prompt", envelope["command_plan"]["args"])
             self.assertNotIn("--bare", envelope["command_plan"]["args"])
             self.assertIn("ANTHROPIC_API_KEY", envelope["environment_policy"]["unset"])
-            self.assertLess(len(prompt), 6000)
+            # Prompt grew when Professor-generated reusable lib started shipping
+            # alongside the per-node experiment.py. Still want a hard upper bound
+            # to catch genuine prompt bloat, just at the new baseline.
+            self.assertLess(len(prompt), 12000)
 
             written = json.loads(envelope_path.read_text(encoding="utf-8"))
             self.assertEqual(written["node_id"], node["id"])

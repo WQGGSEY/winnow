@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,9 @@ from research_harness.config import load_settings
 from research_harness.critics.governance import select_critics
 from research_harness.critics.review_runner import run_critic_reviews
 from research_harness.local_preflight import run_preflight
-from research_harness.orchestrator.tree_search import run_mock_tree_search
+from research_harness.orchestrator.treesearch.agent_manager import (
+    run_agent_manager_search,
+)
 from research_harness.publishing.ac import decide_acceptance
 from research_harness.publishing.publish import publish_state_bundle
 from research_harness.publishing.rebuttal import (
@@ -23,6 +26,102 @@ class ProductionRunError(ValueError):
     """Raised when the production runner cannot proceed safely."""
 
 
+_PLACEHOLDER_BASELINE_PREFIXES = ("TBD", "tbd", "placeholder")
+
+
+def _is_placeholder_contract(contract: dict[str, Any]) -> bool:
+    """True if the grilling intake left placeholders for the Professor to fill."""
+    baselines = contract.get("mandatory_baselines") or []
+    for b in baselines:
+        if not isinstance(b, str):
+            continue
+        # placeholder pattern: anything containing 'TBD (Professor will design)'
+        if "TBD" in b or "Professor will design" in b or "Professor must" in b:
+            return True
+    success = contract.get("success_criteria") or []
+    for s in success:
+        if isinstance(s, str) and "Professor must" in s:
+            return True
+    disproof = contract.get("disproof_conditions") or []
+    for d in disproof:
+        if isinstance(d, str) and "Professor must" in d:
+            return True
+    return False
+
+
+def _professor_design_claim_if_placeholder(
+    root_node: dict[str, Any],
+    settings: dict[str, Any],
+    run_dir: Path,
+) -> dict[str, Any]:
+    """If the root_node has placeholder fields, get the Professor to design
+    the real claim contract before the tree starts. Records the hand-off
+    dialog under run_dir/intake_to_claim_dialog.json so the operator can
+    audit the conversion.
+    """
+    contract = root_node.get("claim_contract", {}) or {}
+    if not _is_placeholder_contract(contract):
+        return root_node
+
+    llm_cfg = (settings.get("runtime", {}) or {}).get("llm_orchestrator", {}) or {}
+    if not llm_cfg.get("enabled", False):
+        # LLM orchestrator disabled — leave placeholders. Downstream validation
+        # will reject them, surfacing the misconfiguration loudly.
+        return root_node
+
+    from research_harness.orchestrator.llm_orchestrator import (
+        MockLLMClient,
+        Professor,
+        build_llm_client,
+    )
+    from research_harness.orchestrator.llm_orchestrator.mock_handlers import (
+        register_default_mock_handlers,
+    )
+
+    client = build_llm_client(settings, role="professor")
+    if isinstance(client, MockLLMClient):
+        register_default_mock_handlers(client)
+    professor = Professor(client)
+    new_contract, dialog = professor.problem_to_initial_claim(
+        problem_statement=contract.get("claim_under_test", ""),
+        domain=str(root_node.get("domain", "")),
+        node_type=str(root_node.get("type", "validity")),
+        goal_facets=list(
+            root_node.get("lineage", {}).get("covers_goal_facets", []) or []
+        ),
+    )
+    revised = dict(root_node)
+    revised["claim_contract"] = {**contract, **new_contract}
+    # Validate; if Professor's contract somehow fails, abort loudly so the
+    # operator sees the upstream problem rather than a silent fallback.
+    from research_harness.orchestrator.validation import validate_node_invariants
+
+    validate_node_invariants(revised)
+    # Persist the hand-off dialog so it shows up in the run audit trail.
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "intake_to_claim_dialog.json").write_text(
+        json.dumps(
+            {
+                "original_contract": contract,
+                "new_contract": new_contract,
+                "dialog": [
+                    {
+                        "speaker": e.speaker,
+                        "intent": e.intent,
+                        "text": e.text,
+                        "metadata": e.metadata,
+                    }
+                    for e in dialog
+                ],
+            },
+            indent=2,
+            ensure_ascii=False,
+        ) + "\n",
+        encoding="utf-8",
+    )
+    return revised
+
+
 def run_production_pipeline(
     repo_root: Path,
     run_dir: Path,
@@ -30,6 +129,7 @@ def run_production_pipeline(
     backend_name: str = "mock",
     publish: bool = True,
     root_node: dict[str, Any] | None = None,
+    max_ac_revisions: int = 1,
 ) -> dict[str, Any]:
     """Chain preflight -> mock tree search -> rebuttal/AC -> publish in one call.
 
@@ -49,8 +149,16 @@ def run_production_pipeline(
             f"local preflight did not pass: status={preflight['status']}"
         )
 
+    # If the root_node came in with placeholder baselines/success/disproof
+    # (the new grilling intake fills these as TBD), the Professor designs the
+    # real claim_contract here BEFORE the tree starts. This is the
+    # 정출연→교수님 hand-off: the user owns the problem, the lab owns the
+    # research design.
+    if root_node is not None:
+        root_node = _professor_design_claim_if_placeholder(root_node, settings, run_dir)
+
     tree_dir = run_dir / "tree"
-    tree_result = run_mock_tree_search(
+    tree_result = run_agent_manager_search(
         repo_root,
         tree_dir,
         backend_name=backend_name,
@@ -74,7 +182,17 @@ def run_production_pipeline(
     research_state_bundle_path: str | None = None
 
     if promoted_ids:
-        promoted_id = promoted_ids[0]
+        # Prefer the promoted root (parent is None) so the paper title and
+        # claim reflect the user's actual question, not a typed draft sibling
+        # introduced by num_drafts. Fall back to the first promoted node.
+        promoted_id = next(
+            (
+                pid
+                for pid in promoted_ids
+                if _node_by_id(search_state, pid).get("parent") is None
+            ),
+            promoted_ids[0],
+        )
         node = _node_by_id(search_state, promoted_id)
         node_dir = tree_dir / "nodes" / promoted_id
         worker_report = _read_json(node_dir / "worker_report.json")
@@ -144,6 +262,81 @@ def run_production_pipeline(
             "research_state_bundle_path": str(state_bundle_path),
             "ac_decision": ac_decision,
         }
+
+        # AC-reject revision loop: if the area chair rejected the paper,
+        # ask the Professor to propose a NEW root claim (honest + strong,
+        # not lazy) and rerun tree search with that claim. Capped by
+        # max_ac_revisions to avoid loops.
+        ac_revision_history: list[dict[str, Any]] = []
+        revision_index = 0
+        while (
+            ac_decision.get("decision") == "reject"
+            and revision_index < max_ac_revisions
+        ):
+            revision_index += 1
+            from research_harness.orchestrator.llm_orchestrator import (
+                MockLLMClient,
+                Professor,
+                build_llm_client,
+            )
+            from research_harness.orchestrator.llm_orchestrator.mock_handlers import (
+                register_default_mock_handlers,
+            )
+
+            llm_cfg = (settings.get("runtime", {}) or {}).get("llm_orchestrator", {}) or {}
+            if not llm_cfg.get("enabled", False):
+                break
+            client = build_llm_client(settings, role="professor")
+            if isinstance(client, MockLLMClient):
+                register_default_mock_handlers(client)
+            professor = Professor(client)
+            new_claim, entries = professor.revise_after_ac_reject(
+                root_claim=node["claim_contract"]["claim_under_test"],
+                ac_decision=ac_decision,
+                promoted_nodes=[
+                    _node_by_id(search_state, pid) for pid in promoted_ids
+                ],
+            )
+            ac_revision_history.append(
+                {
+                    "revision": revision_index,
+                    "previous_claim": node["claim_contract"]["claim_under_test"],
+                    "new_claim": new_claim,
+                    "dialog": [
+                        {
+                            "speaker": e.speaker,
+                            "intent": e.intent,
+                            "text": e.text,
+                            "metadata": e.metadata,
+                        }
+                        for e in entries
+                    ],
+                    "previous_ac_decision": dict(ac_decision),
+                }
+            )
+            # Build a new root node with the revised claim and recurse.
+            new_root = copy.deepcopy(root_node or _node_by_id(search_state, promoted_ids[0]))
+            new_root["claim_contract"]["claim_under_test"] = new_claim
+            new_root["id"] = f"{new_root['id']}_rev{revision_index}"
+            new_root["parent"] = None
+            new_root["status"] = "ready"
+            new_root["lineage"]["introduced_assumptions"] = [
+                f"AC rejected the previous paper (revision {revision_index}); "
+                f"Professor proposed honest+strong successor claim.",
+            ]
+            new_run_dir = run_dir.parent / f"{run_dir.name}_rev{revision_index}"
+            rerun = run_production_pipeline(
+                repo_root,
+                new_run_dir,
+                backend_name=backend_name,
+                publish=publish,
+                root_node=new_root,
+                max_ac_revisions=max_ac_revisions - revision_index,
+            )
+            rerun["ac_revision_history"] = (
+                ac_revision_history + (rerun.get("ac_revision_history") or [])
+            )
+            return rerun
 
         if publish:
             publication_dir = run_dir / "publication"

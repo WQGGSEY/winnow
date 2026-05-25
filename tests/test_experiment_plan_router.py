@@ -156,17 +156,21 @@ class ExperimentPlanRouterTests(unittest.TestCase):
 
 
 class ProductionRunnerTemplateSurfacingTests(unittest.TestCase):
-    def test_production_summary_records_fallback_when_no_template(self) -> None:
+    def test_production_summary_uses_professor_template_by_default(self) -> None:
+        """With the LLM orchestrator enabled (the new default), the Professor
+        materializes a thread-specific template on demand — there is no
+        falling-back-to-demo case. templates_used should reflect that."""
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "run"
             summary = run_production_pipeline(REPO_ROOT, run_dir, publish=False)
             self.assertIn("templates_used", summary)
             self.assertIn("n_demo_001", summary["templates_used"])
             self.assertEqual(
-                summary["templates_used"]["n_demo_001"], FALLBACK_TEMPLATE_ID
+                summary["templates_used"]["n_demo_001"], "professor_generated"
             )
-            self.assertIn("n_demo_001", summary["fallback_node_ids"])
-            self.assertTrue(summary["evidence_is_fake"])
+            # Professor-generated templates are real code (no fallback flag).
+            self.assertEqual(summary["fallback_node_ids"], [])
+            self.assertFalse(summary["evidence_is_fake"])
 
 
 if __name__ == "__main__":

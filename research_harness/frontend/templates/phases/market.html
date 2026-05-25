@@ -47,7 +47,12 @@
               <td>{{ paper.download_status or "" }}</td>
               <td>
                 {% if paper.pdf_path %}
-                  <a href="/files/{{ thread.thread_id }}/market/{{ paper.pdf_path.split('/')|last }}" target="_blank">open</a>
+                  {# pdf_path on disk is an absolute path. The frontend file
+                     route serves anything under the phase dir, so we strip
+                     the bit before `/market/` and pass the rest (preserving
+                     reference_papers/ etc). #}
+                  {% set rel_pdf = paper.pdf_path.split('/market/')|last %}
+                  <a href="/files/{{ thread.thread_id }}/market/{{ rel_pdf }}" target="_blank">open</a>
                 {% endif %}
               </td>
             </tr>
@@ -57,14 +62,15 @@
     {% endif %}
 
     {% if thread.current_phase == "market" and thread.phase_status == "complete" %}
+      {# In MCP mode the production launcher does NOT call any LLM — Claude
+         Code interactive becomes the driver. The button just creates the
+         empty production dir + shows the operator the command to run in a
+         separate terminal. #}
       <button class="btn primary advance-btn"
               type="button"
-              data-execute-ack
-              data-phase="refine"
-              data-thread-id="{{ thread.thread_id }}"
-              data-endpoint="/api/threads/{{ thread.thread_id }}/refine/start"
-              data-cost-note="Multi-turn live sonnet refiner (~$0.10-$0.30 expected).">
-        Advance to refiner →
+              data-mcp-handoff
+              data-thread-id="{{ thread.thread_id }}">
+        Advance to production →
       </button>
     {% endif %}
 
