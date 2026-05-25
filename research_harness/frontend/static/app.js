@@ -220,11 +220,28 @@
       location.reload();
       return;
     }
+    // Thinking + reply-form state — do this BEFORE the chat-list lookup
+    // so refine (which has its own refine-rounds renderer, no chat-${tid}
+    // list) still gets the live counter and form toggle.
+    if (ev.type === 'ask') {
+      setReplyEnabled(threadId, true);
+      setThinking(threadId, false);
+    } else if (ev.type === 'user_reply') {
+      setReplyEnabled(threadId, false);
+      setThinking(threadId, true);
+    }
     const list = document.getElementById(`chat-${threadId}`);
     if (!list) {
-      // Defensive: pre-empty chat panel didn't render for some reason.
-      // Reload to recover.
-      location.reload();
+      // No live chat list (refine panel renders its own round cards
+      // server-side). For ask, reload after a moment so the new pending_ask
+      // and round are rendered. For user_reply, do NOT reload — the
+      // thinking counter just started ticking. For other live events
+      // (scaffold_*, propose_file, dry_import), reload to surface them.
+      if (ev.type === 'ask' || ev.type === 'dry_import'
+          || ev.type === 'propose_file' || ev.type === 'scaffold_start'
+          || ev.type === 'scaffold_complete') {
+        setTimeout(() => location.reload(), 200);
+      }
       return;
     }
     const li = document.createElement('li');
@@ -233,17 +250,11 @@
       const idx = list.querySelectorAll('.msg.ask').length + 1;
       li.innerHTML = `<strong>Q${idx}</strong><div></div>`;
       li.querySelector('div').textContent = ev.question;
-      // First ASK arrived — enable reply form, hide "thinking" dots.
-      setReplyEnabled(threadId, true);
-      setThinking(threadId, false);
     } else if (ev.type === 'user_reply') {
       li.className = 'msg reply';
       const idx = list.querySelectorAll('.msg.reply').length + 1;
       li.innerHTML = `<strong>A${idx}</strong><div></div>`;
       li.querySelector('div').textContent = ev.text;
-      // Reply submitted — disable form, show "thinking" until next ASK.
-      setReplyEnabled(threadId, false);
-      setThinking(threadId, true);
     } else if (ev.type === 'scaffold_start') {
       li.className = 'msg system';
       li.innerHTML = `<strong>Domain scaffolding started</strong>

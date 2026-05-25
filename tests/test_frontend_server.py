@@ -264,6 +264,79 @@ class ServerSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("Resume / reconnect", resp.text)
 
+    def test_refine_panel_renders_thinking_indicator(self) -> None:
+        """The refiner panel should expose the same 'Refiner is thinking…'
+        indicator the grilling panel has, so the user gets the same
+        elapsed-seconds progress signal between reply submit and the
+        next ASK."""
+        t = threads.create_thread(self.repo, user_goal="refine thinking")
+        # Synthesize a refine state with plan.status=in_progress so the
+        # in_progress branch renders.
+        refine_dir = threads.phase_dir(self.repo, t["thread_id"], "refine")
+        refine_dir.mkdir(parents=True, exist_ok=True)
+        plan = {
+            "type": "refined_research_plan",
+            "plan_id": "rrp_thinking_test",
+            "status": "in_progress",
+            "source_grilling_session_id": "grill_test",
+            "source_market_brief_id": "mrb_test",
+            "claim_under_test": "x",
+            "mandatory_baselines": ["a"],
+            "success_criteria": ["b"],
+            "disproof_conditions": ["c"],
+            "validation_procedure": {
+                "primary_metric": {
+                    "name": "ndcg_at_10",
+                    "operator": "greater_than",
+                    "threshold": 0.03,
+                },
+                "splits": {"train": "x", "eval": "y"},
+                "statistical_test": {"name": "paired_t_test", "alpha": 0.05},
+                "n_seeds": 5,
+                "decision_rule": "all_baselines_beaten",
+            },
+            "dataset_specs": [],
+            "unresolved_dataset_specs": [],
+            "sota_reconciliations": [],
+            "acknowledged_limitations": [],
+            "rounds": [],
+            "model": "sonnet",
+            "created_at": "2026-05-25T00:00:00Z",
+            "usage_estimate": {
+                "rounds_used": 0,
+                "total_cost_usd": 0.0,
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+            },
+            "plan_path": "/tmp/x",
+            "dataset_manifest_path": "/tmp/y",
+            "error": None,
+            "pending_ask": None,
+        }
+        (refine_dir / "refined_research_plan.json").write_text(json.dumps(plan))
+        threads.update_thread(
+            self.repo,
+            t["thread_id"],
+            current_phase="refine",
+            phase_status="awaiting_input",
+            domain="x",
+        )
+        # Need an in-memory session so needs_resume = False, and the
+        # in_progress chat panel renders fully.
+        from research_harness.frontend.server import LiveSession
+
+        self.client.app.state.s.sessions[t["thread_id"]] = LiveSession(
+            thread_id=t["thread_id"], phase="refine"
+        )
+        try:
+            resp = self.client.get(f"/threads/{t['thread_id']}")
+            self.assertEqual(resp.status_code, 200)
+            self.assertIn("Refiner is thinking", resp.text)
+            self.assertIn("data-thinking-elapsed", resp.text)
+            self.assertIn(f'id="thinking-{t["thread_id"]}"', resp.text)
+        finally:
+            self.client.app.state.s.sessions.pop(t["thread_id"], None)
+
     def test_retry_requires_failed_status(self) -> None:
         t = threads.create_thread(self.repo, user_goal="retry guard")
         # phase_status defaults to idle — retry should refuse

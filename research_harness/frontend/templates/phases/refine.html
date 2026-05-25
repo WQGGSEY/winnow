@@ -83,6 +83,17 @@
             captured rounds are preserved on disk.
           </div>
         {% endif %}
+        {# Whether to start the thinking indicator visible: True when the
+           last round on disk is a reply that the agent hasn't yet
+           responded to. Mirrors the grilling.html pattern. #}
+        {% set last = plan.rounds[-1] if plan.rounds else none %}
+        {% set was_just_replied = last and last.action == "ASK" and last.user_response and not plan.pending_ask %}
+        <div class="chat-thinking" id="thinking-{{ thread.thread_id }}"
+             {% if not was_just_replied %}hidden{% endif %}>
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span>Refiner is thinking…</span>
+          <span class="thinking-elapsed" data-thinking-elapsed>0.0s</span>
+        </div>
         <form class="chat-reply"
               data-action="refine-reply"
               data-thread-id="{{ thread.thread_id }}">
