@@ -482,7 +482,21 @@ async def _maybe_json(req: Request) -> dict[str, Any]:
 
 
 async def _sse_stream(session: LiveSession):
-    """Async generator that drains LiveSession.out_queue as SSE frames."""
+    """Async generator that drains LiveSession.out_queue as SSE frames.
+
+    On attach, **drain any backlog first**. Items in the queue from a
+    previous consumer (canceled when the user navigated away) are stale
+    — the page that just re-rendered already reflects the current state
+    from disk (rounds, pending_ask, scaffold_state). Replaying those
+    buffered events would create visual duplicates (e.g. Q3 once from
+    the server-rendered chat list, then again from the SSE).
+    Live state on disk is the ground truth; SSE is for *future* updates.
+    """
+    while not session.out_queue.empty():
+        try:
+            session.out_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
     while True:
         event = await session.out_queue.get()
         payload = json.dumps(event, ensure_ascii=False)

@@ -7,6 +7,7 @@ path traversal guard.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import unittest
@@ -191,6 +192,47 @@ class ServerSmokeTests(unittest.TestCase):
             self.assertNotIn(t["thread_id"], app_state.sessions)
         finally:
             app_state.lock._holder = None
+
+    def test_sse_drains_stale_backlog_on_attach(self) -> None:
+        """Regression: when a user navigates away mid-grilling and back,
+        the agent worker has kept emitting events into the LiveSession's
+        out_queue (no SSE consumer was draining). On reconnect, the new
+        SSE generator used to replay every stale event, duplicating Q&A
+        that the server-rendered page had already shown from disk."""
+        from research_harness.frontend.server import LiveSession, _sse_stream
+
+        async def _drive() -> list[dict]:
+            session = LiveSession(thread_id="t_drain", phase="grilling")
+            # Pre-populate the queue with stale events (the "navigate away"
+            # window where no consumer was reading).
+            await session.out_queue.put({"type": "ask", "question": "stale Q1"})
+            await session.out_queue.put({"type": "user_reply", "text": "stale A1"})
+            await session.out_queue.put({"type": "ask", "question": "stale Q2"})
+
+            received: list[dict] = []
+            gen = _sse_stream(session)
+
+            # Inject a fresh terminal event after the drain has had a chance
+            # to run. The generator's first await on `get()` will pick it up.
+            async def _push_fresh() -> None:
+                await asyncio.sleep(0.05)
+                await session.out_queue.put({"type": "phase_complete"})
+
+            push_task = asyncio.create_task(_push_fresh())
+            try:
+                async for frame in gen:
+                    payload = json.loads(frame.removeprefix("data: ").rstrip("\n"))
+                    received.append(payload)
+                    if payload.get("type") in {"phase_complete", "phase_failed"}:
+                        break
+            finally:
+                await push_task
+            return received
+
+        received = asyncio.run(_drive())
+        # Only the fresh phase_complete should come through — stale Q&A drained.
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0]["type"], "phase_complete")
 
     def test_post_restart_page_blocks_reply_form_with_resume_banner(self) -> None:
         """Regression: after server restart, the on-disk grilling_session.json
