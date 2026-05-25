@@ -44,9 +44,14 @@ from typing import Any
 
 from research_harness.config import load_settings
 from research_harness.orchestrator.llm_orchestrator.persona_validator import (
+    validate_baseline_provenance,
+    validate_camera_ready_directives,
     validate_claim_contract,
+    validate_decision_rule_for_capability_claim,
     validate_follow_up_strength,
     validate_grad_student_review,
+    validate_revision_after_reject,
+    validate_synthetic_data_bridging,
 )
 
 
@@ -620,6 +625,99 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "submit_professor_user_goal_attestation",
+        "description": (
+            f"{PROFESSOR_CONTRACT}\n\n"
+            "Dual-gate publication: AC accept is NECESSARY but NOT SUFFICIENT. "
+            "The Professor must also attest that the ORIGINAL user intake "
+            "problem (not the reshaped academic claim) is addressable with the "
+            "evidence produced. If achieved=false, render_final_paper is "
+            "blocked and the system enters honest_failure exit unless "
+            "additional research is triggered. Schema enforces: at least 2 "
+            "evidence anchors back to the intake, >=80-char concrete "
+            "user-action statement, and required_additional_research listing "
+            "when achieved=false."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "attestation"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "attestation": {
+                    "type": "object",
+                    "description": "UserGoalAttestation object — see user_goal_attestation.schema.json.",
+                },
+            },
+        },
+    },
+    {
+        "name": "propose_alternative_root_directions",
+        "description": (
+            f"{PROFESSOR_CONTRACT}\n\n"
+            "When the AC has emitted decision=reject_and_diversify (or when the "
+            "operator wants fan-out before a single-shot revise), the Professor "
+            "proposes N>=3 alternative root claim angles covering distinct axes "
+            "(operational_root, taste_root, mechanism_root, "
+            "inverted_validity_root, different_method_root, "
+            "boundary_first_root, necessity_root). The system records the "
+            "alternatives; select_alternative_root picks one to bootstrap into "
+            "a fresh production attempt. This replaces linear "
+            "revise_root_after_reject when the rejected direction is "
+            "structurally hopeless rather than just under-evidenced."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "proposal"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "proposal": {
+                    "type": "object",
+                    "description": "AlternativeRootProposal — see alternative_root_proposal.schema.json. Must include >=3 distinct angle values.",
+                },
+            },
+        },
+    },
+    {
+        "name": "select_alternative_root",
+        "description": (
+            f"{PROFESSOR_CONTRACT}\n\n"
+            "After propose_alternative_root_directions, select ONE alternative "
+            "by index to bootstrap into a fresh production attempt. The "
+            "selected claim becomes the new root via the same archive-and-"
+            "rebuild path as revise_root_after_reject, but the operator log "
+            "preserves the full N-alternative slate so future audits can see "
+            "the diversification step happened."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "selected_index", "selection_rationale"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "selected_index": {"type": "integer", "minimum": 0},
+                "selection_rationale": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "render_honest_failure_paper",
+        "description": (
+            "Terminal exit when no path to a positive deployable result exists. "
+            "Renders honest_failure.html under production/publication/ instead "
+            "of paper.html, documenting: the user's original intake, all "
+            "attempts made, the final attestation showing achieved=false, and "
+            "the concrete experiments that would change the answer. Used when "
+            "max_reject_cycles is exhausted or when the operator (or Claude "
+            "Code) decides the direction is structurally hopeless and further "
+            "fan-out would not help. This is a HONEST outcome, not a failure "
+            "of the harness — better than publishing a misleading paper."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id"],
+            "properties": {"thread_id": {"type": "string"}},
+        },
+    },
+    {
         "name": "render_final_paper",
         "description": (
             "Assemble all submitted sections + registered figures + tables + "
@@ -627,7 +725,13 @@ TOOL_DEFINITIONS = [
             "two-column HTML paper at production/publication/paper.html, "
             "regenerate interactive_summary.html and slides_summary.html "
             "alongside it, and write production_run_summary.json so the "
-            "frontend production panel populates."
+            "frontend production panel populates. DUAL-GATE: requires both "
+            "(a) AC decision in {accept, revise, revise_with_new_measurements} "
+            "and (b) submit_professor_user_goal_attestation with achieved=true. "
+            "If achieved=false or attestation missing, render is blocked and "
+            "the operator is told to either trigger fan-out via "
+            "propose_alternative_root_directions, run more measurements, or "
+            "call render_honest_failure_paper for the final honest-failure exit."
         ),
         "inputSchema": {
             "type": "object",
@@ -685,6 +789,93 @@ _TOOL_ENVELOPE_TAILS = re.compile(
     """,
     re.DOTALL,
 )
+
+
+def _categorize_failure(final_verdict: str, transition: str) -> str:
+    """Map a Professor's verdict + transition to one of the memory/failures
+    category folders. Conservative: unknown verdicts fall to negative_result."""
+    v = final_verdict.lower()
+    if "contradicted" in v or "disproof" in v:
+        return "negative_result"
+    if "confounded" in v or "leakage" in v or "baseline" in v:
+        return "confounded_result"
+    if "blocked_by_operational" in v or "operational" in v:
+        return "invalid_experiment"
+    if "taste_rejected" in v:
+        return "taste_rejection"
+    if transition == "pruned" and "implementation" in v:
+        return "implementation_failure"
+    return "negative_result"
+
+
+def _write_failure_record(
+    *,
+    tid: str,
+    node_id: str,
+    final_verdict: str,
+    transition: str,
+    response_to_grad_student: str,
+    node: dict[str, Any],
+    worker_report: dict[str, Any],
+) -> None:
+    """Write a one-page failure record under memory/failures/<category>/.
+
+    Idempotent: re-running on the same node overwrites the file. The
+    failures/index.yaml is updated so retrieve_failure_summaries can
+    surface this record on the next thread that shares query_tags.
+    """
+    import hashlib
+    import yaml
+
+    repo = _repo_root()
+    category = _categorize_failure(final_verdict, transition)
+    failures_root = repo / "memory" / "failures"
+    cat_dir = failures_root / category
+    cat_dir.mkdir(parents=True, exist_ok=True)
+
+    suffix = hashlib.md5(
+        f"{tid}|{node_id}|{transition}|{final_verdict}".encode("utf-8")
+    ).hexdigest()[:10]
+    filename = f"{node_id}__{category}__{suffix}.md"
+    fpath = cat_dir / filename
+
+    cleaned_response = _strip_tool_envelope_leak(response_to_grad_student or "").strip()
+    claim = (node.get("claim_contract", {}) or {}).get("claim_under_test", "")
+    tags = sorted(set((node.get("failure_retrieval", {}) or {}).get("query_tags", [])))
+    metrics_summary = ", ".join(
+        f"{k}={round(v, 4) if isinstance(v, (int, float)) else v}"
+        for k, v in (worker_report.get("metrics") or {}).items()
+        if not str(k).startswith("_")
+    )
+    body = (
+        "---\n"
+        f"node_id: {node_id}\n"
+        f"thread_id: {tid}\n"
+        f"category: {category}\n"
+        f"transition: {transition}\n"
+        f"final_verdict: {final_verdict}\n"
+        f"tags: {tags}\n"
+        "source: mcp_server\n"
+        "---\n\n"
+        f"# Failure: {node_id}\n\n"
+        f"**Claim under test:**\n> {claim}\n\n"
+        f"**Professor verdict ({transition}):** {final_verdict}\n\n"
+        f"**Headline metrics:** {metrics_summary or '(none recorded)'}\n\n"
+        f"**Lesson (from Professor's response):**\n\n{cleaned_response or '(no natural-language reply recorded)'}\n"
+    )
+    fpath.write_text(body, encoding="utf-8")
+
+    # Update index.yaml — add this file under the appropriate category if
+    # not already listed. The index drives retrieve_failure_summaries.
+    index_path = failures_root / "index.yaml"
+    index = yaml.safe_load(index_path.read_text(encoding="utf-8")) if index_path.exists() else {"categories": {}}
+    categories = index.setdefault("categories", {})
+    cat_block = categories.setdefault(category, {"description": "", "files": []})
+    files = cat_block.setdefault("files", [])
+    rel_path = f"{category}/{filename}"
+    if rel_path not in files:
+        files.append(rel_path)
+    index_path.write_text(yaml.safe_dump(index, sort_keys=False), encoding="utf-8")
 
 
 def _strip_tool_envelope_leak(text: Any) -> str:
@@ -1030,17 +1221,25 @@ def handle_design_initial_claim_contract(
         "success_criteria": args["success_criteria"],
         "disproof_conditions": args["disproof_conditions"],
     }
+    persona_cfg = _persona_cfg(settings)
     result = validate_claim_contract(
         new_claim=new_claim,
         problem_statement=problem_statement,
         market_context=market_context,
-        config=_persona_cfg(settings),
+        config=persona_cfg,
     )
     if not result.ok:
         return {
             "status": "rejected",
             "reason": result.reject_message(),
         }
+    # Anti-laziness check: capability-metric claims need a decision rule.
+    rule_check = validate_decision_rule_for_capability_claim(
+        claim_contract=new_claim,
+        config=persona_cfg,
+    )
+    if not rule_check.ok:
+        return {"status": "rejected", "reason": rule_check.reject_message()}
     # Persist intake-to-claim hand-off.
     handoff_path = _thread_dir(tid) / "production" / "intake_to_claim_dialog.json"
     handoff_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1430,17 +1629,39 @@ def handle_revise_root_after_reject(
     problem_statement = (
         (grilling or {}).get("extracted", {}).get("claim_under_test") or ""
     )
-    from research_harness.orchestrator.llm_orchestrator.persona_validator import (
-        validate_claim_contract,
-    )
+    persona_cfg = _persona_cfg(settings)
     result = validate_claim_contract(
         new_claim=new_claim,
         problem_statement=problem_statement,
         market_context=market_context,
-        config=_persona_cfg(settings),
+        config=persona_cfg,
     )
     if not result.ok:
         return {"status": "rejected", "reason": result.reject_message()}
+    # Anti-laziness: forbid narrowing the success threshold without
+    # proportionally widening evidence breadth. Pull the old claim from
+    # intake_to_claim_dialog.json (still on disk before we archive it below).
+    old_handoff = _read_json(
+        _thread_dir(tid) / "production" / "intake_to_claim_dialog.json"
+    ) or {}
+    old_claim = old_handoff.get("new_contract")
+    if old_claim:
+        narrow_check = validate_revision_after_reject(
+            new_claim=new_claim,
+            old_claim=old_claim,
+            new_evidence_breadth=args.get("evidence_breadth"),
+            old_evidence_breadth=args.get("previous_evidence_breadth"),
+            config=persona_cfg,
+        )
+        if not narrow_check.ok:
+            return {"status": "rejected", "reason": narrow_check.reject_message()}
+    # Capability claims must include a decision rule.
+    rule_check = validate_decision_rule_for_capability_claim(
+        claim_contract=new_claim,
+        config=persona_cfg,
+    )
+    if not rule_check.ok:
+        return {"status": "rejected", "reason": rule_check.reject_message()}
     # Archive the rejected attempt and write the revised claim as a fresh
     # intake_to_claim handoff so the operator can re-run production from scratch.
     import time
@@ -1681,6 +1902,30 @@ def handle_submit_professor_decision(
             event="mcp_prune", reason="mcp accepted prune",
         )
 
+    # PR4: Failure memory auto-generation. When a node ends in a state the
+    # rest of the harness considers a learnable failure (pruned, with an
+    # informative final_verdict), write a one-page failure record so future
+    # threads can retrieve it. Categories follow the existing memory/failures/
+    # taxonomy.
+    final_verdict = args.get("final_verdict") or ""
+    if transition in {"pruned", "needs_child_branch"} and final_verdict:
+        try:
+            _write_failure_record(
+                tid=tid,
+                node_id=node_id,
+                final_verdict=final_verdict,
+                transition=transition,
+                response_to_grad_student=args.get("response_to_grad_student") or "",
+                node=node,
+                worker_report=_read_json(
+                    _thread_dir(tid) / "production" / "tree" / "nodes" / node_id / "worker_report.json"
+                ) or {},
+            )
+        except Exception:  # noqa: BLE001
+            # Non-fatal — failure memory is a secondary benefit, not a
+            # blocker for the primary search state mutation.
+            pass
+
     state["status"] = (
         "completed"
         if not any(it["status"] == "queued" for it in state["frontier"])
@@ -1844,6 +2089,43 @@ def handle_prepare_rebuttal_packet(args: dict[str, Any]) -> dict[str, Any]:
         or ""
     )
 
+    # PR4: inject relevant prior-thread failures + active lessons so the
+    # rebuttal critics start with the harness's cumulative memory, not a
+    # cold start. retrieve_failure_summaries is safe — empty list when no
+    # tags match.
+    prior_failures: list[dict[str, Any]] = []
+    try:
+        from research_harness.memory.failure_retrieval import (
+            retrieve_failure_summaries,
+        )
+        tags = (node.get("failure_retrieval", {}) or {}).get("query_tags", [])
+        summaries = retrieve_failure_summaries(
+            repo,
+            query_tags=tags,
+            selected_fail_files=[],
+            top_k=5,
+        )
+        prior_failures = [
+            {
+                "file": s.file,
+                "category": s.category,
+                "tags": s.tags,
+                "lesson": s.lesson,
+                "reason": s.reason,
+                "score": s.score,
+            }
+            for s in summaries
+        ]
+    except Exception:  # noqa: BLE001
+        prior_failures = []
+
+    active_lessons: list[dict[str, Any]] = []
+    try:
+        from research_harness.config import load_lessons
+        active_lessons = (load_lessons(repo) or {}).get("active_lessons", []) or []
+    except Exception:  # noqa: BLE001
+        active_lessons = []
+
     return {
         "status": "ok",
         "thread_id": tid,
@@ -1856,6 +2138,8 @@ def handle_prepare_rebuttal_packet(args: dict[str, Any]) -> dict[str, Any]:
         "node": node,
         "original_user_problem": original_user_problem,
         "reshaped_claim_under_test": reshaped_claim,
+        "prior_failures": prior_failures,
+        "active_lessons": active_lessons,
         "methodology_fit_reminder": (
             "When writing direct_methodology_for_user, judge fit to "
             "original_user_problem (not reshaped_claim_under_test). The "
@@ -1986,6 +2270,22 @@ def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
             "reason": "camera_ready_directives must be non-empty even on accept. "
                       "If the rebuttal truly added nothing, name the scope-sharpening it made explicit.",
         }
+    # Anti-laziness: at least one directive must demand a new measurement
+    # (not just paper-text disclaimers) when AC chooses revise. Accept can
+    # be all-disclaimer in principle but in practice the rebuttal usually
+    # surfaces something measurable.
+    if decision.get("decision") == "revise":
+        try:
+            from research_harness.config import load_settings as _ls
+            cfg = _persona_cfg(_ls(_repo_root()))
+        except (OSError, ValueError):
+            cfg = {}
+        dir_check = validate_camera_ready_directives(
+            directives=decision.get("camera_ready_directives") or [],
+            config=cfg,
+        )
+        if not dir_check.ok:
+            return {"status": "rejected", "reason": dir_check.reject_message()}
 
     (_rebuttal_dir(tid) / "ac_decision.json").write_text(
         json.dumps(decision, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
@@ -2067,6 +2367,16 @@ def handle_prepare_paper_writing_context(args: dict[str, Any]) -> dict[str, Any]
     metric_keys = sorted((worker_report.get("metrics") or {}).keys())
     baseline_keys = sorted((worker_report.get("baselines") or {}).keys())
 
+    # PR4: surface cumulative memory (prior failures + active lessons) so
+    # the paper writer can cite them in related work / limitations.
+    repo = _repo_root()
+    active_lessons: list[dict[str, Any]] = []
+    try:
+        from research_harness.config import load_lessons
+        active_lessons = (load_lessons(repo) or {}).get("active_lessons", []) or []
+    except Exception:  # noqa: BLE001
+        active_lessons = []
+
     return {
         "status": "ok",
         "thread_id": tid,
@@ -2078,6 +2388,7 @@ def handle_prepare_paper_writing_context(args: dict[str, Any]) -> dict[str, Any]
         "ac_decision": ac,
         "camera_ready_revision": revision,
         "mental_model_statement": revision.get("mental_model_statement"),
+        "active_lessons": active_lessons,
         "available_metric_keys": metric_keys,
         "available_baseline_keys": baseline_keys,
         "supported_figure_types": [
@@ -2207,10 +2518,301 @@ def handle_submit_paper_section(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def handle_submit_professor_user_goal_attestation(args: dict[str, Any]) -> dict[str, Any]:
+    """Professor's final attestation that the original intake problem is
+    addressable. Second half of the dual publication gate."""
+    from research_harness.schemas.validator import validate_named_schema
+
+    tid = args["thread_id"]
+    attestation = args["attestation"]
+    try:
+        validate_named_schema("user_goal_attestation", attestation)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
+
+    # Cross-check: achieved=true is inconsistent with empty paper writer
+    # state (Professor cannot attest goal achieved when no paper exists yet).
+    if attestation.get("achieved") and attestation.get("required_additional_research"):
+        return {
+            "status": "rejected",
+            "reason": "achieved=true but required_additional_research is non-empty. If research is still required, set achieved=false; the dual-gate will then route to honest-failure or follow-up flow.",
+        }
+    if not attestation.get("achieved") and not attestation.get("required_additional_research"):
+        return {
+            "status": "rejected",
+            "reason": "achieved=false requires required_additional_research to be non-empty. Name at least one concrete experiment that would flip the attestation to true.",
+        }
+
+    # Cross-check with AC: if AC ruled methodology_assessment.aggregate_verdict
+    # != 'provides', Professor cannot unilaterally attest goal achieved.
+    ac = _read_json(_rebuttal_dir(tid) / "ac_decision.json") or {}
+    methodology = (ac.get("rebuttal_synthesis") or {}).get("methodology_assessment", {}) or {}
+    if attestation.get("achieved") and methodology and methodology.get("aggregate_verdict") != "provides":
+        return {
+            "status": "rejected",
+            "reason": (
+                "AC's methodology_assessment.aggregate_verdict is "
+                f"{methodology.get('aggregate_verdict')!r}, not 'provides'. "
+                "Professor cannot attest user goal achieved over an AC-recognized "
+                "methodology gap. Either (a) flip achieved=false and list the "
+                "required_additional_research that closes the AC's remaining_gap, "
+                "or (b) go back to submit_ac_decision and revise the AC synthesis "
+                "if the gap was over-stated."
+            ),
+        }
+
+    out_path = _rebuttal_dir(tid) / "user_goal_attestation.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(attestation, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    if attestation.get("achieved"):
+        next_step = (
+            "Dual gate cleared: AC decision + user-goal attestation both pass. "
+            "Proceed to prepare_paper_writing_context / submit_paper_outline / "
+            "register_paper_figure / submit_paper_section / render_final_paper."
+        )
+    else:
+        next_step = (
+            "achieved=false. Two paths: (a) trigger the required_additional_"
+            "research experiments via the existing tree-search loop "
+            "(get_next_admissible_node → execute_node_experiment → "
+            "submit_professor_decision) and re-attest when evidence arrives; "
+            "(b) if the gap is structural and the direction is hopeless, call "
+            "propose_alternative_root_directions to fan out to N>=3 different "
+            "angles, OR call render_honest_failure_paper for the final exit."
+        )
+    return {"status": "ok", "achieved": attestation.get("achieved"), "next_step": next_step}
+
+
+def handle_propose_alternative_root_directions(args: dict[str, Any]) -> dict[str, Any]:
+    """Professor proposes N>=3 alternative root claim angles after AC
+    reject_and_diversify (or operator request). Replaces single-shot
+    revise_root_after_reject when the direction is structurally hopeless."""
+    from research_harness.schemas.validator import validate_named_schema
+
+    tid = args["thread_id"]
+    proposal = args["proposal"]
+    try:
+        validate_named_schema("alternative_root_proposal", proposal)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
+
+    # Diversification check: N>=3 alternatives across >=3 distinct angles.
+    alternatives = proposal["alternatives"]
+    angles = {a.get("angle") for a in alternatives}
+    if len(angles) < 3:
+        return {
+            "status": "rejected",
+            "reason": (
+                f"propose_alternative_root_directions requires >=3 DISTINCT "
+                f"angles, but you submitted only {len(angles)}: {sorted(angles)}. "
+                "Repeating the same angle with different wording is not "
+                "diversification — pick from at least 3 of "
+                "{operational_root, taste_root, mechanism_root, "
+                "inverted_validity_root, different_method_root, "
+                "boundary_first_root, necessity_root}."
+            ),
+        }
+
+    proposal_path = _thread_dir(tid) / "production" / "alternative_root_proposal.json"
+    proposal_path.parent.mkdir(parents=True, exist_ok=True)
+    proposal_path.write_text(
+        json.dumps(proposal, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    # Track cycle count to enforce termination later.
+    cycles_path = _thread_dir(tid) / "production" / "fanout_cycles.json"
+    cycles = _read_json(cycles_path) or {"count": 0, "history": []}
+    cycles["count"] = int(cycles.get("count", 0)) + 1
+    cycles["history"].append({"angle_set": sorted(angles)})
+    cycles_path.write_text(
+        json.dumps(cycles, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    return {
+        "status": "ok",
+        "alternatives_count": len(alternatives),
+        "distinct_angles": sorted(angles),
+        "cycle_count": cycles["count"],
+        "next_step": (
+            "Call select_alternative_root with selected_index in "
+            f"[0..{len(alternatives) - 1}] to pick one alternative; the "
+            "selected claim becomes the new root via the same archive-and-"
+            "rebuild path as revise_root_after_reject."
+        ),
+    }
+
+
+def handle_select_alternative_root(args: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    """Pick one of the N alternatives proposed earlier and bootstrap it as
+    the new root."""
+    tid = args["thread_id"]
+    idx = int(args["selected_index"])
+    proposal = _read_json(_thread_dir(tid) / "production" / "alternative_root_proposal.json")
+    if not proposal:
+        return {
+            "status": "rejected",
+            "reason": "propose_alternative_root_directions must run before select_alternative_root",
+        }
+    alternatives = proposal.get("alternatives") or []
+    if idx < 0 or idx >= len(alternatives):
+        return {"status": "rejected", "reason": f"selected_index {idx} out of range [0,{len(alternatives)})"}
+
+    chosen = alternatives[idx]
+    # Bootstrap as revise_root_after_reject with the chosen alternative's fields.
+    revise_args = {
+        "thread_id": tid,
+        "new_claim_under_test": chosen["claim_under_test"],
+        "mandatory_baselines": chosen["mandatory_baselines"],
+        "success_criteria": chosen["success_criteria"],
+        "disproof_conditions": chosen["disproof_conditions"],
+        "rationale": (
+            f"[Fan-out selected angle={chosen['angle']}] {chosen.get('rationale','')}\n\n"
+            f"Selection rationale: {args.get('selection_rationale','')}\n\n"
+            f"Why this angle: {chosen.get('why_this_angle','')}"
+        ),
+    }
+    return handle_revise_root_after_reject(revise_args, settings)
+
+
+def handle_render_honest_failure_paper(args: dict[str, Any]) -> dict[str, Any]:
+    """Honest-failure exit: when N alternative roots all failed or
+    user_goal_attestation.achieved=false with no path to flip it, produce
+    an honest-failure summary instead of a paper. The output is also an
+    HTML artifact but explicitly framed as 'we tried X/Y/Z; none worked
+    because A/B/C; here is what would change our answer'."""
+    tid = args["thread_id"]
+    repo = _repo_root()
+    pdir = _thread_dir(tid) / "production"
+    pdir.mkdir(parents=True, exist_ok=True)
+
+    # Gather all evidence the system has accumulated.
+    intake = _read_json(pdir / "intake_to_claim_dialog.json") or {}
+    user_problem = intake.get("original_contract", {}).get("claim_under_test", "")
+    attestation = _read_json(_rebuttal_dir(tid) / "user_goal_attestation.json") or {}
+    fanout = _read_json(pdir / "fanout_cycles.json") or {}
+    proposal = _read_json(pdir / "alternative_root_proposal.json") or {}
+    archived_attempts = sorted(
+        p.name for p in _thread_dir(tid).glob("production.attempt_*") if p.is_dir()
+    )
+
+    import html as _h
+    pub_dir = pdir / "publication"
+    pub_dir.mkdir(parents=True, exist_ok=True)
+    out_path = pub_dir / "honest_failure.html"
+    body_html = (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        f"<title>Honest Failure — {_h.escape(tid)}</title>"
+        "<style>body{font-family:Georgia,serif;max-width:900px;margin:2em auto;padding:0 2em;line-height:1.55;}"
+        "h1{color:#c25450;}h2{border-bottom:1px solid #ccc;padding-bottom:4px;}"
+        ".callout{background:#fbeeee;border-left:3px solid #c25450;padding:10px 14px;margin:1em 0;}"
+        "code{background:#f4f4f4;padding:1px 4px;}"
+        "</style></head><body>"
+        "<h1>Honest Failure Report</h1>"
+        f"<p><strong>Thread:</strong> <code>{_h.escape(tid)}</code></p>"
+        "<div class='callout'>"
+        "This thread did not produce a deployable result. Rather than publish a "
+        "weak paper to hide that, the harness terminates with this honest "
+        "failure report. The user's original problem, every attempt that was "
+        "made, and what would change the answer are below."
+        "</div>"
+        f"<h2>Original user intake</h2><p>{_h.escape(user_problem)}</p>"
+        f"<h2>Final Professor attestation</h2>"
+        f"<p>achieved = <strong>{attestation.get('achieved')}</strong></p>"
+        f"<p>{_h.escape(attestation.get('what_user_can_do_with_this_paper',''))}</p>"
+        f"<h2>What would change our answer</h2>"
+        + "<ul>"
+        + "".join(
+            f"<li><code>{_h.escape(r.get('axis',''))}</code>: "
+            f"{_h.escape(r.get('experiment',''))} "
+            f"<em>({_h.escape(r.get('rationale',''))})</em></li>"
+            for r in (attestation.get("required_additional_research") or [])
+        )
+        + "</ul>"
+        f"<h2>Diversification attempts</h2>"
+        f"<p>Fan-out cycles: {fanout.get('count', 0)}</p>"
+        f"<p>Archived production attempts: {len(archived_attempts)}</p>"
+        + "<ul>"
+        + "".join(f"<li><code>{_h.escape(a)}</code></li>" for a in archived_attempts)
+        + "</ul>"
+        f"<h2>Last alternative root slate</h2>"
+        + "<ol>"
+        + "".join(
+            f"<li><strong>{_h.escape(a.get('angle',''))}</strong>: "
+            f"{_h.escape(a.get('claim_under_test',''))[:240]}</li>"
+            for a in (proposal.get("alternatives") or [])
+        )
+        + "</ol>"
+        "</body></html>"
+    )
+    out_path.write_text(body_html, encoding="utf-8")
+
+    summary = {
+        "type": "production_run_summary",
+        "outcome": "honest_failure",
+        "thread_id": tid,
+        "user_intake": user_problem,
+        "attestation": attestation,
+        "fanout_cycles": fanout.get("count", 0),
+        "archived_attempts": archived_attempts,
+        "publication_dispatch": {
+            "decision": "honest_failure",
+            "rendered_artifacts": [
+                {"output": "honest_failure_html", "artifact_path": str(out_path)}
+            ],
+        },
+    }
+    (pdir / "production_run_summary.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return {"status": "ok", "outcome": "honest_failure", "artifact_path": str(out_path)}
+
+
 def handle_render_final_paper(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.publishing.sakana_paper import render_sakana_paper, SakanaPaperError
 
     tid = args["thread_id"]
+    # DUAL GATE: both AC accept/revise AND user_goal_attestation.achieved=true
+    # must hold before paper render is allowed. Either gate alone is insufficient.
+    ac_pre = _read_json(_rebuttal_dir(tid) / "ac_decision.json") or {}
+    ac_decision_val = ac_pre.get("decision")
+    if ac_decision_val not in {"accept", "revise", "revise_with_new_measurements"}:
+        return {
+            "status": "rejected",
+            "reason": (
+                f"DUAL GATE blocked: AC decision is {ac_decision_val!r} — "
+                "paper render requires AC ∈ {accept, revise, revise_with_new_measurements}. "
+                "Call propose_alternative_root_directions if reject_and_diversify, "
+                "or revise_root_after_reject if reject."
+            ),
+        }
+    attestation = _read_json(_rebuttal_dir(tid) / "user_goal_attestation.json") or {}
+    if not attestation:
+        return {
+            "status": "rejected",
+            "reason": (
+                "DUAL GATE blocked: user_goal_attestation missing. "
+                "Call submit_professor_user_goal_attestation before render_final_paper. "
+                "AC accept is necessary but not sufficient — the Professor must also "
+                "attest the original user intake problem is addressable with this paper."
+            ),
+        }
+    if not attestation.get("achieved"):
+        return {
+            "status": "rejected",
+            "reason": (
+                "DUAL GATE blocked: user_goal_attestation.achieved=false. "
+                "Either (a) run the required_additional_research experiments and "
+                "re-attest with achieved=true, (b) fan out via "
+                "propose_alternative_root_directions, or (c) accept the honest-"
+                "failure exit via render_honest_failure_paper."
+            ),
+        }
     paper_dir = _paper_dir(tid)
     outline = _read_json(paper_dir / "outline.json")
     if not outline:
@@ -2278,6 +2880,39 @@ def handle_render_final_paper(args: dict[str, Any]) -> dict[str, Any]:
         json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+    # PR4: lesson harvest. Aggregate lesson_candidates from every rebuttal
+    # critic + the orchestrator reduction's accepted_lesson_candidates into
+    # a pending_lessons.yaml under the thread root. The operator approves
+    # them out-of-band via the existing lesson_distillation gate; we never
+    # mutate the canonical lessons.yaml from inside an MCP call.
+    try:
+        import yaml as _yaml
+        pending: list[dict[str, Any]] = []
+        for r in reviews:
+            for lc in (r.get("lesson_candidates") or []):
+                pending.append({
+                    "text": lc,
+                    "source_critic": r.get("critic_id"),
+                    "source_thread": tid,
+                    "source_node": ctx["promoted_id"],
+                })
+        for lc in (reduction.get("accepted_lesson_candidates") or []):
+            pending.append({
+                "text": lc,
+                "source_critic": "orchestrator_reduction",
+                "source_thread": tid,
+                "source_node": ctx["promoted_id"],
+            })
+        if pending:
+            pl_path = _thread_dir(tid) / "production" / "pending_lessons.yaml"
+            pl_path.write_text(
+                _yaml.safe_dump({"candidates": pending}, sort_keys=False),
+                encoding="utf-8",
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
     return {"status": "ok", "publication_dispatch": outputs, "summary_path": str(_thread_dir(tid) / "production" / "production_run_summary.json")}
 
 
@@ -2349,6 +2984,14 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_register_paper_figure(args)
             elif name == "submit_paper_section":
                 result = handle_submit_paper_section(args)
+            elif name == "submit_professor_user_goal_attestation":
+                result = handle_submit_professor_user_goal_attestation(args)
+            elif name == "propose_alternative_root_directions":
+                result = handle_propose_alternative_root_directions(args)
+            elif name == "select_alternative_root":
+                result = handle_select_alternative_root(args, settings)
+            elif name == "render_honest_failure_paper":
+                result = handle_render_honest_failure_paper(args)
             elif name == "render_final_paper":
                 result = handle_render_final_paper(args)
             else:

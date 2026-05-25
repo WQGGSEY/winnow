@@ -357,6 +357,352 @@ def validate_grad_student_review(
     return ValidationResult(ok=not violations, violations=violations)
 
 
+# --- Anti-laziness deterministic rules (P0c) ----------------------------- #
+
+
+_CAPABILITY_METRIC_MARKERS = re.compile(
+    r"\b(?:AUC|AUROC|F1|F-?score|accuracy|precision|recall|MAP|nDCG|ROC|MRR|BLEU)\b",
+    re.IGNORECASE,
+)
+
+_DECISION_RULE_MARKERS = re.compile(
+    # A claim that names a decision rule mentions a threshold-or-action language.
+    # We accept several common shapes: "threshold T", "decision rule", "deploy when",
+    # "reject if", "false-positive cost", "expected utility", "false-positive rate ≤",
+    # "false-negative rate ≤", "Bayes-optimal", "decision-theoretic", "cost-weighted".
+    r"\b(?:decision[\s_-]?rule|threshold|deploy[\s_-]?when|reject[\s_-]?if|"
+    r"accept[\s_-]?if|false[\s_-]?positive[\s_-]?cost|false[\s_-]?negative[\s_-]?cost|"
+    r"FP[\s_-]?cost|FN[\s_-]?cost|expected[\s_-]?utility|cost[\s_-]?weighted|"
+    r"bayes[\s_-]?optimal|decision[\s_-]?theoretic|operating[\s_-]?point)\b",
+    re.IGNORECASE,
+)
+
+
+def _measurement_threshold_value(success_criteria: list[str]) -> float | None:
+    """Extract the strongest numeric threshold from a list of success_criteria.
+
+    Returns the largest matched number (which we treat as the headline
+    threshold). None if no numeric threshold found.
+    """
+    best: float | None = None
+    for s in success_criteria or []:
+        for m in re.finditer(r"(\d+(?:\.\d+)?)\s*(?:%|percent)?", str(s)):
+            try:
+                v = float(m.group(1))
+            except ValueError:
+                continue
+            # Heuristic: treat percentages as the unscaled fraction-like number.
+            # We just want a comparable scalar across attempts.
+            if best is None or v > best:
+                best = v
+    return best
+
+
+def validate_revision_after_reject(
+    *,
+    new_claim: dict[str, Any],
+    old_claim: dict[str, Any] | None,
+    new_evidence_breadth: int | None = None,
+    old_evidence_breadth: int | None = None,
+    config: dict[str, Any] | None = None,
+) -> ValidationResult:
+    """Persona check on a Professor's revised claim after AC reject.
+
+    Catches the "lazy narrowing" drift: weaken success threshold without
+    proportionally widening evidence breadth, so the new (weaker) claim
+    passes on the same thin evidence the old (stronger) claim failed on.
+    """
+    cfg = config or {}
+    violations: list[PersonaViolation] = []
+    if not cfg.get("reject_claim_narrowing_without_breadth_compensation", True):
+        return ValidationResult(ok=True, violations=[])
+    if not old_claim:
+        return ValidationResult(ok=True, violations=[])
+
+    new_thr = _measurement_threshold_value(new_claim.get("success_criteria") or [])
+    old_thr = _measurement_threshold_value(old_claim.get("success_criteria") or [])
+    # If we cannot extract comparable thresholds, skip — caller should also
+    # enforce that capability-claim success_criteria contain at least one
+    # numeric via reject_missing_measurable_success.
+    if new_thr is None or old_thr is None:
+        return ValidationResult(ok=True, violations=[])
+
+    narrowed = new_thr < old_thr * 0.95  # tolerance for re-stated equivalents
+    if not narrowed:
+        return ValidationResult(ok=True, violations=[])
+
+    # Evidence breadth must grow proportionally. If the caller didn't supply
+    # breadth numbers, we still flag the narrowing for review — the LLM must
+    # justify it.
+    breadth_multiplier_required = float(
+        cfg.get("claim_narrowing_breadth_multiplier", 2.0)
+    )
+    if (
+        new_evidence_breadth is not None
+        and old_evidence_breadth not in (None, 0)
+        and new_evidence_breadth >= old_evidence_breadth * breadth_multiplier_required
+    ):
+        # Narrowing compensated by widening — accept.
+        return ValidationResult(ok=True, violations=[])
+
+    violations.append(
+        PersonaViolation(
+            rule="claim_narrowing_without_breadth_compensation",
+            message=(
+                f"Your revised claim weakens the success threshold "
+                f"(old≈{old_thr:g} → new≈{new_thr:g}) but does not compensate "
+                f"with proportionally more evidence breadth (≥{breadth_multiplier_required:g}x "
+                f"the previous attempt's test cells × seeds × n_alphas × K). "
+                f"This is the 'narrow the claim to pass on the same thin "
+                f"evidence' anti-pattern."
+            ),
+            suggested_fix=(
+                "Either (a) keep the same threshold and add evidence breadth "
+                "(more SNR points, more seeds, more alphas per class), OR "
+                "(b) if narrowing is genuinely correct, widen evidence by "
+                f">={breadth_multiplier_required:g}x so the weaker claim is "
+                "actually proved more robustly than the stronger one was disproved."
+            ),
+        )
+    )
+    return ValidationResult(ok=not violations, violations=violations)
+
+
+def validate_baseline_provenance(
+    *,
+    baseline_refs: list[dict[str, Any]],
+    market_dossier: dict[str, Any] | None,
+    config: dict[str, Any] | None = None,
+) -> ValidationResult:
+    """Persona check that current_best_known baselines have real paper
+    provenance, not self-made competitors.
+
+    Catches the "AlgoXpert" anti-pattern: invent a baseline, beat it,
+    claim progress. current_best_known must trace back to a market-
+    research-discovered candidate whose dossier entry carries a paper
+    citation / arXiv id / repo link.
+    """
+    cfg = config or {}
+    violations: list[PersonaViolation] = []
+    if not cfg.get("reject_self_made_baseline", True):
+        return ValidationResult(ok=True, violations=[])
+    if not market_dossier:
+        return ValidationResult(ok=True, violations=[])
+
+    candidates = {c.get("id"): c for c in (market_dossier.get("candidates_index") or [])}
+    for ref in baseline_refs or []:
+        roles = set(ref.get("roles") or [])
+        if "current_best_known" not in roles:
+            continue
+        cand_ids = ref.get("candidates") or []
+        ok_provenance = False
+        for cid in cand_ids:
+            cand = candidates.get(cid)
+            if not cand:
+                continue
+            provenance = (
+                cand.get("paper_citation")
+                or cand.get("arxiv_id")
+                or cand.get("doi")
+                or cand.get("repo_url")
+                or cand.get("filename")
+            )
+            if provenance and str(provenance).strip():
+                ok_provenance = True
+                break
+        if not ok_provenance:
+            violations.append(
+                PersonaViolation(
+                    rule="self_made_baseline",
+                    message=(
+                        f"baseline_ref dossier={ref.get('baseline_dossier_id')} "
+                        f"carries the 'current_best_known' role but no candidate "
+                        f"in its set has paper_citation / arxiv_id / doi / "
+                        f"repo_url / filename provenance. Self-made baselines "
+                        f"(invented for this thread) cannot satisfy "
+                        f"current_best_known — the role exists specifically to "
+                        f"force comparison against published prior work."
+                    ),
+                    suggested_fix=(
+                        "Re-open the market_research dossier and pick a "
+                        "candidate whose paper / arxiv / repo is downloaded "
+                        "into reference_papers/. Use THAT as current_best_known. "
+                        "Move the self-made comparator to a different role "
+                        "(naive or random_or_null) or drop it."
+                    ),
+                )
+            )
+            break
+    return ValidationResult(ok=not violations, violations=violations)
+
+
+def validate_synthetic_data_bridging(
+    *,
+    dataset_manifest: dict[str, Any] | None,
+    config: dict[str, Any] | None = None,
+) -> ValidationResult:
+    """Persona check that synthetic data sources carry an explicit
+    synthetic-to-real bridging argument.
+
+    Catches the "synthetic-only forever" anti-pattern: prove a claim on
+    a toy generator and call it deployable. If the dataset_manifest
+    declares synthetic data, it must explain how the synthetic regime
+    constrains conclusions about the user's real environment.
+    """
+    cfg = config or {}
+    violations: list[PersonaViolation] = []
+    if not cfg.get("reject_synthetic_only_without_bridging", True):
+        return ValidationResult(ok=True, violations=[])
+    if not dataset_manifest:
+        return ValidationResult(ok=True, violations=[])
+
+    source = (
+        dataset_manifest.get("data_source")
+        or dataset_manifest.get("source")
+        or ""
+    )
+    if "synthetic" not in str(source).lower():
+        return ValidationResult(ok=True, violations=[])
+
+    bridging = (
+        dataset_manifest.get("synthetic_to_real_bridging_argument")
+        or dataset_manifest.get("bridging_argument")
+        or ""
+    )
+    if len(str(bridging).strip()) >= 80:
+        return ValidationResult(ok=True, violations=[])
+
+    violations.append(
+        PersonaViolation(
+            rule="synthetic_data_without_bridging",
+            message=(
+                "dataset_manifest declares a synthetic data source but the "
+                "synthetic_to_real_bridging_argument field is missing or too "
+                "short (<80 chars). Synthetic results cannot generalize to the "
+                "user's real environment without an explicit bridging argument "
+                "spelling out which structural properties (SNR range, asset "
+                "count, time horizon, generator class) the synthetic regime "
+                "shares with the user's real data, and which it does not."
+            ),
+            suggested_fix=(
+                "Add a synthetic_to_real_bridging_argument string of >=80 "
+                "chars naming: (1) which features of the user's real data "
+                "the synthetic generator reproduces (cite an estimate of "
+                "real-data SNR / regime from the market dossier or external "
+                "source), (2) which features it does NOT (caveat), and "
+                "(3) what conclusion is supported in the synthetic regime "
+                "vs what would require real-data validation."
+            ),
+        )
+    )
+    return ValidationResult(ok=not violations, violations=violations)
+
+
+def validate_camera_ready_directives(
+    *,
+    directives: list[dict[str, Any]],
+    config: dict[str, Any] | None = None,
+) -> ValidationResult:
+    """Persona check that AC camera-ready directives include at least one
+    new-measurement requirement, not just paper-text disclaimers.
+
+    Catches the "AC waves through with disclaimer-only directives" anti-
+    pattern: under-measured papers passed publish-revise because every
+    directive was 'add a sentence to the abstract' rather than 'do the
+    SNR sweep before camera-ready'.
+    """
+    cfg = config or {}
+    violations: list[PersonaViolation] = []
+    if not cfg.get("reject_disclaimer_only_directives", True):
+        return ValidationResult(ok=True, violations=[])
+    if not directives:
+        return ValidationResult(ok=True, violations=[])
+
+    if any(bool(d.get("requires_new_measurement")) for d in directives):
+        return ValidationResult(ok=True, violations=[])
+
+    violations.append(
+        PersonaViolation(
+            rule="disclaimer_only_directives",
+            message=(
+                "All your camera_ready_directives are paper-text additions "
+                "(disclaimer, abstract sentence, limitations note). At least "
+                "one directive must set requires_new_measurement=true and "
+                "demand an additional experiment / measurement before camera-"
+                "ready, otherwise rebuttal-surfaced concerns get buried as "
+                "limitations rather than addressed."
+            ),
+            suggested_fix=(
+                "Either (a) downgrade your AC decision from 'revise' to "
+                "'reject_and_diversify' so the system fan-outs to alternate "
+                "root angles, OR (b) add a directive with requires_new_"
+                "measurement=true naming the specific experiment (e.g. SNR "
+                "sweep over [X, Y, Z] at n=N seeds=K) that must precede "
+                "camera-ready."
+            ),
+        )
+    )
+    return ValidationResult(ok=not violations, violations=violations)
+
+
+def validate_decision_rule_for_capability_claim(
+    *,
+    claim_contract: dict[str, Any],
+    config: dict[str, Any] | None = None,
+) -> ValidationResult:
+    """Persona check that capability claims (AUC / F1 / etc.) include a
+    deployable decision rule, not just a ranking metric headline.
+
+    Catches the "AUC headline only" anti-pattern: ranking metrics tell
+    the user nothing about which threshold to deploy at, what FP/FN costs
+    are, or how to act tomorrow. A real deployable claim includes a
+    decision rule or operating-point statement.
+    """
+    cfg = config or {}
+    violations: list[PersonaViolation] = []
+    if not cfg.get("reject_decision_rule_missing_claim", True):
+        return ValidationResult(ok=True, violations=[])
+
+    claim_text = str(claim_contract.get("claim_under_test") or "")
+    success = " ".join(str(s) for s in (claim_contract.get("success_criteria") or []))
+    full_text = claim_text + " " + success
+
+    # Only fire when the claim explicitly leans on a capability metric.
+    if not _CAPABILITY_METRIC_MARKERS.search(full_text):
+        return ValidationResult(ok=True, violations=[])
+
+    has_decision_rule = bool(
+        claim_contract.get("decision_rule")
+    ) or bool(_DECISION_RULE_MARKERS.search(full_text))
+
+    if has_decision_rule:
+        return ValidationResult(ok=True, violations=[])
+
+    violations.append(
+        PersonaViolation(
+            rule="capability_claim_without_decision_rule",
+            message=(
+                "Your claim_under_test leans on a ranking / capability metric "
+                "(AUC, F1, accuracy, etc.) but does not specify a decision "
+                "rule. A ranking metric alone tells the user 'which method "
+                "ranks better' but not 'which threshold to deploy at, what "
+                "false-positive / false-negative costs to expect, or how to "
+                "act on a single new sample tomorrow'. Without that, even a "
+                "perfect AUC=1.0 result is not deployable."
+            ),
+            suggested_fix=(
+                "Add a claim_contract.decision_rule field (or include "
+                "decision-rule language in the claim text itself): name the "
+                "operating point (e.g. 'deploy if PSC score >= threshold T "
+                "where T is calibrated to false-positive rate <= 0.05 on the "
+                "training universe'), and state the FP/FN cost framing the "
+                "user should expect."
+            ),
+        )
+    )
+    return ValidationResult(ok=not violations, violations=violations)
+
+
 def validate_follow_up_strength(
     *,
     parent_claim: str,

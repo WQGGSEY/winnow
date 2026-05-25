@@ -107,6 +107,10 @@
           "type": "array",
           "items": { "type": "string" },
           "minItems": 1
+        },
+        "decision_rule": {
+          "type": "string",
+          "description": "Optional but strongly recommended for capability-metric claims (AUC, F1, etc.). Names the operating-point threshold, FP/FN cost framing, and deploy-when rule the user can apply tomorrow. The validate_decision_rule_for_capability_claim rule enforces this when the claim text mentions a ranking metric."
         }
       },
       "additionalProperties": false

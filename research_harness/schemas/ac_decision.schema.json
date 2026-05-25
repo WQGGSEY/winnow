@@ -15,7 +15,17 @@
     "rebuttal_synthesis"
   ],
   "properties": {
-    "decision": { "type": "string", "enum": ["accept", "revise", "reject"] },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "accept",
+        "revise",
+        "reject",
+        "revise_with_new_measurements",
+        "reject_and_diversify"
+      ],
+      "description": "accept = camera-ready ready; revise = paper-text revision; reject = root claim must be replaced via revise_root_after_reject (single-shot); revise_with_new_measurements = measurement-blocking directives must be addressed before camera-ready; reject_and_diversify = current direction hopeless, system must fan out to N>=3 alternative root angles via propose_alternative_root_directions."
+    },
     "confidence": { "type": "string", "enum": ["low", "medium", "high"] },
     "score_summary": {
       "type": "object",

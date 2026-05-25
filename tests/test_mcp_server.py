@@ -126,7 +126,17 @@ class MCPServerTests(unittest.TestCase):
             "register_paper_figure",
             "render_final_paper",
         }
-        self.assertEqual(baseline_expected | practitioner_expected, names)
+        # Phase F additions: dual-gate + fan-out + honest-failure exit.
+        dual_gate_expected = {
+            "submit_professor_user_goal_attestation",
+            "propose_alternative_root_directions",
+            "select_alternative_root",
+            "render_honest_failure_paper",
+        }
+        self.assertEqual(
+            baseline_expected | practitioner_expected | dual_gate_expected,
+            names,
+        )
 
     def test_selector_returns_resume_for_midstate_node(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

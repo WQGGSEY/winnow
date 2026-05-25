@@ -43,6 +43,8 @@ SCHEMA_FILES = {
     "paper_outline": "paper_outline.schema.json",
     "paper_section": "paper_section.schema.json",
     "paper_figure_request": "paper_figure_request.schema.json",
+    "user_goal_attestation": "user_goal_attestation.schema.json",
+    "alternative_root_proposal": "alternative_root_proposal.schema.json",
 }
 
 

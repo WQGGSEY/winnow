@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/user_goal_attestation.schema.json",
+  "title": "UserGoalAttestation",
+  "description": "Professor's final attestation that the ORIGINAL user intake problem (not the reshaped academic claim) is now addressable with the evidence produced. Required as the second half of the dual publication gate alongside AC accept.",
+  "type": "object",
+  "required": [
+    "thread_id",
+    "promoted_node_id",
+    "user_intake_recap",
+    "achieved",
+    "what_user_can_do_with_this_paper",
+    "evidence_anchors_back_to_intake",
+    "required_additional_research"
+  ],
+  "properties": {
+    "thread_id": { "type": "string" },
+    "promoted_node_id": { "type": "string" },
+    "user_intake_recap": {
+      "type": "string",
+      "minLength": 40,
+      "description": "Professor recaps the user's ORIGINAL intake problem in their own words. Must reference deployment / decision context, not just the reshaped claim."
+    },
+    "achieved": {
+      "type": "boolean",
+      "description": "TRUE only when a practitioner reading the final paper could take it back to the user's desk and act on it tomorrow. FALSE if the user is still stuck even though some narrower academic claim was proved."
+    },
+    "what_user_can_do_with_this_paper": {
+      "type": "string",
+      "minLength": 80,
+      "description": "Concrete procedure / decision rule / code path / threshold the user can apply. If achieved=false, this MUST honestly state what is still missing."
+    },
+    "evidence_anchors_back_to_intake": {
+      "type": "array",
+      "minItems": 2,
+      "items": { "type": "string", "minLength": 6 },
+      "description": "At least two specific evidence anchors that bridge the paper's measurements to the user's intake problem. Single-anchor attestation is too thin to count as user-goal achievement."
+    },
+    "required_additional_research": {
+      "type": "array",
+      "description": "If achieved=false, must list >=1 concrete experiments needed to close the gap. If achieved=true, can be empty.",
+      "items": {
+        "type": "object",
+        "required": ["axis", "experiment", "rationale"],
+        "properties": {
+          "axis": {
+            "type": "string",
+            "enum": ["validity", "capability", "mechanism", "necessity", "boundary", "constraint", "operational", "taste"]
+          },
+          "experiment": { "type": "string", "minLength": 20 },
+          "rationale": { "type": "string", "minLength": 20 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "synthetic_to_real_caveat": {
+      "type": "string",
+      "description": "Optional but recommended. If the evidence is synthetic-only, explicitly state how it constrains conclusions about the user's real environment."
+    }
+  },
+  "additionalProperties": false
+}

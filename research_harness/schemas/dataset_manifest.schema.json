@@ -9,6 +9,14 @@
     "type": { "type": "string", "enum": ["dataset_manifest"] },
     "created_at": { "type": "string", "minLength": 1 },
     "source_plan_id": { "type": "string", "minLength": 1 },
+    "data_source": {
+      "type": "string",
+      "description": "Optional. Set to 'synthetic' when datasets are generated rather than collected. The validate_synthetic_data_bridging rule then requires synthetic_to_real_bridging_argument."
+    },
+    "synthetic_to_real_bridging_argument": {
+      "type": "string",
+      "description": "Required when data_source = 'synthetic'. Explains which structural properties of the user's real data the synthetic regime reproduces, which it does not, and what conclusion is supported in the synthetic regime vs what would need real-data validation."
+    },
     "datasets": {
       "type": "object",
       "additionalProperties": {

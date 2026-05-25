@@ -231,5 +231,180 @@ class FollowUpStrengthTests(unittest.TestCase):
         self.assertIn("follow_ups_all_weaken", [v.rule for v in r.violations])
 
 
+class AntiLazinessRevisionTests(unittest.TestCase):
+    def test_narrowing_threshold_without_breadth_compensation_rejected(self):
+        from research_harness.orchestrator.llm_orchestrator.persona_validator import (
+            validate_revision_after_reject,
+        )
+        old = {"success_criteria": ["AUC >= 0.80 on held-out set"]}
+        new = {"success_criteria": ["AUC >= 0.65 on held-out set"]}
+        r = validate_revision_after_reject(
+            new_claim=new, old_claim=old,
+            new_evidence_breadth=10, old_evidence_breadth=10,
+        )
+        self.assertFalse(r.ok)
+        self.assertIn(
+            "claim_narrowing_without_breadth_compensation",
+            [v.rule for v in r.violations],
+        )
+
+    def test_narrowing_with_2x_breadth_compensation_passes(self):
+        from research_harness.orchestrator.llm_orchestrator.persona_validator import (
+            validate_revision_after_reject,
+        )
+        old = {"success_criteria": ["AUC >= 0.80"]}
+        new = {"success_criteria": ["AUC >= 0.65"]}
+        r = validate_revision_after_reject(
+            new_claim=new, old_claim=old,
+            new_evidence_breadth=25, old_evidence_breadth=10,
+        )
+        self.assertTrue(r.ok, r.reject_message())
+
+    def test_keeping_threshold_passes(self):
+        from research_harness.orchestrator.llm_orchestrator.persona_validator import (
+            validate_revision_after_reject,
+        )
+        old = {"success_criteria": ["AUC >= 0.80"]}
+        new = {"success_criteria": ["AUC >= 0.80 with stronger CI"]}
+        r = validate_revision_after_reject(
+            new_claim=new, old_claim=old,
+            new_evidence_breadth=10, old_evidence_breadth=10,
+        )
+        self.assertTrue(r.ok, r.reject_message())
+
+
+class AntiLazinessBaselineProvenanceTests(unittest.TestCase):
+    def test_self_made_baseline_rejected(self):
+        from research_harness.orchestrator.llm_orchestrator.persona_validator import (
+            validate_baseline_provenance,
+        )
+        baseline_refs = [
+            {"baseline_dossier_id": "bd_x", "roles": ["current_best_known"],
+             "candidates": ["c_made_up"]}
+        ]
+        dossier = {"candidates_index": [{"id": "c_made_up", "label": "self-defined"}]}
+        r = validate_baseline_provenance(baseline_refs=baseline_refs, market_dossier=dossier)
+        self.assertFalse(r.ok)
+        self.assertIn("self_made_baseline", [v.rule for v in r.violations])
+
+    def test_paper_cited_baseline_passes(self):
+        from research_harness.orchestrator.llm_orchestrator.persona_validator import (
+            validate_baseline_provenance,
+        )
+        baseline_refs = [
+            {"baseline_dossier_id": "bd_x", "roles": ["current_best_known"],
+             "candidates": ["c_real"]}
+        ]
+        dossier = {"candidates_index": [
+            {"id": "c_real", "label": "Smith 2024", "arxiv_id": "2401.12345"}
+        ]}
+        r = validate_baseline_provenance(baseline_refs=baseline_refs, market_dossier=dossier)
+        self.assertTrue(r.ok, r.reject_message())
+
+
+class AntiLazinessSyntheticBridgingTests(unittest.TestCase):
+    def test_synthetic_without_bridging_rejected(self):
+        from research_harness.orchestrator.llm_orchestrator.persona_validator import (
+            validate_synthetic_data_bridging,
+        )
+        r = validate_synthetic_data_bridging(dataset_manifest={"data_source": "synthetic"})
+        self.assertFalse(r.ok)
+        self.assertIn(
+            "synthetic_data_without_bridging", [v.rule for v in r.violations]
+        )
+
+    def test_synthetic_with_bridging_passes(self):
+        from research_harness.orchestrator.llm_orchestrator.persona_validator import (
+            validate_synthetic_data_bridging,
+        )
+        manifest = {
+            "data_source": "synthetic",
+            "synthetic_to_real_bridging_argument": (
+                "MLP-(16,8) generator over N=30 assets, T=252 days. Real WorldQuant "
+                "SNR estimated 0.05-0.15 (Lopez de Prado 2018 ch.11); span covers that. "
+                "Real validation still required for deploy."
+            ),
+        }
+        r = validate_synthetic_data_bridging(dataset_manifest=manifest)
+        self.assertTrue(r.ok, r.reject_message())
+
+    def test_real_data_skips_check(self):
+        from research_harness.orchestrator.llm_orchestrator.persona_validator import (
+            validate_synthetic_data_bridging,
+        )
+        r = validate_synthetic_data_bridging(
+            dataset_manifest={"data_source": "real_panel.parquet"}
+        )
+        self.assertTrue(r.ok, r.reject_message())
+
+
+class AntiLazinessDirectivesTests(unittest.TestCase):
+    def test_disclaimer_only_directives_rejected(self):
+        from research_harness.orchestrator.llm_orchestrator.persona_validator import (
+            validate_camera_ready_directives,
+        )
+        directives = [
+            {"directive": "Add disclaimer.", "requires_new_measurement": False},
+            {"directive": "Note seed.", "requires_new_measurement": False},
+        ]
+        r = validate_camera_ready_directives(directives=directives)
+        self.assertFalse(r.ok)
+        self.assertIn("disclaimer_only_directives", [v.rule for v in r.violations])
+
+    def test_at_least_one_measurement_directive_passes(self):
+        from research_harness.orchestrator.llm_orchestrator.persona_validator import (
+            validate_camera_ready_directives,
+        )
+        directives = [
+            {"directive": "Add disclaimer.", "requires_new_measurement": False},
+            {"directive": "Run SNR sweep [0.05, 0.15, 0.30] n=50 seeds=3.",
+             "requires_new_measurement": True},
+        ]
+        r = validate_camera_ready_directives(directives=directives)
+        self.assertTrue(r.ok, r.reject_message())
+
+
+class AntiLazinessDecisionRuleTests(unittest.TestCase):
+    def test_auc_only_claim_rejected(self):
+        from research_harness.orchestrator.llm_orchestrator.persona_validator import (
+            validate_decision_rule_for_capability_claim,
+        )
+        claim = {
+            "claim_under_test": "Method achieves ROC AUC >= 0.80 on held-out.",
+            "success_criteria": ["AUC >= 0.80"],
+        }
+        r = validate_decision_rule_for_capability_claim(claim_contract=claim)
+        self.assertFalse(r.ok)
+        self.assertIn(
+            "capability_claim_without_decision_rule", [v.rule for v in r.violations]
+        )
+
+    def test_auc_with_decision_rule_passes(self):
+        from research_harness.orchestrator.llm_orchestrator.persona_validator import (
+            validate_decision_rule_for_capability_claim,
+        )
+        claim = {
+            "claim_under_test": (
+                "Method achieves AUC >= 0.80 AND, at operating-point threshold T "
+                "calibrated to false-positive rate <= 0.05, supports a "
+                "deploy-when decision rule."
+            ),
+            "success_criteria": ["AUC >= 0.80", "FP-rate <= 0.05"],
+        }
+        r = validate_decision_rule_for_capability_claim(claim_contract=claim)
+        self.assertTrue(r.ok, r.reject_message())
+
+    def test_non_capability_claim_skipped(self):
+        from research_harness.orchestrator.llm_orchestrator.persona_validator import (
+            validate_decision_rule_for_capability_claim,
+        )
+        claim = {
+            "claim_under_test": "Method respects in-sample-only taste constraint.",
+            "success_criteria": ["procedural compliance audit passes"],
+        }
+        r = validate_decision_rule_for_capability_claim(claim_contract=claim)
+        self.assertTrue(r.ok, r.reject_message())
+
+
 if __name__ == "__main__":
     unittest.main()
