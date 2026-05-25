@@ -37,6 +37,7 @@ MCP client follows the same protocol shape that
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -666,6 +667,37 @@ def _read_json(p: Path) -> dict[str, Any] | None:
         return None
 
 
+_TOOL_ENVELOPE_TAILS = re.compile(
+    # Trailing fragments left over when Claude Code's tool-call XML envelope
+    # bleeds into a string parameter (closing </commentary>, </invoke>,
+    # </function_calls>, or a stray <parameter name="...">JSON</parameter>
+    # block appended after the real text). We strip from the FIRST tail
+    # match onward so the persisted text ends where the prose ends.
+    r"""(?ix)
+    (
+        </\s*commentary\s*>
+      | </\s*response_to_grad_student\s*>
+      | </\s*[a-z][a-z0-9_:-]*\s*>\s*(?=\s*<\s*(?:/?\s*invoke|/?\s*function_calls|parameter\b))
+      | <\s*parameter\s+name\s*=\s*"
+      | <\s*/?\s*(?:invoke|function_calls|antml:[a-z_]+)\b
+    )
+    .*\Z
+    """,
+    re.DOTALL,
+)
+
+
+def _strip_tool_envelope_leak(text: Any) -> str:
+    """Remove trailing Claude Code tool-call XML envelope leakage from a
+    string before persisting it to dialog.json. No-op for non-strings or
+    clean strings. Idempotent.
+    """
+    if not isinstance(text, str):
+        return text  # type: ignore[return-value]
+    stripped = _TOOL_ENVELOPE_TAILS.sub("", text).rstrip()
+    return stripped
+
+
 def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     tid = args["thread_id"]
     d = _thread_dir(tid)
@@ -1125,7 +1157,7 @@ def handle_submit_grad_student_review(
         {
             "speaker": "grad_student",
             "intent": "task_review",
-            "text": args.get("commentary", ""),
+            "text": _strip_tool_envelope_leak(args.get("commentary", "")),
             "metadata": {
                 "source": "mcp_server",
                 "concerns_count": len(args.get("concerns") or []),
@@ -1137,7 +1169,9 @@ def handle_submit_grad_student_review(
             {
                 "speaker": "grad_student",
                 "intent": "concern",
-                "text": f"{c.get('summary', '')} — {c.get('evidence', '')}",
+                "text": _strip_tool_envelope_leak(
+                    f"{c.get('summary', '')} — {c.get('evidence', '')}"
+                ),
                 "metadata": {"blocked": bool(c.get("blocked"))},
             }
         )
@@ -1504,7 +1538,9 @@ def handle_submit_professor_decision(
     # two-way conversation, not a one-sided grad-student monolog.
     dialog_path = decision_path.parent / "dialog.json"
     existing = _read_json(dialog_path) or {"node_id": node_id, "entries": []}
-    response_text = (args.get("response_to_grad_student") or "").strip()
+    response_text = _strip_tool_envelope_leak(
+        (args.get("response_to_grad_student") or "").strip()
+    )
     final_verdict = args.get("final_verdict") or ""
     if response_text:
         existing["entries"].append({
@@ -1535,11 +1571,15 @@ def handle_submit_professor_decision(
             },
         })
     for f in follow_ups:
-        successor = (f.get("successor_claim") or "").strip()
+        successor = _strip_tool_envelope_leak(
+            (f.get("successor_claim") or "").strip()
+        )
         if not successor:
             continue
         ftype = f.get("type") or "?"
-        rationale = (f.get("rationale") or "").strip()
+        rationale = _strip_tool_envelope_leak(
+            (f.get("rationale") or "").strip()
+        )
         existing["entries"].append({
             "speaker": "professor",
             "intent": "follow_up_brief",

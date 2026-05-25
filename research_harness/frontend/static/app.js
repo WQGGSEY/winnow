@@ -481,7 +481,7 @@
         (e.intent || "") +
         "</span>" +
         "<div class='dialog-text'>" +
-        escapeHtml(e.text || "") +
+        escapeHtml(stripToolLeak(e.text || "")) +
         "</div>" +
         "</div>";
     }
@@ -495,6 +495,23 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
+  }
+
+  // Trim trailing Claude Code tool-call envelope leakage from dialog text
+  // at display time so pre-fix entries on disk still render cleanly.
+  // Matches the server-side _strip_tool_envelope_leak() in mcp_server.py.
+  const TOOL_ENVELOPE_TAIL = new RegExp(
+    [
+      "</\\s*commentary\\s*>",
+      "</\\s*response_to_grad_student\\s*>",
+      "<\\s*parameter\\s+name\\s*=\\s*\"",
+      "<\\s*/?\\s*(?:invoke|function_calls|antml:[a-z_]+)\\b",
+    ].join("|") + "[\\s\\S]*$",
+    "i"
+  );
+  function stripToolLeak(s) {
+    if (s == null) return "";
+    return String(s).replace(TOOL_ENVELOPE_TAIL, "").replace(/\s+$/, "");
   }
 
   function init() {

@@ -262,7 +262,7 @@
             `<span class="speaker-${escape(e.speaker)}">${speaker}</span>` +
             `<span class="intent">${escape(e.intent || "")}</span>` +
             mockTag +
-            `<div class="text">${escape(e.text || "")}</div>` +
+            `<div class="text">${escape(stripToolLeak(e.text || ""))}</div>` +
           `</div>`
         );
       }
@@ -588,6 +588,28 @@
   }
 
   // --- 6. Helpers --------------------------------------------------------
+
+  // Older dialog.json entries can carry trailing Claude Code tool-call
+  // envelope leakage — closing </commentary>, </response_to_grad_student>,
+  // </invoke>, or a stray <parameter name="...">JSON</parameter> block
+  // appended after the real prose. The MCP server now sanitizes new
+  // entries, but pre-fix entries on disk still show the leak. We trim it
+  // at display time so the inspector stays clean without mutating
+  // operator-owned thread state.
+  const TOOL_ENVELOPE_TAIL = new RegExp(
+    [
+      "</\\s*commentary\\s*>",
+      "</\\s*response_to_grad_student\\s*>",
+      "<\\s*parameter\\s+name\\s*=\\s*\"",
+      "<\\s*/?\\s*(?:invoke|function_calls|antml:[a-z_]+)\\b",
+    ].join("|") + "[\\s\\S]*$",
+    "i"
+  );
+  function stripToolLeak(s) {
+    if (s == null) return "";
+    return String(s).replace(TOOL_ENVELOPE_TAIL, "").replace(/\s+$/, "");
+  }
+
   function escape(s) {
     return String(s == null ? "" : s)
       .replace(/&/g, "&amp;")
