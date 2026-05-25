@@ -24,10 +24,29 @@ def draft_child_nodes(
     *,
     parent_depth: int,
     max_depth: int,
+    dropped_suggestions: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    """Build debug/branch child nodes, with optional drop-reason logging.
+
+    If ``dropped_suggestions`` is provided, any suggestion not materialized
+    (wrong transition, depth_limit_reached, invalid type) appends an entry
+    so callers can show the operator why nothing was created instead of
+    leaving them to guess. Backward-compatible: callers that omit the
+    list still get the legacy "empty list on overflow" shape.
+    """
     if reduction.get("next_transition") != "needs_child_branch":
         return []
     if parent_depth >= max_depth:
+        if dropped_suggestions is not None:
+            for s in reduction.get("child_branch_suggestions", []):
+                dropped_suggestions.append({
+                    "type": s.get("type", "validity"),
+                    "reason_text": s.get("reason", ""),
+                    "reason": (
+                        f"depth_limit_reached: parent_depth={parent_depth} >= "
+                        f"max_depth={max_depth} (configs/harness.yaml search.max_depth)."
+                    ),
+                })
         return []
 
     children: list[dict[str, Any]] = []

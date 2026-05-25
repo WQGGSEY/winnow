@@ -27,11 +27,21 @@ TERMINAL_STATUSES = {"promoted", "pruned", "blocked", "failed"}
 
 
 def search_policy_from_config(repo_root: Path) -> dict[str, Any]:
+    """Load tree-search policy from configs/harness.yaml `search:` block.
+
+    Every knob the harness uses to bound the search must live here so it
+    can be adjusted without code changes. Last-resort fallbacks below are
+    only hit when the YAML key is missing entirely; they are kept low
+    rather than aspirational so a missing-config bug doesn't quietly let
+    the tree explode.
+    """
     config = load_harness_config(repo_root)
     search = config.get("search", {})
     return {
         "max_depth": int(search.get("max_depth", 5)),
         "max_debug_depth": int(search.get("max_debug_depth", 2)),
+        "num_drafts": int(search.get("num_drafts", 3)),
+        "debug_prob": float(search.get("debug_prob", 0.25)),
         "sunk_cost_policy": str(search.get("sunk_cost_policy", "progress_gated")),
         "scaleup_policy": str(search.get("scaleup_policy", "disallow_by_default")),
         "scaleup_requires": [

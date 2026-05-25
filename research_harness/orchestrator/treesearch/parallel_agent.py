@@ -609,24 +609,50 @@ def _build_follow_up_children(
     *,
     parent_depth: int,
     max_depth: int,
+    dropped_followups: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Materialize Professor-proposed successor claims as new tree nodes.
 
     Each follow-up carries a NEW claim (not the parent's claim) so the next
     grad-student cohort gets a different research question. The parent's
     baseline_refs, lineage, and domain are inherited so workers stay bounded.
+
+    If the caller passes ``dropped_followups`` (a list), every follow-up
+    that is silently NOT materialized appends an entry
+    ``{successor_claim, type, reason}`` to that list so the operator and the
+    Professor see exactly why nothing came back. Callers that don't care
+    can omit the argument; we keep the legacy "return [] on overflow"
+    shape for backward compat, with the depth reason now logged in any
+    list the caller supplied.
     """
-    if parent_depth >= max_depth:
-        return []
     from copy import deepcopy
 
     from research_harness.schemas.validator import validate_named_schema
+
+    if parent_depth >= max_depth:
+        if dropped_followups is not None:
+            for follow in follow_ups:
+                dropped_followups.append({
+                    "successor_claim": follow.get("successor_claim", "").strip(),
+                    "type": follow.get("type", "validity"),
+                    "reason": (
+                        f"depth_limit_reached: parent_depth={parent_depth} >= "
+                        f"max_depth={max_depth} (configs/harness.yaml search.max_depth)."
+                    ),
+                })
+        return []
 
     children: list[dict[str, Any]] = []
     for index, follow in enumerate(follow_ups, start=1):
         successor_claim = follow.get("successor_claim", "").strip()
         ftype = follow.get("type", "validity")
         if not successor_claim:
+            if dropped_followups is not None:
+                dropped_followups.append({
+                    "successor_claim": "",
+                    "type": ftype,
+                    "reason": "empty_successor_claim: professor follow-up missing or whitespace-only.",
+                })
             continue
         child = deepcopy(parent)
         child["id"] = f"{parent['id']}_succ{index:02d}_{ftype}"

@@ -1103,7 +1103,9 @@ def handle_design_initial_claim_contract(
     )
     state["status"] = "running"
     draft_ids = seed_drafts_from_root(
-        state, num_drafts=3, max_depth=int(policy["max_depth"])
+        state,
+        num_drafts=int(policy["num_drafts"]),
+        max_depth=int(policy["max_depth"]),
     )
     tree_dir = _thread_dir(tid) / "production" / "tree"
     tree_dir.mkdir(parents=True, exist_ok=True)
@@ -1751,6 +1753,7 @@ def handle_submit_professor_decision(
 
     # Final transition.
     created_child_ids: list[str] = []
+    dropped_followups: list[dict[str, Any]] = []
     if transition == "promoted":
         transition_node(
             state, node_id, "promoted",
@@ -1760,14 +1763,26 @@ def handle_submit_professor_decision(
             from research_harness.orchestrator.treesearch.parallel_agent import (
                 _build_follow_up_children,
             )
+            from research_harness.orchestrator.search_state import (
+                search_policy_from_config,
+            )
             frontier_item = next(
                 (it for it in state["frontier"] if it["node_id"] == node_id), None
             )
             parent_depth = int(frontier_item["depth"]) if frontier_item else 0
+            # state.max_depth is the canonical authority; if state is missing
+            # it (legacy thread), fall back to the config rather than a
+            # hardcoded magic number — operators who tune harness.yaml
+            # should see the same cap in fresh and resumed threads.
+            effective_max_depth = int(
+                state.get("max_depth")
+                or search_policy_from_config(_repo_root()).get("max_depth")
+            )
             children = _build_follow_up_children(
                 node, follow_ups,
                 parent_depth=parent_depth,
-                max_depth=int(state.get("max_depth", 5)),
+                max_depth=effective_max_depth,
+                dropped_followups=dropped_followups,
             )
             created_child_ids = [c["id"] for c in children]
             if children:
@@ -1794,12 +1809,24 @@ def handle_submit_professor_decision(
     state_path.write_text(
         json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    return {
+    response: dict[str, Any] = {
         "status": "accepted",
         "applied_transition": transition,
         "created_child_ids": created_child_ids,
         "search_state_status": state["status"],
     }
+    if dropped_followups:
+        # Surface why some Professor follow-ups did NOT become tree nodes —
+        # depth_limit_reached, empty_successor_claim, etc. This makes
+        # the previously-silent drop visible to Claude Code and to the
+        # operator inspecting the response.
+        response["dropped_followups"] = dropped_followups
+        response["dropped_followups_summary"] = (
+            f"{len(dropped_followups)} follow-up(s) not materialized — see dropped_followups[].reason. "
+            "If reason starts with 'depth_limit_reached', adjust configs/harness.yaml `search.max_depth` "
+            "and resume; the cap is configurable, not a code constant."
+        )
+    return response
 
 
 def handle_decide_publication_readiness(args: dict[str, Any]) -> dict[str, Any]:
