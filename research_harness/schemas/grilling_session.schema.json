@@ -28,15 +28,80 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["round_index", "question", "user_response"],
+        "required": ["round_index"],
         "properties": {
           "round_index": { "type": "integer", "minimum": 0 },
-          "question": { "type": "string", "minLength": 1 },
+          "action": { "type": "string", "enum": ["ASK", "PROPOSE_FILE", "DONE"] },
+          "question": { "type": "string" },
           "user_response": { "type": "string" },
-          "raw_action": { "type": "string" }
+          "raw_action": { "type": "string" },
+          "file": {
+            "type": "object",
+            "required": ["relative_path", "content"],
+            "properties": {
+              "relative_path": { "type": "string", "minLength": 1 },
+              "purpose": { "type": "string" },
+              "content": { "type": "string" }
+            },
+            "additionalProperties": false
+          },
+          "file_result": {
+            "type": "object",
+            "required": ["relative_path", "status"],
+            "properties": {
+              "relative_path": { "type": "string" },
+              "status": { "type": "string", "enum": ["ok", "failed"] },
+              "checks": { "type": "object" },
+              "staged_at": { "type": ["string", "null"] },
+              "manifest_progress": {
+                "type": "array",
+                "items": { "type": "integer" },
+                "minItems": 2,
+                "maxItems": 2
+              }
+            },
+            "additionalProperties": false
+          }
         },
         "additionalProperties": false
       }
+    },
+    "scaffold_state": {
+      "type": ["object", "null"],
+      "required": ["active"],
+      "properties": {
+        "active": { "type": "boolean" },
+        "domain_slug": { "type": ["string", "null"] },
+        "staging_dir": { "type": ["string", "null"] },
+        "final_destination": { "type": ["string", "null"] },
+        "manifest_required": { "type": "array", "items": { "type": "string" } },
+        "manifest_staged": { "type": "array", "items": { "type": "string" } },
+        "manifest_missing": { "type": "array", "items": { "type": "string" } },
+        "proposed_files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["relative_path", "status"],
+            "properties": {
+              "relative_path": { "type": "string" },
+              "purpose": { "type": "string" },
+              "status": { "type": "string", "enum": ["ok", "failed"] },
+              "round_index": { "type": "integer" },
+              "checks": { "type": "object" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "dry_import_result": {
+          "type": ["object", "null"],
+          "properties": {
+            "status": { "type": "string", "enum": ["ok", "failed"] },
+            "error": { "type": ["string", "null"] }
+          }
+        },
+        "finalized": { "type": "boolean" }
+      },
+      "additionalProperties": false
     },
     "extracted": {
       "type": "object",

@@ -1,0 +1,41 @@
+{% if not p.present %}
+  <div class="phase-empty">
+    <p>Production has not been run for this thread.</p>
+  </div>
+{% else %}
+  {% set summary = p.summary %}
+  <section class="production-view">
+    {% if summary %}
+      {% set ac = summary.ac_decision or {} %}
+      <section class="ac-card decision-{{ ac.decision or 'unknown' }}">
+        <h3>AC decision: <strong>{{ ac.decision or "unknown" }}</strong></h3>
+        {% if ac.reasoning %}
+          <p>{{ ac.reasoning|truncate_chars(400) }}</p>
+        {% endif %}
+        <div class="meta-badges">
+          <span class="badge">templates_used: {{ summary.templates_used|pretty_json|truncate_chars(80) }}</span>
+          <span class="badge">fallback_node_ids: {{ summary.fallback_node_ids|length }}</span>
+          <span class="badge {% if summary.evidence_is_fake %}warn{% endif %}">
+            evidence_is_fake: {{ summary.evidence_is_fake }}
+          </span>
+        </div>
+      </section>
+
+      {% if p.interactive_html_url %}
+        <section class="interactive-card">
+          <h3>interactive_summary.html</h3>
+          <iframe src="{{ p.interactive_html_url }}"
+                  sandbox="allow-same-origin"
+                  loading="lazy"
+                  class="interactive-iframe"></iframe>
+          <p><a href="{{ p.interactive_html_url }}" target="_blank">Open in new tab</a></p>
+        </section>
+      {% endif %}
+    {% endif %}
+
+    <details class="raw-json">
+      <summary>production_run_summary.json</summary>
+      <pre>{{ summary|pretty_json if summary else "(no summary)" }}</pre>
+    </details>
+  </section>
+{% endif %}

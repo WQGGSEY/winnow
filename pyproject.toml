@@ -5,8 +5,28 @@ description = "Greenfield-compatible Sakana v2 style research harness scaffold f
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+frontend = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "jinja2>=3.1",
+  "python-multipart>=0.0.7",
+]
+
 [project.scripts]
 research-harness-demo = "research_harness.orchestrator.demo:main"
+
+[tool.setuptools.packages.find]
+include = ["research_harness*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+"research_harness.frontend" = [
+  "templates/*.html",
+  "templates/phases/*.html",
+  "static/*",
+]
+"research_harness.schemas" = ["*.schema.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

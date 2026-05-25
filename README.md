@@ -85,6 +85,57 @@ Claude invocations remain behind explicit billing + execution acknowledgements.
 - Final TeX renderer (disabled by default per token policy).
 - Richer tree-visualization drilldown.
 
+## Operator Frontend (local UI)
+
+Localhost single-user web UI in front of the harness CLI. Replaces
+terminal interaction for grilling / refiner chat and exposes per-phase
+artifacts in a Claude.ai-style sidebar + accordion. See
+[docs/adr/0002-operator-frontend-in-process.md](docs/adr/0002-operator-frontend-in-process.md)
+and [docs/adr/0003-operator-frontend-htmx-stack.md](docs/adr/0003-operator-frontend-htmx-stack.md)
+for design rationale, and `CONTEXT.md` (operator_frontend,
+research_thread, thread_id, thread.json, single_active_run,
+phase_accordion, multi_turn_session_persistence, live_acks) for the
+domain language.
+
+```bash
+# install the optional frontend dependencies
+pip install -e ".[frontend]"
+
+# start the local server (bound to 127.0.0.1 only)
+python -m research_harness.frontend --port 8765
+
+# open http://127.0.0.1:8765 in a browser
+```
+
+What you get:
+
+- **Sidebar** lists every `research_thread` under `runs/threads/<thread_id>/`.
+  Each row shows the current phase × status + outcome badge. Click `+ New`
+  to mint a `thread_<8hex>` and start a grilling session.
+- **Accordion** per thread: Grilling / Market research / Refiner / Production.
+  The current phase auto-expands; completed phases collapse with a one-line
+  summary. Each panel shows curated cards plus a raw-JSON `<details>` fallback.
+- **Live chat** (SSE) for the multi-turn agents (grilling, refiner). The
+  agent's ASK arrives as a streamed message; replies POST back through the
+  in-process `input_provider`.
+- **Per-round persistence**: every grilling / refiner round is flushed to
+  `grilling_session.json` / `refined_research_plan.json` with status
+  `in_progress` immediately after the user reply is appended. On server
+  restart, in-flight threads are demoted to `awaiting_input` and gain a
+  Resume button.
+- **single_active_run lock**: at most one live phase executes at a time
+  (single-GPU constraint). A second launch attempt is refused, not queued.
+- **Settings panel**: grant `subscription_ack` once (persistent in
+  `settings.local.json`, gitignored). Toggle `full_auto_mode` to skip the
+  per-phase `execute_ack` modal — a persistent `● AUTO` badge in the top bar
+  makes the mode hard to forget.
+
+The frontend does not change harness CLI behavior. You can keep using
+`python -m research_harness.research_runner grill ...` from the terminal
+and the resulting `runs/grilling/...` artifacts are unaffected. Threads
+created through the UI live under `runs/threads/` and are completely
+separate from any legacy single-phase runs.
+
 ## Run The Full Research Pipeline
 
 ```bash

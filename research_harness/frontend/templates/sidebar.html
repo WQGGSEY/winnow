@@ -1,0 +1,29 @@
+<div class="sidebar-head">
+  <h1>Threads</h1>
+  <button class="btn small" type="button" data-open-new-thread>+ New</button>
+</div>
+<ul class="thread-list">
+  {% for t in thread_list %}
+    <li class="thread-row {% if active_thread and t.thread_id == active_thread.thread_id %}active{% endif %}">
+      <a href="/threads/{{ t.thread_id }}">
+        <div class="thread-title">{{ t.title|truncate_chars(60) }}</div>
+        <div class="thread-meta">
+          <span class="phase-tag phase-{{ t.current_phase }}">{{ t.current_phase }}</span>
+          <span class="status-tag status-{{ t.phase_status }}">{{ t.phase_status }}</span>
+          {% if t.outcome %}
+            <span class="outcome-tag outcome-{{ t.outcome }}">{{ t.outcome }}</span>
+          {% endif %}
+        </div>
+        {% if t.domain_state == "scaffolding" %}
+          <div class="thread-domain scaffolding"><em>✎ scaffolding</em></div>
+        {% elif t.domain %}
+          <div class="thread-domain">{{ t.domain }}</div>
+        {% endif %}
+      </a>
+    </li>
+  {% else %}
+    <li class="thread-row empty">
+      <em>No threads yet. Click + New to start.</em>
+    </li>
+  {% endfor %}
+</ul>

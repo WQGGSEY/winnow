@@ -1,0 +1,180 @@
+{% set session = p.session if p.session is defined else none %}
+{% set is_live = thread.phase_status in ["running", "awaiting_input"] %}
+{% if not session and not is_live %}
+  <div class="phase-empty">
+    <p>Grilling has not been started for this thread.</p>
+    <button class="btn primary"
+            type="button"
+            data-execute-ack
+            data-phase="grilling"
+            data-thread-id="{{ thread.thread_id }}"
+            data-endpoint="/api/threads/{{ thread.thread_id }}/grilling/start"
+            data-cost-note="Multi-turn live sonnet (~$0.05-$0.20 expected)">
+      Start grilling
+    </button>
+  </div>
+{% else %}
+  <section class="grilling-chat" data-thread-id="{{ thread.thread_id }}">
+    <header class="chat-header">
+      {% if session %}
+        <span>session_id: <code>{{ session.session_id }}</code></span>
+        <span>model: {{ session.model }}</span>
+        <span>rounds: {{ session.rounds|length }} / {{ session.max_rounds }}</span>
+        <span>status: <strong class="status-{{ session.status }}">{{ session.status }}</strong></span>
+      {% else %}
+        <span>status: <strong class="status-running">starting</strong></span>
+        <span>agent is contacting Claude…</span>
+      {% endif %}
+    </header>
+
+    <ol class="chat-transcript" id="chat-{{ thread.thread_id }}">
+      <li class="msg user-goal"><strong>User goal</strong>
+        <div>{{ session.user_goal if session else thread.user_goal }}</div>
+      </li>
+      {% if session and session.scaffold_state and session.scaffold_state.active %}
+        <li class="msg system">
+          <strong>Domain scaffolding mode</strong>
+          <div>
+            No existing domain matched. The agent is interviewing for a new
+            domain (<code>{{ session.scaffold_state.domain_slug or "tbd" }}</code>)
+            and will propose every file. Each file is syntax-checked before
+            staging. Manifest progress:
+            <strong>{{ session.scaffold_state.manifest_staged|length }} /
+              {{ session.scaffold_state.manifest_required|length }}</strong>.
+          </div>
+        </li>
+      {% endif %}
+      {% if session %}
+        {% for r in session.rounds %}
+          {% set action = r.action or "ASK" %}
+          {% if action == "ASK" %}
+            <li class="msg ask"><strong>Q{{ r.round_index + 1 }}</strong><div>{{ r.question }}</div></li>
+            {% if r.user_response %}
+              <li class="msg reply"><strong>A{{ r.round_index + 1 }}</strong><div>{{ r.user_response }}</div></li>
+            {% endif %}
+          {% elif action == "PROPOSE_FILE" %}
+            {% set fr = r.file_result or {} %}
+            <li class="msg propose-file file-{{ fr.status or 'unknown' }}">
+              <strong>📄 PROPOSE_FILE</strong>
+              <div>
+                <code>{{ r.file.relative_path }}</code>
+                {% if r.file.purpose %} — {{ r.file.purpose }}{% endif %}
+                <div class="propose-status status-{{ fr.status }}">
+                  {% if fr.status == "ok" %}✓ staged{% else %}✕ failed{% endif %}
+                  {% if fr.checks %}
+                    {% for k, v in fr.checks.items() %}
+                      <span class="propose-check check-{{ v }}">{{ k }}: {{ v|truncate_chars(60) }}</span>
+                    {% endfor %}
+                  {% endif %}
+                </div>
+                {% if fr.manifest_progress %}
+                  <div class="manifest-progress">
+                    manifest {{ fr.manifest_progress[0] }} / {{ fr.manifest_progress[1] }}
+                  </div>
+                {% endif %}
+              </div>
+            </li>
+          {% elif action == "DONE" %}
+            {% set fr = r.file_result or {} %}
+            <li class="msg done-rejected">
+              <strong>⚠ DONE rejected</strong>
+              <div>
+                {% if fr.checks and fr.checks.manifest_missing %}
+                  Missing manifest: <code>{{ fr.checks.manifest_missing|pretty_json|truncate_chars(120) }}</code>
+                {% endif %}
+                {% if fr.checks and fr.checks.dry_import_error %}
+                  Dry-import error: <code>{{ fr.checks.dry_import_error|truncate_chars(160) }}</code>
+                {% endif %}
+              </div>
+            </li>
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+    </ol>
+
+    {% set in_progress = (session and session.status == "in_progress") or (not session and is_live) %}
+    {% if in_progress %}
+      <div class="chat-thinking" id="thinking-{{ thread.thread_id }}"
+           {% if session and session.rounds and not session.rounds[-1].user_response %}{% else %}hidden{% endif %}>
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        Agent is thinking…
+      </div>
+      <form class="chat-reply"
+            data-action="grilling-reply"
+            data-thread-id="{{ thread.thread_id }}"
+            {% if not session or thread.phase_status != "awaiting_input" %}data-await-first-ask{% endif %}>
+        <textarea name="reply" rows="3"
+                  placeholder="{% if thread.phase_status == 'awaiting_input' %}Reply to the agent's question…{% else %}Waiting for the first question…{% endif %}"
+                  {% if not session or thread.phase_status != "awaiting_input" %}disabled{% endif %}
+                  required></textarea>
+        <button type="submit" class="btn primary"
+                {% if not session or thread.phase_status != "awaiting_input" %}disabled{% endif %}>
+          Send
+        </button>
+      </form>
+      <button class="btn small"
+              type="button"
+              data-execute-ack
+              data-phase="grilling"
+              data-thread-id="{{ thread.thread_id }}"
+              data-endpoint="/api/threads/{{ thread.thread_id }}/grilling/start"
+              data-cost-note="Resume grilling. If the in-process task is still alive this is a no-op; if it died (server restart) it relaunches from the last persisted round.">
+        Resume / reconnect
+      </button>
+      <button class="btn small danger"
+              type="button"
+              data-abandon
+              data-thread-id="{{ thread.thread_id }}"
+              data-endpoint="/api/threads/{{ thread.thread_id }}/grilling/abandon">
+        Abandon
+      </button>
+    {% endif %}
+
+    {% if session.status in ["done", "max_rounds_reached"] %}
+      <section class="extracted-card">
+        <h3>Extracted</h3>
+        <table>
+          <tr><th>claim_under_test</th><td>{{ session.extracted.claim_under_test }}</td></tr>
+          <tr><th>domain</th><td>{{ session.extracted.domain }}</td></tr>
+          <tr><th>node_type</th><td>{{ session.extracted.node_type }}</td></tr>
+          <tr>
+            <th>mandatory_baselines</th>
+            <td>
+              <ul>{% for b in session.extracted.mandatory_baselines %}<li>{{ b }}</li>{% endfor %}</ul>
+            </td>
+          </tr>
+          <tr>
+            <th>success_criteria</th>
+            <td>
+              <ul>{% for c in session.extracted.success_criteria %}<li>{{ c }}</li>{% endfor %}</ul>
+            </td>
+          </tr>
+          <tr>
+            <th>disproof_conditions</th>
+            <td>
+              <ul>{% for c in session.extracted.disproof_conditions %}<li>{{ c }}</li>{% endfor %}</ul>
+            </td>
+          </tr>
+          <tr><th>search_query_seed</th><td><code>{{ session.extracted.search_query_seed }}</code></td></tr>
+        </table>
+      </section>
+
+      {% if thread.current_phase == "grilling" %}
+        <button class="btn primary advance-btn"
+                type="button"
+                data-execute-ack
+                data-phase="market"
+                data-thread-id="{{ thread.thread_id }}"
+                data-endpoint="/api/threads/{{ thread.thread_id }}/market/start"
+                data-cost-note="Market research (paper search + PDF download). No live LLM unless enable_sonnet_analysis.">
+          Advance to market research →
+        </button>
+      {% endif %}
+    {% endif %}
+
+    <details class="raw-json">
+      <summary>grilling_session.json</summary>
+      <pre>{{ session|pretty_json }}</pre>
+    </details>
+  </section>
+{% endif %}

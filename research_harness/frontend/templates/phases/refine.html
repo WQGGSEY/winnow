@@ -1,0 +1,153 @@
+{% if not p.present %}
+  <div class="phase-empty">
+    <p>Refiner has not been run for this thread.</p>
+    {% set grilling_ready = phase_data is defined and phase_data["market"] and phase_data["market"].brief %}
+    {% if thread.current_phase == "refine" or grilling_ready %}
+      <button class="btn primary"
+              type="button"
+              data-execute-ack
+              data-phase="refine"
+              data-thread-id="{{ thread.thread_id }}"
+              data-endpoint="/api/threads/{{ thread.thread_id }}/refine/start"
+              data-cost-note="Multi-turn live sonnet refiner (~$0.10-$0.30 expected).">
+        Start refiner
+      </button>
+    {% endif %}
+  </div>
+{% else %}
+  {% set plan = p.plan %}
+  <section class="refine-view" data-thread-id="{{ thread.thread_id }}">
+    {% if plan %}
+      <header class="phase-mini-head">
+        <span>plan_id: <code>{{ plan.plan_id }}</code></span>
+        <span>status: <strong class="status-{{ plan.status }}">{{ plan.status }}</strong></span>
+        <span>rounds: {{ plan.rounds|length }} / 12</span>
+      </header>
+
+      <ol class="refine-rounds">
+        {% for r in plan.rounds %}
+          <li class="refine-round action-{{ r.action|lower }}">
+            <strong>Round {{ r.round_index + 1 }} — {{ r.action }}</strong>
+            {% if r.action == "ASK" %}
+              <div class="ask">Q: {{ r.payload.question }}</div>
+              {% if r.user_response %}<div class="reply">A: {{ r.user_response }}</div>{% endif %}
+            {% elif r.action == "PROPOSE_DATASET" %}
+              <div class="ds-spec">spec: <code>{{ r.payload.spec.id }}</code> ({{ r.payload.spec.type }})</div>
+              {% if r.materialize_result %}
+                <div class="ds-status status-{{ r.materialize_result.status }}">
+                  {{ r.materialize_result.status }}{% if r.materialize_result.detail %} — {{ r.materialize_result.detail }}{% endif %}
+                </div>
+              {% endif %}
+            {% elif r.action == "DONE" %}
+              <div>final plan committed</div>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ol>
+
+      {% if plan.status == "in_progress" %}
+        <form class="chat-reply"
+              data-action="refine-reply"
+              data-thread-id="{{ thread.thread_id }}">
+          <textarea name="reply" rows="3" placeholder="Reply to the refiner..." required></textarea>
+          <button type="submit" class="btn primary">Send</button>
+        </form>
+        <button class="btn small"
+                type="button"
+                data-execute-ack
+                data-phase="refine"
+                data-thread-id="{{ thread.thread_id }}"
+                data-endpoint="/api/threads/{{ thread.thread_id }}/refine/start"
+                data-cost-note="Resume refiner. If the in-process task is still alive this is a no-op; if it died (server restart) it relaunches from the last persisted round.">
+          Resume / reconnect
+        </button>
+        <button class="btn small danger"
+                type="button"
+                data-abandon
+                data-thread-id="{{ thread.thread_id }}"
+                data-endpoint="/api/threads/{{ thread.thread_id }}/refine/abandon">
+          Abandon
+        </button>
+      {% endif %}
+
+      {% if plan.status in ["done", "max_rounds_reached"] %}
+        <section class="vp-card">
+          <h3>Validation procedure</h3>
+          <table>
+            {% set vp = plan.validation_procedure %}
+            <tr><th>primary_metric</th><td>{{ vp.primary_metric }}</td></tr>
+            <tr><th>comparison_op</th><td>{{ vp.comparison_op }}</td></tr>
+            <tr><th>threshold</th><td>{{ vp.threshold }}</td></tr>
+            <tr><th>splits</th><td>{{ vp.splits }}</td></tr>
+            <tr><th>statistical_test</th><td>{{ vp.statistical_test }}</td></tr>
+            <tr><th>seeds</th><td>{{ vp.seeds }}</td></tr>
+            <tr><th>decision_rule</th><td>{{ vp.decision_rule }}</td></tr>
+          </table>
+        </section>
+
+        <section class="ds-card">
+          <h3>Dataset specs</h3>
+          <table>
+            <thead><tr><th>id</th><th>type</th><th>role</th><th>source</th></tr></thead>
+            <tbody>
+              {% for ds in plan.dataset_specs %}
+                <tr>
+                  <td><code>{{ ds.id }}</code></td>
+                  <td>{{ ds.type }}</td>
+                  <td>{{ ds.role }}</td>
+                  <td>{{ ds.source|pretty_json|truncate_chars(120) }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </section>
+
+        {% if plan.sota_reconciliations %}
+          <section class="sota-card">
+            <h3>SOTA reconciliations</h3>
+            <ul>
+              {% for sr in plan.sota_reconciliations %}
+                <li>
+                  <strong>{{ sr.path }}</strong> — {{ sr.conflict_text }}
+                  <div class="resolution">→ {{ sr.post_resolution_wording }}</div>
+                </li>
+              {% endfor %}
+            </ul>
+          </section>
+        {% endif %}
+
+        {% if plan.acknowledged_limitations %}
+          <section class="limits-card">
+            <h3>Acknowledged limitations</h3>
+            <ul>
+              {% for lim in plan.acknowledged_limitations %}<li>{{ lim }}</li>{% endfor %}
+            </ul>
+          </section>
+        {% endif %}
+
+        {% if thread.current_phase == "refine" %}
+          <button class="btn primary advance-btn"
+                  type="button"
+                  data-execute-ack
+                  data-phase="production"
+                  data-thread-id="{{ thread.thread_id }}"
+                  data-endpoint="/api/threads/{{ thread.thread_id }}/production/start"
+                  data-cost-note="Production pipeline (preflight + mock tree search + rebuttal/AC + publish).">
+            Advance to production →
+          </button>
+        {% endif %}
+      {% endif %}
+    {% endif %}
+
+    <details class="raw-json">
+      <summary>refined_research_plan.json</summary>
+      <pre>{{ plan|pretty_json if plan else "(no plan)" }}</pre>
+    </details>
+    {% if p.manifest %}
+      <details class="raw-json">
+        <summary>dataset_manifest.json</summary>
+        <pre>{{ p.manifest|pretty_json }}</pre>
+      </details>
+    {% endif %}
+  </section>
+{% endif %}

@@ -1,0 +1,60 @@
+{% if not p.present %}
+  <div class="phase-empty">
+    <p>Market research has not been run for this thread.</p>
+  </div>
+{% else %}
+  {% set brief = p.brief %}
+  <section class="market-view">
+    {% if brief %}
+      <header class="phase-mini-head">
+        <span>brief_id: <code>{{ brief.brief_id }}</code></span>
+        <span>baseline_dossier_id: <code>{{ brief.baseline_dossier_id }}</code></span>
+        <span>papers: {{ brief.papers|length if brief.papers else 0 }}</span>
+      </header>
+    {% endif %}
+
+    {% if p.baseline_md %}
+      <article class="markdown-body">
+        <pre class="md-raw">{{ p.baseline_md }}</pre>
+      </article>
+    {% endif %}
+
+    {% if brief and brief.papers %}
+      <h3>Reference papers</h3>
+      <table class="papers-table">
+        <thead><tr><th>Title</th><th>Source</th><th>Status</th><th>PDF</th></tr></thead>
+        <tbody>
+          {% for paper in brief.papers %}
+            <tr>
+              <td>{{ paper.title|truncate_chars(120) }}</td>
+              <td>{{ paper.source or "" }}</td>
+              <td>{{ paper.download_status or "" }}</td>
+              <td>
+                {% if paper.pdf_path %}
+                  <a href="/files/{{ thread.thread_id }}/market/{{ paper.pdf_path.split('/')|last }}" target="_blank">open</a>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+
+    {% if thread.current_phase == "market" and thread.phase_status == "complete" %}
+      <button class="btn primary advance-btn"
+              type="button"
+              data-execute-ack
+              data-phase="refine"
+              data-thread-id="{{ thread.thread_id }}"
+              data-endpoint="/api/threads/{{ thread.thread_id }}/refine/start"
+              data-cost-note="Multi-turn live sonnet refiner (~$0.10-$0.30 expected).">
+        Advance to refiner →
+      </button>
+    {% endif %}
+
+    <details class="raw-json">
+      <summary>market_research_brief.json</summary>
+      <pre>{{ brief|pretty_json if brief else "(no brief)" }}</pre>
+    </details>
+  </section>
+{% endif %}

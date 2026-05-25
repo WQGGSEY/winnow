@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Research Harness — Operator</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js"></script>
+  <script defer src="/static/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-title">Research Harness</div>
+    <div class="topbar-meta">
+      {% if full_auto_mode %}<span class="badge auto">● AUTO</span>{% endif %}
+      {% if lock_holder %}
+        <span class="badge live">
+          ● LIVE: {{ lock_holder.thread_id|truncate_chars(20) }} / {{ lock_holder.phase }}
+        </span>
+      {% endif %}
+      <button class="topbar-btn" type="button" data-open-settings>Settings</button>
+    </div>
+  </header>
+
+  <main class="app">
+    <aside class="sidebar" id="sidebar">
+      {% include "sidebar.html" %}
+    </aside>
+
+    <section class="main-pane" id="main-pane">
+      {% if active_thread %}
+        {% include "accordion.html" %}
+      {% else %}
+        <div class="empty-pane">
+          <h2>Pick or create a thread</h2>
+          <p>The sidebar on the left lists every research thread under
+          <code>runs/threads/</code>. Click one to open its accordion, or
+          create a new one to start with a grilling session.</p>
+          {% if not has_subscription_ack %}
+            <div class="callout">
+              <strong>Live Claude is gated.</strong>
+              You haven't granted subscription_ack yet — open Settings to
+              grant it once. (You can still browse completed runs without it.)
+            </div>
+          {% endif %}
+        </div>
+      {% endif %}
+    </section>
+  </main>
+
+  <dialog id="settings-dialog" class="settings-dialog">
+    <form method="dialog" class="settings-form">
+      <h2>Settings</h2>
+      <fieldset>
+        <legend>subscription_ack</legend>
+        {% if has_subscription_ack %}
+          <p>Granted at <code>{{ ack_state.subscription_ack_at }}</code>.</p>
+          <button type="button" class="btn" data-action="revoke-subscription">Revoke</button>
+        {% else %}
+          <p>Not granted. Required once before any live phase can run.</p>
+          <button type="button" class="btn primary" data-action="grant-subscription">Grant</button>
+        {% endif %}
+      </fieldset>
+      <fieldset>
+        <legend>full_auto_mode</legend>
+        <label class="toggle">
+          <input type="checkbox" id="full-auto-toggle"
+                 {% if full_auto_mode %}checked{% endif %}>
+          <span>Skip per-phase execute_ack modal</span>
+        </label>
+        <p class="hint">subscription_ack is <em>not</em> bypassed by full_auto.
+        Auto-launched phases still write to <code>thread.json.execute_acks[mode: "auto"]</code>.</p>
+      </fieldset>
+      <div class="settings-actions">
+        <button type="button" class="btn" data-close-settings>Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="new-thread-dialog" class="settings-dialog">
+    <form class="settings-form" hx-post="/api/threads" hx-target="#sidebar" hx-swap="innerHTML">
+      <h2>New thread</h2>
+      <label>
+        <span>User goal</span>
+        <textarea name="user_goal" rows="4" required
+                  placeholder="What research claim are you testing?"></textarea>
+      </label>
+      <label>
+        <span>Title (optional)</span>
+        <input type="text" name="title" placeholder="defaults to a snippet of user_goal">
+      </label>
+      <div class="settings-actions">
+        <button type="button" class="btn" data-close-new-thread>Cancel</button>
+        <button type="submit" class="btn primary">Create</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="execute-ack-dialog" class="settings-dialog">
+    <form class="settings-form" id="execute-ack-form">
+      <h2>Execute live phase?</h2>
+      <p id="execute-ack-body"></p>
+      <div class="settings-actions">
+        <button type="button" class="btn" data-close-execute-ack>Cancel</button>
+        <button type="submit" class="btn primary">Run</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

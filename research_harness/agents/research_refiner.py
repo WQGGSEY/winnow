@@ -170,6 +170,10 @@ def run_research_refiner(
     status = "in_progress"
     error: str | None = None
 
+    _flush_refiner_in_progress(
+        plan_path, base_plan, rounds, usage, verified_dataset_specs
+    )
+
     try:
         for index in range(max_rounds):
             call = _call_refiner_round(
@@ -203,6 +207,9 @@ def run_research_refiner(
                         "materialize_result": None,
                     }
                 )
+                _flush_refiner_in_progress(
+                    plan_path, base_plan, rounds, usage, verified_dataset_specs
+                )
                 continue
 
             if action_type == "PROPOSE_DATASET":
@@ -232,6 +239,9 @@ def run_research_refiner(
                         "user_response": None,
                         "materialize_result": result.to_dict(),
                     }
+                )
+                _flush_refiner_in_progress(
+                    plan_path, base_plan, rounds, usage, verified_dataset_specs
                 )
                 continue
 
@@ -774,6 +784,56 @@ def _accumulate(usage: dict[str, Any], call: _RoundCall) -> None:
     usage["total_cost_usd"] = float(usage.get("total_cost_usd") or 0.0) + call.cost_usd
     usage["total_input_tokens"] = int(usage.get("total_input_tokens") or 0) + call.input_tokens
     usage["total_output_tokens"] = int(usage.get("total_output_tokens") or 0) + call.output_tokens
+
+
+def _flush_refiner_in_progress(
+    plan_path: Path,
+    base_plan: dict[str, Any],
+    rounds: list[dict[str, Any]],
+    usage: dict[str, Any],
+    verified_dataset_specs: list[dict[str, Any]],
+) -> None:
+    """Persist mid-refiner state so a crash never loses user input.
+
+    Schema accepts status="in_progress"; best-effort write that swallows
+    schema/disk errors rather than crashing the agent loop. Atomic write
+    (temp file + os.replace) so concurrent HTTP readers never see a
+    truncated JSON.
+    """
+    snapshot = {
+        **base_plan,
+        "status": "in_progress",
+        "rounds": rounds,
+        "usage_estimate": usage,
+        "dataset_specs": list(verified_dataset_specs),
+        "error": None,
+    }
+    try:
+        validate_named_schema("refined_research_plan", snapshot)
+    except SchemaValidationError:
+        return
+    import os
+    import tempfile
+
+    try:
+        text = json.dumps(snapshot, indent=2, sort_keys=True) + "\n"
+        parent = plan_path.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(
+            prefix="." + plan_path.name + ".", suffix=".tmp", dir=str(parent)
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            os.replace(tmp_path, plan_path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+    except OSError:
+        return
 
 
 def _write_plan_or_replace_with_aborted(path: Path, plan: dict[str, Any]) -> None:

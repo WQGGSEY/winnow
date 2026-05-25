@@ -1,0 +1,72 @@
+<header class="thread-head">
+  <h1>{{ active_thread.title }}</h1>
+  <div class="thread-head-meta">
+    <code>{{ active_thread.thread_id }}</code>
+    <span class="phase-tag phase-{{ active_thread.current_phase }}">{{ active_thread.current_phase }}</span>
+    <span class="status-tag status-{{ active_thread.phase_status }}">{{ active_thread.phase_status }}</span>
+    {% if active_thread.outcome %}
+      <span class="outcome-tag outcome-{{ active_thread.outcome }}">{{ active_thread.outcome }}</span>
+    {% endif %}
+    {% set ds = active_thread.domain_state %}
+    {% if ds == "scaffolding" %}
+      <span class="domain-tag domain-scaffolding">✎ scaffolding</span>
+    {% elif active_thread.domain %}
+      <span class="domain-tag domain-{{ ds or 'matched' }}">domain: {{ active_thread.domain }}</span>
+    {% else %}
+      <span class="domain-tag domain-null">domain: —</span>
+    {% endif %}
+  </div>
+  <details class="raw-json">
+    <summary>thread.json</summary>
+    <pre>{{ active_thread|pretty_json }}</pre>
+  </details>
+</header>
+
+<div class="accordion"
+     data-thread-id="{{ active_thread.thread_id }}"
+     data-current-phase="{{ active_thread.current_phase }}"
+     data-phase-status="{{ active_thread.phase_status }}">
+  {% set phases = [
+    ("grilling", "Grilling"),
+    ("market",   "Market research"),
+    ("refine",   "Refiner"),
+    ("production","Production"),
+  ] %}
+  {% for slug, label in phases %}
+    {% set is_current = active_thread.current_phase == slug %}
+    {% set is_done = phase_data[slug].present and (
+      (slug == "grilling" and phase_data[slug].session and phase_data[slug].session.status in ["done", "max_rounds_reached"])
+      or (slug == "market" and phase_data[slug].brief is defined)
+      or (slug == "refine" and phase_data[slug].plan and phase_data[slug].plan.status in ["done", "max_rounds_reached"])
+      or (slug == "production" and phase_data[slug].summary is defined)
+    ) %}
+    {% set open_now = is_current or (is_current and active_thread.phase_status in ["running", "awaiting_input", "complete"]) %}
+    <details class="phase-panel phase-{{ slug }}"
+             {% if is_current %}open{% endif %}
+             data-phase="{{ slug }}">
+      <summary>
+        <span class="phase-name">{{ label }}</span>
+        <span class="phase-summary">
+          {% if not phase_data[slug].present %}
+            <em>not yet run</em>
+          {% elif is_done %}
+            ✓ complete
+          {% elif is_current and active_thread.phase_status == "running" %}
+            ● running
+          {% elif is_current and active_thread.phase_status == "awaiting_input" %}
+            ⏸ awaiting input
+          {% elif is_current and active_thread.phase_status == "failed" %}
+            ✕ failed
+          {% else %}
+            in progress
+          {% endif %}
+        </span>
+      </summary>
+      <div class="phase-body">
+        {% with p = phase_data[slug], thread = active_thread, phase = slug %}
+          {% include "phases/" ~ slug ~ ".html" %}
+        {% endwith %}
+      </div>
+    </details>
+  {% endfor %}
+</div>

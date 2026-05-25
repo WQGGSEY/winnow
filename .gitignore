@@ -20,3 +20,10 @@ runs/
 # Materialized datasets (HF reuses ~/.cache; local/synthetic land here).
 .dataset_cache/
 
+# operator_frontend per-machine state (subscription_ack, full_auto_mode).
+settings.local.json
+
+# Editable-install metadata.
+*.egg-info/
+
+.gstack/

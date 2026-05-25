@@ -1,0 +1,264 @@
+"""research_thread CRUD on the filesystem.
+
+Threads live under ``runs/threads/<thread_id>/`` with a denormalized
+``thread.json`` index file at the root. The frontend sidebar reads
+nothing but ``thread.json`` files to build its list — phase artifacts
+are loaded lazily when their accordion panel is expanded.
+
+See ``CONTEXT.md`` → research_thread, thread_id, thread.json.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterable
+
+
+PHASES: tuple[str, ...] = ("grilling", "market", "refine", "production")
+PHASE_STATUSES: tuple[str, ...] = (
+    "idle",
+    "running",
+    "awaiting_input",
+    "complete",
+    "failed",
+)
+OUTCOMES: tuple[str | None, ...] = (None, "accept", "reject", "inconclusive")
+
+
+class ThreadError(ValueError):
+    """Raised when a thread directory or thread.json is malformed."""
+
+
+def threads_root(repo_root: Path) -> Path:
+    return (repo_root / "runs" / "threads").resolve()
+
+
+def new_thread_id() -> str:
+    return "thread_" + uuid.uuid4().hex[:8]
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def create_thread(
+    repo_root: Path,
+    *,
+    user_goal: str,
+    title: str | None = None,
+    thread_id: str | None = None,
+) -> dict[str, Any]:
+    """Mint a fresh thread directory + thread.json. Returns the index dict."""
+
+    if not user_goal or not user_goal.strip():
+        raise ThreadError("user_goal must be a non-empty string")
+    thread_id = thread_id or new_thread_id()
+    root = threads_root(repo_root) / thread_id
+    if root.exists():
+        raise ThreadError(f"thread_id {thread_id} already exists at {root}")
+    root.mkdir(parents=True, exist_ok=False)
+    created = _now()
+    index: dict[str, Any] = {
+        "thread_id": thread_id,
+        "title": (title or user_goal.strip())[:140],
+        "created_at": created,
+        "updated_at": created,
+        "current_phase": "grilling",
+        "phase_status": "idle",
+        "outcome": None,
+        "domain": None,
+        "user_goal": user_goal.strip(),
+        "execute_acks": [],
+    }
+    _write_index(root, index)
+    return index
+
+
+def load_thread(repo_root: Path, thread_id: str) -> dict[str, Any]:
+    """Load and validate a thread.json. Raises ThreadError if malformed."""
+    root = threads_root(repo_root) / thread_id
+    index_path = root / "thread.json"
+    if not index_path.exists():
+        raise ThreadError(f"thread.json missing at {index_path}")
+    try:
+        data = json.loads(index_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ThreadError(f"thread.json at {index_path} is not valid JSON: {exc}") from exc
+    _validate_index(data, source=str(index_path))
+    return data
+
+
+def list_threads(repo_root: Path) -> list[dict[str, Any]]:
+    """Sidebar source: every readable thread.json under runs/threads/.
+
+    Skips directories that have no thread.json or whose JSON fails
+    validation — the sidebar must never crash because of one bad file.
+    Results are sorted by ``updated_at`` descending so the freshest
+    thread is at the top.
+    """
+    root = threads_root(repo_root)
+    if not root.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    for child in sorted(root.iterdir()):
+        if not child.is_dir():
+            continue
+        index_path = child / "thread.json"
+        if not index_path.exists():
+            continue
+        try:
+            data = json.loads(index_path.read_text(encoding="utf-8"))
+            _validate_index(data, source=str(index_path))
+        except (json.JSONDecodeError, ThreadError):
+            continue
+        out.append(data)
+    out.sort(key=lambda d: d.get("updated_at") or "", reverse=True)
+    return out
+
+
+DOMAIN_STATES: tuple[str, ...] = (
+    "matched",
+    "scaffolding",
+    "scaffold_complete",
+    "scaffold_failed",
+)
+
+
+def update_thread(
+    repo_root: Path,
+    thread_id: str,
+    *,
+    title: str | None = None,
+    current_phase: str | None = None,
+    phase_status: str | None = None,
+    outcome: str | None = None,
+    domain: str | None = None,
+    domain_state: str | None = None,
+    append_execute_ack: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Apply a partial update to thread.json. Returns the new index."""
+    index = load_thread(repo_root, thread_id)
+    if title is not None:
+        index["title"] = title[:140]
+    if current_phase is not None:
+        if current_phase not in PHASES:
+            raise ThreadError(f"unknown current_phase {current_phase!r}")
+        index["current_phase"] = current_phase
+    if phase_status is not None:
+        if phase_status not in PHASE_STATUSES:
+            raise ThreadError(f"unknown phase_status {phase_status!r}")
+        index["phase_status"] = phase_status
+    if outcome is not None:
+        if outcome not in {"accept", "reject", "inconclusive"}:
+            raise ThreadError(f"unknown outcome {outcome!r}")
+        index["outcome"] = outcome
+    if domain is not None:
+        index["domain"] = domain
+    if domain_state is not None:
+        if domain_state not in DOMAIN_STATES:
+            raise ThreadError(f"unknown domain_state {domain_state!r}")
+        index["domain_state"] = domain_state
+    if append_execute_ack is not None:
+        index.setdefault("execute_acks", []).append(append_execute_ack)
+    index["updated_at"] = _now()
+    _write_index(threads_root(repo_root) / thread_id, index)
+    return index
+
+
+def phase_dir(repo_root: Path, thread_id: str, phase: str) -> Path:
+    if phase not in PHASES:
+        raise ThreadError(f"unknown phase {phase!r}")
+    return threads_root(repo_root) / thread_id / phase
+
+
+def boot_repair(repo_root: Path) -> list[str]:
+    """Run on server start: demote any ``running`` thread to ``awaiting_input``.
+
+    The frontend server cannot have left any phase truly running across a
+    restart (the in-process loop died with the process). The repair
+    transition lets the user resume the multi-turn session without
+    holding a stale "running" badge forever. Returns the list of thread
+    ids that were repaired so the caller can log it.
+    """
+    repaired: list[str] = []
+    for index in list_threads(repo_root):
+        if index.get("phase_status") == "running":
+            update_thread(
+                repo_root,
+                index["thread_id"],
+                phase_status="awaiting_input",
+            )
+            repaired.append(index["thread_id"])
+    return repaired
+
+
+# ---------------------------------------------------------------- helpers
+
+
+def _write_index(root: Path, index: dict[str, Any]) -> None:
+    """Validate and atomically write thread.json.
+
+    Atomicity matters: two HTTP requests can read thread.json while a third
+    is updating it (e.g. the agent worker thread bumping phase_status while
+    a reply POST is validating the thread). A non-atomic write briefly
+    exposes a truncated / empty file and the reader raises JSONDecodeError.
+    Write to a sibling temp file and rename() — os.replace is atomic on
+    POSIX and on Windows since 3.3.
+    """
+    _validate_index(index, source=str(root / "thread.json"))
+    target = root / "thread.json"
+    payload = json.dumps(index, indent=2, sort_keys=True) + "\n"
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=".thread.", suffix=".json.tmp", dir=str(root)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+        os.replace(tmp_path, target)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+_REQUIRED_KEYS: tuple[str, ...] = (
+    "thread_id",
+    "title",
+    "created_at",
+    "updated_at",
+    "current_phase",
+    "phase_status",
+    "user_goal",
+)
+
+
+def _validate_index(index: Any, *, source: str) -> None:
+    if not isinstance(index, dict):
+        raise ThreadError(f"{source}: top-level must be an object")
+    for key in _REQUIRED_KEYS:
+        if key not in index:
+            raise ThreadError(f"{source}: missing required field {key!r}")
+    if not isinstance(index["thread_id"], str) or not index["thread_id"].startswith("thread_"):
+        raise ThreadError(f"{source}: thread_id must be a string starting with 'thread_'")
+    if index["current_phase"] not in PHASES:
+        raise ThreadError(f"{source}: unknown current_phase {index['current_phase']!r}")
+    if index["phase_status"] not in PHASE_STATUSES:
+        raise ThreadError(f"{source}: unknown phase_status {index['phase_status']!r}")
+    outcome = index.get("outcome")
+    if outcome not in {None, "accept", "reject", "inconclusive"}:
+        raise ThreadError(f"{source}: unknown outcome {outcome!r}")
+
+
+def iter_phase_artifacts(repo_root: Path, thread_id: str, phase: str) -> Iterable[Path]:
+    """Yield top-level files inside the given phase directory, if any."""
+    pdir = phase_dir(repo_root, thread_id, phase)
+    if not pdir.exists():
+        return []
+    return sorted(p for p in pdir.iterdir() if p.is_file())
