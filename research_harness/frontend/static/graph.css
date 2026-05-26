@@ -80,6 +80,45 @@ body.graph-page {
 .graph-node[data-status="running"]  .node-circle  { stroke: #b6850b; }
 .graph-node[data-status="failed"]   .node-circle  { stroke: #a82828; }
 .graph-node[data-status="ready"]    .node-circle  { stroke: #6a6f80; }
+.graph-node[data-status="completed_worker_report"] .node-circle { stroke: #b6850b; }
+.graph-node[data-status="critic_reviewed"]         .node-circle { stroke: #b6850b; }
+.graph-node[data-status="orchestrator_reduced"]    .node-circle { stroke: #b6850b; }
+
+/* In-progress: any node Claude Code is mid-way through.
+   Pulsing amber halo + thicker stroke + always-visible "⚙" badge. */
+.graph-node.in-progress .node-circle {
+  stroke: #d97706;
+  stroke-width: 3.5;
+  filter: drop-shadow(0 0 6px rgba(217, 119, 6, 0.55));
+  animation: graph-in-progress-pulse 1.6s ease-in-out infinite;
+}
+.graph-node.in-progress .node-id-label { fill: #d97706; font-weight: 600; }
+.graph-node.in-progress .node-type-label { fill: #5a3300; }
+@keyframes graph-in-progress-pulse {
+  0%, 100% { stroke-opacity: 1;   }
+  50%      { stroke-opacity: 0.55; }
+}
+
+/* Topbar "working on" pill. */
+.graph-now-working {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 4px 10px; border-radius: 12px;
+  background: #fef3c7; border: 1px solid #f5d27a;
+  font-size: 12px; color: #5a3300; max-width: 540px;
+}
+.graph-now-working[hidden] { display: none; }
+.graph-now-working .now-working-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: #d97706;
+  animation: graph-in-progress-pulse 1.6s ease-in-out infinite;
+}
+.graph-now-working .now-working-label { font-weight: 600; }
+.graph-now-working .now-working-body a {
+  color: #5a3300; text-decoration: underline; text-decoration-style: dotted;
+  font-family: 'Menlo', 'Monaco', monospace; font-size: 11.5px;
+}
+.graph-now-working .now-working-body a:hover { color: #b3590f; }
+.graph-now-working .muted { color: #8a6d3b; font-size: 11px; }
 
 .graph-inspector {
   background: #fff; border-left: 1px solid #d8dde7;

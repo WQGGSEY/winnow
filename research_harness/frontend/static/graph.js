@@ -567,6 +567,74 @@
     }
   }
 
+  // Track which nodes Claude Code is currently mid-way through. Server
+  // returns this on /graph_data as `in_progress_nodes`. We mark the SVG
+  // <g> with .in-progress so CSS can pulse the ring, and surface a small
+  // "working on" pill in the topbar so the operator doesn't have to scan
+  // the tree to find activity.
+  const nowWorkingEl = document.getElementById("graph-now-working");
+  const nowWorkingBody = nowWorkingEl
+    ? nowWorkingEl.querySelector(".now-working-body")
+    : null;
+  const STATUS_LABELS = {
+    running: "running experiment",
+    completed_worker_report: "awaiting critic reviews",
+    critic_reviewed: "awaiting professor decision",
+    orchestrator_reduced: "awaiting professor decision",
+  };
+
+  function applyInProgress(inProgressNodes) {
+    const want = new Set();
+    const meta = new Map();
+    (inProgressNodes || []).forEach((n) => {
+      if (!n || !n.node_id) return;
+      want.add(n.node_id);
+      meta.set(n.node_id, n);
+    });
+    nodesLayer.querySelectorAll(".graph-node").forEach((g) => {
+      const nid = g.dataset.id;
+      if (want.has(nid)) {
+        const m = meta.get(nid);
+        g.classList.add("in-progress");
+        if (m && m.next_tool) g.dataset.nextTool = m.next_tool;
+        if (m && m.status) g.dataset.midStatus = m.status;
+      } else {
+        g.classList.remove("in-progress");
+        delete g.dataset.nextTool;
+        delete g.dataset.midStatus;
+      }
+    });
+    if (!nowWorkingEl || !nowWorkingBody) return;
+    const list = Array.from(want);
+    if (list.length === 0) {
+      nowWorkingEl.hidden = true;
+      nowWorkingBody.textContent = "";
+      return;
+    }
+    nowWorkingEl.hidden = false;
+    const parts = list.slice(0, 3).map((nid) => {
+      const m = meta.get(nid) || {};
+      const label = STATUS_LABELS[m.status] || m.status || "in flight";
+      const short = truncateMid(nid, 28);
+      return `<a href="#" data-jump="${nid}" title="${escape(nid)}">${escape(short)}</a> <span class="muted">· ${escape(label)}</span>`;
+    });
+    const more = list.length > parts.length ? ` <span class="muted">(+${list.length - parts.length} more)</span>` : "";
+    nowWorkingBody.innerHTML = parts.join(" &nbsp;|&nbsp; ") + more;
+    nowWorkingBody.querySelectorAll("a[data-jump]").forEach((a) => {
+      a.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        const nid = a.dataset.jump;
+        const g = nodesLayer.querySelector(`.graph-node[data-id="${CSS.escape(nid)}"]`);
+        if (!g) return;
+        pinnedNodeId = nid;
+        nodesLayer.querySelectorAll(".graph-node.selected")
+          .forEach((el) => el.classList.remove("selected"));
+        g.classList.add("selected");
+        showNodeDetail(nid);
+      });
+    });
+  }
+
   async function poll() {
     if (!liveUrl) return;
     try {
@@ -575,15 +643,23 @@
       const data = await resp.json();
       const state = data.tree_state || { nodes: [] };
       const sig = snapshotSignature(state, data.last_activity_mtime);
-      if (sig === lastSignature) return;
-      lastSignature = sig;
-      redraw(state, data.node_dialogs);
+      if (sig !== lastSignature) {
+        lastSignature = sig;
+        redraw(state, data.node_dialogs);
+      }
+      // in_progress_nodes updates even when tree structure is unchanged
+      // (e.g. a node moves running → completed_worker_report). Apply it on
+      // every poll so the visual lag is bounded by pollIntervalMs.
+      applyInProgress(data.in_progress_nodes);
     } catch (err) {
       // Network blip — wait for the next tick.
     }
   }
   if (liveUrl && pollIntervalMs > 0) {
     lastSignature = snapshotSignature(tree, 0);
+    // First poll fires immediately so the in-progress markers + topbar
+    // pill don't sit empty for a whole pollIntervalMs window after load.
+    poll();
     setInterval(poll, pollIntervalMs);
   }
 
