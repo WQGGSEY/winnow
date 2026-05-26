@@ -8,12 +8,15 @@ categories:
       - "invalid_experiment/n_demo_001_b01_b01_b01__invalid_experiment__3c6cd3867b.md"
       - "invalid_experiment/n_demo_001_b01_b01_b01_b01__invalid_experiment__dea1dd8477.md"
       - "invalid_experiment/n_demo_001_b01_b01_b01_b01_b01__invalid_experiment__4e2b53a427.md"
+      - "invalid_experiment/n_llm_gradflow_wq_alpha_root__invalid_experiment__c411206998.md"
+      - "invalid_experiment/n_llm_gradflow_wq_alpha_root_draft02__invalid_experiment__cb18eb48a9.md"
   implementation_failure:
     description: "The idea was not evaluated because implementation failed."
     files: []
   negative_result:
     description: "The experiment was valid but the claim was contradicted or weak."
-    files: []
+    files:
+      - "negative_result/n_llm_gradflow_wq_alpha_root_draft01__negative_result__cdaad15cca.md"
   taste_rejection:
     description: "The result may work locally but conflicts with research taste or goal."
     files: []

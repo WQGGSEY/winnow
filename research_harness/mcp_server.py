@@ -875,7 +875,33 @@ def _write_failure_record(
     rel_path = f"{category}/{filename}"
     if rel_path not in files:
         files.append(rel_path)
-    index_path.write_text(yaml.safe_dump(index, sort_keys=False), encoding="utf-8")
+    # parse_simple_yaml in config.py expects: list dashes indented +2 past
+    # the key, descriptions quoted, no line wrapping. pyyaml.safe_dump
+    # outputs a different (still-valid) style that the custom parser
+    # cannot read back. Emit manually with the expected shape.
+    index_path.write_text(_format_failure_index(index), encoding="utf-8")
+
+
+def _format_failure_index(index: dict[str, Any]) -> str:
+    """Emit memory/failures/index.yaml in the shape parse_simple_yaml
+    accepts: 2-space indent throughout, list dashes at +2 past their key,
+    description strings double-quoted on a single line."""
+    out: list[str] = ["categories:"]
+    for cat_name, cat_block in (index.get("categories") or {}).items():
+        out.append(f"  {cat_name}:")
+        desc = (cat_block or {}).get("description") or ""
+        # quote-safe: escape backslash + double-quote then wrap.
+        safe_desc = str(desc).replace("\\", "\\\\").replace("\"", "\\\"")
+        out.append(f"    description: \"{safe_desc}\"")
+        files_list = (cat_block or {}).get("files") or []
+        if not files_list:
+            out.append("    files: []")
+        else:
+            out.append("    files:")
+            for f in files_list:
+                safe_f = str(f).replace("\\", "\\\\").replace("\"", "\\\"")
+                out.append(f"      - \"{safe_f}\"")
+    return "\n".join(out) + "\n"
 
 
 def _strip_tool_envelope_leak(text: Any) -> str:
@@ -1595,11 +1621,13 @@ def handle_revise_root_after_reject(
     tid = args["thread_id"]
     ac_path = _thread_dir(tid) / "production" / "rebuttal" / "ac_decision.json"
     prev_ac = _read_json(ac_path)
-    if not prev_ac or prev_ac.get("decision") != "reject":
+    # 'reject_and_diversify' routes through select_alternative_root, which
+    # delegates to this handler; accept both terminal-reject AC decisions.
+    if not prev_ac or prev_ac.get("decision") not in {"reject", "reject_and_diversify"}:
         return {
             "status": "rejected",
             "reason": (
-                "revise_root_after_reject is only valid after an AC reject. "
+                "revise_root_after_reject is only valid after an AC reject/reject_and_diversify. "
                 "Current ac_decision.json status: "
                 f"{(prev_ac or {}).get('decision', 'missing')}"
             ),
