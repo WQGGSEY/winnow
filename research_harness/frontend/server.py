@@ -1107,6 +1107,12 @@ def _read_phase_artifacts(
         if md.exists():
             with contextlib.suppress(OSError):
                 result["baseline_md"] = md.read_text(encoding="utf-8")
+        # Live elapsed-counter anchor for the "Market-research agent is
+        # searching…" indicator. Use the market dir's mtime (set when
+        # the launch route mkdir's it) as the phase-start anchor; that
+        # mutates exactly once per phase start, including on retry.
+        with contextlib.suppress(OSError):
+            result["phase_started_unix"] = pdir.stat().st_mtime
     elif phase == "production":
         sp = pdir / "production_run_summary.json"
         if sp.exists():

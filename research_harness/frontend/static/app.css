@@ -258,7 +258,8 @@ code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-
 }
 .chat-needs-resume strong { color: #713f12; }
 
-.chat-thinking {
+.chat-thinking,
+.phase-thinking {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -268,6 +269,27 @@ code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-
   font-style: italic;
 }
 .chat-thinking[hidden] { display: none; }
+.phase-thinking { margin: 12px 0; }
+.phase-thinking .dot {
+  width: 5px;
+  height: 5px;
+  background: var(--accent);
+  border-radius: 50%;
+  display: inline-block;
+  animation: chat-dot 1.2s infinite ease-in-out;
+}
+.phase-thinking .dot:nth-child(2) { animation-delay: 0.2s; }
+.phase-thinking .dot:nth-child(3) { animation-delay: 0.4s; margin-right: 6px; }
+.phase-thinking .thinking-elapsed {
+  margin-left: 6px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  font-style: normal;
+  color: var(--accent);
+  opacity: 0.85;
+  min-width: 60px;
+  display: inline-block;
+}
 .chat-thinking .thinking-elapsed {
   margin-left: 6px;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;

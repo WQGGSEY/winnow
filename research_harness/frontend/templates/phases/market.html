@@ -2,7 +2,23 @@
   <div class="phase-empty">
     <p>Market research has not been run for this thread.</p>
   </div>
-{% elif thread.current_phase == "market" and thread.phase_status in ("failed", "running", "awaiting_input") %}
+{% elif thread.current_phase == "market" and thread.phase_status == "running" %}
+  {# Phase is genuinely in flight (claude -p subprocess running, arxiv/scholar
+     fetching, etc.). Show an honest live elapsed counter instead of an empty
+     empty-state. p.phase_started_unix is set by _read_phase_artifacts from
+     either the thread.updated_at or the market/ dir mtime, whichever is newer. #}
+  <div class="phase-thinking">
+    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+    <span>Market-research agent is searching…</span>
+    <span class="thinking-elapsed"
+          data-elapsed-since="{{ p.phase_started_unix }}">computing…</span>
+  </div>
+  <p class="muted" style="font-size:12px;">
+    arXiv + Google Scholar + claude -p WebSearch are running in the background.
+    Panel auto-refreshes every 4s; when the agent finishes you'll see the
+    papers list and baseline dossier right here.
+  </p>
+{% elif thread.current_phase == "market" and thread.phase_status in ("failed", "awaiting_input") %}
   <div class="phase-empty">
     {% if thread.phase_status == "failed" %}
       <p><strong>Market research failed.</strong>

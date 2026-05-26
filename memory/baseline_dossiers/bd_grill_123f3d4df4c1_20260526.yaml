@@ -1,0 +1,94 @@
+id: bd_grill_123f3d4df4c1_20260526
+created_at: "2026-05-26"
+query: "GEPA LLM gradient flow automated WorldQuant Brain expression alpha generation dataset selection"
+problem_scope:
+  domain: "automated_expression_alpha_generation"
+  node_type: "validity"
+  claim_under_test: "It is possible to solve the problem of building an automated pipeline that generates WorldQuant Brain\u2013style expression alphas using a GEPA-style LLM-based gradient-flow methodology, where the pipeline also automatically selects which datasets/fields/categories to use from the millions of available WQ data fields (guided by metadata such as description, type, and per-dataset count of alphas in the WQ submitted alpha pool, while avoiding both over-used fields that fail correlation checks and under-used fields with no signal), given 8 years of data across 3000 stocks, evaluated in a self-built simulator during research and on the WorldQuant Brain simulator at production stage, and respecting WorldQuant Brain alpha submission constraints."
+selected:
+  method: "GEPA: Reflective Prompt Evolution Can Outperform Reinforcement Learning"
+  role: current_best_known
+  candidate_id: c_arxiv_250719457v2
+  one_paragraph_reason: "Top-ranked search result for the grilled claim."
+  evidence_tags:
+    - "automated_market_research"
+    - "arxiv"
+  risk_tags:
+    - "operator_should_review"
+candidates_index:
+  - id: c_arxiv_250719457v2
+    method: "GEPA: Reflective Prompt Evolution Can Outperform Reinforcement Learning"
+    decision: selected
+    reason_tags:
+      - "automated_market_research"
+      - "current_best_known"
+    detail_file: candidates/c_arxiv_250719457v2.md
+  - id: c_naive_placeholder
+    method: "naive: TBD (Professor will design)"
+    decision: selected_as_naive
+    reason_tags:
+      - "operator_review_required"
+      - "naive"
+    detail_file: candidates/c_naive_placeholder.md
+  - id: c_arxiv_251201452v1
+    method: "Automated Risk-of-Bias Assessment of Randomized Controlled Trials: A First Look at a GEPA-trained Programmatic Prompting Framework"
+    decision: selected_as_random_or_null
+    reason_tags:
+      - "automated_market_research"
+      - "random_or_null"
+    detail_file: candidates/c_arxiv_251201452v1.md
+source_index:
+  - id: s1
+    url: "https://arxiv.org/abs/2507.19457v2"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_2507.19457v2"
+  - id: s2
+    url: "https://arxiv.org/abs/2405.19595v1"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_2405.19595v1"
+  - id: s3
+    url: "https://arxiv.org/abs/2512.19399v1"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_2512.19399v1"
+  - id: s4
+    url: "https://arxiv.org/abs/astro-ph/0412590v2"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_astro-ph/0412590v2"
+  - id: s5
+    url: "https://arxiv.org/abs/2506.09162v1"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_2506.09162v1"
+  - id: s6
+    url: "https://arxiv.org/abs/2011.11052v1"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_2011.11052v1"
+  - id: s7
+    url: "https://arxiv.org/abs/2312.05930v2"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_2312.05930v2"
+  - id: s8
+    url: "https://arxiv.org/abs/2512.01452v1"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_2512.01452v1"
+  - id: s9
+    url: "https://arxiv.org/abs/2202.08261v2"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_2202.08261v2"
+  - id: s10
+    url: "https://arxiv.org/abs/2109.02486v1"
+    accessed_at: "2026-05-26"
+    supports:
+      - "arxiv_2109.02486v1"
+refresh_policy:
+  required_before:
+    - "final_claim_promotion"
+    - "external_writeup"

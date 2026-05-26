@@ -705,3 +705,42 @@
   document.body.addEventListener('htmx:afterSwap', (e) => bind(e.target));
 })();
 
+
+/* === Live elapsed-since counter ============================================= */
+(function () {
+  function bind(root) {
+    (root || document).querySelectorAll('[data-elapsed-since]').forEach((el) => {
+      if (el.dataset._elapsedBound) return;
+      el.dataset._elapsedBound = '1';
+      const since = parseFloat(el.dataset.elapsedSince);
+      if (!Number.isFinite(since)) {
+        el.textContent = '—';
+        return;
+      }
+      const tick = () => {
+        if (!el.isConnected) {
+          clearInterval(handle);
+          return;
+        }
+        const sec = Date.now() / 1000 - since;
+        if (sec < 0) {
+          el.textContent = '0.0s';
+        } else if (sec < 60) {
+          el.textContent = `${sec.toFixed(1)}s`;
+        } else if (sec < 3600) {
+          const m = Math.floor(sec / 60);
+          const s = Math.floor(sec % 60);
+          el.textContent = `${m}m ${s.toString().padStart(2, '0')}s`;
+        } else {
+          const h = Math.floor(sec / 3600);
+          const m = Math.floor((sec % 3600) / 60);
+          el.textContent = `${h}h ${m}m`;
+        }
+      };
+      tick();
+      const handle = setInterval(tick, 200);
+    });
+  }
+  document.addEventListener('DOMContentLoaded', () => bind(document));
+  document.body.addEventListener('htmx:afterSwap', (e) => bind(e.target));
+})();
