@@ -31,6 +31,7 @@ import errno
 import json
 import os
 import pty
+import re
 import select
 import signal
 import sys
@@ -506,6 +507,78 @@ def _which(name: str) -> str | None:
     return None
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[NOPDM]|[\x07\x08\x0b\x0c\x0e\x0f]")
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes + control chars from a string so the
+    log file is human-readable. claude's startup banner emits a lot of
+    color/cursor codes even in non-interactive mode."""
+    return _ANSI_RE.sub("", text)
+
+
+def _format_stream_json_event(line: str) -> str | None:
+    """Parse one line of claude --output-format=stream-json output and
+    return a readable single-line log entry. Returns None when the line
+    is uninteresting (ping, system noise) and should be dropped."""
+    line = line.strip()
+    if not line or not line.startswith("{"):
+        return None
+    try:
+        ev = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(ev, dict):
+        return None
+    etype = ev.get("type", "")
+    if etype == "system":
+        sub = ev.get("subtype") or ev.get("session_id", "")
+        return f"[system] {sub}"
+    if etype == "assistant":
+        msg = ev.get("message") or {}
+        contents = msg.get("content") or []
+        out: list[str] = []
+        for c in contents:
+            if not isinstance(c, dict):
+                continue
+            ct = c.get("type")
+            if ct == "text":
+                txt = (c.get("text") or "").strip()
+                if txt:
+                    out.append(f"text> {txt[:300]}")
+            elif ct == "tool_use":
+                name = c.get("name", "?")
+                inp = c.get("input") or {}
+                # Only print key names so we don't dump full prompts.
+                key_summary = ", ".join(sorted(inp.keys())[:6])
+                out.append(f"tool_use> {name}({key_summary})")
+            elif ct == "thinking":
+                txt = (c.get("thinking") or c.get("text") or "")
+                if txt:
+                    out.append(f"thinking> {txt.strip()[:200]}")
+        return "\n".join(out) if out else None
+    if etype == "user":
+        msg = ev.get("message") or {}
+        contents = msg.get("content") or []
+        for c in contents:
+            if isinstance(c, dict) and c.get("type") == "tool_result":
+                content = c.get("content")
+                if isinstance(content, list) and content:
+                    first = content[0]
+                    if isinstance(first, dict):
+                        txt = (first.get("text") or "")[:200]
+                        return f"tool_result> {txt}"
+                elif isinstance(content, str):
+                    return f"tool_result> {content[:200]}"
+        return None
+    if etype == "result":
+        subtype = ev.get("subtype", "")
+        cost = ev.get("total_cost_usd")
+        turns = ev.get("num_turns")
+        return f"[result] subtype={subtype} turns={turns} cost=${cost}"
+    return None
+
+
 def spawn_claude_session(
     prompt: str,
     *,
@@ -515,14 +588,16 @@ def spawn_claude_session(
     active_child_ref: dict | None = None,
 ) -> int:
     """Run `claude -p <prompt>` (non-interactive) as a managed
-    subprocess. claude executes the full agentic loop — MCP tools,
-    WebSearch, file I/O — and exits when the LLM finishes the task or
-    hits the session/turn limit. Supervisor's outer loop spawns the
-    next cycle on its own.
+    subprocess with stream-json output. Each event (assistant text,
+    tool_use, tool_result, result) is parsed and written as one
+    readable line to log_path. ANSI escape codes are stripped.
 
     Why not pty + interactive `claude`: that path hung at empty stdout
-    on every spawn (TTY dialog blocking prompt injection). The
-    market_research_claude module hit the same bug; same fix.
+    on every spawn (TTY dialog blocking prompt injection). Why not
+    `--output-format text`: claude's startup banner emits ASCII art +
+    ANSI codes, and tool-use progress is buffered until completion,
+    so the log was unreadable cruft until cycle end. stream-json gives
+    line-by-line visibility into tool calls + reasoning.
 
     Subscription pool only. No API path.
     """
@@ -535,41 +610,53 @@ def spawn_claude_session(
             "and ensure `claude` is on the operator's PATH. "
             "Supervisor uses the subscription pool — no API fallback."
         )
-    # boot_delay was useful for pty; with -p there is no TTY surface
-    # to wait on, so we just keep the parameter for API compatibility
-    # and the existing test signatures.
-    del boot_delay
+    del boot_delay  # kept for API compat; no TTY surface to wait on
 
-    cmd = [claude_bin, "-p", prompt, "--model", model, "--output-format", "text"]
-    log_fh = log_path.open("ab") if log_path else None
+    cmd = [
+        claude_bin, "-p", prompt,
+        "--model", model,
+        "--output-format", "stream-json",
+        "--verbose",  # stream-json requires --verbose in claude v2+
+    ]
+    log_fh = log_path.open("a", encoding="utf-8") if log_path else None
     proc = _subprocess.Popen(
         cmd,
         stdin=_subprocess.DEVNULL,
         stdout=_subprocess.PIPE,
         stderr=_subprocess.STDOUT,
-        text=False,
+        text=True,
+        bufsize=1,  # line-buffered
         close_fds=True,
     )
     if active_child_ref is not None:
         active_child_ref["pid"] = proc.pid
 
+    if log_fh:
+        log_fh.write(f"\n=== claude spawn pid={proc.pid} {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+        log_fh.flush()
+
     try:
-        # Stream stdout to log file + operator's stderr so the operator
-        # can `tail -f` the subprocess log. Single read loop; no pty,
-        # so no select needed.
         assert proc.stdout is not None
-        while True:
-            chunk = proc.stdout.read(4096)
-            if not chunk:
-                break
+        for line in proc.stdout:
+            clean = _strip_ansi(line).rstrip("\n")
+            formatted = _format_stream_json_event(clean)
+            if formatted is None:
+                # Fall back to raw line if it has content but isn't
+                # one of our recognized event types — keeps surprises
+                # visible rather than silently dropped.
+                if clean.strip() and not clean.startswith("{"):
+                    formatted = clean
+                else:
+                    continue
+            stamped = f"[{time.strftime('%H:%M:%S')}] {formatted}"
             if log_fh:
                 try:
-                    log_fh.write(chunk)
+                    log_fh.write(stamped + "\n")
                     log_fh.flush()
                 except OSError:
                     pass
             try:
-                LOG.write(chunk.decode("utf-8", errors="replace"))
+                LOG.write(stamped + "\n")
                 LOG.flush()
             except Exception:  # noqa: BLE001
                 pass

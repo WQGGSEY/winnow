@@ -17,6 +17,7 @@ categories:
     description: "The experiment was valid but the claim was contradicted or weak."
     files:
       - "negative_result/n_llm_gradflow_wq_alpha_root_draft01__negative_result__cdaad15cca.md"
+      - "negative_result/n_gepa_expression_alpha_pipeline_root__negative_result__0bfba4c780.md"
   taste_rejection:
     description: "The result may work locally but conflicts with research taste or goal."
     files: []

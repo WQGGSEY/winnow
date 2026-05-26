@@ -492,6 +492,52 @@ class NeededResourcesTests(unittest.TestCase):
             self.assertIn("boundary", written)
 
 
+class StreamJsonFormatterTests(unittest.TestCase):
+    def test_ansi_codes_stripped(self):
+        banner = " \x1b[38;2;215;119;87m▐\x1b[48;2;0;0;0m▛███▜\x1b[49m▌"
+        self.assertEqual(ts._strip_ansi(banner), " ▐▛███▜▌")
+
+    def test_assistant_tool_use_formatted(self):
+        line = json.dumps({
+            "type": "assistant",
+            "message": {"content": [
+                {"type": "tool_use", "name": "get_research_state",
+                 "input": {"thread_id": "t1"}}
+            ]}
+        })
+        out = ts._format_stream_json_event(line)
+        self.assertIn("tool_use>", out)
+        self.assertIn("get_research_state", out)
+
+    def test_assistant_text_truncated(self):
+        line = json.dumps({
+            "type": "assistant",
+            "message": {"content": [
+                {"type": "text", "text": "hello world"}
+            ]}
+        })
+        out = ts._format_stream_json_event(line)
+        self.assertIn("text>", out)
+        self.assertIn("hello world", out)
+
+    def test_result_event_formatted(self):
+        line = json.dumps({
+            "type": "result", "subtype": "success",
+            "total_cost_usd": 0.05, "num_turns": 12,
+        })
+        out = ts._format_stream_json_event(line)
+        self.assertIn("[result]", out)
+        self.assertIn("turns=12", out)
+
+    def test_unknown_event_returns_none(self):
+        out = ts._format_stream_json_event(json.dumps({"type": "ping"}))
+        self.assertIsNone(out)
+
+    def test_non_json_returns_none(self):
+        self.assertIsNone(ts._format_stream_json_event("not json"))
+        self.assertIsNone(ts._format_stream_json_event(""))
+
+
 class WhichTests(unittest.TestCase):
     def test_which_finds_python(self):
         # Python is always on PATH in CI; sanity-check _which.
