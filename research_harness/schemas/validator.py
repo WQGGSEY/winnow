@@ -147,14 +147,36 @@ def _validate(schema: dict[str, Any], data: Any, path: str) -> None:
                 _validate(item_schema, item, f"{path}[{index}]")
 
     if isinstance(data, dict):
+        # Report ALL missing required keys at once instead of one at a time.
+        # Otherwise an LLM filling fields reactively will re-submit N times
+        # for N missing fields, with the previous N-1 retries all wasted on
+        # the same trivial fix. Listing the full set lets the next attempt
+        # close the gap in one shot.
         required = schema.get("required", [])
-        for key in required:
-            if key not in data:
-                raise SchemaValidationError(f"{path}: missing required key {key!r}")
+        missing = [k for k in required if k not in data]
+        if missing:
+            if len(missing) == 1:
+                raise SchemaValidationError(
+                    f"{path}: missing required key {missing[0]!r}"
+                )
+            raise SchemaValidationError(
+                f"{path}: missing required keys {missing!r}"
+            )
 
+        # Likewise report all unexpected keys together when
+        # additionalProperties=False, instead of bailing on the first one.
         properties = schema.get("properties", {})
+        unexpected: list[str] = []
+        if schema.get("additionalProperties") is False:
+            unexpected = [k for k in data.keys() if k not in properties]
+        if unexpected:
+            if len(unexpected) == 1:
+                raise SchemaValidationError(
+                    f"{path}: unexpected key {unexpected[0]!r}"
+                )
+            raise SchemaValidationError(
+                f"{path}: unexpected keys {unexpected!r}"
+            )
         for key, value in data.items():
             if key in properties:
                 _validate(properties[key], value, f"{path}.{key}")
-            elif schema.get("additionalProperties") is False:
-                raise SchemaValidationError(f"{path}: unexpected key {key!r}")
