@@ -92,12 +92,20 @@ class EnrichTests(unittest.TestCase):
                     timeout_seconds=5.0,
                 )
             self.assertEqual(len(papers), 1)
-            self.assertEqual(papers[0]["source"], "websearch")
-            self.assertEqual(papers[0]["url"], "https://example.com/paper")
-            self.assertEqual(papers[0]["title"], "Sample Industry Paper")
-            self.assertEqual(papers[0]["download_status"], "skipped")
-            self.assertEqual(papers[0]["arxiv_id"], None)
-            self.assertEqual(papers[0]["reported_metric"], "AUC=0.6")
+            paper = papers[0]
+            self.assertEqual(paper["source"], "websearch")
+            self.assertEqual(paper["url"], "https://example.com/paper")
+            self.assertEqual(paper["title"], "Sample Industry Paper")
+            self.assertEqual(paper["download_status"], "skipped")
+            self.assertEqual(paper["arxiv_id"], None)
+            # reported_metric is folded into abstract to stay
+            # schema-compliant (reference_paper.schema has
+            # additionalProperties: false).
+            self.assertIn("AUC=0.6", paper["abstract"])
+            # schema-only fields are present; non-schema fields removed.
+            self.assertNotIn("reported_metric", paper)
+            self.assertNotIn("role_hint", paper)
+            self.assertNotIn("published", paper)
             # log file written with stdout
             log = (run_dir / "claude_websearch.log").read_text(encoding="utf-8")
             self.assertIn("=== stdout ===", log)
@@ -193,6 +201,45 @@ class EnrichTests(unittest.TestCase):
                     run_dir=Path(tmp),
                 )
             self.assertEqual(papers, [])
+
+    def test_normalized_papers_pass_reference_paper_schema(self):
+        """Regression: every normalized paper MUST satisfy reference_paper
+        schema (additionalProperties: false), otherwise market_research's
+        validate_named_schema loop blows up the whole phase."""
+        from research_harness.schemas.validator import validate_named_schema
+
+        sample = [
+            {
+                "id": "web_chain_of_alpha",
+                "title": "Chain-of-Alpha",
+                "url": "https://arxiv.org/abs/2508.06312",
+                "authors": [],
+                "abstract": "Dual-chain LLM framework.",
+                "arxiv_id": "2508.06312",
+                "published": "2025-08",
+                "reported_metric": "IC 0.07 / Sharpe 1.5",
+                "role_hint": "current_best_known",
+            }
+        ]
+        with TemporaryDirectory() as tmp:
+            with mock.patch.object(mrc, "_which", return_value="/usr/bin/claude"), \
+                 mock.patch.object(
+                     mrc.subprocess, "run",
+                     return_value=self._fake_completed(json.dumps(sample)),
+                 ):
+                papers = mrc.enrich_with_claude_websearch(
+                    query="q",
+                    user_goal="g",
+                    existing_papers=[],
+                    run_dir=Path(tmp),
+                )
+            self.assertEqual(len(papers), 1)
+            # Critical: schema validation must succeed.
+            validate_named_schema("reference_paper", papers[0])
+            # arxiv_id preserved when claude provided it.
+            self.assertEqual(papers[0]["arxiv_id"], "2508.06312")
+            # year extracted from "2025-08".
+            self.assertEqual(papers[0]["year"], 2025)
 
     def test_malformed_json_returns_empty(self):
         with TemporaryDirectory() as tmp:

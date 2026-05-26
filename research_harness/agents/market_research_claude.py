@@ -218,31 +218,58 @@ def enrich_with_claude_websearch(
 
     # Normalize each candidate to the reference_paper schema shape so
     # downstream code can validate + ingest without case-by-case fixups.
+    # Schema is STRICT (additionalProperties: false) — any extra field
+    # (published, reported_metric, role_hint, etc.) breaks validation,
+    # so we drop them here. role_hint is re-derived deterministically by
+    # _role_hint_for() in market_research; reported_metric ends up
+    # inside the candidate file's abstract paragraph if we want it.
     normalized: list[dict[str, Any]] = []
     for p in papers:
         if not isinstance(p, dict):
             continue
         if not p.get("url") or not p.get("title"):
             continue
+        # Preserve claude-found arxiv_id when present (real provenance).
+        raw_aid = p.get("arxiv_id")
+        arxiv_id = str(raw_aid) if raw_aid else None
+        # Fold reported_metric into the abstract so the info survives
+        # without breaking the schema. Keep abstract under the implicit
+        # downstream display budget.
+        base_abstract = str(p.get("abstract") or "").strip()
+        rm = str(p.get("reported_metric") or "").strip()
+        if rm and rm not in base_abstract:
+            base_abstract = (base_abstract + " [reported_metric: " + rm + "]").strip()
+        # Map "published": "2025-08" → year: 2025 (schema field).
+        year: int | None = None
+        pub_raw = p.get("published")
+        if pub_raw:
+            m = _YEAR_RE.search(str(pub_raw))
+            if m:
+                try:
+                    year = int(m.group(0))
+                except ValueError:
+                    year = None
         norm = {
             "id": str(p.get("id") or f"web_{abs(hash(p['url'])) % (10**8):08d}"),
             "source": "websearch",
             "title": str(p["title"])[:400],
             "url": str(p["url"])[:1024],
             "authors": [str(a) for a in (p.get("authors") or []) if a][:8],
-            "published": p.get("published"),
-            "abstract": str(p.get("abstract") or "")[:2000] or None,
-            "arxiv_id": None,
+            "abstract": base_abstract[:2000] or None,
+            "arxiv_id": arxiv_id,
+            "year": year,
             "download_status": "skipped",
             "download_error": None,
             "pdf_path": None,
             "pdf_bytes": None,
             "fetched_at": str(p.get("fetched_at") or _now_iso()),
-            "reported_metric": str(p.get("reported_metric") or "")[:300] or None,
-            "role_hint": str(p.get("role_hint") or "current_best_known")[:64],
         }
         normalized.append(norm)
     return normalized
+
+
+import re as _re
+_YEAR_RE = _re.compile(r"\b(19|20|21)\d{2}\b")
 
 
 def _now_iso() -> str:
