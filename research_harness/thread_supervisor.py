@@ -47,16 +47,20 @@ DEFAULT_MAX_IDLE_SECONDS = 600.0   # 10 min — claude session typically idle
                                    #          experiments; we want to detect
                                    #          true death, not a long step.
 DEFAULT_POLL_SECONDS = 30.0        # check every 30s
-DEFAULT_MAX_CYCLES = 12            # hard cap on respawn cycles per thread
+DEFAULT_MILESTONE_CYCLE = 10       # informational logging milestone (PR8:
+                                   #          no longer a termination cause —
+                                   #          supervisor never quits on count)
 DEFAULT_CLAUDE_BOOT_DELAY = 3.0    # seconds to wait after fork before
                                    #          writing the resume prompt
 DEFAULT_CLAUDE_MODEL = "claude-opus-4-7"
 
-
-TERMINAL_OUTCOMES = {
-    "accept",        # render_final_paper finished
-    "honest_failure",  # render_honest_failure_paper finished
-}
+# PR8: rate-limit backoff. When claude subprocess fails fast (exit < 30s)
+# we treat it as a likely rate-limit and back off exponentially. Backoff
+# resets when a cycle runs healthily for >= RATE_LIMIT_HEALTHY_CYCLE_SECONDS.
+DEFAULT_RATE_LIMIT_BACKOFF_INITIAL = 60.0
+DEFAULT_RATE_LIMIT_BACKOFF_MAX = 1800.0
+RATE_LIMIT_FAST_FAIL_SECONDS = 30.0
+RATE_LIMIT_HEALTHY_CYCLE_SECONDS = 300.0
 
 
 # --- terminal-state detection ------------------------------------------- #
@@ -67,28 +71,134 @@ def _thread_dir(repo: Path, tid: str) -> Path:
 
 
 def is_terminal(repo: Path, tid: str) -> tuple[bool, str | None]:
-    """Return (is_terminal, outcome). Terminal means the thread has emitted
-    a publication artifact and a production_run_summary.json with a
-    recognized outcome — render_final_paper or render_honest_failure_paper.
+    """PR8: ONLY terminate on the dual-gate publication outcome — i.e.,
+    AC decision in {accept, revise} AND submit_professor_user_goal_
+    attestation.achieved=true AND a paper artifact rendered. Everything
+    else (honest_failure, max_cycles, rate limits) is a state to retreat
+    from and retry, not a termination.
+
+    Returns (is_terminal, 'accept_with_goal_achieved' | None).
     """
-    summary_path = _thread_dir(repo, tid) / "production" / "production_run_summary.json"
+    pdir = _thread_dir(repo, tid) / "production"
+    summary_path = pdir / "production_run_summary.json"
     if not summary_path.exists():
         return False, None
     try:
         s = json.loads(summary_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False, None
-    # honest_failure path writes outcome at top level.
-    direct = s.get("outcome")
-    if direct in TERMINAL_OUTCOMES:
-        return True, direct
-    # accept path: render_final_paper writes rebuttal_summary.ac_decision.decision.
-    ac_decision = (s.get("rebuttal_summary") or {}).get("ac_decision", {}).get("decision")
-    if ac_decision in {"accept", "revise"} and (
-        s.get("publication_dispatch", {}) or {}
-    ).get("rendered_artifacts"):
-        return True, "accept"
-    return False, None
+
+    # honest_failure no longer terminates — supervisor must drive a retry.
+    if s.get("outcome") == "honest_failure":
+        return False, None
+
+    rebuttal = s.get("rebuttal_summary") or {}
+    ac_decision = (rebuttal.get("ac_decision") or {}).get("decision")
+    rendered = (s.get("publication_dispatch") or {}).get("rendered_artifacts")
+    if ac_decision not in {"accept", "revise"} or not rendered:
+        return False, None
+
+    # Second half of the dual-gate: Professor's user_goal_attestation must
+    # exist with achieved=true. summary may embed it or we read it directly.
+    attestation = rebuttal.get("user_goal_attestation")
+    if not attestation:
+        attestation_path = pdir / "rebuttal" / "user_goal_attestation.json"
+        if attestation_path.exists():
+            try:
+                attestation = json.loads(attestation_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                attestation = None
+    if not attestation or not attestation.get("achieved"):
+        return False, None
+
+    return True, "accept_with_goal_achieved"
+
+
+def collect_needed_resources(repo: Path, tid: str) -> list[dict[str, object]]:
+    """PR8: scan the thread state for unmet resource requirements that are
+    blocking publication. Combines:
+      - user_goal_attestation.required_additional_research (when achieved=false)
+      - alternative_root_proposal.alternatives' implicit resource needs
+      - feasibility_envelope gaps (e.g., target=deployment but no real adapter)
+    The supervisor logs this to needed_resources.yaml so the operator can
+    see what's blocking and add the missing pieces.
+    """
+    pdir = _thread_dir(repo, tid) / "production"
+    needs: list[dict[str, object]] = []
+
+    # Source 1: latest attestation's required_additional_research.
+    att_path = pdir / "rebuttal" / "user_goal_attestation.json"
+    if att_path.exists():
+        try:
+            a = json.loads(att_path.read_text(encoding="utf-8"))
+            if not a.get("achieved"):
+                for r in a.get("required_additional_research") or []:
+                    needs.append({
+                        "type": "additional_research",
+                        "axis": r.get("axis"),
+                        "experiment": r.get("experiment", "")[:300],
+                        "rationale": r.get("rationale", "")[:200],
+                        "source": "user_goal_attestation",
+                    })
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    # Source 2: feasibility envelope gaps. If target_scope=deployment and
+    # no real_adapter is declared, that's a structural blocker the operator
+    # must address by registering an adapter.
+    env_path = pdir / "feasibility_envelope.json"
+    if env_path.exists():
+        try:
+            env = json.loads(env_path.read_text(encoding="utf-8"))
+            target = (env.get("operator_intent") or {}).get("target_deploy_grade_scope")
+            real = [s for s in env.get("data_sources_available", []) if s.get("kind") == "real_adapter"]
+            if target == "deployment" and not real:
+                needs.append({
+                    "type": "data_adapter",
+                    "spec": "register a real_adapter under settings.json.data_adapters.registered",
+                    "rationale": (
+                        "operator_intent.target_deploy_grade_scope='deployment' but "
+                        "no real_adapter is in the envelope. Without one, deployment-"
+                        "scope claims are blocked."
+                    ),
+                    "source": "feasibility_envelope",
+                })
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    return needs
+
+
+def _format_needed_resources_yaml(needs: list[dict[str, object]]) -> str:
+    """Hand-rolled YAML emitter compatible with the harness's
+    parse_simple_yaml. Mirrors mcp_server._format_failure_index style."""
+    if not needs:
+        return "needs: []\n"
+    lines = ["needs:"]
+    for n in needs:
+        lines.append(f"  - type: \"{_q(n.get('type', ''))}\"")
+        for k in ("axis", "spec", "experiment", "rationale", "source"):
+            v = n.get(k)
+            if v:
+                lines.append(f"    {k}: \"{_q(str(v))}\"")
+    return "\n".join(lines) + "\n"
+
+
+def _q(s: str) -> str:
+    return str(s).replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")
+
+
+def update_needed_resources_file(repo: Path, tid: str) -> list[dict[str, object]]:
+    """Write the current needed_resources snapshot to disk. Returns the
+    list so the supervisor can include it in the next resume prompt."""
+    needs = collect_needed_resources(repo, tid)
+    path = _thread_dir(repo, tid) / "needed_resources.yaml"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_format_needed_resources_yaml(needs), encoding="utf-8")
+    except OSError:
+        pass
+    return needs
 
 
 # --- MCP idle detection ------------------------------------------------- #
@@ -160,12 +270,30 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
     promoted = state.get("promoted_node_ids") or []
     archived = state.get("archived_attempts", 0)
     last_ac = state.get("last_ac_decision")
+    needs = update_needed_resources_file(repo, tid)
+
+    needs_block = ["needed_resources (불만족 상태 / 다음 cycle에 해결 시도):"]
+    if needs:
+        for n in needs:
+            tag = n.get("type", "?")
+            spec = n.get("spec") or n.get("experiment") or n.get("axis") or "-"
+            needs_block.append(f"  - [{tag}] {str(spec)[:200]}")
+    else:
+        needs_block.append("  (없음 또는 첫 cycle)")
 
     lines = [
         f"research_harness MCP에 붙어있어. Thread {tid} 를 이어서 진행할 거야.",
         "",
-        f"[supervisor cycle #{cycle}] 이전 세션이 한도로 종료됐어. 너가 새 세션이고,",
-        "이전 세션이 남긴 thread 디스크 상태를 읽어서 어디서 멈췄는지 파악해야 해.",
+        f"[supervisor cycle #{cycle}] 이전 세션이 한도로 종료됐어. 새 세션이야.",
+        "디스크 상태를 읽고 어디서 멈췄는지 파악해서 이어가.",
+        "",
+        "**절대 종료 조건 (PR8):** 이 thread는 오직 DUAL-GATE 양쪽이",
+        "모두 통과할 때만 끝나. 다음 두 조건 동시 성립해야:",
+        "  (1) submit_ac_decision: decision ∈ {accept, revise}",
+        "  (2) submit_professor_user_goal_attestation: achieved=true",
+        "→ 그 외엔 모두 'still working' 상태. honest_failure 호출하지 마.",
+        "→ supervisor가 honest_failure를 종료로 안 받음. 그건 retreat 신호일 뿐이고,",
+        "   다음 cycle에 새 angle / chunk / 자원으로 재시도해야 함.",
         "",
         "현재 상태 (디스크 스냅샷):",
         f"  - promoted nodes: {promoted}",
@@ -174,17 +302,24 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         f"  - last AC decision: {last_ac!r}",
         f"  - search state status: {state.get('search_state_status')!r}",
         "",
+        *needs_block,
+        "",
         "방향:",
-        "  1. get_research_state(thread_id=\"" + tid + "\") 호출로 정확한 현재 상태 확인.",
-        "  2. mid-state 노드가 있으면 그 노드의 다음 도구 (resume_production_state",
-        "     또는 get_next_admissible_node의 status=resume 응답 따라가기) 호출.",
-        "  3. mid-state 노드가 없고 promoted_node_ids도 비어있으면",
-        "     get_next_admissible_node로 다음 ready 노드 처리.",
-        "  4. publish 단계 도달하면 dual-gate 둘 다 통과해야 render_final_paper 가능:",
+        f"  1. get_research_state(thread_id=\"{tid}\") 로 정확한 현재 상태 확인.",
+        "  2. needed_resources가 있고 그게 해결 가능하면 (예: synthetic→다른 oracle,",
+        "     scope 좁히기, chunk 쪼개기) 그쪽으로. 자원 자체가 부족하면 (real data adapter",
+        "     없음 등) feasibility_envelope 다시 보고 scope을 'feasibility' 또는",
+        "     'directional'로 narrow + dual-gate 통과 가능한 형태로 reframe.",
+        "  3. mid-state 노드 있으면 그 노드의 다음 도구 호출 (resume_production_state",
+        "     또는 get_next_admissible_node의 status=resume 응답).",
+        "  4. 없으면 get_next_admissible_node로 다음 ready 노드 처리.",
+        "  5. publish 직전 단계 도달하면 dual-gate 둘 다 통과 시도:",
         "       (a) submit_ac_decision (decision ∈ {accept, revise}),",
         "       (b) submit_professor_user_goal_attestation (achieved=true).",
-        "  5. 방향이 hopeless로 판단되면 propose_alternative_root_directions로",
-        "     N≥3 angles fan-out. 끝까지 안 풀리면 render_honest_failure_paper.",
+        "     achieved=true가 안 나오면 honest_failure 부르지 말고,",
+        "     required_additional_research를 다음 follow-up 노드로 만들고 cycle 계속.",
+        "  6. claim 자체가 envelope에 맞지 않으면 revise_root_after_reject로",
+        "     scope을 envelope-fit하게 narrow. (예: deployment → feasibility)",
         "",
         "Anti-laziness 룰 작동 중 (PR1):",
         "  - claim narrowing-without-breadth → reject",
@@ -194,13 +329,19 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "  - capability claim without decision_rule → reject",
         "Anti-laziness 통과 못 하면 retry 메시지가 explicit reason과 함께 와.",
         "",
+        "Feasibility envelope (PR7):",
+        "  - feasibility_envelope.json이 thread에 있어. 거기 declared된",
+        "    data_sources / llm_oracles / compute_budget / operator_intent 안에서만",
+        "    claim 설계 가능. envelope 못 맞추면 validate_claim_fits_envelope이 reject.",
+        "",
         "Memory (PR4):",
         "  - prior failures + active lessons는 prepare_rebuttal_packet /",
         "    prepare_paper_writing_context의 응답 payload에 inject됨.",
         "  - 너의 prune/contradicted 결정은 memory/failures/ 에 자동 기록됨.",
         "",
         "세션 한도 가까워지면 self-judge로 멈춰. 한 줄 status 남기고 종료해.",
-        "supervisor가 잠시 후 새 세션 spawn 해서 이어받을 거야.",
+        "supervisor가 곧 새 cycle spawn 해서 이어받을 거야. 절대 honest_failure로",
+        "끝내지 마 — 그건 종료 아니야, retreat 신호일 뿐.",
         "",
         "지금 시작:",
     ]
@@ -375,16 +516,26 @@ def watch_thread(
     *,
     max_idle_seconds: float = DEFAULT_MAX_IDLE_SECONDS,
     poll_seconds: float = DEFAULT_POLL_SECONDS,
-    max_cycles: int = DEFAULT_MAX_CYCLES,
+    milestone_cycle: int = DEFAULT_MILESTONE_CYCLE,
     model: str = DEFAULT_CLAUDE_MODEL,
     boot_delay: float = DEFAULT_CLAUDE_BOOT_DELAY,
+    rate_limit_backoff_initial: float = DEFAULT_RATE_LIMIT_BACKOFF_INITIAL,
+    rate_limit_backoff_max: float = DEFAULT_RATE_LIMIT_BACKOFF_MAX,
+    max_cycles: int | None = None,  # PR8: only honored when explicitly set;
+                                    #      default behavior never quits on count.
 ) -> dict[str, object]:
-    """Main supervisor loop. Returns a final-status dict for the operator.
+    """PR8 supervisor loop. ONLY exits when the dual-gate publish outcome
+    is reached (AC accept + Professor user_goal_attestation.achieved=true)
+    OR the operator sends SIGINT/SIGTERM. honest_failure is treated as a
+    retreat state — supervisor respawns claude with instructions to try a
+    different angle. Subscription rate-limit fast-fails trigger
+    exponential backoff (1m → 2m → 4m → ... cap).
 
     Exit conditions:
-      - thread reaches terminal outcome (publish or honest_failure) → success
-      - max_cycles respawns exhausted → exits with max_cycles_exceeded
-      - SIGINT/SIGTERM → graceful (lock released, status='interrupted')
+      - dual-gate publish (AC accept + attestation.achieved=true) → status='terminal'
+      - SIGINT/SIGTERM → status='interrupted'
+      - explicit max_cycles override hit → status='max_cycles_exceeded'
+        (left available for tests + emergency operator stop; default = unlimited)
     """
     tdir = _thread_dir(repo, tid)
     if not tdir.exists():
@@ -401,34 +552,52 @@ def watch_thread(
     signal.signal(signal.SIGTERM, _sigint)
 
     _log(log_path, f"supervisor starting for thread {tid} (pid={os.getpid()})")
-    _log(log_path, f"max_idle={max_idle_seconds}s poll={poll_seconds}s max_cycles={max_cycles} model={model}")
+    _log(
+        log_path,
+        f"max_idle={max_idle_seconds}s poll={poll_seconds}s milestone_cycle={milestone_cycle} "
+        f"model={model} max_cycles={max_cycles!r} (None=unlimited)",
+    )
 
     cycle = 0
+    rate_limit_backoff = rate_limit_backoff_initial
+    rate_limit_armed = False  # toggled after a fast-fail cycle
     while True:
         terminal, outcome = is_terminal(repo, tid)
         if terminal:
-            _log(log_path, f"thread reached terminal outcome={outcome!r} after {cycle} cycle(s). exiting cleanly.")
+            _log(log_path, f"DUAL-GATE PASS: outcome={outcome!r} after {cycle} cycle(s). exiting cleanly.")
             return {"status": "terminal", "outcome": outcome, "cycles": cycle}
 
         if interrupted["flag"]:
             _log(log_path, "interrupted by signal — exiting.")
             return {"status": "interrupted", "cycles": cycle}
 
-        if cycle >= max_cycles:
-            _log(log_path, f"max_cycles ({max_cycles}) exhausted. exiting without terminal outcome.")
+        if max_cycles is not None and cycle >= max_cycles:
+            _log(log_path, f"explicit max_cycles override ({max_cycles}) hit. exiting.")
             return {"status": "max_cycles_exceeded", "cycles": cycle}
+
+        # PR8 milestone-not-termination logging.
+        if cycle > 0 and cycle % milestone_cycle == 0:
+            needs = update_needed_resources_file(repo, tid)
+            _log(
+                log_path,
+                f"[milestone] cycle {cycle} reached without dual-gate. "
+                f"blocking on {len(needs)} resource(s); see needed_resources.yaml. "
+                "supervisor continues indefinitely per never-quit policy.",
+            )
 
         idle = mcp_idle_seconds(repo, tid)
         if idle <= max_idle_seconds:
-            # Recent activity — MCP still being driven by someone. Wait.
+            # Recent activity — MCP still being driven. Wait.
             time.sleep(poll_seconds)
             continue
 
-        # Idle past threshold — claude session is gone or never existed.
-        # Spawn a new one with the resume prompt.
+        # Idle past threshold — spawn a new claude cycle. update needed_resources
+        # before generating the resume prompt so the LLM sees the latest gaps.
+        update_needed_resources_file(repo, tid)
         cycle += 1
         prompt = build_resume_prompt(repo, tid, cycle)
         _log(log_path, f"cycle #{cycle}: idle={idle:.0f}s > {max_idle_seconds:.0f}s — spawning claude")
+        spawn_started = time.time()
         try:
             exit_code = spawn_claude_session(
                 prompt,
@@ -436,11 +605,35 @@ def watch_thread(
                 boot_delay=boot_delay,
                 log_path=tdir / "claude_subprocess.log",
             )
-            _log(log_path, f"cycle #{cycle}: claude subprocess exited with code={exit_code}")
+            spawn_elapsed = time.time() - spawn_started
+            _log(
+                log_path,
+                f"cycle #{cycle}: claude subprocess exited code={exit_code} after {spawn_elapsed:.1f}s",
+            )
+            # PR8 rate-limit detection. A real claude session normally runs
+            # at least several minutes (MCP tool calls + reasoning). A
+            # sub-30s exit usually means auth/rate-limit/binary failure.
+            if spawn_elapsed < RATE_LIMIT_FAST_FAIL_SECONDS:
+                rate_limit_armed = True
+                _log(
+                    log_path,
+                    f"cycle #{cycle}: fast-fail ({spawn_elapsed:.1f}s) — likely rate limit / "
+                    f"auth issue. backing off {rate_limit_backoff:.0f}s.",
+                )
+                time.sleep(rate_limit_backoff)
+                rate_limit_backoff = min(
+                    rate_limit_backoff_max, rate_limit_backoff * 2.0
+                )
+            elif spawn_elapsed >= RATE_LIMIT_HEALTHY_CYCLE_SECONDS:
+                if rate_limit_armed:
+                    _log(
+                        log_path,
+                        "cycle ran healthy — resetting rate-limit backoff.",
+                    )
+                rate_limit_armed = False
+                rate_limit_backoff = rate_limit_backoff_initial
         except Exception as exc:  # noqa: BLE001
             _log(log_path, f"cycle #{cycle}: spawn raised {type(exc).__name__}: {exc}")
-            # Brief backoff before retrying so we don't spin on a fast-failing
-            # CLI (e.g., missing auth, missing binary).
             time.sleep(min(60.0, poll_seconds * 2))
 
 
@@ -466,7 +659,10 @@ def main(argv: list[str] | None = None) -> int:
     p_watch.add_argument("--repo-root", type=Path, default=None)
     p_watch.add_argument("--max-idle-seconds", type=float, default=DEFAULT_MAX_IDLE_SECONDS)
     p_watch.add_argument("--poll-seconds", type=float, default=DEFAULT_POLL_SECONDS)
-    p_watch.add_argument("--max-cycles", type=int, default=DEFAULT_MAX_CYCLES)
+    p_watch.add_argument("--milestone-cycle", type=int, default=DEFAULT_MILESTONE_CYCLE,
+                          help="informational logging interval (PR8: not a termination)")
+    p_watch.add_argument("--max-cycles", type=int, default=None,
+                          help="emergency operator override; default = unlimited (PR8 never-quit policy)")
     p_watch.add_argument("--model", default=DEFAULT_CLAUDE_MODEL)
     p_watch.add_argument("--boot-delay", type=float, default=DEFAULT_CLAUDE_BOOT_DELAY)
 
@@ -478,6 +674,7 @@ def main(argv: list[str] | None = None) -> int:
             args.thread_id,
             max_idle_seconds=args.max_idle_seconds,
             poll_seconds=args.poll_seconds,
+            milestone_cycle=args.milestone_cycle,
             max_cycles=args.max_cycles,
             model=args.model,
             boot_delay=args.boot_delay,

@@ -703,6 +703,195 @@ def validate_decision_rule_for_capability_claim(
     return ValidationResult(ok=not violations, violations=violations)
 
 
+# --- PR7: feasibility envelope enforcement -------------------------------- #
+
+
+def validate_claim_fits_envelope(
+    *,
+    claim_contract: dict[str, Any],
+    envelope: dict[str, Any] | None,
+    registered_adapter_ids: set[str] | None = None,
+    config: dict[str, Any] | None = None,
+) -> ValidationResult:
+    """PR7: Reject a claim whose declared deploy_grade_scope cannot be met
+    by the feasibility envelope. This is the *generator-for-goodness* gate
+    — strong+safe by construction rather than filter-bad-after-the-fact.
+
+    Rules:
+      - claim.deploy_grade_scope is required (must be one of
+        deployment/feasibility/directional).
+      - 'deployment' requires (a) envelope.data_sources_available has a
+        real_adapter, (b) that adapter is in registered_adapter_ids, AND
+        (c) the claim's data_source_anchor names that adapter id.
+      - 'feasibility' allows synthetic data sources but the claim's
+        data_source_anchor must start with 'synthetic:' (or be a
+        registered adapter id — feasibility on real data is fine too).
+      - 'directional' allows anything but downgrades implicit expectation:
+        decision_rule no longer required, no real-adapter requirement,
+        synthetic OK without bridging.
+    """
+    cfg = config or {}
+    violations: list[PersonaViolation] = []
+    if not cfg.get("require_feasibility_envelope", True):
+        return ValidationResult(ok=True, violations=[])
+
+    # Backward-compat: if no envelope has been submitted and the caller
+    # hasn't set deploy_grade_scope, the legacy claim shape is allowed
+    # through. The strong+safe-by-construction gate fires the moment the
+    # envelope file exists OR the claim explicitly sets a scope.
+    scope = (claim_contract or {}).get("deploy_grade_scope")
+    if scope is None and not envelope:
+        return ValidationResult(ok=True, violations=[])
+
+    if scope not in {"deployment", "feasibility", "directional"}:
+        # Envelope exists OR scope was attempted but invalid — enforce.
+        violations.append(
+            PersonaViolation(
+                rule="missing_deploy_grade_scope",
+                message=(
+                    "claim_contract.deploy_grade_scope is required when a "
+                    "feasibility envelope has been submitted, and must be "
+                    "one of {deployment, feasibility, directional}."
+                ),
+                suggested_fix=(
+                    "Add deploy_grade_scope: 'deployment' if the user can "
+                    "deploy this tomorrow on real data; 'feasibility' for a "
+                    "synthetic-regime proof-of-concept with explicit bridging; "
+                    "'directional' for a methodology-hint paper that does NOT "
+                    "claim deploy-grade utility."
+                ),
+            )
+        )
+        return ValidationResult(ok=False, violations=violations)
+
+    if scope == "directional":
+        # Directional papers are allowed to skip the real-adapter
+        # requirement, but they cannot LATER be upgraded to 'deployment'
+        # without re-design. We let it through.
+        return ValidationResult(ok=True, violations=[])
+
+    if not envelope:
+        violations.append(
+            PersonaViolation(
+                rule="missing_feasibility_envelope",
+                message=(
+                    "deploy_grade_scope is set but no FeasibilityEnvelope "
+                    "has been submitted for this thread. The envelope must "
+                    "precede the claim — call submit_feasibility_envelope "
+                    "first."
+                ),
+                suggested_fix=(
+                    "Call submit_feasibility_envelope(thread_id=..., envelope=...) "
+                    "declaring data_sources_available, llm_oracles_available, "
+                    "compute_budget, baseline_provenance_available, and "
+                    "operator_intent. Then revise this claim with a scope "
+                    "that fits the envelope."
+                ),
+            )
+        )
+        return ValidationResult(ok=False, violations=violations)
+
+    data_sources = envelope.get("data_sources_available") or []
+    real_adapter_ids_in_env = {
+        s["id"] for s in data_sources
+        if s.get("kind") == "real_adapter" and s.get("id")
+    }
+    anchor = (claim_contract.get("data_source_anchor") or "").strip()
+
+    if scope == "deployment":
+        # All three conditions must hold.
+        if not real_adapter_ids_in_env:
+            violations.append(
+                PersonaViolation(
+                    rule="deployment_scope_without_real_adapter_in_envelope",
+                    message=(
+                        "deploy_grade_scope='deployment' but the envelope "
+                        "declares no real_adapter data source. Synthetic-"
+                        "only evidence cannot back a deployment-grade claim."
+                    ),
+                    suggested_fix=(
+                        "Either (a) downgrade deploy_grade_scope to "
+                        "'feasibility' (synthetic + bridging argument is "
+                        "acceptable there), or (b) re-run "
+                        "submit_feasibility_envelope after registering a "
+                        "real-data adapter in settings.json.data_adapters."
+                    ),
+                )
+            )
+        if not anchor or anchor not in real_adapter_ids_in_env:
+            violations.append(
+                PersonaViolation(
+                    rule="deployment_anchor_not_in_envelope",
+                    message=(
+                        f"deploy_grade_scope='deployment' but "
+                        f"claim_contract.data_source_anchor={anchor!r} is "
+                        f"not one of the envelope's real_adapter ids "
+                        f"({sorted(real_adapter_ids_in_env)})."
+                    ),
+                    suggested_fix=(
+                        "Set claim_contract.data_source_anchor to one of the "
+                        "real_adapter ids declared in the envelope."
+                    ),
+                )
+            )
+        if registered_adapter_ids is not None and anchor and anchor not in registered_adapter_ids:
+            violations.append(
+                PersonaViolation(
+                    rule="deployment_anchor_not_registered",
+                    message=(
+                        f"data_source_anchor={anchor!r} is not registered "
+                        f"under settings.json.data_adapters.registered "
+                        f"({sorted(registered_adapter_ids)})."
+                    ),
+                    suggested_fix=(
+                        "Add the adapter to settings.json.data_adapters.registered "
+                        "with id + module + provenance, or pick an already-"
+                        "registered adapter id."
+                    ),
+                )
+            )
+        return ValidationResult(ok=not violations, violations=violations)
+
+    # scope == 'feasibility'
+    if not anchor:
+        violations.append(
+            PersonaViolation(
+                rule="feasibility_scope_without_data_anchor",
+                message=(
+                    "deploy_grade_scope='feasibility' requires "
+                    "data_source_anchor to be set (either 'synthetic:<label>' "
+                    "or a real adapter id)."
+                ),
+                suggested_fix=(
+                    "Set data_source_anchor='synthetic:<generator_label>' if "
+                    "using synthetic data, or a registered adapter_id if "
+                    "using real data."
+                ),
+            )
+        )
+    elif anchor.startswith("synthetic:"):
+        # OK — but the dataset_manifest's bridging argument will be checked
+        # by validate_synthetic_data_bridging separately.
+        pass
+    elif anchor not in real_adapter_ids_in_env:
+        violations.append(
+            PersonaViolation(
+                rule="feasibility_anchor_not_in_envelope",
+                message=(
+                    f"data_source_anchor={anchor!r} doesn't match any "
+                    f"envelope source. Synthetic anchors must start with "
+                    f"'synthetic:'; real anchors must match a declared "
+                    f"real_adapter id ({sorted(real_adapter_ids_in_env)})."
+                ),
+                suggested_fix=(
+                    "Pick an anchor declared in the envelope, or update the "
+                    "envelope first via submit_feasibility_envelope."
+                ),
+            )
+        )
+    return ValidationResult(ok=not violations, violations=violations)
+
+
 def validate_follow_up_strength(
     *,
     parent_claim: str,

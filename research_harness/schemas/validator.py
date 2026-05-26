@@ -45,6 +45,7 @@ SCHEMA_FILES = {
     "paper_figure_request": "paper_figure_request.schema.json",
     "user_goal_attestation": "user_goal_attestation.schema.json",
     "alternative_root_proposal": "alternative_root_proposal.schema.json",
+    "feasibility_envelope": "feasibility_envelope.schema.json",
 }
 
 

@@ -37,7 +37,9 @@ class TerminalDetectionTests(unittest.TestCase):
             self.assertFalse(t)
             self.assertIsNone(outcome)
 
-    def test_honest_failure_outcome_is_terminal(self):
+    def test_honest_failure_outcome_is_NOT_terminal_under_pr8(self):
+        # PR8: honest_failure is a retreat state, not a terminal one.
+        # supervisor must keep iterating until dual-gate passes.
         with TemporaryDirectory() as tmp:
             repo = Path(tmp)
             tdir = _make_thread(repo, "t1")
@@ -45,10 +47,11 @@ class TerminalDetectionTests(unittest.TestCase):
                 json.dumps({"outcome": "honest_failure"}), encoding="utf-8"
             )
             t, outcome = ts.is_terminal(repo, "t1")
-            self.assertTrue(t)
-            self.assertEqual(outcome, "honest_failure")
+            self.assertFalse(t)
 
-    def test_accept_with_rendered_artifacts_is_terminal(self):
+    def test_accept_without_attestation_is_NOT_terminal_under_pr8(self):
+        # PR8: AC accept alone is no longer enough. Dual-gate requires
+        # Professor user_goal_attestation.achieved=true.
         with TemporaryDirectory() as tmp:
             repo = Path(tmp)
             tdir = _make_thread(repo, "t1")
@@ -62,8 +65,30 @@ class TerminalDetectionTests(unittest.TestCase):
                 encoding="utf-8",
             )
             t, outcome = ts.is_terminal(repo, "t1")
+            self.assertFalse(t)
+
+    def test_dual_gate_pass_is_terminal(self):
+        # PR8: only this combination terminates the supervisor.
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            tdir = _make_thread(repo, "t1")
+            (tdir / "production" / "rebuttal").mkdir(parents=True)
+            (tdir / "production" / "rebuttal" / "user_goal_attestation.json").write_text(
+                json.dumps({"achieved": True, "what_user_can_do_with_this_paper": "x"}),
+                encoding="utf-8",
+            )
+            (tdir / "production" / "production_run_summary.json").write_text(
+                json.dumps({
+                    "rebuttal_summary": {"ac_decision": {"decision": "accept"}},
+                    "publication_dispatch": {
+                        "rendered_artifacts": [{"output": "paper_html", "artifact_path": "/x"}]
+                    },
+                }),
+                encoding="utf-8",
+            )
+            t, outcome = ts.is_terminal(repo, "t1")
             self.assertTrue(t)
-            self.assertEqual(outcome, "accept")
+            self.assertEqual(outcome, "accept_with_goal_achieved")
 
     def test_accept_without_artifacts_is_not_terminal(self):
         with TemporaryDirectory() as tmp:
@@ -73,6 +98,26 @@ class TerminalDetectionTests(unittest.TestCase):
                 json.dumps({
                     "rebuttal_summary": {"ac_decision": {"decision": "accept"}},
                     "publication_dispatch": {"rendered_artifacts": []},
+                }),
+                encoding="utf-8",
+            )
+            t, outcome = ts.is_terminal(repo, "t1")
+            self.assertFalse(t)
+
+    def test_attestation_achieved_false_is_not_terminal(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            tdir = _make_thread(repo, "t1")
+            (tdir / "production" / "rebuttal").mkdir(parents=True)
+            (tdir / "production" / "rebuttal" / "user_goal_attestation.json").write_text(
+                json.dumps({"achieved": False}), encoding="utf-8"
+            )
+            (tdir / "production" / "production_run_summary.json").write_text(
+                json.dumps({
+                    "rebuttal_summary": {"ac_decision": {"decision": "accept"}},
+                    "publication_dispatch": {
+                        "rendered_artifacts": [{"output": "paper_html", "artifact_path": "/x"}]
+                    },
                 }),
                 encoding="utf-8",
             )
@@ -193,12 +238,23 @@ class LockTests(unittest.TestCase):
 
 
 class WatchLoopTests(unittest.TestCase):
-    def test_terminal_thread_exits_without_spawn(self):
+    def test_dual_gate_pass_exits_terminal(self):
+        # PR8: only dual-gate pass terminates.
         with TemporaryDirectory() as tmp:
             repo = Path(tmp)
             tdir = _make_thread(repo, "t1")
+            (tdir / "production" / "rebuttal").mkdir(parents=True)
+            (tdir / "production" / "rebuttal" / "user_goal_attestation.json").write_text(
+                json.dumps({"achieved": True}), encoding="utf-8"
+            )
             (tdir / "production" / "production_run_summary.json").write_text(
-                json.dumps({"outcome": "honest_failure"}), encoding="utf-8"
+                json.dumps({
+                    "rebuttal_summary": {"ac_decision": {"decision": "accept"}},
+                    "publication_dispatch": {
+                        "rendered_artifacts": [{"output": "paper_html", "artifact_path": "/x"}]
+                    },
+                }),
+                encoding="utf-8",
             )
             with mock.patch.object(ts, "spawn_claude_session") as spawn:
                 result = ts.watch_thread(
@@ -206,47 +262,161 @@ class WatchLoopTests(unittest.TestCase):
                 )
             spawn.assert_not_called()
             self.assertEqual(result["status"], "terminal")
-            self.assertEqual(result["outcome"], "honest_failure")
+            self.assertEqual(result["outcome"], "accept_with_goal_achieved")
 
-    def test_idle_thread_triggers_spawn_then_terminates_on_outcome(self):
+    def test_honest_failure_alone_does_NOT_terminate_under_pr8(self):
+        # PR8: honest_failure is a retreat state. Supervisor keeps trying.
+        # We use max_cycles=2 as emergency override to bound the test.
         with TemporaryDirectory() as tmp:
             repo = Path(tmp)
             tdir = _make_thread(repo, "t1")
-            # production dir exists but is empty -> idle = inf
-            # We make spawn flip the thread to terminal so the loop exits.
+            (tdir / "production" / "production_run_summary.json").write_text(
+                json.dumps({"outcome": "honest_failure"}), encoding="utf-8"
+            )
+            with mock.patch.object(ts, "spawn_claude_session", return_value=0) as spawn:
+                result = ts.watch_thread(
+                    repo, "t1", max_idle_seconds=0.0, poll_seconds=0.01,
+                    max_cycles=2, rate_limit_backoff_initial=0.001,
+                )
+            # spawn was called twice — supervisor kept trying despite honest_failure.
+            self.assertEqual(spawn.call_count, 2)
+            self.assertEqual(result["status"], "max_cycles_exceeded")
+
+    def test_idle_thread_spawns_until_dual_gate(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            tdir = _make_thread(repo, "t1")
             summary_path = tdir / "production" / "production_run_summary.json"
+            attestation_path = tdir / "production" / "rebuttal" / "user_goal_attestation.json"
 
             def fake_spawn(prompt, **kw):  # noqa: ARG001
+                attestation_path.parent.mkdir(parents=True, exist_ok=True)
+                attestation_path.write_text(
+                    json.dumps({"achieved": True}), encoding="utf-8"
+                )
                 summary_path.write_text(
-                    json.dumps({"outcome": "honest_failure"}), encoding="utf-8"
+                    json.dumps({
+                        "rebuttal_summary": {"ac_decision": {"decision": "accept"}},
+                        "publication_dispatch": {
+                            "rendered_artifacts": [{"output": "paper_html", "artifact_path": "/x"}]
+                        },
+                    }),
+                    encoding="utf-8",
                 )
                 return 0
 
             with mock.patch.object(ts, "spawn_claude_session", side_effect=fake_spawn) as spawn:
                 result = ts.watch_thread(
-                    repo, "t1", max_idle_seconds=0.0, poll_seconds=0.01, max_cycles=3
+                    repo, "t1", max_idle_seconds=0.0, poll_seconds=0.01,
+                    max_cycles=3, rate_limit_backoff_initial=0.001,
                 )
             spawn.assert_called_once()
             self.assertEqual(result["status"], "terminal")
-            self.assertEqual(result["cycles"], 1)
 
-    def test_max_cycles_exhaustion_exits(self):
+    def test_max_cycles_override_can_force_exit(self):
+        # Emergency operator override still works for safety.
         with TemporaryDirectory() as tmp:
             repo = Path(tmp)
             tdir = _make_thread(repo, "t1")
-            # production dir empty -> always idle, never terminal.
             with mock.patch.object(ts, "spawn_claude_session", return_value=0) as spawn:
                 result = ts.watch_thread(
-                    repo, "t1", max_idle_seconds=0.0, poll_seconds=0.01, max_cycles=2
+                    repo, "t1", max_idle_seconds=0.0, poll_seconds=0.01,
+                    max_cycles=2, rate_limit_backoff_initial=0.001,
                 )
             self.assertEqual(spawn.call_count, 2)
             self.assertEqual(result["status"], "max_cycles_exceeded")
-            self.assertEqual(result["cycles"], 2)
+
+    def test_unlimited_cycles_by_default(self):
+        # Default (no max_cycles) = supervisor never quits on count.
+        # We assert via lots of spawns + manual interrupt via mock.
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            tdir = _make_thread(repo, "t1")
+            count = {"n": 0}
+            attestation_path = tdir / "production" / "rebuttal" / "user_goal_attestation.json"
+
+            def fake_spawn(prompt, **kw):  # noqa: ARG001
+                count["n"] += 1
+                # only complete on the 20th cycle.
+                if count["n"] >= 20:
+                    attestation_path.parent.mkdir(parents=True, exist_ok=True)
+                    attestation_path.write_text(json.dumps({"achieved": True}), encoding="utf-8")
+                    (tdir / "production" / "production_run_summary.json").write_text(
+                        json.dumps({
+                            "rebuttal_summary": {"ac_decision": {"decision": "accept"}},
+                            "publication_dispatch": {
+                                "rendered_artifacts": [{"output": "paper_html", "artifact_path": "/x"}]
+                            },
+                        }),
+                        encoding="utf-8",
+                    )
+                return 0
+
+            with mock.patch.object(ts, "spawn_claude_session", side_effect=fake_spawn):
+                result = ts.watch_thread(
+                    repo, "t1", max_idle_seconds=0.0, poll_seconds=0.001,
+                    rate_limit_backoff_initial=0.001,
+                    rate_limit_backoff_max=0.01,
+                )
+            self.assertEqual(result["status"], "terminal")
+            self.assertGreaterEqual(count["n"], 20)
 
     def test_thread_dir_missing_raises(self):
         with TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(RuntimeError, "not found"):
                 ts.watch_thread(Path(tmp), "no_such_thread")
+
+
+class NeededResourcesTests(unittest.TestCase):
+    def test_needs_collected_from_attestation_when_achieved_false(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            tdir = _make_thread(repo, "t1")
+            (tdir / "production" / "rebuttal").mkdir(parents=True)
+            (tdir / "production" / "rebuttal" / "user_goal_attestation.json").write_text(
+                json.dumps({
+                    "achieved": False,
+                    "required_additional_research": [
+                        {"axis": "boundary", "experiment": "SNR sweep", "rationale": "needed"},
+                        {"axis": "validity", "experiment": "real data", "rationale": "deploy"},
+                    ],
+                }),
+                encoding="utf-8",
+            )
+            needs = ts.collect_needed_resources(repo, "t1")
+            self.assertEqual(len(needs), 2)
+            self.assertEqual(needs[0]["axis"], "boundary")
+
+    def test_envelope_deployment_without_real_adapter_logged_as_blocker(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            tdir = _make_thread(repo, "t1")
+            (tdir / "production" / "feasibility_envelope.json").write_text(
+                json.dumps({
+                    "operator_intent": {"target_deploy_grade_scope": "deployment"},
+                    "data_sources_available": [{"kind": "synthetic", "id": "s1"}],
+                }),
+                encoding="utf-8",
+            )
+            needs = ts.collect_needed_resources(repo, "t1")
+            self.assertTrue(any(n.get("type") == "data_adapter" for n in needs))
+
+    def test_update_needed_resources_writes_yaml(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            tdir = _make_thread(repo, "t1")
+            (tdir / "production" / "rebuttal").mkdir(parents=True)
+            (tdir / "production" / "rebuttal" / "user_goal_attestation.json").write_text(
+                json.dumps({"achieved": False, "required_additional_research": [
+                    {"axis": "boundary", "experiment": "x", "rationale": "y"},
+                ]}),
+                encoding="utf-8",
+            )
+            needs = ts.update_needed_resources_file(repo, "t1")
+            self.assertEqual(len(needs), 1)
+            written = (tdir / "needed_resources.yaml").read_text(encoding="utf-8")
+            self.assertIn("axis:", written)
+            self.assertIn("boundary", written)
 
 
 class WhichTests(unittest.TestCase):

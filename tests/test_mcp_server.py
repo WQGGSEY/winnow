@@ -133,8 +133,12 @@ class MCPServerTests(unittest.TestCase):
             "select_alternative_root",
             "render_honest_failure_paper",
         }
+        # PR7: feasibility envelope tool.
+        envelope_expected = {
+            "submit_feasibility_envelope",
+        }
         self.assertEqual(
-            baseline_expected | practitioner_expected | dual_gate_expected,
+            baseline_expected | practitioner_expected | dual_gate_expected | envelope_expected,
             names,
         )
 

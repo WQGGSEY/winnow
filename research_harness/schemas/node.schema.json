@@ -111,6 +111,15 @@
         "decision_rule": {
           "type": "string",
           "description": "Optional but strongly recommended for capability-metric claims (AUC, F1, etc.). Names the operating-point threshold, FP/FN cost framing, and deploy-when rule the user can apply tomorrow. The validate_decision_rule_for_capability_claim rule enforces this when the claim text mentions a ranking metric."
+        },
+        "deploy_grade_scope": {
+          "type": "string",
+          "enum": ["deployment", "feasibility", "directional"],
+          "description": "PR7: How strong+safe the claim aspires to be. 'deployment' = user can run this in production tomorrow (requires real data adapter + decision_rule + live LLM or equivalent oracle). 'feasibility' = proof-of-concept within synthetic regime + bridging argument. 'directional' = methodology hint only. The validator forces the scope to fit the FeasibilityEnvelope declared earlier."
+        },
+        "data_source_anchor": {
+          "type": "string",
+          "description": "PR7: Reference to the data source backing this claim. Must be either an adapter_id from settings.json.data_adapters (real data) or 'synthetic:<generator_label>' (synthetic). 'deployment' scope requires a registered adapter_id."
         }
       },
       "additionalProperties": false

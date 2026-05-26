@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/feasibility_envelope.schema.json",
+  "title": "FeasibilityEnvelope",
+  "description": "Operator + Professor's joint declaration of what the harness ACTUALLY has access to at production-entry time, before any claim is designed. This anchors strong+safe claim construction: a 'deployment-grade' claim cannot be promised if the matching resource (real data, live LLM, compute budget) is not in the envelope. Validators reject mismatches at design_initial_claim_contract and revise_root_after_reject time.",
+  "type": "object",
+  "required": [
+    "thread_id",
+    "data_sources_available",
+    "llm_oracles_available",
+    "compute_budget",
+    "baseline_provenance_available",
+    "operator_intent"
+  ],
+  "properties": {
+    "thread_id": { "type": "string" },
+    "data_sources_available": {
+      "type": "array",
+      "minItems": 1,
+      "description": "What data the harness can actually read for this thread. Each entry is either an adapter_id registered under settings.json.data_adapters (real data path) or the literal string 'synthetic' (the harness can generate). 'synthetic' alone forbids deployment-scope claims.",
+      "items": {
+        "type": "object",
+        "required": ["kind", "id"],
+        "properties": {
+          "kind": { "type": "string", "enum": ["real_adapter", "synthetic"] },
+          "id": { "type": "string", "minLength": 1, "description": "adapter_id (real) or generator label (synthetic)" },
+          "scope_note": { "type": "string", "description": "Brief description of what this data covers — date range, universe, asset class, etc." }
+        },
+        "additionalProperties": false
+      }
+    },
+    "llm_oracles_available": {
+      "type": "array",
+      "minItems": 1,
+      "description": "What LLM oracles are reachable: 'subscription_claude_code' (Claude Code interactive driving the thread itself, free), 'live_anthropic_api' (paid, requires billing_ack), 'deterministic_proxy' (no LLM, deterministic substitute), or 'none'. Live API entries require operator ack flags in settings.",
+      "items": {
+        "type": "object",
+        "required": ["kind"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "subscription_claude_code",
+              "live_anthropic_api",
+              "deterministic_proxy",
+              "none"
+            ]
+          },
+          "model": { "type": "string" },
+          "ack_status": { "type": "string", "description": "For live_anthropic_api: 'authorized' or 'pending_billing_ack'." }
+        },
+        "additionalProperties": false
+      }
+    },
+    "compute_budget": {
+      "type": "object",
+      "required": ["max_runner_seconds_per_node", "max_concurrent_nodes", "max_total_node_hours"],
+      "description": "Practical compute envelope. The Professor uses these to scope claims that fit — e.g., a 19,200-measurement experiment may need to be chunked.",
+      "properties": {
+        "max_runner_seconds_per_node": { "type": "integer", "minimum": 60 },
+        "max_concurrent_nodes": { "type": "integer", "minimum": 1 },
+        "max_total_node_hours": { "type": "number", "minimum": 0.5 }
+      },
+      "additionalProperties": false
+    },
+    "baseline_provenance_available": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Baselines that exist with verifiable paper / arxiv / repo provenance via the market_research dossier. self-made baselines are NOT listed here.",
+      "items": {
+        "type": "object",
+        "required": ["candidate_id", "provenance"],
+        "properties": {
+          "candidate_id": { "type": "string" },
+          "provenance": {
+            "type": "string",
+            "description": "arxiv id, doi, repo url, or reference_papers/ filename"
+          },
+          "role_hint": {
+            "type": "string",
+            "enum": ["current_best_known", "naive", "random_or_null"]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "operator_intent": {
+      "type": "object",
+      "required": ["target_deploy_grade_scope", "acceptable_alternative_scopes"],
+      "description": "What kind of outcome the operator is willing to accept as 'goal achieved'. target = preferred; acceptable_alternative_scopes = fallback options before the system gives up scope-wise (it never gives up the user-goal+AC-accept dual-gate, but it may settle for narrower deploy-grade than 'deployment' if real data is missing).",
+      "properties": {
+        "target_deploy_grade_scope": {
+          "type": "string",
+          "enum": ["deployment", "feasibility", "directional"]
+        },
+        "acceptable_alternative_scopes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": ["deployment", "feasibility", "directional"]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "notes": { "type": "string" }
+  },
+  "additionalProperties": false
+}

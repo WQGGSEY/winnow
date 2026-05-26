@@ -47,6 +47,7 @@ from research_harness.orchestrator.llm_orchestrator.persona_validator import (
     validate_baseline_provenance,
     validate_camera_ready_directives,
     validate_claim_contract,
+    validate_claim_fits_envelope,
     validate_decision_rule_for_capability_claim,
     validate_follow_up_strength,
     validate_grad_student_review,
@@ -196,6 +197,35 @@ TOOL_DEFINITIONS = [
             "type": "object",
             "required": ["thread_id"],
             "properties": {"thread_id": {"type": "string"}},
+        },
+    },
+    {
+        "name": "submit_feasibility_envelope",
+        "description": (
+            f"{PROFESSOR_CONTRACT}\n\n"
+            "PR7: BEFORE designing any claim, the Professor declares the "
+            "FeasibilityEnvelope — what the harness actually has at this "
+            "thread's disposal: registered real-data adapters, available "
+            "LLM oracles (subscription / live API / proxy), compute budget "
+            "(seconds per node / concurrent nodes / total hours), "
+            "paper-cited baselines from the market dossier, and the "
+            "operator's target deploy_grade_scope. This anchors every "
+            "subsequent claim: 'deployment' scope is blocked when no real "
+            "adapter is registered, 'live LLM' oracle is blocked when no "
+            "billing_ack is set, etc. The envelope is persisted to "
+            "production/feasibility_envelope.json and read by every "
+            "downstream validator."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "envelope"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "envelope": {
+                    "type": "object",
+                    "description": "FeasibilityEnvelope object — see feasibility_envelope.schema.json.",
+                },
+            },
         },
     },
     {
@@ -1211,6 +1241,69 @@ def handle_resume_production_state(args: dict[str, Any]) -> dict[str, Any]:
     return {"status": "ok", "demoted_node_ids": demoted}
 
 
+def handle_submit_feasibility_envelope(args: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    """PR7: persist the operator+Professor feasibility envelope. Subsequent
+    design_initial_claim_contract and revise_root_after_reject calls read
+    this file and validate claim scope against it."""
+    from research_harness.schemas.validator import validate_named_schema
+    tid = args["thread_id"]
+    env = args["envelope"]
+    try:
+        validate_named_schema("feasibility_envelope", env)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
+
+    # Cross-check: 'deployment' target requires at least one real_adapter
+    # data source. (We catch this at envelope-submission time too, not just
+    # at claim-design time, so the operator sees the constraint early.)
+    target = (env.get("operator_intent") or {}).get("target_deploy_grade_scope")
+    real_sources = [s for s in env.get("data_sources_available", []) if s.get("kind") == "real_adapter"]
+    registered = {
+        a.get("id")
+        for a in (settings.get("data_adapters", {}) or {}).get("registered", []) or []
+    }
+    if target == "deployment":
+        if not real_sources:
+            return {
+                "status": "rejected",
+                "reason": (
+                    "operator_intent.target_deploy_grade_scope='deployment' "
+                    "but data_sources_available has no kind='real_adapter'. "
+                    "Either register a real-data adapter under "
+                    "settings.json.data_adapters.registered and reference its "
+                    "id here, or downgrade target to 'feasibility' / 'directional'."
+                ),
+            }
+        unregistered = [s["id"] for s in real_sources if s["id"] not in registered]
+        if unregistered:
+            return {
+                "status": "rejected",
+                "reason": (
+                    f"real_adapter ids not in settings.json.data_adapters.registered: "
+                    f"{unregistered}. Add them or remove from the envelope."
+                ),
+            }
+
+    env_path = _thread_dir(tid) / "production" / "feasibility_envelope.json"
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    env_path.write_text(
+        json.dumps(env, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "status": "ok",
+        "envelope_path": str(env_path),
+        "registered_real_adapters": sorted(registered),
+        "target_scope": target,
+        "next_step": (
+            "Now call design_initial_claim_contract. The claim's "
+            "deploy_grade_scope MUST fit this envelope (deployment requires "
+            "real_adapter; feasibility allows synthetic with bridging; "
+            "directional is methodology-hint only)."
+        ),
+    }
+
+
 def handle_design_initial_claim_contract(
     args: dict[str, Any], settings: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1266,6 +1359,29 @@ def handle_design_initial_claim_contract(
     )
     if not rule_check.ok:
         return {"status": "rejected", "reason": rule_check.reject_message()}
+    # PR7: enforce feasibility envelope. Claim's deploy_grade_scope must
+    # fit the envelope declared upfront via submit_feasibility_envelope.
+    envelope = _read_json(
+        _thread_dir(tid) / "production" / "feasibility_envelope.json"
+    )
+    registered = {
+        a.get("id")
+        for a in (settings.get("data_adapters", {}) or {}).get("registered", []) or []
+    }
+    env_check = validate_claim_fits_envelope(
+        claim_contract={**new_claim,
+                         "deploy_grade_scope": args.get("deploy_grade_scope"),
+                         "data_source_anchor": args.get("data_source_anchor")},
+        envelope=envelope,
+        registered_adapter_ids=registered,
+        config=persona_cfg,
+    )
+    if not env_check.ok:
+        return {"status": "rejected", "reason": env_check.reject_message()}
+    # Promote the scope/anchor onto the persisted contract.
+    new_claim["deploy_grade_scope"] = args.get("deploy_grade_scope")
+    if args.get("data_source_anchor"):
+        new_claim["data_source_anchor"] = args["data_source_anchor"]
     # Persist intake-to-claim hand-off.
     handoff_path = _thread_dir(tid) / "production" / "intake_to_claim_dialog.json"
     handoff_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1690,6 +1806,28 @@ def handle_revise_root_after_reject(
     )
     if not rule_check.ok:
         return {"status": "rejected", "reason": rule_check.reject_message()}
+    # PR7: re-check feasibility envelope on the revised claim.
+    envelope = _read_json(
+        _thread_dir(tid) / "production" / "feasibility_envelope.json"
+    )
+    registered = {
+        a.get("id")
+        for a in (settings.get("data_adapters", {}) or {}).get("registered", []) or []
+    }
+    env_check = validate_claim_fits_envelope(
+        claim_contract={**new_claim,
+                         "deploy_grade_scope": args.get("deploy_grade_scope"),
+                         "data_source_anchor": args.get("data_source_anchor")},
+        envelope=envelope,
+        registered_adapter_ids=registered,
+        config=persona_cfg,
+    )
+    if not env_check.ok:
+        return {"status": "rejected", "reason": env_check.reject_message()}
+    if args.get("deploy_grade_scope"):
+        new_claim["deploy_grade_scope"] = args["deploy_grade_scope"]
+    if args.get("data_source_anchor"):
+        new_claim["data_source_anchor"] = args["data_source_anchor"]
     # Archive the rejected attempt and write the revised claim as a fresh
     # intake_to_claim handoff so the operator can re-run production from scratch.
     import time
@@ -2978,6 +3116,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_get_next_admissible_node(args)
             elif name == "resume_production_state":
                 result = handle_resume_production_state(args)
+            elif name == "submit_feasibility_envelope":
+                result = handle_submit_feasibility_envelope(args, settings)
             elif name == "design_initial_claim_contract":
                 result = handle_design_initial_claim_contract(args, settings)
             elif name == "design_experiment_template":
