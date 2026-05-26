@@ -600,6 +600,19 @@
     }
     return r.json();
   }
+  function refreshProductionPanel() {
+    // Dispatch the custom event the production-panel-poll div listens
+    // for via `hx-trigger="every 4s, supervisor-state-changed from:body"`.
+    // HTMX fetches the partial, swaps outerHTML, scroll position is
+    // preserved, no flicker. Falls back to location.reload only if
+    // htmx is somehow missing.
+    if (window.htmx) {
+      document.body.dispatchEvent(new CustomEvent('supervisor-state-changed'));
+    } else {
+      setTimeout(() => location.reload(), 200);
+    }
+  }
+
   function showInlineFeedback(btn, text, klass) {
     let note = btn.parentElement.querySelector('.supervisor-inline-feedback');
     if (!note) {
@@ -631,12 +644,13 @@
           btn.textContent = '✓ Started (pid=' + data.pid + ')';
           showInlineFeedback(
             btn,
-            'Supervisor pid=' + data.pid + ' spawned. Panel will refresh on next 4s poll.',
+            'Supervisor pid=' + data.pid + ' spawned.',
             'ok'
           );
-          // Force an immediate refresh of the production panel so the
-          // operator sees the running state without the 4s gap.
-          setTimeout(() => location.reload(), 1500);
+          // Trigger an immediate HTMX swap of the production panel so
+          // the supervisor card flips from idle → running without a
+          // full page reload (preserves scroll, no flicker).
+          refreshProductionPanel();
         } catch (e) {
           btn.textContent = originalText;
           btn.disabled = false;
@@ -662,10 +676,12 @@
         try {
           const data = await postJson('/api/threads/' + tid + '/supervisor/stop');
           const signals = (data.signals_sent || []).join(' → ') || 'already exited';
-          showInlineFeedback(btn, '✓ Stopped (' + signals + '). Reloading…', 'ok');
-          // Server already waited the escalation window, so a quick
-          // reload reliably shows idle state.
-          setTimeout(() => location.reload(), 400);
+          showInlineFeedback(btn, '✓ Stopped (' + signals + ').', 'ok');
+          // Optimistic DOM update: hide the Stop button immediately
+          // so the operator sees instant feedback even before HTMX
+          // swap fetches the fresh panel.
+          btn.style.display = 'none';
+          refreshProductionPanel();
         } catch (e) {
           btn.textContent = originalText;
           btn.disabled = false;

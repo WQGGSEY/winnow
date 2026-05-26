@@ -4,7 +4,7 @@
 <div class="production-panel-poll"
      {% if thread.phase_status != "complete" %}
        hx-get="/partials/thread/{{ thread.thread_id }}/phase/production"
-       hx-trigger="every 4s"
+       hx-trigger="every 4s, supervisor-state-changed from:body"
        hx-swap="outerHTML"
      {% endif %}>
 {# Always-visible graph link — the graph page itself polls and shows an
