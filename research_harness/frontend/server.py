@@ -562,6 +562,17 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
         target_scope = (body.get("target_scope") or "directional").strip()
         if target_scope not in {"deployment", "feasibility", "directional"}:
             raise HTTPException(400, f"invalid target_scope: {target_scope!r}")
+        # PR10b: refuse to start/resume once a publication artifact
+        # exists. The frontend hides the button in this case, but we
+        # enforce here as well so direct API hits respect the rule.
+        pub_dir = s.repo_root / "runs" / "threads" / thread_id / "production" / "publication"
+        if (pub_dir / "paper.html").exists() or (pub_dir / "honest_failure.html").exists():
+            raise HTTPException(
+                409,
+                "publication already exists for this thread; supervisor "
+                "resume is disabled. Remove production/publication/ first "
+                "to re-enable.",
+            )
         # Reject if a supervisor is already running for this thread.
         lock_path = s.repo_root / "runs" / "threads" / thread_id / ".supervisor.lock"
         if lock_path.exists():
@@ -1186,6 +1197,23 @@ def _read_phase_artifacts(
             result["last_activity_mtime"] = last_activity
         # PR10: supervisor state for the production panel.
         result["supervisor"] = _read_supervisor_state(repo_root, thread_id)
+        # PR10b: distinguish "fresh thread" / "resumable mid-state" /
+        # "publication complete" so the supervisor card can render the
+        # correct button label. Resume = activity present, paper not yet.
+        paper_path = pdir / "publication" / "paper.html"
+        honest_failure_path = pdir / "publication" / "honest_failure.html"
+        result["publication_exists"] = paper_path.exists() or honest_failure_path.exists()
+        # "production has activity" = at least one MCP-produced file under
+        # production/. We exclude the auto-bootstrapped feasibility
+        # envelope because a fresh supervisor start writes it before any
+        # real work — counting it as activity would mislabel every
+        # supervisor-touched fresh thread as "resumable".
+        result["has_production_activity"] = (
+            (pdir / "tree" / "search_state.json").exists()
+            or (pdir / "rebuttal").exists()
+            or (pdir / "_drafts").exists()
+            or (pdir / "production_run_summary.json").exists()
+        )
         # MCP-mode progress: list per-node MCP decision files + their
         # mtimes so the operator can see Claude Code's last action.
         mcp_progress: list[dict[str, Any]] = []

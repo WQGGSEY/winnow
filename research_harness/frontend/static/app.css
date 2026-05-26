@@ -733,3 +733,6 @@ code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-
   font-family: 'Menlo', 'Monaco', monospace;
 }
 .supervisor-needs li { margin: 4px 0; }
+.supervisor-publication-done {
+  color: #2e7d2e; font-weight: 600; font-size: 13px; display: inline-block;
+}

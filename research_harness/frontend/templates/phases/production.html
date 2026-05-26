@@ -32,7 +32,19 @@
       {% endif %}
     </h3>
     <div class="supervisor-actions">
-      {% if not sup.running %}
+      {% if sup.running %}
+        <button class="btn supervisor-stop-btn"
+                data-thread-id="{{ thread.thread_id }}">
+          ■ Stop supervisor (SIGINT)
+        </button>
+      {% elif p.publication_exists %}
+        <span class="supervisor-publication-done">
+          ✓ Publication complete — resume disabled.
+          <br><span class="muted" style="font-size:11px;">
+            (Delete the publication/ artifacts to re-enable.)
+          </span>
+        </span>
+      {% else %}
         <label class="muted" style="font-size:12px;margin-right:6px;">
           target scope:
           <select id="supervisor-scope-{{ thread.thread_id }}">
@@ -41,15 +53,17 @@
             <option value="deployment">deployment</option>
           </select>
         </label>
-        <button class="btn primary supervisor-start-btn"
-                data-thread-id="{{ thread.thread_id }}">
-          ▶ Start supervisor
-        </button>
-      {% else %}
-        <button class="btn supervisor-stop-btn"
-                data-thread-id="{{ thread.thread_id }}">
-          ■ Stop supervisor (SIGINT)
-        </button>
+        {% if p.has_production_activity %}
+          <button class="btn primary supervisor-start-btn"
+                  data-thread-id="{{ thread.thread_id }}">
+            ⟳ Resume supervisor
+          </button>
+        {% else %}
+          <button class="btn primary supervisor-start-btn"
+                  data-thread-id="{{ thread.thread_id }}">
+            ▶ Start supervisor
+          </button>
+        {% endif %}
       {% endif %}
     </div>
   </div>

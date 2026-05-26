@@ -148,6 +148,34 @@ class SupervisorRoutesTests(unittest.TestCase):
             self.assertEqual(r.status_code, 200, r.text)
             kill.assert_called_once()
 
+    def test_start_rejects_when_publication_paper_exists(self):
+        # PR10b: resume is disabled once publication artifact exists.
+        with TemporaryDirectory() as tmp:
+            repo = _setup_repo(Path(tmp))
+            pub = repo / "runs" / "threads" / "thread_t1" / "production" / "publication"
+            pub.mkdir(parents=True, exist_ok=True)
+            (pub / "paper.html").write_text("<html/>", encoding="utf-8")
+            client = self._client(repo)
+            r = client.post(
+                "/api/threads/thread_t1/supervisor/start",
+                json={"target_scope": "directional"},
+            )
+            self.assertEqual(r.status_code, 409)
+            self.assertIn("publication", r.text.lower())
+
+    def test_start_rejects_when_honest_failure_exists(self):
+        with TemporaryDirectory() as tmp:
+            repo = _setup_repo(Path(tmp))
+            pub = repo / "runs" / "threads" / "thread_t1" / "production" / "publication"
+            pub.mkdir(parents=True, exist_ok=True)
+            (pub / "honest_failure.html").write_text("<html/>", encoding="utf-8")
+            client = self._client(repo)
+            r = client.post(
+                "/api/threads/thread_t1/supervisor/start",
+                json={"target_scope": "directional"},
+            )
+            self.assertEqual(r.status_code, 409)
+
 
 if __name__ == "__main__":
     unittest.main()
