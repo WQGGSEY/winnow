@@ -514,14 +514,20 @@ def spawn_claude_session(
     log_path: Path | None = None,
     active_child_ref: dict | None = None,
 ) -> int:
-    """Fork+exec `claude --model <model>` under a pty. Write the resume
-    prompt after a brief boot delay. Stream child output to log_path
-    while also passing through to our stderr so the operator can tail it.
+    """Run `claude -p <prompt>` (non-interactive) as a managed
+    subprocess. claude executes the full agentic loop — MCP tools,
+    WebSearch, file I/O — and exits when the LLM finishes the task or
+    hits the session/turn limit. Supervisor's outer loop spawns the
+    next cycle on its own.
 
-    Returns the child's exit status (WEXITSTATUS).
+    Why not pty + interactive `claude`: that path hung at empty stdout
+    on every spawn (TTY dialog blocking prompt injection). The
+    market_research_claude module hit the same bug; same fix.
 
     Subscription pool only. No API path.
     """
+    import subprocess as _subprocess
+
     claude_bin = _which("claude")
     if not claude_bin:
         raise RuntimeError(
@@ -529,78 +535,58 @@ def spawn_claude_session(
             "and ensure `claude` is on the operator's PATH. "
             "Supervisor uses the subscription pool — no API fallback."
         )
+    # boot_delay was useful for pty; with -p there is no TTY surface
+    # to wait on, so we just keep the parameter for API compatibility
+    # and the existing test signatures.
+    del boot_delay
 
-    pid, master_fd = pty.fork()
-    if pid == 0:
-        # Child: replace with `claude --model <model>`. Inherits OAuth/
-        # subscription credentials from the parent shell environment.
-        os.execvp(claude_bin, [claude_bin, "--model", model])
-
-    if active_child_ref is not None:
-        active_child_ref["pid"] = pid
-
+    cmd = [claude_bin, "-p", prompt, "--model", model, "--output-format", "text"]
     log_fh = log_path.open("ab") if log_path else None
-    try:
-        # Let claude initialize the TTY surface before we write.
-        time.sleep(boot_delay)
-        try:
-            os.write(master_fd, (prompt + "\n").encode("utf-8"))
-        except OSError as exc:
-            print(f"[supervisor] failed to write prompt to claude pty: {exc}", file=LOG)
-            os.kill(pid, signal.SIGTERM)
-            _, status = os.waitpid(pid, 0)
-            return os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1
+    proc = _subprocess.Popen(
+        cmd,
+        stdin=_subprocess.DEVNULL,
+        stdout=_subprocess.PIPE,
+        stderr=_subprocess.STDOUT,
+        text=False,
+        close_fds=True,
+    )
+    if active_child_ref is not None:
+        active_child_ref["pid"] = proc.pid
 
-        # Drain child output until exit. Block for a chunk, then check
-        # liveness; loop until waitpid succeeds.
-        buf = bytearray()
+    try:
+        # Stream stdout to log file + operator's stderr so the operator
+        # can `tail -f` the subprocess log. Single read loop; no pty,
+        # so no select needed.
+        assert proc.stdout is not None
         while True:
-            try:
-                ready, _, _ = select.select([master_fd], [], [], 1.0)
-            except OSError as exc:
-                if exc.errno == errno.EINTR:
-                    continue
+            chunk = proc.stdout.read(4096)
+            if not chunk:
                 break
-            if ready:
+            if log_fh:
                 try:
-                    chunk = os.read(master_fd, 4096)
-                except OSError as exc:
-                    if exc.errno in (errno.EIO, errno.EBADF):
-                        break
-                    raise
-                if not chunk:
-                    break
-                buf.extend(chunk)
-                if log_fh:
                     log_fh.write(chunk)
                     log_fh.flush()
-                # Mirror to operator stderr so tail -f works.
-                try:
-                    LOG.write(chunk.decode("utf-8", errors="replace"))
-                    LOG.flush()
-                except Exception:  # noqa: BLE001
+                except OSError:
                     pass
-            # Reap child if it has exited.
             try:
-                done_pid, status = os.waitpid(pid, os.WNOHANG)
-            except ChildProcessError:
-                break
-            if done_pid:
-                return os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1
-
-        # Fall-through: drain finished without explicit reap. Wait
-        # for child to ensure deterministic exit code.
-        _, status = os.waitpid(pid, 0)
-        return os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1
+                LOG.write(chunk.decode("utf-8", errors="replace"))
+                LOG.flush()
+            except Exception:  # noqa: BLE001
+                pass
+        proc.wait()
+        return proc.returncode if proc.returncode is not None else 1
+    except KeyboardInterrupt:
+        try:
+            proc.terminate()
+            proc.wait(timeout=3)
+        except _subprocess.TimeoutExpired:
+            proc.kill()
+        raise
     finally:
         if active_child_ref is not None:
             active_child_ref["pid"] = None
         if log_fh:
             log_fh.close()
-        try:
-            os.close(master_fd)
-        except OSError:
-            pass
 
 
 # --- supervisor loop ---------------------------------------------------- #
