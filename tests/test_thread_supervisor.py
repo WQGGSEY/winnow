@@ -367,6 +367,79 @@ class WatchLoopTests(unittest.TestCase):
                 ts.watch_thread(Path(tmp), "no_such_thread")
 
 
+class EnvelopeAutoBootstrapTests(unittest.TestCase):
+    def _setup_repo(self, tmp: str, *, with_market: bool = True, registered_adapters=None):
+        repo = Path(tmp)
+        (repo / "runs" / "threads" / "t1" / "production").mkdir(parents=True)
+        if with_market:
+            mdir = repo / "runs" / "threads" / "t1" / "market"
+            mdir.mkdir(parents=True, exist_ok=True)
+            (mdir / "market_research_brief.json").write_text(json.dumps({
+                "baseline_dossier_candidates_index": [
+                    {"id": "c1", "arxiv_id": "2401.12345"},
+                    {"id": "c2", "filename": "paper.pdf"},
+                ]
+            }), encoding="utf-8")
+        settings = {
+            "data_adapters": {
+                "registered": registered_adapters or []
+            }
+        }
+        (repo / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+        return repo
+
+    def test_bootstrap_writes_schema_valid_envelope(self):
+        with TemporaryDirectory() as tmp:
+            repo = self._setup_repo(tmp, registered_adapters=[
+                {"id": "wq_snap", "provenance": "operator-curated"}
+            ])
+            env = ts.bootstrap_envelope_if_missing(repo, "t1", target_scope="directional")
+            self.assertIsNotNone(env)
+            self.assertEqual(env["thread_id"], "t1")
+            # real adapter from settings shows up
+            real_ids = [s["id"] for s in env["data_sources_available"] if s["kind"] == "real_adapter"]
+            self.assertIn("wq_snap", real_ids)
+            # synthetic always present as fallback
+            synth_ids = [s["id"] for s in env["data_sources_available"] if s["kind"] == "synthetic"]
+            self.assertTrue(synth_ids)
+            # baseline provenance pulled from market dossier
+            cand_ids = [b["candidate_id"] for b in env["baseline_provenance_available"]]
+            self.assertIn("c1", cand_ids)
+            # file actually written
+            env_path = repo / "runs" / "threads" / "t1" / "production" / "feasibility_envelope.json"
+            self.assertTrue(env_path.exists())
+
+    def test_bootstrap_idempotent(self):
+        with TemporaryDirectory() as tmp:
+            repo = self._setup_repo(tmp)
+            ts.bootstrap_envelope_if_missing(repo, "t1")
+            second = ts.bootstrap_envelope_if_missing(repo, "t1")
+            self.assertIsNone(second)  # respects existing envelope
+
+    def test_bootstrap_without_market_dossier_uses_placeholder(self):
+        with TemporaryDirectory() as tmp:
+            repo = self._setup_repo(tmp, with_market=False)
+            env = ts.bootstrap_envelope_if_missing(repo, "t1")
+            self.assertIsNotNone(env)
+            self.assertTrue(env["baseline_provenance_available"])
+            self.assertEqual(
+                env["baseline_provenance_available"][0]["candidate_id"],
+                "no_market_baselines_found",
+            )
+
+    def test_bootstrap_target_scope_deployment_with_no_real_adapter_still_writes(self):
+        # The envelope is still schema-valid; the validator will reject
+        # deployment claims separately at design_initial_claim_contract.
+        with TemporaryDirectory() as tmp:
+            repo = self._setup_repo(tmp)
+            env = ts.bootstrap_envelope_if_missing(repo, "t1", target_scope="deployment")
+            self.assertIsNotNone(env)
+            self.assertEqual(
+                env["operator_intent"]["target_deploy_grade_scope"],
+                "deployment",
+            )
+
+
 class NeededResourcesTests(unittest.TestCase):
     def test_needs_collected_from_attestation_when_achieved_false(self):
         with TemporaryDirectory() as tmp:

@@ -227,6 +227,149 @@ def mcp_idle_seconds(repo: Path, tid: str) -> float:
     return max(0.0, time.time() - most_recent)
 
 
+# --- envelope auto-bootstrap (supervisor side) -------------------------- #
+
+
+def bootstrap_envelope_if_missing(
+    repo: Path,
+    tid: str,
+    *,
+    target_scope: str = "directional",
+) -> dict[str, object] | None:
+    """Auto-construct a FeasibilityEnvelope from settings.json + thread
+    market dossier and write it to the thread's production dir, if no
+    envelope exists yet.
+
+    The operator should NOT have to hand-craft this on every new thread.
+    The supervisor is the operator's stand-in: it reads what the harness
+    actually has (registered data adapters, available oracle = the
+    subscription Claude Code itself, compute envelope from settings) and
+    builds the envelope. Returns the envelope dict that was written (or
+    None if already present / failed).
+    """
+    env_path = _thread_dir(repo, tid) / "production" / "feasibility_envelope.json"
+    if env_path.exists():
+        return None  # already there; respect existing operator/Professor input.
+
+    # Read settings.
+    settings_path = repo / "settings.json"
+    settings: dict[str, object] = {}
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    data_adapters = (settings.get("data_adapters") or {}).get("registered") or []
+    prod_term = settings.get("production_termination") or {}
+    # Conservative default compute budget — operator can override by
+    # adjusting settings.production_termination or by writing the
+    # envelope themselves before launching supervisor.
+    compute = {
+        "max_runner_seconds_per_node": 900,
+        "max_concurrent_nodes": 2,
+        "max_total_node_hours": 8.0,
+    }
+
+    # data_sources_available: every registered real adapter + 'synthetic'.
+    data_sources: list[dict[str, object]] = []
+    for a in data_adapters:
+        if not isinstance(a, dict) or not a.get("id"):
+            continue
+        data_sources.append({
+            "kind": "real_adapter",
+            "id": a["id"],
+            "scope_note": a.get("provenance", ""),
+        })
+    data_sources.append({"kind": "synthetic", "id": "synthetic_generator_default"})
+
+    # Pull baseline provenance from the thread's market dossier candidate
+    # (if present) so the envelope's baseline_provenance_available is real.
+    baseline_prov: list[dict[str, object]] = []
+    market_brief_path = _thread_dir(repo, tid) / "market" / "market_research_brief.json"
+    if market_brief_path.exists():
+        try:
+            brief = json.loads(market_brief_path.read_text(encoding="utf-8"))
+            for c in brief.get("baseline_dossier_candidates_index", []) or []:
+                if not isinstance(c, dict) or not c.get("id"):
+                    continue
+                # Heuristic: anything cited via market_research has either
+                # a filename, arxiv id, doi, or repo url.
+                prov = (
+                    c.get("paper_citation")
+                    or c.get("arxiv_id")
+                    or c.get("doi")
+                    or c.get("repo_url")
+                    or c.get("filename")
+                    or c.get("title")
+                    or ""
+                )
+                if prov:
+                    baseline_prov.append({
+                        "candidate_id": c["id"],
+                        "provenance": str(prov),
+                    })
+        except (OSError, json.JSONDecodeError):
+            pass
+    if not baseline_prov:
+        # Schema requires minItems=1; supply a transparent placeholder so
+        # the envelope is schema-valid AND the operator can see that no
+        # real baselines were grounded by market_research.
+        baseline_prov.append({
+            "candidate_id": "no_market_baselines_found",
+            "provenance": "market_research did not produce paper-cited baseline candidates for this thread",
+        })
+
+    if target_scope not in {"deployment", "feasibility", "directional"}:
+        target_scope = "directional"
+    # acceptable_alternative_scopes always includes scopes weaker or equal
+    # to the target — the system never silently upgrades.
+    alts_order = ["deployment", "feasibility", "directional"]
+    target_idx = alts_order.index(target_scope)
+    acceptable = alts_order[target_idx:]
+
+    envelope = {
+        "thread_id": tid,
+        "data_sources_available": data_sources,
+        "llm_oracles_available": [{
+            "kind": "subscription_claude_code",
+            "model": "claude-opus-4-7",
+        }],
+        "compute_budget": compute,
+        "baseline_provenance_available": baseline_prov,
+        "operator_intent": {
+            "target_deploy_grade_scope": target_scope,
+            "acceptable_alternative_scopes": acceptable,
+        },
+        "notes": (
+            "Auto-bootstrapped by thread_supervisor from settings.json + "
+            "market dossier. Operator can override by writing the envelope "
+            "manually before launching supervisor."
+        ),
+    }
+
+    # Validate against the schema before writing. If validation fails, do
+    # NOT write a bad envelope — Claude Code can then submit one itself.
+    try:
+        from research_harness.schemas.validator import validate_named_schema
+        validate_named_schema("feasibility_envelope", envelope)
+    except Exception as exc:  # noqa: BLE001
+        # Surface the failure so the operator sees why the auto-bootstrap
+        # didn't take.
+        print(
+            f"[supervisor] envelope auto-bootstrap failed schema check: {exc}",
+            file=LOG,
+        )
+        return None
+
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    env_path.write_text(
+        json.dumps(envelope, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return envelope
+
+
 # --- resume prompt assembly --------------------------------------------- #
 
 
@@ -329,10 +472,14 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "  - capability claim without decision_rule → reject",
         "Anti-laziness 통과 못 하면 retry 메시지가 explicit reason과 함께 와.",
         "",
-        "Feasibility envelope (PR7):",
-        "  - feasibility_envelope.json이 thread에 있어. 거기 declared된",
-        "    data_sources / llm_oracles / compute_budget / operator_intent 안에서만",
-        "    claim 설계 가능. envelope 못 맞추면 validate_claim_fits_envelope이 reject.",
+        "Feasibility envelope (PR7, supervisor 자동 작성):",
+        "  - feasibility_envelope.json이 production/ 에 이미 supervisor가 자동 작성한 상태.",
+        "    submit_feasibility_envelope 다시 호출할 필요 없음. 그냥 거기 declared된",
+        "    data_sources / llm_oracles / compute_budget / operator_intent 안에서 claim 설계.",
+        "    envelope 못 맞추면 validate_claim_fits_envelope이 reject.",
+        "  - envelope에 적힌 target_deploy_grade_scope을 claim_contract.deploy_grade_scope에",
+        "    그대로 박고, data_source_anchor도 envelope에 적힌 real_adapter id 또는",
+        "    'synthetic:<label>' 중 하나로.",
         "",
         "Memory (PR4):",
         "  - prior failures + active lessons는 prepare_rebuttal_packet /",
@@ -521,6 +668,7 @@ def watch_thread(
     boot_delay: float = DEFAULT_CLAUDE_BOOT_DELAY,
     rate_limit_backoff_initial: float = DEFAULT_RATE_LIMIT_BACKOFF_INITIAL,
     rate_limit_backoff_max: float = DEFAULT_RATE_LIMIT_BACKOFF_MAX,
+    target_scope: str = "directional",  # bootstrap envelope target
     max_cycles: int | None = None,  # PR8: only honored when explicitly set;
                                     #      default behavior never quits on count.
 ) -> dict[str, object]:
@@ -555,8 +703,25 @@ def watch_thread(
     _log(
         log_path,
         f"max_idle={max_idle_seconds}s poll={poll_seconds}s milestone_cycle={milestone_cycle} "
-        f"model={model} max_cycles={max_cycles!r} (None=unlimited)",
+        f"model={model} max_cycles={max_cycles!r} (None=unlimited) target_scope={target_scope!r}",
     )
+
+    # PR7+PR8: auto-bootstrap the feasibility envelope from settings.json +
+    # market dossier. Operator no longer needs to hand-craft the envelope
+    # nor instruct Claude Code to submit it — supervisor is the operator's
+    # stand-in.
+    bootstrapped = bootstrap_envelope_if_missing(repo, tid, target_scope=target_scope)
+    if bootstrapped is not None:
+        adapter_ids = [
+            s.get("id") for s in bootstrapped.get("data_sources_available", [])
+            if s.get("kind") == "real_adapter"
+        ]
+        _log(
+            log_path,
+            f"feasibility envelope auto-bootstrapped: target_scope={target_scope!r}, "
+            f"real_adapters={adapter_ids}, "
+            f"baseline_provenance_count={len(bootstrapped.get('baseline_provenance_available') or [])}",
+        )
 
     cycle = 0
     rate_limit_backoff = rate_limit_backoff_initial
@@ -663,6 +828,17 @@ def main(argv: list[str] | None = None) -> int:
                           help="informational logging interval (PR8: not a termination)")
     p_watch.add_argument("--max-cycles", type=int, default=None,
                           help="emergency operator override; default = unlimited (PR8 never-quit policy)")
+    p_watch.add_argument(
+        "--target-scope",
+        choices=["deployment", "feasibility", "directional"],
+        default="directional",
+        help=(
+            "PR7 target deploy_grade_scope. Default 'directional' (safest — "
+            "any registered data adapter suffices). Use 'deployment' only "
+            "when settings.json.data_adapters.registered has at least one "
+            "real adapter for this thread's domain."
+        ),
+    )
     p_watch.add_argument("--model", default=DEFAULT_CLAUDE_MODEL)
     p_watch.add_argument("--boot-delay", type=float, default=DEFAULT_CLAUDE_BOOT_DELAY)
 
@@ -678,6 +854,7 @@ def main(argv: list[str] | None = None) -> int:
             max_cycles=args.max_cycles,
             model=args.model,
             boot_delay=args.boot_delay,
+            target_scope=args.target_scope,
         )
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0 if result.get("status") in {"terminal", "interrupted"} else 1
