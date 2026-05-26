@@ -91,22 +91,52 @@
     </details>
   {% endif %}
 
-  {% if sup.log_tail %}
-    <details {% if sup.running %}open{% endif %} class="supervisor-log">
+  {# Live-tail log surfaces. When the supervisor is running, we render
+     empty <pre> placeholders that the body-level SupervisorLogStream
+     fills via SSE (no 4s panel-poll latency). When idle, we fall back
+     to the static last-N snapshot from disk so the operator can still
+     inspect what just happened. The data-supervisor-log-* attrs are
+     how the streamer re-binds after every htmx swap. #}
+  {% if sup.running %}
+    <details open class="supervisor-log live"
+             data-supervisor-log-section
+             data-thread-id="{{ thread.thread_id }}">
       <summary><strong>supervisor.log</strong>
-        (last {{ sup.log_tail|length }} lines)</summary>
-      <pre>{% for ln in sup.log_tail %}{{ ln }}
-{% endfor %}</pre>
+        <span class="muted log-kind-status" data-supervisor-log-status="supervisor">
+          live · connecting…
+        </span>
+      </summary>
+      <pre data-supervisor-log="supervisor"
+           data-thread-id="{{ thread.thread_id }}"></pre>
     </details>
-  {% endif %}
-
-  {% if sup.subprocess_log_tail %}
-    <details class="supervisor-claude-log">
+    <details class="supervisor-claude-log live"
+             data-supervisor-log-section
+             data-thread-id="{{ thread.thread_id }}">
       <summary><strong>claude_subprocess.log</strong>
-        (last {{ sup.subprocess_log_tail|length }} lines)</summary>
-      <pre>{% for ln in sup.subprocess_log_tail %}{{ ln }}
-{% endfor %}</pre>
+        <span class="muted log-kind-status" data-supervisor-log-status="subprocess">
+          live · connecting…
+        </span>
+      </summary>
+      <pre data-supervisor-log="subprocess"
+           data-thread-id="{{ thread.thread_id }}"></pre>
     </details>
+  {% else %}
+    {% if sup.log_tail %}
+      <details class="supervisor-log">
+        <summary><strong>supervisor.log</strong>
+          (last {{ sup.log_tail|length }} lines)</summary>
+        <pre>{% for ln in sup.log_tail %}{{ ln }}
+{% endfor %}</pre>
+      </details>
+    {% endif %}
+    {% if sup.subprocess_log_tail %}
+      <details class="supervisor-claude-log">
+        <summary><strong>claude_subprocess.log</strong>
+          (last {{ sup.subprocess_log_tail|length }} lines)</summary>
+        <pre>{% for ln in sup.subprocess_log_tail %}{{ ln }}
+{% endfor %}</pre>
+      </details>
+    {% endif %}
   {% endif %}
 </section>
 

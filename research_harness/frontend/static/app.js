@@ -752,3 +752,148 @@
   document.addEventListener('DOMContentLoaded', () => bind(document));
   document.body.addEventListener('htmx:afterSwap', (e) => bind(e.target));
 })();
+
+
+/* === Supervisor live log stream ============================================= *
+ * Body-level singleton. Survives htmx panel swaps: the EventSource lives on
+ * window.__supervisorLogStreams[threadId], and after each swap we re-bind to
+ * the new placeholder <pre> elements and re-render from in-memory ring buffers.
+ * Source: /api/threads/{tid}/supervisor/log/stream (SSE, 500ms tail-follow).
+ * ============================================================================ */
+(function () {
+  const RING_MAX = 600;
+  const RENDER_CAP = 400;
+  const w = window;
+  if (!w.__supervisorLogStreams) w.__supervisorLogStreams = {};
+
+  function streamFor(threadId) {
+    let st = w.__supervisorLogStreams[threadId];
+    if (st) return st;
+    st = {
+      threadId,
+      es: null,
+      buffers: { supervisor: [], subprocess: [] },
+      statuses: { supervisor: 'connecting…', subprocess: 'connecting…' },
+      stickyBottom: { supervisor: true, subprocess: true },
+    };
+    w.__supervisorLogStreams[threadId] = st;
+    open(st);
+    return st;
+  }
+
+  function push(st, kind, line) {
+    const buf = st.buffers[kind];
+    if (!buf) return;
+    buf.push(line);
+    if (buf.length > RING_MAX) buf.splice(0, buf.length - RING_MAX);
+  }
+
+  function setStatus(st, kind, text) {
+    st.statuses[kind] = text;
+    document
+      .querySelectorAll(`[data-supervisor-log-status="${kind}"]`)
+      .forEach((el) => {
+        const sec = el.closest('[data-supervisor-log-section]');
+        if (sec && sec.dataset.threadId && sec.dataset.threadId !== st.threadId) return;
+        el.textContent = `live · ${text}`;
+      });
+  }
+
+  function render(st, kind) {
+    const pre = document.querySelector(
+      `pre[data-supervisor-log="${kind}"][data-thread-id="${st.threadId}"]`
+    );
+    if (!pre) return;
+    const buf = st.buffers[kind];
+    const slice = buf.length > RENDER_CAP ? buf.slice(-RENDER_CAP) : buf;
+    pre.textContent = slice.join('\n');
+    if (st.stickyBottom[kind]) {
+      pre.scrollTop = pre.scrollHeight;
+    }
+  }
+
+  function bindScrollListeners(st) {
+    ['supervisor', 'subprocess'].forEach((kind) => {
+      const pre = document.querySelector(
+        `pre[data-supervisor-log="${kind}"][data-thread-id="${st.threadId}"]`
+      );
+      if (!pre || pre.dataset._scrollBound) return;
+      pre.dataset._scrollBound = '1';
+      pre.addEventListener('scroll', () => {
+        const nearBottom =
+          pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
+        st.stickyBottom[kind] = nearBottom;
+      });
+    });
+  }
+
+  function open(st) {
+    if (st.es) return;
+    try {
+      const url = `/api/threads/${st.threadId}/supervisor/log/stream`;
+      const es = new EventSource(url);
+      st.es = es;
+      setStatus(st, 'supervisor', 'connecting…');
+      setStatus(st, 'subprocess', 'connecting…');
+
+      es.addEventListener('snapshot', (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          const kind = data.kind;
+          const lines = Array.isArray(data.lines) ? data.lines : [];
+          if (!st.buffers[kind]) return;
+          st.buffers[kind] = lines.slice(-RING_MAX);
+          setStatus(st, kind, 'connected');
+          render(st, kind);
+        } catch (_) {}
+      });
+
+      es.addEventListener('append', (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          push(st, data.kind, data.line);
+          render(st, data.kind);
+        } catch (_) {}
+      });
+
+      es.onerror = () => {
+        setStatus(st, 'supervisor', 'reconnecting…');
+        setStatus(st, 'subprocess', 'reconnecting…');
+      };
+    } catch (err) {
+      setStatus(st, 'supervisor', 'error');
+      setStatus(st, 'subprocess', 'error');
+    }
+  }
+
+  function close(threadId) {
+    const st = w.__supervisorLogStreams[threadId];
+    if (!st) return;
+    if (st.es) {
+      try { st.es.close(); } catch (_) {}
+    }
+    delete w.__supervisorLogStreams[threadId];
+  }
+
+  function bind(/* root */) {
+    const sections = document.querySelectorAll('[data-supervisor-log-section]');
+    const seen = new Set();
+    sections.forEach((sec) => {
+      const tid = sec.dataset.threadId;
+      if (!tid) return;
+      seen.add(tid);
+      const st = streamFor(tid);
+      bindScrollListeners(st);
+      render(st, 'supervisor');
+      render(st, 'subprocess');
+      setStatus(st, 'supervisor', st.statuses.supervisor);
+      setStatus(st, 'subprocess', st.statuses.subprocess);
+    });
+    Object.keys(w.__supervisorLogStreams).forEach((tid) => {
+      if (!seen.has(tid)) close(tid);
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', () => bind());
+  document.body.addEventListener('htmx:afterSwap', () => bind());
+})();

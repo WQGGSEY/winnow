@@ -699,6 +699,27 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
             _sse_stream(session), media_type="text/event-stream"
         )
 
+    @app.get("/api/threads/{thread_id}/supervisor/log/stream")
+    async def supervisor_log_stream(thread_id: str) -> StreamingResponse:
+        """Tail-follow supervisor.log + claude_subprocess.log as SSE.
+
+        Initial: emits one `snapshot` event per file with the last 200
+        lines. Then polls every 500ms and emits one `append` event per
+        new line. Heartbeat ping every 15s keeps proxies from closing
+        the stream. Survives the files not existing yet (they'll be
+        created when the supervisor starts).
+        """
+        _require_thread(s.repo_root, thread_id)
+        tdir = s.repo_root / "runs" / "threads" / thread_id
+        return StreamingResponse(
+            _tail_supervisor_logs(tdir),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     # -------- settings
 
     @app.post("/api/settings/subscription_ack")
@@ -834,6 +855,98 @@ async def _sse_stream(session: LiveSession):
             # one terminal event then close — client EventSource will reopen
             # only if explicitly re-fetched, which is what we want
             break
+
+
+async def _tail_supervisor_logs(tdir: Path):
+    """Tail two append-only logs (supervisor.log + claude_subprocess.log)
+    as SSE. Emits a `snapshot` event per file with last 200 lines on
+    connect, then `append` events per new line every 500ms.
+
+    Files may not exist yet; we poll until they appear. If a file
+    shrinks (rotation/truncation), we reset its offset to 0 and resync.
+    """
+    SNAPSHOT_LINES = 200
+    POLL = 0.5
+    HEARTBEAT = 15.0
+    sup_path = tdir / "supervisor.log"
+    sub_path = tdir / "claude_subprocess.log"
+
+    state = {
+        "supervisor": {"path": sup_path, "offset": 0, "snapshotted": False, "buf": ""},
+        "subprocess": {"path": sub_path, "offset": 0, "snapshotted": False, "buf": ""},
+    }
+
+    last_beat = time.time()
+
+    def _snapshot(p: Path) -> tuple[int, list[str]]:
+        try:
+            data = p.read_bytes()
+        except OSError:
+            return (0, [])
+        text = data.decode("utf-8", errors="replace")
+        lines = text.splitlines()
+        # If the file doesn't end with newline, the last line is partial;
+        # exclude it from the snapshot so the live-tail isn't out of sync.
+        if data and not data.endswith(b"\n") and lines:
+            lines = lines[:-1]
+        return (len(data), lines[-SNAPSHOT_LINES:])
+
+    def _new_lines(st: dict) -> list[str]:
+        p: Path = st["path"]
+        try:
+            size = p.stat().st_size
+        except OSError:
+            return []
+        if size < st["offset"]:
+            # rotated/truncated — resync from start
+            st["offset"] = 0
+            st["buf"] = ""
+        if size == st["offset"]:
+            return []
+        try:
+            with p.open("rb") as f:
+                f.seek(st["offset"])
+                chunk = f.read(size - st["offset"])
+            st["offset"] = size
+        except OSError:
+            return []
+        st["buf"] += chunk.decode("utf-8", errors="replace")
+        parts = st["buf"].split("\n")
+        # Last element is the partial line (or "" if chunk ended with \n).
+        st["buf"] = parts[-1]
+        return parts[:-1]
+
+    try:
+        while True:
+            for kind, st in state.items():
+                p: Path = st["path"]
+                if not st["snapshotted"]:
+                    if not p.exists():
+                        continue
+                    offset, lines = _snapshot(p)
+                    st["offset"] = offset
+                    st["snapshotted"] = True
+                    payload = json.dumps(
+                        {"kind": kind, "lines": lines}, ensure_ascii=False
+                    )
+                    yield f"event: snapshot\ndata: {payload}\n\n"
+                    continue
+                new = _new_lines(st)
+                for ln in new:
+                    payload = json.dumps(
+                        {"kind": kind, "line": ln}, ensure_ascii=False
+                    )
+                    yield f"event: append\ndata: {payload}\n\n"
+
+            now = time.time()
+            if now - last_beat > HEARTBEAT:
+                yield ": ping\n\n"
+                last_beat = now
+
+            await asyncio.sleep(POLL)
+    except asyncio.CancelledError:
+        # Client disconnected — exit cleanly so the task is reaped.
+        return
 
 
 # --------------------------------------------------------------- phase launchers
