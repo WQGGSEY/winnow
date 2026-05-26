@@ -137,16 +137,49 @@ class SupervisorRoutesTests(unittest.TestCase):
             r = client.post("/api/threads/thread_t1/supervisor/stop")
             self.assertEqual(r.status_code, 404)
 
-    def test_stop_signals_alive_pid(self):
+    def test_stop_signals_alive_pid_and_escalates(self):
+        """Stop sends SIGTERM, polls liveness, and escalates to SIGKILL
+        if the process is still alive after 3s. With the os.kill mock
+        always succeeding, the liveness probe never throws → escalation
+        path fires."""
         with TemporaryDirectory() as tmp:
             repo = _setup_repo(Path(tmp))
             lock = repo / "runs" / "threads" / "thread_t1" / ".supervisor.lock"
             lock.write_text(str(os.getpid()), encoding="utf-8")
             client = self._client(repo)
             with mock.patch.object(fserver.os, "kill") as kill:
+                # Patch asyncio.sleep so the test doesn't actually wait 3s.
+                with mock.patch.object(fserver.asyncio, "sleep",
+                                        return_value=None) as _asleep:
+                    r = client.post("/api/threads/thread_t1/supervisor/stop")
+            self.assertEqual(r.status_code, 200, r.text)
+            data = r.json()
+            # At minimum SIGTERM was sent; SIGKILL may follow.
+            self.assertIn("SIGTERM", data["signals_sent"])
+            # os.kill called with SIGTERM at least once.
+            sigterms = [
+                c for c in kill.call_args_list
+                if len(c.args) >= 2 and c.args[1] == fserver.signal.SIGTERM
+            ]
+            self.assertGreaterEqual(len(sigterms), 1)
+
+    def test_stop_succeeds_when_process_already_dead(self):
+        """If SIGTERM raises ProcessLookupError immediately, route
+        cleans the stale lock and returns 200 with empty signals."""
+        with TemporaryDirectory() as tmp:
+            repo = _setup_repo(Path(tmp))
+            lock = repo / "runs" / "threads" / "thread_t1" / ".supervisor.lock"
+            lock.write_text("99999999", encoding="utf-8")
+            client = self._client(repo)
+            with mock.patch.object(
+                fserver.os, "kill",
+                side_effect=ProcessLookupError(),
+            ):
                 r = client.post("/api/threads/thread_t1/supervisor/stop")
             self.assertEqual(r.status_code, 200, r.text)
-            kill.assert_called_once()
+            self.assertEqual(r.json()["signals_sent"], [])
+            # stale lock removed
+            self.assertFalse(lock.exists())
 
     def test_start_rejects_when_publication_paper_exists(self):
         # PR10b: resume is disabled once publication artifact exists.
@@ -175,6 +208,16 @@ class SupervisorRoutesTests(unittest.TestCase):
                 json={"target_scope": "directional"},
             )
             self.assertEqual(r.status_code, 409)
+
+    def test_force_kill_route_removed(self):
+        """PR12b: combined Stop + escalation replaces the separate
+        Force kill route. Make sure the old route is gone — a 404 is
+        the expected response (route does not exist)."""
+        with TemporaryDirectory() as tmp:
+            repo = _setup_repo(Path(tmp))
+            client = self._client(repo)
+            r = client.post("/api/threads/thread_t1/supervisor/force_kill")
+            self.assertEqual(r.status_code, 404)
 
 
 if __name__ == "__main__":

@@ -649,48 +649,27 @@
       btn.dataset._bound = '1';
       btn.addEventListener('click', async () => {
         if (!confirm(
-          'Send SIGTERM to supervisor?\n\n' +
-          'The supervisor cascades the signal to its active claude ' +
-          'subprocess so the cycle ends in seconds, not the minutes a ' +
-          'running session would normally take. If it does not exit ' +
-          'within ~10s, use ⚡ Force kill.'
+          'Stop supervisor?\n\n' +
+          'Sends SIGTERM first (supervisor cascades it to the active ' +
+          'claude subprocess so the cycle ends in seconds). If it does ' +
+          'not exit within 3s, automatically escalates to SIGKILL. ' +
+          'Lock file is cleaned up either way.'
         )) return;
         const tid = btn.dataset.threadId;
         btn.disabled = true;
         const originalText = btn.textContent;
-        btn.textContent = '⏳ Sending SIGTERM…';
+        btn.textContent = '⏳ Stopping…';
         try {
-          await postJson('/api/threads/' + tid + '/supervisor/stop');
-          showInlineFeedback(btn, 'SIGTERM sent. Supervisor + claude subprocess exiting…', 'ok');
-          setTimeout(() => location.reload(), 3000);
+          const data = await postJson('/api/threads/' + tid + '/supervisor/stop');
+          const signals = (data.signals_sent || []).join(' → ') || 'already exited';
+          showInlineFeedback(btn, '✓ Stopped (' + signals + '). Reloading…', 'ok');
+          // Server already waited the escalation window, so a quick
+          // reload reliably shows idle state.
+          setTimeout(() => location.reload(), 400);
         } catch (e) {
           btn.textContent = originalText;
           btn.disabled = false;
           showInlineFeedback(btn, 'Stop failed: ' + e.message, 'error');
-        }
-      });
-    });
-    (root || document).querySelectorAll('.supervisor-force-kill-btn').forEach((btn) => {
-      if (btn.dataset._bound) return;
-      btn.dataset._bound = '1';
-      btn.addEventListener('click', async () => {
-        if (!confirm(
-          'Force kill supervisor with SIGKILL?\n\n' +
-          'Unlinks the lock file immediately so the UI returns to idle. ' +
-          'Use only when ■ Stop did not take within ~10 seconds.'
-        )) return;
-        const tid = btn.dataset.threadId;
-        btn.disabled = true;
-        const originalText = btn.textContent;
-        btn.textContent = '⏳ Force killing…';
-        try {
-          await postJson('/api/threads/' + tid + '/supervisor/force_kill');
-          showInlineFeedback(btn, '⚡ SIGKILL sent + lock cleared. Reloading…', 'ok');
-          setTimeout(() => location.reload(), 800);
-        } catch (e) {
-          btn.textContent = originalText;
-          btn.disabled = false;
-          showInlineFeedback(btn, 'Force kill failed: ' + e.message, 'error');
         }
       });
     });
