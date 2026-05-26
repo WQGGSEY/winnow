@@ -651,3 +651,57 @@
   document.body.addEventListener("htmx:afterSwap", refresh);
   setInterval(refresh, 1000);
 })();
+
+/* === PR10: Supervisor start/stop buttons ====================================== */
+(function () {
+  async function postJson(url, body) {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!r.ok) {
+      let detail = '';
+      try { detail = (await r.json()).detail || ''; } catch (_) {}
+      alert('Supervisor request failed (' + r.status + '): ' + detail);
+      throw new Error('failed: ' + r.status);
+    }
+    return r.json();
+  }
+  function bind(root) {
+    (root || document).querySelectorAll('.supervisor-start-btn').forEach((btn) => {
+      if (btn.dataset._bound) return;
+      btn.dataset._bound = '1';
+      btn.addEventListener('click', async () => {
+        const tid = btn.dataset.threadId;
+        const sel = document.getElementById('supervisor-scope-' + tid);
+        const target_scope = sel ? sel.value : 'directional';
+        btn.disabled = true;
+        try {
+          await postJson('/api/threads/' + tid + '/supervisor/start',
+                         {target_scope: target_scope});
+        } finally {
+          btn.disabled = false;
+        }
+        // Next HTMX poll will refresh the panel showing running state.
+      });
+    });
+    (root || document).querySelectorAll('.supervisor-stop-btn').forEach((btn) => {
+      if (btn.dataset._bound) return;
+      btn.dataset._bound = '1';
+      btn.addEventListener('click', async () => {
+        if (!confirm('Send SIGINT to supervisor? Current cycle will finish first.')) return;
+        const tid = btn.dataset.threadId;
+        btn.disabled = true;
+        try {
+          await postJson('/api/threads/' + tid + '/supervisor/stop');
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+  document.addEventListener('DOMContentLoaded', () => bind(document));
+  document.body.addEventListener('htmx:afterSwap', (e) => bind(e.target));
+})();
+

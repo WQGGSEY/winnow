@@ -17,23 +17,93 @@
   </a>
 </p>
 
+{# PR10: supervisor control card — visible whether production has started
+   or not, so the operator can launch the never-quit supervisor with a
+   single click. Mirrors the supervisor state from disk every poll. #}
+{% set sup = p.supervisor or {} %}
+<section class="supervisor-card {% if sup.running %}running{% else %}idle{% endif %}">
+  <div class="supervisor-header">
+    <h3>
+      🤖 Supervisor
+      {% if sup.running %}
+        <span class="supervisor-status-running">running (pid={{ sup.pid }})</span>
+      {% else %}
+        <span class="supervisor-status-idle">idle</span>
+      {% endif %}
+    </h3>
+    <div class="supervisor-actions">
+      {% if not sup.running %}
+        <label class="muted" style="font-size:12px;margin-right:6px;">
+          target scope:
+          <select id="supervisor-scope-{{ thread.thread_id }}">
+            <option value="directional" selected>directional</option>
+            <option value="feasibility">feasibility</option>
+            <option value="deployment">deployment</option>
+          </select>
+        </label>
+        <button class="btn primary supervisor-start-btn"
+                data-thread-id="{{ thread.thread_id }}">
+          ▶ Start supervisor
+        </button>
+      {% else %}
+        <button class="btn supervisor-stop-btn"
+                data-thread-id="{{ thread.thread_id }}">
+          ■ Stop supervisor (SIGINT)
+        </button>
+      {% endif %}
+    </div>
+  </div>
+  <p class="muted" style="font-size:12px;">
+    Hands-free: supervisor auto-bootstraps the feasibility envelope, spawns
+    Claude Code subprocesses under your subscription, and only terminates
+    when AC accepts and the Professor attests user goal achieved.
+    honest_failure and rate limits are retreat-and-retry signals, not stops.
+  </p>
+
+  {% if sup.needed_resources %}
+    <details open class="supervisor-needs">
+      <summary><strong>needed_resources</strong>
+        ({{ sup.needed_resources|length }})</summary>
+      <ul>
+        {% for n in sup.needed_resources %}
+          <li>
+            <code>{{ n.type or '?' }}</code>
+            {% if n.axis %}<span class="muted">[{{ n.axis }}]</span>{% endif %}
+            — {{ (n.spec or n.experiment or '')|truncate_chars(200) }}
+          </li>
+        {% endfor %}
+      </ul>
+    </details>
+  {% endif %}
+
+  {% if sup.log_tail %}
+    <details {% if sup.running %}open{% endif %} class="supervisor-log">
+      <summary><strong>supervisor.log</strong>
+        (last {{ sup.log_tail|length }} lines)</summary>
+      <pre>{% for ln in sup.log_tail %}{{ ln }}
+{% endfor %}</pre>
+    </details>
+  {% endif %}
+
+  {% if sup.subprocess_log_tail %}
+    <details class="supervisor-claude-log">
+      <summary><strong>claude_subprocess.log</strong>
+        (last {{ sup.subprocess_log_tail|length }} lines)</summary>
+      <pre>{% for ln in sup.subprocess_log_tail %}{{ ln }}
+{% endfor %}</pre>
+    </details>
+  {% endif %}
+</section>
+
 {% if not p.present %}
   <div class="phase-empty">
     <p>Production has not been run for this thread.</p>
     {% if thread.phase_status != "complete" %}
       <p class="muted" style="font-size:11.5px;">
         <span class="poll-pulse">●</span>
-        Auto-refreshing every 4 seconds. When Claude Code commits its first
-        MCP decision, this panel will populate without a reload.
-      </p>
-    {% endif %}
-    {% if p.llm_backend == "mcp" %}
-      <p class="muted" style="font-size:12.5px;">
-        Backend: <code>mcp</code>. Reasoning runs inside your Claude Code
-        interactive session. Open the Market panel and click "Advance to
-        production →" to get the handoff command, then run it in a separate
-        terminal. The frontend won't launch production directly while
-        <code>backend: "mcp"</code> is set.
+        Auto-refreshing every 4 seconds. Hit ▶ Start supervisor above to
+        kick off the hands-free production loop — supervisor will write
+        artifacts as it cycles.
       </p>
     {% endif %}
   </div>

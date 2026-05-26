@@ -30,6 +30,11 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
+import signal
+import subprocess
+import sys
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -547,6 +552,81 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
         await _launch_production(s, index)
         return JSONResponse({"ok": True})
 
+    @app.post("/api/threads/{thread_id}/supervisor/start")
+    async def supervisor_start(thread_id: str, req: Request) -> JSONResponse:
+        """Spawn thread_supervisor as a detached background subprocess.
+        The supervisor takes over until the dual-gate publication
+        outcome is reached (or operator stops it)."""
+        _require_thread(s.repo_root, thread_id)
+        body = await _maybe_json(req)
+        target_scope = (body.get("target_scope") or "directional").strip()
+        if target_scope not in {"deployment", "feasibility", "directional"}:
+            raise HTTPException(400, f"invalid target_scope: {target_scope!r}")
+        # Reject if a supervisor is already running for this thread.
+        lock_path = s.repo_root / "runs" / "threads" / thread_id / ".supervisor.lock"
+        if lock_path.exists():
+            try:
+                pid = int(lock_path.read_text(encoding="utf-8").strip())
+                os.kill(pid, 0)  # alive check
+                raise HTTPException(409, f"supervisor already running (pid={pid})")
+            except (ProcessLookupError, ValueError):
+                # Stale lock — fall through; supervisor's lock acquire
+                # will clean it up.
+                pass
+            except PermissionError:
+                # PID exists in another user's session — block to be safe.
+                raise HTTPException(409, f"supervisor lock exists; manual cleanup needed: {lock_path}")
+        # Spawn detached so it survives this request.
+        cmd = [
+            sys.executable, "-m", "research_harness.thread_supervisor",
+            "watch", thread_id,
+            "--repo-root", str(s.repo_root),
+            "--target-scope", target_scope,
+        ]
+        # Redirect stdio to a file so frontend can later tail it.
+        log_dir = s.repo_root / "runs" / "threads" / thread_id
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stdout_path = log_dir / "supervisor_subprocess.out"
+        with open(stdout_path, "ab") as fh:
+            fh.write(f"\n=== supervisor spawn at {time.strftime('%Y-%m-%d %H:%M:%S')}, target_scope={target_scope} ===\n".encode("utf-8"))
+        out_handle = open(stdout_path, "ab")  # noqa: SIM115
+        proc = subprocess.Popen(
+            cmd,
+            stdout=out_handle,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+        # We DON'T wait. The subprocess writes its own lock file as it
+        # starts up; that's the canonical liveness signal.
+        return JSONResponse({
+            "ok": True,
+            "pid": proc.pid,
+            "target_scope": target_scope,
+            "log_path": str(stdout_path),
+        })
+
+    @app.post("/api/threads/{thread_id}/supervisor/stop")
+    async def supervisor_stop(thread_id: str) -> JSONResponse:
+        _require_thread(s.repo_root, thread_id)
+        lock_path = s.repo_root / "runs" / "threads" / thread_id / ".supervisor.lock"
+        if not lock_path.exists():
+            raise HTTPException(404, "no supervisor running for this thread")
+        try:
+            pid = int(lock_path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            raise HTTPException(409, "supervisor lock file is corrupt")
+        try:
+            os.kill(pid, signal.SIGINT)
+        except ProcessLookupError:
+            try:
+                lock_path.unlink()
+            except OSError:
+                pass
+            raise HTTPException(404, f"supervisor pid {pid} not alive (cleaned stale lock)")
+        return JSONResponse({"ok": True, "signaled_pid": pid})
+
     @app.get("/api/threads/{thread_id}/production/stream")
     async def production_stream(thread_id: str) -> StreamingResponse:
         _require_thread(s.repo_root, thread_id)
@@ -896,6 +976,80 @@ async def _launch_production(s: AppState, index: dict[str, Any]) -> None:
 # --------------------------------------------------------------- phase data
 
 
+def _read_supervisor_state(repo_root: Path, thread_id: str) -> dict[str, Any]:
+    """PR10: surface thread_supervisor state for the production panel.
+
+    Returns a dict the template can consume:
+      - running: bool
+      - pid: int | None
+      - log_tail: list[str] (last ~30 lines of supervisor.log)
+      - subprocess_log_tail: list[str] (last ~10 lines of claude_subprocess.log)
+      - needed_resources: list[dict] (parsed from needed_resources.yaml)
+      - target_scope: str | None (parsed from supervisor.log if present)
+    """
+    tdir = repo_root / "runs" / "threads" / thread_id
+    out: dict[str, Any] = {
+        "running": False,
+        "pid": None,
+        "log_tail": [],
+        "subprocess_log_tail": [],
+        "needed_resources": [],
+        "target_scope": None,
+    }
+
+    # Liveness from lock file.
+    lock_path = tdir / ".supervisor.lock"
+    if lock_path.exists():
+        try:
+            pid = int(lock_path.read_text(encoding="utf-8").strip())
+            os.kill(pid, 0)
+            out["running"] = True
+            out["pid"] = pid
+        except (OSError, ValueError, ProcessLookupError):
+            pass
+
+    # Supervisor log tail (last 30 lines).
+    log_path = tdir / "supervisor.log"
+    if log_path.exists():
+        try:
+            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            out["log_tail"] = lines[-30:]
+            for ln in reversed(lines):
+                if "target_scope=" in ln:
+                    # crude parse — find target_scope=...
+                    idx = ln.find("target_scope=")
+                    tail = ln[idx + len("target_scope="):]
+                    # strip trailing chars / quotes / brackets
+                    out["target_scope"] = tail.split()[0].strip().strip("',\"")
+                    break
+        except OSError:
+            pass
+
+    # Claude subprocess log tail (last 10 lines — heavy, keep small).
+    subproc_log = tdir / "claude_subprocess.log"
+    if subproc_log.exists():
+        try:
+            data = subproc_log.read_bytes()
+            text = data.decode("utf-8", errors="replace")
+            lines = [ln for ln in text.splitlines() if ln.strip()]
+            out["subprocess_log_tail"] = lines[-10:]
+        except OSError:
+            pass
+
+    # needed_resources.yaml — parse with the harness's simple parser.
+    nr_path = tdir / "needed_resources.yaml"
+    if nr_path.exists():
+        try:
+            from research_harness.config import parse_simple_yaml
+            parsed = parse_simple_yaml(nr_path.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict) and isinstance(parsed.get("needs"), list):
+                out["needed_resources"] = parsed["needs"]
+        except Exception:  # noqa: BLE001
+            pass
+
+    return out
+
+
 def _collect_phase_data(repo_root: Path, thread_id: str) -> dict[str, Any]:
     """Read every phase artifact present on disk and pass to templates."""
     out: dict[str, Any] = {}
@@ -1030,6 +1184,8 @@ def _read_phase_artifacts(
                 last_activity = max(last_activity, dp.stat().st_mtime)
         if last_activity:
             result["last_activity_mtime"] = last_activity
+        # PR10: supervisor state for the production panel.
+        result["supervisor"] = _read_supervisor_state(repo_root, thread_id)
         # MCP-mode progress: list per-node MCP decision files + their
         # mtimes so the operator can see Claude Code's last action.
         mcp_progress: list[dict[str, Any]] = []

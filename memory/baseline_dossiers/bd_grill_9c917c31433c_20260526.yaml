@@ -1,0 +1,49 @@
+id: bd_grill_9c917c31433c_20260526
+created_at: "2026-05-26"
+query: "LLM-driven gradient flow alpha expression search WorldQuant Brain 2026"
+problem_scope:
+  domain: "llm_driven_gradient_flow_alpha_expression_search"
+  node_type: "validity"
+  claim_under_test: "It is possible to solve: automating the generation of WorldQuant Brain-submittable alpha expressions (operator-tree / formula strings, kept short to minimize overfitting) over a universe of ~3000 stocks with 8 years of WQ database data, by adapting and extending a 2025/2026 line of LLM-driven 'gradient flow' methods \u2014 where the alpha expression itself is the optimization target and an LLM plays the role of the gradient ('how to improve') back-propagated through multiple layers \u2014 so as to perform global (non-local-minimum) search over the expression space."
+selected:
+  method: "AlphaForgeBench: Benchmarking End-to-End Trading Strategy Design with Large Language Models"
+  role: current_best_known
+  candidate_id: c_scholar_alphaforgebench_benchmar
+  one_paragraph_reason: "Top-ranked search result for the grilled claim."
+  evidence_tags:
+    - "automated_market_research"
+    - "google_scholar"
+  risk_tags:
+    - "operator_should_review"
+candidates_index:
+  - id: c_scholar_alphaforgebench_benchmar
+    method: "AlphaForgeBench: Benchmarking End-to-End Trading Strategy Design with Large Language Models"
+    decision: selected
+    reason_tags:
+      - "automated_market_research"
+      - "current_best_known"
+    detail_file: candidates/c_scholar_alphaforgebench_benchmar.md
+  - id: c_naive_placeholder
+    method: "naive: TBD (Professor will design)"
+    decision: selected_as_naive
+    reason_tags:
+      - "operator_review_required"
+      - "naive"
+    detail_file: candidates/c_naive_placeholder.md
+  - id: c_null_placeholder
+    method: "random_or_null: TBD (Professor will design)"
+    decision: selected_as_random_or_null
+    reason_tags:
+      - "operator_review_required"
+      - "random_or_null"
+    detail_file: candidates/c_null_placeholder.md
+source_index:
+  - id: s1
+    url: "https://arxiv.org/abs/2602.18481"
+    accessed_at: "2026-05-26"
+    supports:
+      - "scholar_alphaforgebench_benchmar"
+refresh_policy:
+  required_before:
+    - "final_claim_promotion"
+    - "external_writeup"
