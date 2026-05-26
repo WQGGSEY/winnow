@@ -977,10 +977,11 @@ async def _launch_production(s: AppState, index: dict[str, Any]) -> None:
     del s, index  # parameters kept for API compatibility with the route caller
     raise HTTPException(
         409,
-        "Production launch is disabled from the frontend. Reasoning happens "
-        "inside Claude Code interactive via the MCP server. Use the "
-        "'Advance to production →' modal to copy the MCP handoff command, "
-        "then run it in a separate terminal.",
+        "Production launch is disabled at this endpoint. Use the supervisor "
+        "card on the Production tab — click ▶ Start supervisor. The "
+        "supervisor spawns claude subprocesses under your subscription "
+        "pool, auto-bootstraps the feasibility envelope, and drives "
+        "production to dual-gate publish hands-free.",
     )
 
 

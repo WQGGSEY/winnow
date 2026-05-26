@@ -86,16 +86,14 @@
     {% endif %}
 
     {% if thread.current_phase == "market" and thread.phase_status == "complete" %}
-      {# In MCP mode the production launcher does NOT call any LLM — Claude
-         Code interactive becomes the driver. The button just creates the
-         empty production dir + shows the operator the command to run in a
-         separate terminal. #}
-      <button class="btn primary advance-btn"
-              type="button"
-              data-mcp-handoff
-              data-thread-id="{{ thread.thread_id }}">
-        Advance to production →
-      </button>
+      <div class="market-next-step callout">
+        <strong>Market research complete.</strong>
+        Open the <a href="#production" class="advance-to-production-link"
+                     data-thread-id="{{ thread.thread_id }}">Production tab ↓</a>
+        and click <strong>▶ Start supervisor</strong>. The supervisor
+        auto-bootstraps the feasibility envelope from this market dossier
+        and drives production hands-free to dual-gate publish.
+      </div>
     {% endif %}
 
     <details class="raw-json">

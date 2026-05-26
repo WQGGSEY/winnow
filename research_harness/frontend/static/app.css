@@ -758,3 +758,25 @@ code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-
 .supervisor-publication-done {
   color: #2e7d2e; font-weight: 600; font-size: 13px; display: inline-block;
 }
+.supervisor-inline-feedback {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.supervisor-inline-feedback.ok      { color: #2e7d2e; }
+.supervisor-inline-feedback.pending { color: #2845a8; }
+.supervisor-inline-feedback.error   { color: #c25450; }
+
+/* Market → Production hand-off callout */
+.market-next-step.callout {
+  background: #eef3ff;
+  border-left: 3px solid #2845a8;
+  padding: 10px 14px;
+  margin: 12px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.market-next-step a.advance-to-production-link {
+  color: #2845a8; text-decoration: underline; font-weight: 600;
+}

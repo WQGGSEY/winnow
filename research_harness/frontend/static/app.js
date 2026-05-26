@@ -533,77 +533,9 @@
   document.body.addEventListener("htmx:afterSwap", init);
 })();
 
-/* === MCP handoff modal — replaces the direct production launch ============ */
-(function () {
-  function currentModelFor(tid) {
-    const picker = document.querySelector(
-      `.mcp-model-picker[data-thread-id="${tid}"] select[data-mcp-model-select]`
-    );
-    return picker ? picker.value : "";
-  }
-  function modal(tid) {
-    const model = currentModelFor(tid) || "claude-opus-4-7";
-    // Each step is ONE single-line command to type by hand. macOS Terminal
-    // mangles multi-line paste; assume the operator types each line.
-    const step1 = `claude mcp add research_harness -- python -m research_harness.mcp_server --repo-root $(pwd)`;
-    const step2 = `claude --model ${model}`;
-    // Step 3 is the natural-language message to TYPE INSIDE Claude Code.
-    // No slash command — MCP tools are invoked by Claude Code reasoning,
-    // not by /commands.
-    const step3 = `Start the research_harness production run for thread ${tid}. Use the research_harness MCP tools: call get_research_state once to load context, then loop — get_next_admissible_node, design_experiment_template if no _lib yet, submit_grad_student_review, execute_node_experiment, run_critic_reviews, submit_professor_decision — one node at a time. When decide_publication_readiness returns submit=true, call run_rebuttal_and_publish. If the AC rejects, call revise_root_after_reject with a stronger honest claim and restart the loop.`;
-    const wrap = document.createElement("dialog");
-    wrap.className = "settings-dialog mcp-handoff-dialog";
-    wrap.innerHTML = `
-      <form method="dialog" class="settings-form">
-        <h2>Hand off to Claude Code (MCP mode)</h2>
-        <p style="font-size: 13px; line-height: 1.5;">
-          Production reasoning runs inside your Claude Code interactive
-          session — free in the subscription pool, unaffected by the
-          2026-06-15 policy change. macOS Terminal mangles multi-line paste,
-          so each step below is ONE line. Type each one yourself; do not
-          paste several lines at once.
-        </p>
-
-        <h3 style="margin-top:14px; font-size:12.5px;">① One-time only (skip if already done): register the MCP server</h3>
-        <pre data-mcp-line>${escape(step1)}</pre>
-
-        <h3 style="margin-top:14px; font-size:12.5px;">② Open Claude Code with this thread's model</h3>
-        <pre data-mcp-line>${escape(step2)}</pre>
-
-        <h3 style="margin-top:14px; font-size:12.5px;">③ Inside Claude Code, type this as a single chat message (NOT a slash command)</h3>
-        <pre data-mcp-line style="white-space:pre-wrap;">${escape(step3)}</pre>
-        <p style="font-size: 11.5px; color: #5a5a5a; margin-top:2px;">
-          Claude Code reads the MCP tool descriptions and invokes them from
-          the prompt automatically. Persona violations (lazy/safe claims,
-          placeholder baselines, market-ignoring baselines, …) are rejected
-          at the MCP boundary so Claude Code retries on its own. Progress
-          shows up live in this panel.
-        </p>
-
-        <div class="settings-actions">
-          <button type="button" class="btn primary" data-mcp-close>Got it</button>
-        </div>
-      </form>`;
-    document.body.appendChild(wrap);
-    wrap.showModal();
-    wrap.querySelector("[data-mcp-close]").addEventListener("click", () => {
-      wrap.close();
-      wrap.remove();
-    });
-  }
-  function escape(s) {
-    return String(s)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-  }
-  document.addEventListener("click", (ev) => {
-    const btn = ev.target.closest("[data-mcp-handoff]");
-    if (!btn) return;
-    ev.preventDefault();
-    modal(btn.dataset.threadId);
-  });
-})();
+/* (legacy MCP-handoff modal removed — replaced by thread_supervisor +
+   the supervisor card on the production panel. Operator clicks
+   ▶ Start supervisor instead of running commands by hand.) */
 
 /* === Per-thread MCP model selector ====================================== */
 (function () {
@@ -668,6 +600,17 @@
     }
     return r.json();
   }
+  function showInlineFeedback(btn, text, klass) {
+    let note = btn.parentElement.querySelector('.supervisor-inline-feedback');
+    if (!note) {
+      note = document.createElement('span');
+      note.className = 'supervisor-inline-feedback';
+      btn.parentElement.appendChild(note);
+    }
+    note.textContent = text;
+    note.className = 'supervisor-inline-feedback ' + (klass || '');
+  }
+
   function bind(root) {
     (root || document).querySelectorAll('.supervisor-start-btn').forEach((btn) => {
       if (btn.dataset._bound) return;
@@ -677,13 +620,28 @@
         const sel = document.getElementById('supervisor-scope-' + tid);
         const target_scope = sel ? sel.value : 'directional';
         btn.disabled = true;
+        const originalText = btn.textContent;
+        btn.textContent = '⏳ Starting supervisor…';
+        showInlineFeedback(btn, '', 'pending');
         try {
-          await postJson('/api/threads/' + tid + '/supervisor/start',
-                         {target_scope: target_scope});
-        } finally {
+          const data = await postJson(
+            '/api/threads/' + tid + '/supervisor/start',
+            {target_scope: target_scope}
+          );
+          btn.textContent = '✓ Started (pid=' + data.pid + ')';
+          showInlineFeedback(
+            btn,
+            'Supervisor pid=' + data.pid + ' spawned. Panel will refresh on next 4s poll.',
+            'ok'
+          );
+          // Force an immediate refresh of the production panel so the
+          // operator sees the running state without the 4s gap.
+          setTimeout(() => location.reload(), 1500);
+        } catch (e) {
+          btn.textContent = originalText;
           btn.disabled = false;
+          showInlineFeedback(btn, 'Start failed: ' + e.message, 'error');
         }
-        // Next HTMX poll will refresh the panel showing running state.
       });
     });
     (root || document).querySelectorAll('.supervisor-stop-btn').forEach((btn) => {
@@ -693,10 +651,35 @@
         if (!confirm('Send SIGINT to supervisor? Current cycle will finish first.')) return;
         const tid = btn.dataset.threadId;
         btn.disabled = true;
+        const originalText = btn.textContent;
+        btn.textContent = '⏳ Sending SIGINT…';
         try {
           await postJson('/api/threads/' + tid + '/supervisor/stop');
-        } finally {
+          showInlineFeedback(btn, 'SIGINT sent. Current cycle will finish then exit.', 'ok');
+          setTimeout(() => location.reload(), 1500);
+        } catch (e) {
+          btn.textContent = originalText;
           btn.disabled = false;
+          showInlineFeedback(btn, 'Stop failed: ' + e.message, 'error');
+        }
+      });
+    });
+    // PR12: "advance-to-production-link" in the market panel — scrolls to
+    // the production accordion section and opens it if collapsed.
+    (root || document).querySelectorAll('.advance-to-production-link').forEach((a) => {
+      if (a.dataset._bound) return;
+      a.dataset._bound = '1';
+      a.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        const target = document.querySelector(
+          '[data-phase="production"], .accordion-item[data-phase="production"], #production'
+        );
+        if (target) {
+          // If wrapped in a <details>, open it.
+          if (target.tagName === 'DETAILS') target.open = true;
+          const details = target.closest('details');
+          if (details) details.open = true;
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
       });
     });
