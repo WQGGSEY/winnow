@@ -12,7 +12,18 @@
 <body>
   <header class="topbar">
     <div class="topbar-title" title="Winnow — sharpen claims before you ship them.">
-      🌾 Winnow
+      <svg class="topbar-mark" viewBox="0 0 64 64" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="3" stroke-linecap="round">
+          <line x1="32" y1="20" x2="18" y2="42"/>
+          <line x1="32" y1="20" x2="46" y2="42"/>
+        </g>
+        <g fill="currentColor">
+          <circle cx="32" cy="20" r="6"/>
+          <circle cx="18" cy="44" r="5"/>
+          <circle cx="46" cy="44" r="5"/>
+        </g>
+      </svg>
+      <span>Winnow</span>
     </div>
     <div class="topbar-meta">
       {% if full_auto_mode %}<span class="badge auto">● AUTO</span>{% endif %}
