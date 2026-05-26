@@ -867,7 +867,7 @@ async def _tail_supervisor_logs(tdir: Path):
     """
     SNAPSHOT_LINES = 200
     POLL = 0.5
-    HEARTBEAT = 15.0
+    HEARTBEAT = 5.0
     sup_path = tdir / "supervisor.log"
     sub_path = tdir / "claude_subprocess.log"
 
@@ -876,6 +876,11 @@ async def _tail_supervisor_logs(tdir: Path):
         "subprocess": {"path": sub_path, "offset": 0, "snapshotted": False, "buf": ""},
     }
 
+    # Send a first byte immediately. Without this the browser sees no data
+    # until either a snapshot fires (file exists) or 5s heartbeat elapses;
+    # some proxies (and EventSource impls under load) treat that silence
+    # as a failed connect and trigger `onerror` → infinite reconnect loop.
+    yield ": connected\n\n"
     last_beat = time.time()
 
     def _snapshot(p: Path) -> tuple[int, list[str]]:
@@ -918,25 +923,30 @@ async def _tail_supervisor_logs(tdir: Path):
 
     try:
         while True:
-            for kind, st in state.items():
-                p: Path = st["path"]
-                if not st["snapshotted"]:
-                    if not p.exists():
+            try:
+                for kind, st in state.items():
+                    p: Path = st["path"]
+                    if not st["snapshotted"]:
+                        if not p.exists():
+                            continue
+                        offset, lines = _snapshot(p)
+                        st["offset"] = offset
+                        st["snapshotted"] = True
+                        payload = json.dumps(
+                            {"kind": kind, "lines": lines}, ensure_ascii=False
+                        )
+                        yield f"event: snapshot\ndata: {payload}\n\n"
                         continue
-                    offset, lines = _snapshot(p)
-                    st["offset"] = offset
-                    st["snapshotted"] = True
-                    payload = json.dumps(
-                        {"kind": kind, "lines": lines}, ensure_ascii=False
-                    )
-                    yield f"event: snapshot\ndata: {payload}\n\n"
-                    continue
-                new = _new_lines(st)
-                for ln in new:
-                    payload = json.dumps(
-                        {"kind": kind, "line": ln}, ensure_ascii=False
-                    )
-                    yield f"event: append\ndata: {payload}\n\n"
+                    new = _new_lines(st)
+                    for ln in new:
+                        payload = json.dumps(
+                            {"kind": kind, "line": ln}, ensure_ascii=False
+                        )
+                        yield f"event: append\ndata: {payload}\n\n"
+            except (OSError, UnicodeError, ValueError):
+                # Per-cycle hiccup (race on file delete, decode glitch, etc.) —
+                # swallow and keep the SSE alive; next poll will try again.
+                pass
 
             now = time.time()
             if now - last_beat > HEARTBEAT:

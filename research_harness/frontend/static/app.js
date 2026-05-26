@@ -836,6 +836,19 @@
       setStatus(st, 'supervisor', 'connecting…');
       setStatus(st, 'subprocess', 'connecting…');
 
+      es.onopen = () => {
+        // Stream is alive. If a kind's snapshot hasn't arrived yet (log file
+        // doesn't exist on disk yet, e.g. supervisor just started), reflect
+        // that instead of leaving the badge stuck at "connecting…".
+        ['supervisor', 'subprocess'].forEach((kind) => {
+          if (!st.buffers[kind] || st.buffers[kind].length === 0) {
+            setStatus(st, kind, 'connected · waiting for log');
+          } else {
+            setStatus(st, kind, 'connected');
+          }
+        });
+      };
+
       es.addEventListener('snapshot', (ev) => {
         try {
           const data = JSON.parse(ev.data);
