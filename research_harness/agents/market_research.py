@@ -69,6 +69,7 @@ def run_market_research(
     run_dir: Path | None = None,
     max_papers: int = 10,
     enable_google_scholar: bool = True,
+    enable_claude_websearch: bool = True,
     write_dossier_to_memory: bool = True,
     http_fetcher: HttpFetcher | None = None,
     pdf_fetcher: PdfFetcher | None = None,
@@ -122,6 +123,42 @@ def run_market_research(
         except Exception as exc:
             warnings.append(f"google scholar search failed: {exc}")
             sources_attempted.append("google_scholar")
+
+    # PR11: Claude Code WebSearch enrichment. Catches industry / blog /
+    # repo / workshop sources arXiv misses. Subscription pool only; no
+    # API key. Returns [] silently if `claude` CLI is not on PATH or the
+    # subprocess fails — never breaks the legacy flow.
+    # Test escape hatch: when this env var is set (pytest conftest does it
+    # for the whole suite) we skip the hook entirely so existing
+    # market-research tests don't see new sources or new subprocess work.
+    import os as _os
+    if enable_claude_websearch and not _os.environ.get(
+        "RESEARCH_HARNESS_DISABLE_CLAUDE_WEBSEARCH"
+    ):
+        try:
+            from research_harness.agents.market_research_claude import (
+                enrich_with_claude_websearch,
+            )
+            user_goal = (
+                extracted.get("user_goal")
+                or extracted.get("claim_under_test")
+                or ""
+            )
+            web_papers = enrich_with_claude_websearch(
+                query=query,
+                user_goal=str(user_goal),
+                existing_papers=papers,
+                run_dir=run_dir,
+            )
+            if web_papers:
+                sources_attempted.append("claude_websearch")
+                papers.extend(web_papers)
+            else:
+                sources_attempted.append("claude_websearch")
+                warnings.append("claude web-search enrichment returned no new papers")
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"claude web-search enrichment failed: {exc}")
+            sources_attempted.append("claude_websearch")
 
     papers = _deduplicate_papers(papers)[:max_papers]
 
