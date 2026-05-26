@@ -241,6 +241,36 @@ class EnrichTests(unittest.TestCase):
             # year extracted from "2025-08".
             self.assertEqual(papers[0]["year"], 2025)
 
+    def test_source_label_matches_brief_schema_enum(self):
+        """Regression for the 'claude_websearch' vs 'websearch' label
+        mismatch: the string market_research appends to sources_attempted
+        when this enrichment runs MUST be in the market_research_brief
+        schema's sources_used enum. If someone renames either side, this
+        test fails before production does."""
+        from research_harness.schemas.validator import load_schema
+        brief_schema = load_schema("market_research_brief")
+        sources_enum = (
+            brief_schema["properties"]["sources_used"]["items"]["enum"]
+        )
+        # Find the literal we use in market_research.py.
+        import inspect
+        from research_harness.agents import market_research as mr
+        src = inspect.getsource(mr.run_market_research)
+        # The label appears in sources_attempted.append("...") for
+        # the claude-enrichment branch. Extract any string that lands
+        # in sources_attempted next to enable_claude_websearch.
+        import re
+        labels = re.findall(
+            r"sources_attempted\.append\(\"([a-z_]+)\"\)", src
+        )
+        # All labels used in market_research must be in the enum.
+        for label in labels:
+            self.assertIn(
+                label, sources_enum,
+                f"sources_attempted label {label!r} is not in market_"
+                f"research_brief.sources_used enum {sources_enum!r}",
+            )
+
     def test_malformed_json_returns_empty(self):
         with TemporaryDirectory() as tmp:
             with mock.patch.object(mrc, "_which", return_value="/usr/bin/claude"), \

@@ -151,14 +151,14 @@ def run_market_research(
                 run_dir=run_dir,
             )
             if web_papers:
-                sources_attempted.append("claude_websearch")
+                sources_attempted.append("websearch")
                 papers.extend(web_papers)
             else:
-                sources_attempted.append("claude_websearch")
+                sources_attempted.append("websearch")
                 warnings.append("claude web-search enrichment returned no new papers")
         except Exception as exc:  # noqa: BLE001
             warnings.append(f"claude web-search enrichment failed: {exc}")
-            sources_attempted.append("claude_websearch")
+            sources_attempted.append("websearch")
 
     papers = _deduplicate_papers(papers)[:max_papers]
 
