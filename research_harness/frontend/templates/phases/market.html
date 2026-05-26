@@ -2,19 +2,27 @@
   <div class="phase-empty">
     <p>Market research has not been run for this thread.</p>
   </div>
-{% elif thread.current_phase == "market" and thread.phase_status == "failed" %}
+{% elif thread.current_phase == "market" and thread.phase_status in ("failed", "running", "awaiting_input") %}
   <div class="phase-empty">
-    <p><strong>Market research failed.</strong>
-       Check server logs for the exception; common causes are network
-       failures during arXiv search or PDF download.
-    </p>
+    {% if thread.phase_status == "failed" %}
+      <p><strong>Market research failed.</strong>
+         Check server logs for the exception; common causes are network
+         failures during arXiv search or PDF download.
+      </p>
+    {% else %}
+      <p><strong>Market research stuck ({{ thread.phase_status }}).</strong>
+         Most likely an orphaned phase from a previous server restart or
+         a hung subprocess. Click Retry to archive the partial attempt
+         as <code>market.attemptN/</code> and start fresh.
+      </p>
+    {% endif %}
     <button class="btn primary"
             type="button"
             data-execute-ack
             data-phase="market"
             data-thread-id="{{ thread.thread_id }}"
             data-endpoint="/api/threads/{{ thread.thread_id }}/market/retry"
-            data-cost-note="Retry market research. Failed attempt archived as market.attempt<N>/.">
+            data-cost-note="Retry market research. Previous attempt archived as market.attempt<N>/.">
       Retry market research
     </button>
   </div>
