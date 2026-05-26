@@ -512,6 +512,7 @@ def spawn_claude_session(
     model: str = DEFAULT_CLAUDE_MODEL,
     boot_delay: float = DEFAULT_CLAUDE_BOOT_DELAY,
     log_path: Path | None = None,
+    active_child_ref: dict | None = None,
 ) -> int:
     """Fork+exec `claude --model <model>` under a pty. Write the resume
     prompt after a brief boot delay. Stream child output to log_path
@@ -534,6 +535,9 @@ def spawn_claude_session(
         # Child: replace with `claude --model <model>`. Inherits OAuth/
         # subscription credentials from the parent shell environment.
         os.execvp(claude_bin, [claude_bin, "--model", model])
+
+    if active_child_ref is not None:
+        active_child_ref["pid"] = pid
 
     log_fh = log_path.open("ab") if log_path else None
     try:
@@ -589,6 +593,8 @@ def spawn_claude_session(
         _, status = os.waitpid(pid, 0)
         return os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1
     finally:
+        if active_child_ref is not None:
+            active_child_ref["pid"] = None
         if log_fh:
             log_fh.close()
         try:
@@ -693,9 +699,34 @@ def watch_thread(
     lock.acquire()
 
     interrupted = {"flag": False}
+    active_child: dict[str, int | None] = {"pid": None}
+
     def _sigint(_signum, _frame):
         interrupted["flag"] = True
-        _log(log_path, "SIGINT received — finishing current cycle then exiting.")
+        _log(
+            log_path,
+            "signal received — terminating active claude subprocess then exiting.",
+        )
+        # Cascade the signal to the active claude subprocess so the
+        # current cycle ends in seconds, not minutes. Without this, the
+        # supervisor's loop can only check the interrupted flag between
+        # cycles — i.e., after the running claude subprocess exits on
+        # its own — and the operator sees the supervisor 'still running'
+        # in the UI for the whole subprocess lifetime.
+        child_pid = active_child.get("pid")
+        if child_pid:
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.kill(child_pid, sig)
+                except ProcessLookupError:
+                    break
+                # Brief pause to let SIGTERM take effect before SIGKILL.
+                time.sleep(0.5)
+                try:
+                    os.kill(child_pid, 0)
+                except ProcessLookupError:
+                    break
+
     signal.signal(signal.SIGINT, _sigint)
     signal.signal(signal.SIGTERM, _sigint)
 
@@ -769,6 +800,7 @@ def watch_thread(
                 model=model,
                 boot_delay=boot_delay,
                 log_path=tdir / "claude_subprocess.log",
+                active_child_ref=active_child,
             )
             spawn_elapsed = time.time() - spawn_started
             _log(

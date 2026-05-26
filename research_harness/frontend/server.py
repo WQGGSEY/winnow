@@ -620,6 +620,11 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
 
     @app.post("/api/threads/{thread_id}/supervisor/stop")
     async def supervisor_stop(thread_id: str) -> JSONResponse:
+        """Send SIGTERM to the supervisor. The supervisor's handler
+        cascades the signal to its active claude subprocess so the
+        cycle ends in seconds, not the minutes a running claude session
+        would otherwise take. The lock file is removed by the
+        supervisor's atexit hook once it exits cleanly."""
         _require_thread(s.repo_root, thread_id)
         lock_path = s.repo_root / "runs" / "threads" / thread_id / ".supervisor.lock"
         if not lock_path.exists():
@@ -629,14 +634,39 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
         except (OSError, ValueError):
             raise HTTPException(409, "supervisor lock file is corrupt")
         try:
-            os.kill(pid, signal.SIGINT)
+            os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
             try:
                 lock_path.unlink()
             except OSError:
                 pass
             raise HTTPException(404, f"supervisor pid {pid} not alive (cleaned stale lock)")
-        return JSONResponse({"ok": True, "signaled_pid": pid})
+        return JSONResponse({"ok": True, "signaled_pid": pid, "signal": "SIGTERM"})
+
+    @app.post("/api/threads/{thread_id}/supervisor/force_kill")
+    async def supervisor_force_kill(thread_id: str) -> JSONResponse:
+        """SIGKILL escape hatch. Used when SIGTERM cascade didn't take
+        within a reasonable window. Also unlinks the lock file
+        immediately so the UI returns to idle without waiting for the
+        supervisor's atexit hook."""
+        _require_thread(s.repo_root, thread_id)
+        lock_path = s.repo_root / "runs" / "threads" / thread_id / ".supervisor.lock"
+        if not lock_path.exists():
+            raise HTTPException(404, "no supervisor running for this thread")
+        try:
+            pid = int(lock_path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            pid = None
+        if pid:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
+        return JSONResponse({"ok": True, "killed_pid": pid, "signal": "SIGKILL"})
 
     @app.get("/api/threads/{thread_id}/production/stream")
     async def production_stream(thread_id: str) -> StreamingResponse:

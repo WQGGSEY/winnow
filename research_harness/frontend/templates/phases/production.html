@@ -35,7 +35,12 @@
       {% if sup.running %}
         <button class="btn supervisor-stop-btn"
                 data-thread-id="{{ thread.thread_id }}">
-          ■ Stop supervisor (SIGINT)
+          ■ Stop supervisor (SIGTERM)
+        </button>
+        <button class="btn supervisor-force-kill-btn"
+                data-thread-id="{{ thread.thread_id }}"
+                title="SIGKILL the supervisor + unlink lock immediately. Use when Stop didn't take.">
+          ⚡ Force kill
         </button>
       {% elif p.publication_exists %}
         <span class="supervisor-publication-done">
