@@ -1,9 +1,9 @@
-"""PR11 tests for the Claude-driven web-search enrichment of market_research."""
+"""PR11 tests for the `claude -p` Web-Search enrichment of market_research."""
 
 from __future__ import annotations
 
 import json
-import os
+import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -29,80 +29,68 @@ class PromptTests(unittest.TestCase):
                 {"title": "AlphaForgeBench"},
                 {"title": "gplearn paper"},
             ],
-            output_path=Path("/tmp/out.json"),
         )
         self.assertIn("alpha discovery for quant", prompt)
         self.assertIn("AlphaForgeBench", prompt)
         self.assertIn("gplearn paper", prompt)
-        self.assertIn("/tmp/out.json", prompt)
         self.assertIn("websearch", prompt.lower())
+        self.assertIn("JSON", prompt)
 
     def test_prompt_caps_existing_titles(self):
-        # 30 titles in -> only first 10 shown.
         prompt = mrc._build_prompt(
             query="q",
             user_goal="g",
             existing_papers=[{"title": f"paper_{i}"} for i in range(30)],
-            output_path=Path("/tmp/x.json"),
         )
         self.assertIn("paper_0", prompt)
         self.assertNotIn("paper_29", prompt)
 
 
 class EnrichTests(unittest.TestCase):
+    def _fake_completed(self, stdout: str, returncode: int = 0, stderr: str = "") -> subprocess.CompletedProcess:
+        cp = subprocess.CompletedProcess(args=["claude"], returncode=returncode)
+        cp.stdout = stdout
+        cp.stderr = stderr
+        return cp
+
     def test_no_claude_on_path_returns_empty(self):
         with TemporaryDirectory() as tmp:
-            run_dir = Path(tmp)
             with mock.patch.object(mrc, "_which", return_value=None):
                 out = mrc.enrich_with_claude_websearch(
                     query="q",
                     user_goal="g",
                     existing_papers=[],
-                    run_dir=run_dir,
+                    run_dir=Path(tmp),
                 )
             self.assertEqual(out, [])
 
-    def test_subprocess_writes_valid_json_returns_normalized_papers(self):
+    def test_subprocess_returns_valid_json_normalized(self):
+        sample = [
+            {
+                "id": "web_xyz",
+                "title": "Sample Industry Paper",
+                "url": "https://example.com/paper",
+                "authors": ["Author A"],
+                "abstract": "We propose X with reported metric Y=0.6.",
+                "reported_metric": "AUC=0.6",
+                "role_hint": "current_best_known",
+            }
+        ]
         with TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
-            output_path = run_dir / "web_search_papers.json"
-            sample = [
-                {
-                    "id": "web_xyz",
-                    "title": "Sample Industry Paper",
-                    "url": "https://example.com/paper",
-                    "authors": ["Author A"],
-                    "abstract": "We propose X with reported metric Y=0.6.",
-                    "reported_metric": "AUC=0.6",
-                    "role_hint": "current_best_known",
-                }
-            ]
-
-            # The function deletes any stale output file at start; we
-            # simulate claude completing by having os.write (the
-            # prompt-injection moment) create the file.
-            def fake_write(fd, data):
-                output_path.write_text(json.dumps(sample), encoding="utf-8")
-                return len(data)
-
-            with mock.patch.object(mrc, "_which", return_value="/usr/bin/true"), \
-                 mock.patch.object(mrc.pty, "fork", return_value=(12345, 99)), \
-                 mock.patch.object(mrc.os, "write", side_effect=fake_write), \
-                 mock.patch.object(mrc.select, "select", return_value=([], [], [])), \
-                 mock.patch.object(mrc.os, "read", return_value=b""), \
-                 mock.patch.object(mrc.os, "waitpid", return_value=(12345, 0)), \
-                 mock.patch.object(mrc.os, "kill"), \
-                 mock.patch.object(mrc.os, "close"), \
-                 mock.patch.object(mrc.time, "sleep"):
+            with mock.patch.object(mrc, "_which", return_value="/usr/bin/claude"), \
+                 mock.patch.object(
+                     mrc.subprocess,
+                     "run",
+                     return_value=self._fake_completed(json.dumps(sample)),
+                 ):
                 papers = mrc.enrich_with_claude_websearch(
                     query="q",
                     user_goal="g",
                     existing_papers=[],
                     run_dir=run_dir,
                     timeout_seconds=5.0,
-                    boot_delay=0.0,
                 )
-
             self.assertEqual(len(papers), 1)
             self.assertEqual(papers[0]["source"], "websearch")
             self.assertEqual(papers[0]["url"], "https://example.com/paper")
@@ -110,66 +98,116 @@ class EnrichTests(unittest.TestCase):
             self.assertEqual(papers[0]["download_status"], "skipped")
             self.assertEqual(papers[0]["arxiv_id"], None)
             self.assertEqual(papers[0]["reported_metric"], "AUC=0.6")
+            # log file written with stdout
+            log = (run_dir / "claude_websearch.log").read_text(encoding="utf-8")
+            self.assertIn("=== stdout ===", log)
 
-    def test_subprocess_no_file_returns_empty(self):
+    def test_subprocess_timeout_returns_empty_and_logs(self):
         with TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
-            # NO output file ever created.
-            def fake_fork():
-                return (12345, 99)
-
-            with mock.patch.object(mrc, "_which", return_value="/usr/bin/true"), \
-                 mock.patch.object(mrc.pty, "fork", side_effect=fake_fork), \
-                 mock.patch.object(mrc.os, "write", return_value=10), \
-                 mock.patch.object(mrc.select, "select", return_value=([], [], [])), \
-                 mock.patch.object(mrc.os, "read", return_value=b""), \
-                 mock.patch.object(mrc.os, "waitpid", return_value=(12345, 0)), \
-                 mock.patch.object(mrc.os, "kill"), \
-                 mock.patch.object(mrc.os, "close"), \
-                 mock.patch.object(mrc.time, "sleep"):
+            timeout_exc = subprocess.TimeoutExpired(
+                cmd=["claude"], timeout=1, output=b"partial", stderr=b""
+            )
+            with mock.patch.object(mrc, "_which", return_value="/usr/bin/claude"), \
+                 mock.patch.object(mrc.subprocess, "run", side_effect=timeout_exc):
                 papers = mrc.enrich_with_claude_websearch(
                     query="q",
                     user_goal="g",
                     existing_papers=[],
                     run_dir=run_dir,
-                    timeout_seconds=0.5,
-                    boot_delay=0.0,
+                    timeout_seconds=1.0,
+                )
+            self.assertEqual(papers, [])
+            log = (run_dir / "claude_websearch.log").read_text(encoding="utf-8")
+            self.assertIn("TIMEOUT", log)
+
+    def test_subprocess_nonzero_exit_returns_empty(self):
+        with TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            with mock.patch.object(mrc, "_which", return_value="/usr/bin/claude"), \
+                 mock.patch.object(
+                     mrc.subprocess, "run",
+                     return_value=self._fake_completed("", returncode=2),
+                 ):
+                papers = mrc.enrich_with_claude_websearch(
+                    query="q",
+                    user_goal="g",
+                    existing_papers=[],
+                    run_dir=run_dir,
                 )
             self.assertEqual(papers, [])
 
     def test_strips_code_fence_in_output(self):
         with TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
-            output_path = run_dir / "web_search_papers.json"
-            fenced = (
-                "```json\n"
-                + json.dumps([{"id": "w1", "title": "T", "url": "https://a"}])
-                + "\n```\n"
-            )
-
-            def fake_write(fd, data):
-                output_path.write_text(fenced, encoding="utf-8")
-                return len(data)
-
-            with mock.patch.object(mrc, "_which", return_value="/usr/bin/true"), \
-                 mock.patch.object(mrc.pty, "fork", return_value=(12345, 99)), \
-                 mock.patch.object(mrc.os, "write", side_effect=fake_write), \
-                 mock.patch.object(mrc.select, "select", return_value=([], [], [])), \
-                 mock.patch.object(mrc.os, "read", return_value=b""), \
-                 mock.patch.object(mrc.os, "waitpid", return_value=(12345, 0)), \
-                 mock.patch.object(mrc.os, "kill"), \
-                 mock.patch.object(mrc.os, "close"), \
-                 mock.patch.object(mrc.time, "sleep"):
+            sample = [{"id": "w1", "title": "T", "url": "https://a"}]
+            fenced = "```json\n" + json.dumps(sample) + "\n```\n"
+            with mock.patch.object(mrc, "_which", return_value="/usr/bin/claude"), \
+                 mock.patch.object(
+                     mrc.subprocess, "run",
+                     return_value=self._fake_completed(fenced),
+                 ):
                 papers = mrc.enrich_with_claude_websearch(
                     query="q",
                     user_goal="g",
                     existing_papers=[],
                     run_dir=run_dir,
-                    timeout_seconds=5.0,
-                    boot_delay=0.0,
                 )
             self.assertEqual(len(papers), 1)
             self.assertEqual(papers[0]["title"], "T")
+
+    def test_prose_around_json_is_recovered(self):
+        with TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            sample = [{"id": "w1", "title": "T", "url": "https://a"}]
+            wrapped = (
+                "I searched and found the following:\n\n"
+                + json.dumps(sample)
+                + "\n\nLet me know if you need more."
+            )
+            with mock.patch.object(mrc, "_which", return_value="/usr/bin/claude"), \
+                 mock.patch.object(
+                     mrc.subprocess, "run",
+                     return_value=self._fake_completed(wrapped),
+                 ):
+                papers = mrc.enrich_with_claude_websearch(
+                    query="q",
+                    user_goal="g",
+                    existing_papers=[],
+                    run_dir=run_dir,
+                )
+            self.assertEqual(len(papers), 1)
+            self.assertEqual(papers[0]["title"], "T")
+
+    def test_empty_array_returns_empty(self):
+        with TemporaryDirectory() as tmp:
+            with mock.patch.object(mrc, "_which", return_value="/usr/bin/claude"), \
+                 mock.patch.object(
+                     mrc.subprocess, "run",
+                     return_value=self._fake_completed("[]"),
+                 ):
+                papers = mrc.enrich_with_claude_websearch(
+                    query="q",
+                    user_goal="g",
+                    existing_papers=[],
+                    run_dir=Path(tmp),
+                )
+            self.assertEqual(papers, [])
+
+    def test_malformed_json_returns_empty(self):
+        with TemporaryDirectory() as tmp:
+            with mock.patch.object(mrc, "_which", return_value="/usr/bin/claude"), \
+                 mock.patch.object(
+                     mrc.subprocess, "run",
+                     return_value=self._fake_completed("not json at all"),
+                 ):
+                papers = mrc.enrich_with_claude_websearch(
+                    query="q",
+                    user_goal="g",
+                    existing_papers=[],
+                    run_dir=Path(tmp),
+                )
+            self.assertEqual(papers, [])
 
 
 if __name__ == "__main__":
