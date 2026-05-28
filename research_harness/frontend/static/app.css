@@ -745,6 +745,34 @@ code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-
   border: 1px solid #ddd; padding: 5px 7px; vertical-align: top; text-align: left;
 }
 
+/* Hands-free escalation: operator-prompt cards rendered when the
+   auto-resolver refuses to chain. Visually loud so the operator notices
+   immediately on returning to a long-running thread. */
+.operator-prompts-card {
+  border: 1px solid #d97706; border-left: 4px solid #d97706;
+  border-radius: 6px; padding: 12px 16px; margin: 12px 0;
+  background: #fff7ed;
+}
+.operator-prompts-card h3 { margin: 0 0 8px 0; font-size: 14px; color: #9a3412; }
+.operator-prompt {
+  border-top: 1px dashed #fcd9b0; padding: 10px 0; margin-top: 8px;
+}
+.operator-prompt:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+.operator-prompt header { font-size: 12.5px; margin-bottom: 6px; }
+.operator-prompt-body { margin: 6px 0; font-size: 13.5px; }
+.operator-prompt-response { font-size: 12px; }
+.operator-prompt-form textarea {
+  width: 100%; box-sizing: border-box; font-family: inherit; font-size: 13px;
+  margin: 6px 0; padding: 6px 8px;
+}
+.operator-prompt-options { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+.btn-chip {
+  background: #fef3c7; border: 1px solid #fbbf24; color: #92400e;
+  border-radius: 999px; padding: 2px 10px; font-size: 12px;
+  cursor: pointer;
+}
+.btn-chip:hover { background: #fde68a; }
+
 /* PR10: Supervisor card on production panel */
 .supervisor-card {
   border: 1px solid #ddd; border-radius: 6px;

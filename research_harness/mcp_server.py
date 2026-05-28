@@ -759,6 +759,64 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "enqueue_operator_prompt",
+        "description": (
+            f"{PROFESSOR_CONTRACT}\n\n"
+            "Hands-free escalation channel. When the auto-resolver refuses to "
+            "chain (safety budget hit, identical-fingerprint loop, suggestion "
+            "confidence below the auto-dispatch bar), the rail surfaces a "
+            "prompt to the operator via this tool. The frontend renders "
+            "pending prompts in the production phase view; the operator's "
+            "free-text response lands back via get_pending_operator_response. "
+            "Fire-and-forget — does not block; caller polls separately."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "kind", "prompt"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "kind": {
+                    "type": "string",
+                    "enum": ["auto_resolver_escalation", "decision_request", "context_request"],
+                },
+                "prompt": {"type": "string", "minLength": 1},
+                "options": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional list of suggested operator responses (rendered as quick-pick chips).",
+                },
+                "source_rail": {"type": "string"},
+                "event_id": {
+                    "type": "string",
+                    "description": "Stable id for idempotent retry. Auto-generated when omitted.",
+                },
+            },
+        },
+    },
+    {
+        "name": "get_pending_operator_response",
+        "description": (
+            f"{PROFESSOR_CONTRACT}\n\n"
+            "Polled by the Claude Code subprocess to consume operator "
+            "responses to prompts previously enqueued via "
+            "enqueue_operator_prompt. Returns the oldest responded prompt "
+            "(or the one matching event_id if supplied) and marks it as "
+            "consumed in the queue log. Returns status=='empty' when "
+            "nothing is ready — caller should wait and try again."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "event_id": {
+                    "type": "string",
+                    "description": "Consume this specific event_id; otherwise the oldest responded prompt is taken.",
+                },
+            },
+        },
+    },
+    {
         "name": "render_honest_failure_paper",
         "description": (
             "Terminal exit when no path to a positive deployable result exists. "
@@ -2756,6 +2814,96 @@ def _auto_dispatchable_handlers() -> dict[str, Any]:
     }
 
 
+def _escalate_to_operator(
+    tid: str,
+    suggestion: Any,
+    *,
+    refusal_reason: str,
+) -> dict[str, Any]:
+    """Enqueue an operator prompt summarizing a refused auto-action so the
+    frontend can render it and let the operator decide what to do next.
+
+    Returns a small dict the caller can attach to the response under
+    ``operator_prompt`` so the LLM driving the session knows where to poll.
+    """
+    from research_harness.orchestrator.operator_prompts import enqueue_prompt
+
+    prompt_text = (
+        f"Auto-resolver refused to dispatch {suggestion.tool!r} "
+        f"(source: {suggestion.source_rail}). Reason: {refusal_reason}. "
+        f"Rationale that triggered the suggestion: {suggestion.rationale}"
+    )
+    event_id = f"opr_esc_{suggestion.source_rail}_{abs(hash(refusal_reason)) & 0xFFFFFFFF:08x}"
+    try:
+        record = enqueue_prompt(
+            _thread_dir(tid),
+            kind="auto_resolver_escalation",
+            prompt=prompt_text,
+            options=[
+                "dispatch_anyway",
+                "abandon_and_revise_root",
+                "render_honest_failure_paper",
+            ],
+            source_rail=suggestion.source_rail,
+            event_id=event_id,
+        )
+    except ValueError:
+        return {"event_id": event_id, "status": "already_enqueued"}
+    return {
+        "event_id": record["event_id"],
+        "status": "enqueued",
+        "next_step": (
+            "Poll get_pending_operator_response with this event_id to consume "
+            "the operator's reply once it lands."
+        ),
+    }
+
+
+def handle_enqueue_operator_prompt(args: dict[str, Any]) -> dict[str, Any]:
+    """MCP-side wrapper around operator_prompts.enqueue_prompt."""
+    from research_harness.orchestrator.operator_prompts import enqueue_prompt
+
+    tid = args["thread_id"]
+    try:
+        record = enqueue_prompt(
+            _thread_dir(tid),
+            kind=args["kind"],
+            prompt=args["prompt"],
+            options=args.get("options"),
+            source_rail=args.get("source_rail"),
+            event_id=args.get("event_id"),
+        )
+    except ValueError as exc:
+        return {"status": "rejected", "reason": str(exc)}
+    return {
+        "status": "ok",
+        "event_id": record["event_id"],
+        "next_step": (
+            "Poll get_pending_operator_response to consume the operator's "
+            "reply once it lands."
+        ),
+    }
+
+
+def handle_get_pending_operator_response(args: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.orchestrator.operator_prompts import take_pending_response
+
+    tid = args["thread_id"]
+    record = take_pending_response(_thread_dir(tid), event_id=args.get("event_id"))
+    if record is None:
+        return {"status": "empty"}
+    return {
+        "status": "ok",
+        "event_id": record["event_id"],
+        "kind": record["kind"],
+        "prompt": record["prompt"],
+        "response": record["response"],
+        "source_rail": record.get("source_rail"),
+        "created_at": record["created_at"],
+        "responded_at": record.get("responded_at"),
+    }
+
+
 def _maybe_auto_dispatch(tid: str, response: dict[str, Any]) -> dict[str, Any]:
     """If response carries an auto_action_suggestion that passes safety, run it.
 
@@ -2783,6 +2931,10 @@ def _maybe_auto_dispatch(tid: str, response: dict[str, Any]) -> dict[str, Any]:
             outcome="refused_by_safety_check",
             refusal_reason="not in auto-dispatchable allowlist",
         )
+        response["operator_prompt"] = _escalate_to_operator(
+            tid, suggestion,
+            refusal_reason=f"tool {suggestion.tool!r} not in auto-dispatchable allowlist",
+        )
         return response
     verdict = chain_safety_check(_thread_dir(tid), suggestion)
     if not verdict.ok:
@@ -2795,6 +2947,9 @@ def _maybe_auto_dispatch(tid: str, response: dict[str, Any]) -> dict[str, Any]:
             _thread_dir(tid), suggestion,
             outcome="refused_by_safety_check",
             refusal_reason=verdict.reason,
+        )
+        response["operator_prompt"] = _escalate_to_operator(
+            tid, suggestion, refusal_reason=verdict.reason,
         )
         return response
     try:
@@ -2809,6 +2964,9 @@ def _maybe_auto_dispatch(tid: str, response: dict[str, Any]) -> dict[str, Any]:
             _thread_dir(tid), suggestion,
             outcome="dispatch_error",
             refusal_reason=str(exc),
+        )
+        response["operator_prompt"] = _escalate_to_operator(
+            tid, suggestion, refusal_reason=f"dispatch error: {exc}",
         )
         return response
     response["auto_resolved"] = {
@@ -3791,6 +3949,10 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_select_alternative_root(args, settings)
             elif name == "seed_alternative_root_formulation":
                 result = handle_seed_alternative_root_formulation(args)
+            elif name == "enqueue_operator_prompt":
+                result = handle_enqueue_operator_prompt(args)
+            elif name == "get_pending_operator_response":
+                result = handle_get_pending_operator_response(args)
             elif name == "render_honest_failure_paper":
                 result = handle_render_honest_failure_paper(args)
             elif name == "render_final_paper":

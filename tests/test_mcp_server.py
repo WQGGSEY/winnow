@@ -141,9 +141,14 @@ class MCPServerTests(unittest.TestCase):
         multi_root_expected = {
             "seed_alternative_root_formulation",
         }
+        # Hands-free: operator-prompt channel for auto-resolver escalations.
+        operator_prompt_expected = {
+            "enqueue_operator_prompt",
+            "get_pending_operator_response",
+        }
         self.assertEqual(
             baseline_expected | practitioner_expected | dual_gate_expected
-            | envelope_expected | multi_root_expected,
+            | envelope_expected | multi_root_expected | operator_prompt_expected,
             names,
         )
 

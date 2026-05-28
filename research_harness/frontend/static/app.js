@@ -714,6 +714,32 @@
 })();
 
 
+/* === Operator-prompt chip handler ==========================================
+   When the auto-resolver enqueues an escalation, the production panel
+   renders quick-pick chips above the free-text textarea. Clicking a chip
+   populates the textarea with its label so the operator can edit-then-send
+   rather than retyping the suggestion verbatim. */
+(function () {
+  function bind(root) {
+    (root || document).querySelectorAll('.btn-chip[data-fill-response]').forEach((el) => {
+      if (el.dataset._chipBound) return;
+      el.dataset._chipBound = '1';
+      el.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        const form = el.closest('form');
+        if (!form) return;
+        const ta = form.querySelector('textarea[name="response"]');
+        if (!ta) return;
+        ta.value = el.dataset.fillResponse;
+        ta.focus();
+      });
+    });
+  }
+  document.addEventListener('DOMContentLoaded', () => bind(document));
+  document.body.addEventListener('htmx:afterSwap', (e) => bind(e.target));
+})();
+
+
 /* === Live elapsed-since counter ============================================= */
 (function () {
   function bind(root) {
