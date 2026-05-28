@@ -304,3 +304,157 @@ def test_camera_ready_must_address_every_directive(isolated_thread):
     })
     assert out["status"] == "rejected"
     assert "directive" in out["reason"].lower()
+
+
+# --- Strictness rails (post-thread_e5b277f9 review) --------------------- #
+
+
+def _write_child_decision(tmp_path, tid, child_id, parent_id, final_verdict):
+    """Append a child node to search_state + write its professor decision file."""
+    tree_dir = tmp_path / "runs" / "threads" / tid / "production" / "tree"
+    state = json.loads((tree_dir / "search_state.json").read_text(encoding="utf-8"))
+    state["nodes"].append({
+        "id": child_id, "type": "mechanism", "domain": state["nodes"][0]["domain"],
+        "stage": "promotion", "parent": parent_id, "status": "pruned",
+        "claim_contract": state["nodes"][0]["claim_contract"],
+        "baseline_refs": state["nodes"][0]["baseline_refs"],
+    })
+    (tree_dir / "search_state.json").write_text(json.dumps(state), encoding="utf-8")
+    child_dir = tree_dir / "nodes" / child_id
+    child_dir.mkdir(parents=True, exist_ok=True)
+    (child_dir / "mcp_professor_decision.json").write_text(
+        json.dumps({"node_id": child_id, "final_verdict": final_verdict,
+                    "next_transition": "pruned", "response_to_grad_student": "x"}),
+        encoding="utf-8",
+    )
+
+
+def _run_to_ac(tid, node_id):
+    """Run prepare_rebuttal_packet → submit reviews → reduction. Returns nothing."""
+    prep = M.handle_prepare_rebuttal_packet({"thread_id": tid})
+    for cid in [c["critic_id"] for c in prep["critic_list"]]:
+        M.handle_submit_rebuttal_critic_review({
+            "thread_id": tid, "review": _practitioner_review(cid, node_id),
+        })
+    M.handle_submit_orchestrator_reduction({
+        "thread_id": tid, "node_id": node_id,
+        "final_verdict": "supported_with_scope_narrowing",
+        "research_status": "supported_with_scope_narrowing",
+        "score_summary": {"validity": 8, "necessity": 7, "reproducibility": 7, "taste_alignment": 8},
+        "synthesis_message": "Synthesis is operator-language. " * 4,
+        "next_transition": "promoted",
+    })
+
+
+def _minimal_ac(decision="accept"):
+    return {
+        "decision": decision, "confidence": "high",
+        "score_summary": {"novelty": 7, "validity": 8, "necessity": 7, "clarity": 7,
+                          "reproducibility": 7, "taste_alignment": 8},
+        "blocking_reasons": [], "required_next_search_nodes": [],
+        "camera_ready_conditions": [],
+        "camera_ready_directives": [{
+            "directive": "Tighten scope statement to name the band-matching guard rail explicitly.",
+            "origin_critic_ids": ["x"], "must_appear_in_section": "method",
+            "rationale": "Without this the reader cannot tell why scope narrows.",
+        }],
+        "advisor_message_to_professor": (
+            "The validity case stands inside its scope. Tighten the boundary section "
+            "so the band-matching guard rail leads the discussion."
+        ),
+        "rebuttal_synthesis": {
+            "strongest_supporting_evidence": ["x"],
+            "load_bearing_objections": [],
+            "minority_dissent": [],
+            "methodology_assessment": {
+                "aggregate_verdict": "partial",
+                "methodology_for_user": "Use as a pre-OOS calibration filter.",
+                "remaining_gap": "harness recipe.",
+            },
+        },
+    }
+
+
+def test_ac_accept_blocked_when_two_thirds_successors_negative(isolated_thread, tmp_path):
+    """Rail 1: thread_e5b277f9 reproducer — 3/3 children negative must block accept."""
+    tid, node_id = isolated_thread
+    for i, verdict in enumerate(["contradicted", "contradicted", "blocked_by_operational_issue"]):
+        _write_child_decision(tmp_path, tid, f"{node_id}_succ0{i+1}", node_id, verdict)
+    _run_to_ac(tid, node_id)
+    out = M.handle_submit_ac_decision({"thread_id": tid, "ac_decision": _minimal_ac("accept")})
+    assert out["status"] == "rejected"
+    assert "successor-verdict rail" in out["reason"]
+    assert "3/3" in out["reason"]
+
+
+def test_ac_accept_blocked_when_any_blocking_successor(isolated_thread, tmp_path):
+    """Rail 1: one confounded/blocked child blocks accept even if others passed."""
+    tid, node_id = isolated_thread
+    _write_child_decision(tmp_path, tid, f"{node_id}_succ01", node_id, "supported_with_scope_narrowing")
+    _write_child_decision(tmp_path, tid, f"{node_id}_succ02", node_id, "confounded_or_not_evaluable")
+    _run_to_ac(tid, node_id)
+    out = M.handle_submit_ac_decision({"thread_id": tid, "ac_decision": _minimal_ac("accept")})
+    assert out["status"] == "rejected"
+    assert "blocking verdicts" in out["reason"]
+
+
+def test_ac_accept_allowed_when_successors_mostly_supported(isolated_thread, tmp_path):
+    """Rail 1: 2/3 supported children → accept passes the rail."""
+    tid, node_id = isolated_thread
+    _write_child_decision(tmp_path, tid, f"{node_id}_succ01", node_id, "supported_with_scope_narrowing")
+    _write_child_decision(tmp_path, tid, f"{node_id}_succ02", node_id, "supported")
+    _write_child_decision(tmp_path, tid, f"{node_id}_succ03", node_id, "contradicted")
+    _run_to_ac(tid, node_id)
+    out = M.handle_submit_ac_decision({"thread_id": tid, "ac_decision": _minimal_ac("accept")})
+    assert out["status"] == "ok"
+
+
+def test_ac_confidence_downclamped_when_no_real_adapter(isolated_thread, tmp_path):
+    """Rail 4: envelope with synthetic-only data sources clamps confidence to low."""
+    tid, node_id = isolated_thread
+    # Write a minimal envelope declaring only synthetic data.
+    envelope = {
+        "thread_id": tid,
+        "data_sources_available": [{"kind": "synthetic", "id": "synth_default"}],
+        "llm_oracles_available": [{"kind": "subscription_claude_code", "model": "claude-opus-4-7"}],
+        "compute_budget": {"max_runner_seconds_per_node": 900, "max_concurrent_nodes": 2, "max_total_node_hours": 8.0},
+        "baseline_provenance_available": [{"candidate_id": "x", "provenance": "y"}],
+        "operator_intent": {"target_deploy_grade_scope": "feasibility", "acceptable_alternative_scopes": ["feasibility"]},
+    }
+    (tmp_path / "runs" / "threads" / tid / "production" / "feasibility_envelope.json").write_text(
+        json.dumps(envelope), encoding="utf-8"
+    )
+    _run_to_ac(tid, node_id)
+    out = M.handle_submit_ac_decision({"thread_id": tid, "ac_decision": _minimal_ac("accept")})
+    assert out["status"] == "ok"
+    persisted = json.loads(
+        (tmp_path / "runs" / "threads" / tid / "production" / "rebuttal" / "ac_decision.json").read_text(encoding="utf-8")
+    )
+    assert persisted["confidence"] == "low"
+    assert any("real_adapter" in r for r in persisted["confidence_downclamp_reasons"])
+
+
+def test_ac_confidence_downclamped_on_deterministic_dump_dossier(isolated_thread, tmp_path):
+    """Rail 4 / Rail 2 signal: dossier with placeholder reason + TBD candidates clamps confidence."""
+    tid, node_id = isolated_thread
+    market_dir = tmp_path / "runs" / "threads" / tid / "market"
+    market_dir.mkdir(parents=True, exist_ok=True)
+    (market_dir / "baseline_dossier_candidate.yaml").write_text(
+        "selected:\n"
+        "  one_paragraph_reason: \"Top-ranked search result for the grilled claim.\"\n"
+        "  risk_tags:\n"
+        "    - \"operator_should_review\"\n"
+        "candidates_index:\n"
+        "  - id: c_naive_placeholder\n"
+        "    method: \"naive: TBD (Professor will design)\"\n"
+        "    decision: selected_as_naive\n",
+        encoding="utf-8",
+    )
+    _run_to_ac(tid, node_id)
+    out = M.handle_submit_ac_decision({"thread_id": tid, "ac_decision": _minimal_ac("accept")})
+    assert out["status"] == "ok"
+    persisted = json.loads(
+        (tmp_path / "runs" / "threads" / tid / "production" / "rebuttal" / "ac_decision.json").read_text(encoding="utf-8")
+    )
+    assert persisted["confidence"] == "low"
+    assert any("deterministic_dump" in r for r in persisted["confidence_downclamp_reasons"])

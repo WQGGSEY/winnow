@@ -30,3 +30,7 @@ settings.local.json
 .claude/
 
 .gstack/
+
+# Operator-local research memory (baseline dossiers, failure records, lessons).
+# Per-run state shouldn't sit in version control.
+memory/

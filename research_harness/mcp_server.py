@@ -1154,6 +1154,30 @@ def handle_get_next_admissible_node(args: dict[str, Any]) -> dict[str, Any]:
             (weight, int(item.get("depth", 0)), item["node_id"], node)
         )
     if not candidates:
+        # Rail 5: surface MUST_REVISE_ROOT when the deepest promoted node's
+        # successor branches have collapsed (>=3 negative, 0 promoted children).
+        # Without this, operators silently fall through to decide_publication_readiness
+        # while the underlying root claim is dead in the water — exactly the
+        # pattern that let thread_e5b277f9 ship with 3/3 negative successors.
+        revise_signal = _detect_must_revise_root_signal(state)
+        if revise_signal:
+            return {
+                "status": "must_revise_root",
+                "active_stage": stage["name"],
+                "promoted_node_id": revise_signal["promoted_node_id"],
+                "negative_children": revise_signal["negative_children"],
+                "alternative_root_candidates": revise_signal["alternative_root_candidates"],
+                "reason": (
+                    f"Promoted node {revise_signal['promoted_node_id']} has "
+                    f"{len(revise_signal['negative_children'])} negative direct successor(s) "
+                    f"and 0 promoted children. The current root claim cannot be saved by more children — "
+                    f"call revise_root_after_reject (single-shot) or propose_alternative_root_directions (fan-out)."
+                ),
+                "next_tool_choices": [
+                    "revise_root_after_reject",
+                    "propose_alternative_root_directions",
+                ],
+            }
         return {
             "status": "no_admissible_node",
             "active_stage": stage["name"],
@@ -1447,6 +1471,22 @@ def handle_design_initial_claim_contract(
             candidate_ids=candidate_ids,
             baseline_analysis_md_path=market_brief.get("baseline_analysis_md_path"),
         )
+    # --- Rail 2: baseline dossier substance preflight. -------------------
+    # Block production entry when the dossier is a deterministic dump
+    # (no operator-reviewed substance). thread_e5b277f9 entered production
+    # with selected.one_paragraph_reason="Top-ranked search result" and
+    # naive/null candidates = "TBD"; that should never have been allowed.
+    bd_path = _thread_dir(tid) / "market" / "baseline_dossier_candidate.yaml"
+    dump_signals = _detect_deterministic_dump_dossier(bd_path)
+    if dump_signals:
+        return {
+            "status": "rejected",
+            "reason": (
+                "baseline_dossier_candidate.yaml is a deterministic dump — operator "
+                "must review the market_research candidates and resolve the placeholder "
+                "before production can start. Signals: " + "; ".join(dump_signals)
+            ),
+        }
     policy = search_policy_from_config(repo)
     state = initialize_search_state(
         search_id=f"s_{tid}", root_node=root_node, policy=policy
@@ -2413,6 +2453,176 @@ def handle_submit_orchestrator_reduction(args: dict[str, Any]) -> dict[str, Any]
     return {"status": "ok", "next_step": "Call submit_ac_decision next."}
 
 
+# --- Strictness rails (see post-thread_e5b277f9 review) ----------------- #
+
+_NEGATIVE_SUCCESSOR_VERDICTS = {
+    "contradicted",
+    "confounded_or_not_evaluable",
+    "blocked_by_operational_issue",
+}
+_BLOCKING_SUCCESSOR_VERDICTS = {
+    "confounded_or_not_evaluable",
+    "blocked_by_operational_issue",
+}
+
+
+def _aggregate_successor_verdicts(tid: str, promoted_node_id: str) -> dict[str, Any]:
+    """Count direct-children final_verdicts of the promoted node.
+
+    Used by submit_ac_decision to block accept when the promoted root's
+    children largely returned negative — which is exactly the failure mode
+    thread_e5b277f9 hit (3/3 successors negative yet AC=accept).
+    """
+    state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
+    state = _read_json(state_path) or {}
+    children = [
+        n for n in state.get("nodes", [])
+        if n.get("parent") == promoted_node_id
+    ]
+    nodes_dir = _thread_dir(tid) / "production" / "tree" / "nodes"
+    negative: list[tuple[str, str]] = []
+    blocking: list[tuple[str, str]] = []
+    evaluated = 0
+    for child in children:
+        decision_path = nodes_dir / child["id"] / "mcp_professor_decision.json"
+        decision = _read_json(decision_path)
+        if not decision:
+            continue
+        evaluated += 1
+        fv = str(decision.get("final_verdict") or "")
+        if fv in _NEGATIVE_SUCCESSOR_VERDICTS:
+            negative.append((child["id"], fv))
+        if fv in _BLOCKING_SUCCESSOR_VERDICTS:
+            blocking.append((child["id"], fv))
+    return {
+        "total_children": len(children),
+        "evaluated": evaluated,
+        "negative_count": len(negative),
+        "negative_children": negative,
+        "blocking_children": blocking,
+    }
+
+
+_DETERMINISTIC_DUMP_REASON_PATTERNS = (
+    "top-ranked search result",
+    "tbd",
+    "professor will design",
+    "operator should review",
+    "deterministic dump",
+)
+_DETERMINISTIC_DUMP_RISK_TAGS = {
+    "operator_should_review",
+    "operator_review_required",
+}
+
+
+def _detect_deterministic_dump_dossier(bd_path: Path) -> list[str]:
+    """Return non-empty signal list if baseline_dossier_candidate.yaml looks
+    like a deterministic dump (no operator-reviewed substance). Used both by
+    AC confidence down-clamp and by production preflight (Rail 2)."""
+    if not bd_path.exists():
+        return []
+    try:
+        import yaml as _yaml
+        dossier = _yaml.safe_load(bd_path.read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        return []
+    if not isinstance(dossier, dict):
+        return []
+    signals: list[str] = []
+    selected = dossier.get("selected") or {}
+    if isinstance(selected, dict):
+        reason = str(selected.get("one_paragraph_reason") or "").lower()
+        if any(pat in reason for pat in _DETERMINISTIC_DUMP_REASON_PATTERNS):
+            signals.append(f"selected.one_paragraph_reason matches placeholder pattern: {reason[:80]!r}")
+        risk_tags = {str(t).lower() for t in (selected.get("risk_tags") or [])}
+        if risk_tags & _DETERMINISTIC_DUMP_RISK_TAGS:
+            signals.append(f"selected.risk_tags contains operator-review marker: {sorted(risk_tags & _DETERMINISTIC_DUMP_RISK_TAGS)}")
+    for cand in dossier.get("candidates_index") or []:
+        if not isinstance(cand, dict):
+            continue
+        method = str(cand.get("method") or "")
+        decision = str(cand.get("decision") or "")
+        if decision in {"selected_as_naive", "selected_as_random_or_null"} and method.lower().lstrip().startswith(("naive: tbd", "random_or_null: tbd")):
+            signals.append(f"candidate {cand.get('id')} ({decision}) is unresolved placeholder: {method!r}")
+    return signals
+
+
+def _has_real_data_adapter(tid: str) -> bool | None:
+    """True if envelope declares at least one real_adapter data source.
+    None if envelope is missing (signal not informative)."""
+    envelope = _read_json(_thread_dir(tid) / "production" / "feasibility_envelope.json")
+    if not envelope:
+        return None
+    sources = envelope.get("data_sources_available") or []
+    for src in sources:
+        if isinstance(src, dict) and src.get("kind") == "real_adapter":
+            return True
+    return False
+
+
+def _compute_ac_downclamp_signals(tid: str, successor_agg: dict[str, Any]) -> list[str]:
+    """Collect signals that justify auto-clamping AC confidence to 'low'."""
+    reasons: list[str] = []
+    if successor_agg["evaluated"] > 0:
+        ratio = successor_agg["negative_count"] / successor_agg["evaluated"]
+        if ratio >= 0.5:
+            reasons.append(
+                f"successor_negative_ratio={successor_agg['negative_count']}/{successor_agg['evaluated']}>=0.5"
+            )
+    real_adapter = _has_real_data_adapter(tid)
+    if real_adapter is False:
+        reasons.append("feasibility_envelope.data_sources_available has no real_adapter (synthetic-only)")
+    bd_path = _thread_dir(tid) / "market" / "baseline_dossier_candidate.yaml"
+    dump_signals = _detect_deterministic_dump_dossier(bd_path)
+    if dump_signals:
+        reasons.append("baseline_dossier_substance=deterministic_dump: " + "; ".join(dump_signals))
+    return reasons
+
+
+def _detect_must_revise_root_signal(state: dict[str, Any]) -> dict[str, Any] | None:
+    """Rail 5: detect when the deepest promoted node has collapsed branches.
+
+    Triggers when a promoted node has >=3 pruned direct children and 0 promoted
+    children. Returns dict with the promoted_node_id + alternative root
+    candidates already in the tree (queued/pruned root siblings), or None.
+    """
+    nodes = state.get("nodes") or []
+    if not nodes:
+        return None
+    by_id = {n["id"]: n for n in nodes}
+    promoted_ids = {n["id"] for n in nodes if n.get("status") == "promoted"}
+    if not promoted_ids:
+        return None
+    promoted_with_promoted_child: set[str] = set()
+    for n in nodes:
+        if n.get("status") == "promoted" and n.get("parent") in promoted_ids:
+            promoted_with_promoted_child.add(n["parent"])
+    promoted_leaves = promoted_ids - promoted_with_promoted_child
+
+    for leaf_id in promoted_leaves:
+        children = [n for n in nodes if n.get("parent") == leaf_id]
+        if not children:
+            continue
+        negative_children = [
+            n["id"] for n in children if n.get("status") == "pruned"
+        ]
+        promoted_children = [n["id"] for n in children if n.get("status") == "promoted"]
+        if promoted_children or len(negative_children) < 3:
+            continue
+        parent_id = by_id[leaf_id].get("parent")
+        siblings = [
+            n["id"] for n in nodes
+            if n.get("parent") == parent_id and n["id"] != leaf_id
+        ] if parent_id else []
+        return {
+            "promoted_node_id": leaf_id,
+            "negative_children": negative_children,
+            "alternative_root_candidates": siblings,
+        }
+    return None
+
+
 def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.schemas.validator import validate_named_schema
 
@@ -2436,6 +2646,40 @@ def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
             "reason": "camera_ready_directives must be non-empty even on accept. "
                       "If the rebuttal truly added nothing, name the scope-sharpening it made explicit.",
         }
+
+    # --- Rail 1: successor-verdict aggregator + hard accept gate. --------
+    # Block accept when the promoted root's direct children largely failed.
+    successor_agg = {"total_children": 0, "evaluated": 0, "negative_count": 0,
+                     "negative_children": [], "blocking_children": []}
+    try:
+        promoted_ctx = _resolve_promoted_node(tid)
+        successor_agg = _aggregate_successor_verdicts(tid, promoted_ctx["promoted_id"])
+    except (OSError, ValueError):
+        # Tree state missing — fall through; schema gate already ran.
+        pass
+    if decision.get("decision") == "accept" and successor_agg["evaluated"] >= 2:
+        ratio = successor_agg["negative_count"] / successor_agg["evaluated"]
+        if ratio >= 2 / 3:
+            return {
+                "status": "rejected",
+                "reason": (
+                    f"accept blocked by successor-verdict rail: "
+                    f"{successor_agg['negative_count']}/{successor_agg['evaluated']} direct children of the promoted root "
+                    f"returned negative verdicts {successor_agg['negative_children']}. "
+                    f"Either downgrade to revise_with_new_measurements / reject_and_diversify, "
+                    f"or call revise_root_after_reject to swap the root before re-attempting accept."
+                ),
+            }
+        if successor_agg["blocking_children"]:
+            return {
+                "status": "rejected",
+                "reason": (
+                    f"accept blocked: successor(s) {successor_agg['blocking_children']} returned blocking verdicts "
+                    f"(confounded_or_not_evaluable / blocked_by_operational_issue). "
+                    f"Resolve or branch around the operational issue before accepting."
+                ),
+            }
+
     # Anti-laziness: at least one directive must demand a new measurement
     # (not just paper-text disclaimers) when AC chooses revise. Accept can
     # be all-disclaimer in principle but in practice the rebuttal usually
@@ -2452,6 +2696,13 @@ def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
         )
         if not dir_check.ok:
             return {"status": "rejected", "reason": dir_check.reject_message()}
+
+    # --- Rail 4: confidence down-clamp based on uncertainty signals. -----
+    downclamp_reasons = _compute_ac_downclamp_signals(tid, successor_agg)
+    if downclamp_reasons:
+        decision = dict(decision)
+        decision["confidence"] = "low"
+        decision["confidence_downclamp_reasons"] = downclamp_reasons
 
     (_rebuttal_dir(tid) / "ac_decision.json").write_text(
         json.dumps(decision, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
