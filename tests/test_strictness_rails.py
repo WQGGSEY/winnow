@@ -314,6 +314,65 @@ def test_anchor_check_skips_must_not_measure(tmp_path, monkeypatch):
     assert out == {"unbound": [], "unmeasured": []}
 
 
+# --- Multi-root: alternative claim formulations ------------------------- #
+
+
+def test_derive_alternative_formulations_emits_strong_plus_feasibility():
+    from research_harness.agents.grilling import derive_alternative_formulations
+    out = derive_alternative_formulations(
+        primary_claim="synthetic data transfers meaningfully to real production traffic",
+        user_goal="…",
+    )
+    assert len(out) == 2
+    kinds = [f["scope_kind"] for f in out]
+    assert kinds == ["strong", "feasibility_narrowed"]
+    assert all(f["formulation_id"].startswith("acf_") for f in out)
+    # Truth conditions differ: strong claim asserts real-data transfer;
+    # feasibility-narrowed survives without real-data measurement.
+    assert "feasibility scope" in out[1]["claim_under_test"]
+    assert out[0]["ranked_priority"] == 1
+    assert out[1]["ranked_priority"] == 2
+
+
+def test_derive_alternative_formulations_empty_primary_returns_empty():
+    from research_harness.agents.grilling import derive_alternative_formulations
+    assert derive_alternative_formulations(primary_claim="", user_goal="anything") == []
+
+
+def test_seed_drafts_from_root_accepts_explicit_root_id():
+    from research_harness.orchestrator.treesearch.drafts import seed_drafts_from_root
+    from research_harness.orchestrator.search_state import initialize_search_state
+
+    def _root(rid, claim):
+        return {
+            "id": rid, "type": "capability", "status": "ready", "stage": "promotion",
+            "domain": "d", "parent": None,
+            "claim_contract": {"claim_under_test": claim, "mandatory_baselines": ["b"],
+                                "success_criteria": ["s"], "disproof_conditions": ["d"]},
+            "baseline_refs": [{"baseline_dossier_id": "bd_x", "candidate_ids": [], "roles": ["current_best_known"]}],
+            "lineage": {"root_goal_id": "rg_" + rid, "inherited_assumptions": [], "introduced_assumptions": [],
+                         "covers_goal_facets": [], "taste_constraints_applied": []},
+            "runtime_profile": {"worker_type": "experiment_worker", "timeout_policy": "task_class_dependent", "turn_budget": 6},
+            "failure_retrieval": {"query_tags": [], "selected_fail_files": []},
+            "outputs": {"artifacts": [], "verdict": None},
+        }
+
+    policy = {"max_depth": 3, "max_debug_depth": 1, "sunk_cost_policy": "default",
+              "scaleup_policy": "default", "num_drafts": 2}
+    state = initialize_search_state(search_id="s_test", root_node=_root("n_a", "x"), policy=policy)
+    # Add a second parent=null root via the same frontier-aware path.
+    state["nodes"].append(_root("n_b", "y"))
+    state["frontier"].append({"node_id": "n_b", "parent": None, "depth": 0,
+                               "priority": 1.0, "stage": "promotion",
+                               "status": "queued", "reason": "alt root"})
+    # Default (no root_id) → drafts the first parent=None node (n_a)
+    draft_ids_a = seed_drafts_from_root(state, num_drafts=2, max_depth=3)
+    assert draft_ids_a and all(d.startswith("n_a") for d in draft_ids_a)
+    # Explicit root_id=n_b → drafts n_b
+    draft_ids_b = seed_drafts_from_root(state, num_drafts=2, max_depth=3, root_id="n_b")
+    assert draft_ids_b and all(d.startswith("n_b") for d in draft_ids_b)
+
+
 def test_get_next_admissible_node_returns_must_revise_sentinel(tmp_path, monkeypatch):
     monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
     tid = "t_revise"
@@ -332,3 +391,140 @@ def test_get_next_admissible_node_returns_must_revise_sentinel(tmp_path, monkeyp
     assert out["status"] == "must_revise_root"
     assert out["promoted_node_id"] == "n_promoted"
     assert "revise_root_after_reject" in out["next_tool_choices"]
+
+
+def test_must_revise_root_surfaces_unseeded_formulations(tmp_path, monkeypatch):
+    """Rail 5 + multi-root: when sentinel fires AND grilling has unseeded
+    formulations, surface them so the operator can call
+    seed_alternative_root_formulation rather than hand-roll a new claim."""
+    monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
+    tid = "t_revise"
+    tree_dir = tmp_path / "runs" / "threads" / tid / "production" / "tree"
+    tree_dir.mkdir(parents=True, exist_ok=True)
+    state = _state_with_promoted_and_children([
+        ("n_promoted_c1", "pruned"),
+        ("n_promoted_c2", "pruned"),
+        ("n_promoted_c3", "pruned"),
+    ])
+    state["frontier"] = []
+    state["promoted_node_ids"] = ["n_promoted"]
+    (tree_dir / "search_state.json").write_text(json.dumps(state), encoding="utf-8")
+    gdir = tmp_path / "runs" / "threads" / tid / "grilling"
+    gdir.mkdir(parents=True, exist_ok=True)
+    (gdir / "grilling_session.json").write_text(json.dumps({
+        "extracted": {"alternative_claim_formulations": [
+            {"formulation_id": "acf_strong_x", "scope_kind": "strong",
+             "scope_note": "deployment", "ranked_priority": 1, "claim_under_test": "x"},
+            {"formulation_id": "acf_feasibility_x", "scope_kind": "feasibility_narrowed",
+             "scope_note": "feasibility", "ranked_priority": 2, "claim_under_test": "x narrow"},
+        ]}
+    }), encoding="utf-8")
+    out = M.handle_get_next_admissible_node({"thread_id": tid})
+    assert out["status"] == "must_revise_root"
+    assert "seed_alternative_root_formulation" in out["next_tool_choices"]
+    assert out["next_tool_choices"][0] == "seed_alternative_root_formulation"
+    assert len(out["unseeded_alternative_formulations"]) == 2
+    assert out["unseeded_alternative_formulations"][0]["scope_kind"] == "strong"
+
+
+def test_seed_alternative_root_formulation_adds_parallel_root(tmp_path, monkeypatch):
+    """seed_alternative_root_formulation: happy path — formulation is pulled
+    from grilling, a new parent=null root is appended, drafts get seeded
+    under it, and the original root remains untouched."""
+    from research_harness.orchestrator.search_state import initialize_search_state
+
+    monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
+    monkeypatch.setattr(M, "_repo_root", lambda: Path(__file__).resolve().parents[1])
+
+    tid = "t_seed"
+    pdir = tmp_path / "runs" / "threads" / tid / "production"
+    tree_dir = pdir / "tree"
+    tree_dir.mkdir(parents=True, exist_ok=True)
+    primary_root = {
+        "id": "n_primary_root", "type": "validity", "status": "ready", "stage": "promotion",
+        "domain": "d", "parent": None,
+        "claim_contract": {"claim_under_test": "primary claim",
+                            "mandatory_baselines": ["b"], "success_criteria": ["s"],
+                            "disproof_conditions": ["d"]},
+        "baseline_refs": [{"baseline_dossier_id": "bd_x", "candidate_ids": [],
+                            "roles": ["current_best_known"]}],
+        "lineage": {"root_goal_id": "rg_thing", "inherited_assumptions": [],
+                     "introduced_assumptions": [], "covers_goal_facets": [],
+                     "taste_constraints_applied": []},
+        "runtime_profile": {"worker_type": "experiment_worker",
+                             "timeout_policy": "task_class_dependent", "turn_budget": 6},
+        "failure_retrieval": {"query_tags": [], "selected_fail_files": []},
+        "outputs": {"artifacts": [], "verdict": None},
+    }
+    policy = {"max_depth": 3, "max_debug_depth": 1, "sunk_cost_policy": "default",
+              "scaleup_policy": "default", "num_drafts": 2}
+    state = initialize_search_state(search_id="s_x", root_node=primary_root, policy=policy)
+    (tree_dir / "search_state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    gdir = tmp_path / "runs" / "threads" / tid / "grilling"
+    gdir.mkdir(parents=True, exist_ok=True)
+    (gdir / "grilling_session.json").write_text(json.dumps({
+        "session_id": "grill_test", "status": "done", "user_goal": "primary",
+        "max_rounds": 1, "rounds": [], "model": "mock",
+        "created_at": "2026-05-29T00:00:00+00:00",
+        "usage_estimate": {"rounds_used": 0, "total_cost_usd": 0.0,
+                            "total_input_tokens": 0, "total_output_tokens": 0},
+        "extracted": {
+            "root_goal_id": "rg_thing", "domain": "d", "node_type": "validity",
+            "claim_under_test": "primary claim",
+            "mandatory_baselines": ["b"], "success_criteria": ["s"],
+            "disproof_conditions": ["d"], "goal_facets": [], "taste_constraints": [],
+            "search_query_seed": "x",
+            "alternative_claim_formulations": [
+                {"formulation_id": "acf_feasibility_alt", "scope_kind": "feasibility_narrowed",
+                 "scope_note": "feasibility variant", "ranked_priority": 2,
+                 "claim_under_test": "primary claim at feasibility scope"},
+            ],
+        },
+    }), encoding="utf-8")
+
+    out = M.handle_seed_alternative_root_formulation({
+        "thread_id": tid, "formulation_id": "acf_feasibility_alt",
+    })
+    assert out["status"] == "ok"
+    assert out["new_root_id"].endswith("acf_feasibility_alt")
+    assert out["scope_kind"] == "feasibility_narrowed"
+    assert out["seeded_draft_ids"], "drafts should have been seeded under the new root"
+
+    persisted = json.loads((tree_dir / "search_state.json").read_text(encoding="utf-8"))
+    parent_null_nodes = [n for n in persisted["nodes"] if n.get("parent") is None]
+    assert len(parent_null_nodes) == 2, "both primary and alternative roots must be parent=null"
+    assert {n["id"] for n in parent_null_nodes} == {"n_primary_root", out["new_root_id"]}
+    # Primary root's claim must be untouched.
+    primary = next(n for n in persisted["nodes"] if n["id"] == "n_primary_root")
+    assert primary["claim_contract"]["claim_under_test"] == "primary claim"
+    # Alt root carries the formulation's claim.
+    alt = next(n for n in persisted["nodes"] if n["id"] == out["new_root_id"])
+    assert alt["claim_contract"]["claim_under_test"] == "primary claim at feasibility scope"
+
+
+def test_seed_alternative_root_formulation_rejects_unknown_id(tmp_path, monkeypatch):
+    monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
+    tid = "t_seed"
+    gdir = tmp_path / "runs" / "threads" / tid / "grilling"
+    gdir.mkdir(parents=True, exist_ok=True)
+    (gdir / "grilling_session.json").write_text(json.dumps({
+        "extracted": {"alternative_claim_formulations": [
+            {"formulation_id": "acf_one", "scope_kind": "strong",
+             "scope_note": "x", "ranked_priority": 1, "claim_under_test": "x"},
+        ]}
+    }), encoding="utf-8")
+    out = M.handle_seed_alternative_root_formulation({
+        "thread_id": tid, "formulation_id": "acf_does_not_exist",
+    })
+    assert out["status"] == "rejected"
+    assert "not found" in out["reason"]
+
+
+def test_seed_alternative_root_formulation_requires_grilling(tmp_path, monkeypatch):
+    monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
+    out = M.handle_seed_alternative_root_formulation({
+        "thread_id": "t_missing", "formulation_id": "acf_x",
+    })
+    assert out["status"] == "rejected"
+    assert "grilling_session" in out["reason"]

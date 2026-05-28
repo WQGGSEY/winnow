@@ -172,6 +172,38 @@
           "items": { "type": "string" }
         },
         "search_query_seed": { "type": "string", "minLength": 1 },
+        "alternative_claim_formulations": {
+          "type": "array",
+          "description": "Multi-root: fundamentally different ways to frame the user_goal as a testable claim. Seeded as parallel root candidates via seed_alternative_root_formulation. The primary claim_under_test should typically appear here as 'strong' so callers see the whole option space in one place.",
+          "items": {
+            "type": "object",
+            "required": ["formulation_id", "claim_under_test", "scope_kind", "scope_note"],
+            "properties": {
+              "formulation_id": {
+                "type": "string",
+                "pattern": "^acf_[A-Za-z0-9_]+$",
+                "description": "Stable id used by seed_alternative_root_formulation."
+              },
+              "claim_under_test": { "type": "string", "minLength": 1 },
+              "scope_kind": {
+                "type": "string",
+                "enum": ["strong", "feasibility_narrowed", "alternative_mechanism", "alternative_data_path"],
+                "description": "Why this formulation differs from the others. 'strong' = aggressive, full-scope; 'feasibility_narrowed' = scope-restricted to what the envelope actually supports; 'alternative_mechanism' / 'alternative_data_path' = same user_goal, different theory of solution."
+              },
+              "scope_note": {
+                "type": "string",
+                "minLength": 1,
+                "description": "One sentence on what makes this formulation a different bet than the others — its truth condition should be non-overlapping with siblings."
+              },
+              "ranked_priority": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Operator-visible ordering (1 = try first)."
+              }
+            },
+            "additionalProperties": false
+          }
+        },
         "user_goal_anchors": {
           "type": "array",
           "description": "Rail 3: load-bearing tokens from the user_goal text that the AC will check evidence for at accept-time. Auto-populated by a heuristic extractor at grilling time; operator or LLM can refine and bind each anchor to a worker_report.metrics key.",

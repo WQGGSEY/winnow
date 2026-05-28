@@ -39,18 +39,29 @@ def seed_drafts_from_root(
     *,
     num_drafts: int,
     max_depth: int,
+    root_id: str | None = None,
 ) -> list[str]:
-    """Seed up to num_drafts typed draft siblings under the root node.
+    """Seed up to num_drafts typed draft siblings under a root node.
 
-    Only runs once — if the root already has any children, it's a no-op.
-    Returns the list of created child ids.
+    Only runs once per root — if the chosen root already has any children,
+    it's a no-op. Returns the list of created child ids. When ``root_id``
+    is omitted the first parent=None node is used (legacy single-root
+    behaviour); pass an explicit ``root_id`` for multi-root tournaments.
     """
     if num_drafts < 1:
         return []
-    roots = [node for node in search_state["nodes"] if node.get("parent") is None]
-    if not roots:
-        return []
-    root = roots[0]
+    if root_id is None:
+        roots = [node for node in search_state["nodes"] if node.get("parent") is None]
+        if not roots:
+            return []
+        root = roots[0]
+    else:
+        root = next(
+            (n for n in search_state["nodes"] if n.get("id") == root_id),
+            None,
+        )
+        if root is None:
+            return []
     existing_children = [
         node for node in search_state["nodes"] if node.get("parent") == root["id"]
     ]

@@ -729,6 +729,36 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "seed_alternative_root_formulation",
+        "description": (
+            f"{PROFESSOR_CONTRACT}\n\n"
+            "Multi-root tournament: pull a named formulation from "
+            "grilling_session.extracted.alternative_claim_formulations and "
+            "add it as a second/third root_node (parent=null) to the live "
+            "search_state. The current root is NOT touched — both run in "
+            "parallel and the strongest survives at publication time. "
+            "Use when the current root has been pruned (Rail 5 fires "
+            "must_revise_root) AND grilling produced an alternative the "
+            "operator hasn't tried yet — avoids hand-rolling a new claim "
+            "via revise_root_after_reject."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "formulation_id"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "formulation_id": {
+                    "type": "string",
+                    "description": "Matches grilling_session.extracted.alternative_claim_formulations[*].formulation_id.",
+                },
+                "seed_drafts": {
+                    "type": "boolean",
+                    "description": "If true (default), also seed typed sibling drafts under the new root via seed_drafts_from_root.",
+                },
+            },
+        },
+    },
+    {
         "name": "render_honest_failure_paper",
         "description": (
             "Terminal exit when no path to a positive deployable result exists. "
@@ -1161,22 +1191,45 @@ def handle_get_next_admissible_node(args: dict[str, Any]) -> dict[str, Any]:
         # pattern that let thread_e5b277f9 ship with 3/3 negative successors.
         revise_signal = _detect_must_revise_root_signal(state)
         if revise_signal:
+            # Surface any unseeded alternative_claim_formulations from
+            # grilling — operator can call seed_alternative_root_formulation
+            # to drop one in without doing fresh research.
+            grilling = _read_json(_thread_dir(tid) / "grilling" / "grilling_session.json") or {}
+            formulations = (grilling.get("extracted") or {}).get("alternative_claim_formulations") or []
+            existing_root_ids = {n["id"] for n in state.get("nodes", []) if n.get("parent") is None}
+            unseeded = [
+                {
+                    "formulation_id": f.get("formulation_id"),
+                    "scope_kind": f.get("scope_kind"),
+                    "scope_note": f.get("scope_note"),
+                    "ranked_priority": f.get("ranked_priority"),
+                }
+                for f in formulations
+                if isinstance(f, dict)
+                and not any(rid.endswith(f"_root_{f.get('formulation_id')}") for rid in existing_root_ids)
+            ]
+            next_choices = ["revise_root_after_reject", "propose_alternative_root_directions"]
+            if unseeded:
+                next_choices.insert(0, "seed_alternative_root_formulation")
             return {
                 "status": "must_revise_root",
                 "active_stage": stage["name"],
                 "promoted_node_id": revise_signal["promoted_node_id"],
                 "negative_children": revise_signal["negative_children"],
                 "alternative_root_candidates": revise_signal["alternative_root_candidates"],
+                "unseeded_alternative_formulations": unseeded,
                 "reason": (
                     f"Promoted node {revise_signal['promoted_node_id']} has "
                     f"{len(revise_signal['negative_children'])} negative direct successor(s) "
                     f"and 0 promoted children. The current root claim cannot be saved by more children — "
-                    f"call revise_root_after_reject (single-shot) or propose_alternative_root_directions (fan-out)."
+                    + (
+                        f"call seed_alternative_root_formulation with one of {[f['formulation_id'] for f in unseeded]} "
+                        f"to spin up a pre-vetted alternative root in parallel, or "
+                        if unseeded else ""
+                    )
+                    + "call revise_root_after_reject (single-shot) / propose_alternative_root_directions (fan-out)."
                 ),
-                "next_tool_choices": [
-                    "revise_root_after_reject",
-                    "propose_alternative_root_directions",
-                ],
+                "next_tool_choices": next_choices,
             }
         return {
             "status": "no_admissible_node",
@@ -2666,6 +2719,115 @@ def _detect_must_revise_root_signal(state: dict[str, Any]) -> dict[str, Any] | N
     return None
 
 
+def handle_seed_alternative_root_formulation(args: dict[str, Any]) -> dict[str, Any]:
+    """Multi-root: add a second/third root from grilling.alternative_claim_formulations.
+
+    The current root is untouched — both run in parallel via the same
+    search_state. seed_drafts_from_root by default fires for the new root only
+    (it's idempotent against the existing root's already-populated children).
+    """
+    from research_harness.orchestrator.root_node_from_grilling import (
+        build_root_node_from_grilling,
+    )
+    from research_harness.orchestrator.search_state import (
+        search_policy_from_config,
+    )
+    from research_harness.orchestrator.treesearch.drafts import seed_drafts_from_root
+    from research_harness.orchestrator.validation import validate_node_invariants
+    from research_harness.schemas.validator import validate_named_schema
+
+    tid = args["thread_id"]
+    formulation_id = args["formulation_id"]
+    seed_drafts_flag = args.get("seed_drafts", True)
+
+    grilling = _read_json(_thread_dir(tid) / "grilling" / "grilling_session.json")
+    if not grilling:
+        return {"status": "rejected", "reason": "grilling_session.json missing — run grilling first"}
+    formulations = (grilling.get("extracted") or {}).get("alternative_claim_formulations") or []
+    chosen = next(
+        (f for f in formulations if isinstance(f, dict) and f.get("formulation_id") == formulation_id),
+        None,
+    )
+    if not chosen:
+        available = [f.get("formulation_id") for f in formulations if isinstance(f, dict)]
+        return {
+            "status": "rejected",
+            "reason": f"formulation_id {formulation_id!r} not found in grilling.alternative_claim_formulations. Available: {available}",
+        }
+
+    state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
+    state = _read_json(state_path)
+    if not state or not state.get("nodes"):
+        return {
+            "status": "rejected",
+            "reason": "search_state.json missing — design_initial_claim_contract must run first to seed the primary root",
+        }
+
+    market_brief = _read_json(_thread_dir(tid) / "market" / "market_research_brief.json") or {}
+    baseline_dossier_id = market_brief.get("baseline_dossier_id") or "bd_pending_market_research"
+    candidate_ids: list[str] = []
+    raw_candidates = market_brief.get("baseline_dossier_candidates_index")
+    if isinstance(raw_candidates, list):
+        candidate_ids = [c["id"] for c in raw_candidates if isinstance(c, dict) and c.get("id")]
+
+    # Build a new root node with the formulation's claim overriding grilling's.
+    new_root = build_root_node_from_grilling(
+        grilling,
+        baseline_dossier_id=baseline_dossier_id,
+        candidate_ids=candidate_ids,
+        node_id_suffix=f"root_{formulation_id}",
+    )
+    new_root["claim_contract"]["claim_under_test"] = chosen["claim_under_test"]
+    new_root["lineage"]["introduced_assumptions"].append(
+        f"alternative_claim_formulation: {formulation_id} (scope_kind={chosen.get('scope_kind')})"
+    )
+    validate_node_invariants(new_root)
+    validate_named_schema("node", new_root)
+
+    if any(n["id"] == new_root["id"] for n in state["nodes"]):
+        return {
+            "status": "rejected",
+            "reason": f"root with id {new_root['id']} already exists in search_state — formulation has already been seeded",
+        }
+
+    state["nodes"].append(new_root)
+    state["frontier"].append({
+        "node_id": new_root["id"], "parent": None, "depth": 0, "priority": 1.0,
+        "stage": new_root.get("stage", "promotion"), "status": "queued",
+        "reason": f"alternative root from formulation {formulation_id}",
+    })
+    state["transitions"].append({
+        "node_id": new_root["id"], "from_status": "ready", "to_status": "ready",
+        "event": "seed_alternative_root", "reason": f"formulation_id={formulation_id}",
+        "created_child_ids": [],
+    })
+
+    draft_ids: list[str] = []
+    if seed_drafts_flag:
+        policy = search_policy_from_config(_repo_root())
+        draft_ids = seed_drafts_from_root(
+            state,
+            num_drafts=int(policy["num_drafts"]),
+            max_depth=int(policy["max_depth"]),
+            root_id=new_root["id"],
+        )
+
+    state_path.write_text(
+        json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return {
+        "status": "ok",
+        "new_root_id": new_root["id"],
+        "formulation_id": formulation_id,
+        "scope_kind": chosen.get("scope_kind"),
+        "seeded_draft_ids": draft_ids,
+        "next_step": (
+            "Call get_next_admissible_node — the new root + drafts are now in the frontier. "
+            "Both the original root tree and this one will be expanded in parallel."
+        ),
+    }
+
+
 def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.schemas.validator import validate_named_schema
 
@@ -3482,6 +3644,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_propose_alternative_root_directions(args)
             elif name == "select_alternative_root":
                 result = handle_select_alternative_root(args, settings)
+            elif name == "seed_alternative_root_formulation":
+                result = handle_seed_alternative_root_formulation(args)
             elif name == "render_honest_failure_paper":
                 result = handle_render_honest_failure_paper(args)
             elif name == "render_final_paper":

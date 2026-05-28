@@ -813,6 +813,12 @@ def _coerce_extracted(
     # extractor if the LLM didn't fill them in. Operator can refine later.
     if not isinstance(extracted.get("user_goal_anchors"), list):
         extracted["user_goal_anchors"] = extract_user_goal_anchor_candidates(user_goal)
+    # Multi-root: ensure alternative_claim_formulations are present.
+    if not isinstance(extracted.get("alternative_claim_formulations"), list):
+        extracted["alternative_claim_formulations"] = derive_alternative_formulations(
+            primary_claim=extracted["claim_under_test"],
+            user_goal=user_goal,
+        )
     return extracted
 
 
@@ -829,7 +835,67 @@ def _placeholder_extracted(user_goal: str) -> dict[str, Any]:
         "taste_constraints": [],
         "search_query_seed": user_goal.strip(),
         "user_goal_anchors": extract_user_goal_anchor_candidates(user_goal),
+        "alternative_claim_formulations": derive_alternative_formulations(
+            primary_claim=user_goal.strip(), user_goal=user_goal,
+        ),
     }
+
+
+# --- Multi-root: alternative claim formulations ------------------------- #
+# The harness's biggest structural weakness was that drafts copied the root's
+# claim verbatim — there was no "this claim might be wrong" hypothesis in the
+# tree. derive_alternative_formulations seeds two non-overlapping framings
+# (strong + feasibility-narrowed) so the operator / Rail 5 can swap in a
+# pre-vetted alternative without doing fresh research. LLM grilling pass can
+# extend with alternative_mechanism / alternative_data_path entries.
+
+
+def _slug_for_formulation(text: str) -> str:
+    raw = _slugify(text)[:30] or "alt"
+    return raw.strip("_") or "alt"
+
+
+def derive_alternative_formulations(
+    *, primary_claim: str, user_goal: str
+) -> list[dict[str, Any]]:
+    """Return >=2 root-claim candidates: the strong claim as stated, plus a
+    feasibility-narrowed variant. v1 is deterministic; the LLM grilling pass
+    can append alternative_mechanism / alternative_data_path formulations."""
+    primary_claim = (primary_claim or "").strip()
+    if not primary_claim:
+        return []
+    strong_slug = _slug_for_formulation(primary_claim)
+    weak_slug = _slug_for_formulation("feasibility_" + primary_claim)
+    weak_claim = (
+        primary_claim.rstrip(".") + " — at feasibility scope: validated only "
+        "on the data sources actually declared in the feasibility_envelope, "
+        "with the full-deployment close enumerated as forward-work rather "
+        "than asserted."
+    )
+    return [
+        {
+            "formulation_id": f"acf_strong_{strong_slug}",
+            "claim_under_test": primary_claim,
+            "scope_kind": "strong",
+            "scope_note": (
+                "Primary claim as stated by the operator; deployment-scope "
+                "if the envelope supports it, otherwise will fail envelope check."
+            ),
+            "ranked_priority": 1,
+        },
+        {
+            "formulation_id": f"acf_feasibility_{weak_slug}",
+            "claim_under_test": weak_claim,
+            "scope_kind": "feasibility_narrowed",
+            "scope_note": (
+                "Same user_goal restated at feasibility scope. Truth condition "
+                "differs from 'strong': this claim survives even when real-data "
+                "transfer isn't measurable, by explicitly scoping to "
+                "envelope-available data sources."
+            ),
+            "ranked_priority": 2,
+        },
+    ]
 
 
 # --- Rail 3: user_goal anchor extraction -------------------------------- #

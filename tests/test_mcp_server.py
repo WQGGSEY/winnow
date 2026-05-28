@@ -137,8 +137,13 @@ class MCPServerTests(unittest.TestCase):
         envelope_expected = {
             "submit_feasibility_envelope",
         }
+        # Multi-root tournament: alternative root formulations.
+        multi_root_expected = {
+            "seed_alternative_root_formulation",
+        }
         self.assertEqual(
-            baseline_expected | practitioner_expected | dual_gate_expected | envelope_expected,
+            baseline_expected | practitioner_expected | dual_gate_expected
+            | envelope_expected | multi_root_expected,
             names,
         )
 
