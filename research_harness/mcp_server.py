@@ -1211,7 +1211,30 @@ def handle_get_next_admissible_node(args: dict[str, Any]) -> dict[str, Any]:
             next_choices = ["revise_root_after_reject", "propose_alternative_root_directions"]
             if unseeded:
                 next_choices.insert(0, "seed_alternative_root_formulation")
-            return {
+            # Hands-free: when an unseeded formulation exists, attach an
+            # auto_action_suggestion so the auto-resolver can dispatch
+            # seed_alternative_root_formulation without operator decision.
+            # Pick the lowest ranked_priority (1 = try first).
+            auto_action: dict[str, Any] | None = None
+            if unseeded:
+                ranked = sorted(
+                    unseeded,
+                    key=lambda f: (f.get("ranked_priority") or 99, f.get("formulation_id") or ""),
+                )
+                top = ranked[0]
+                auto_action = {
+                    "tool": "seed_alternative_root_formulation",
+                    "args": {"thread_id": tid, "formulation_id": top["formulation_id"]},
+                    "source_rail": "rail_5_must_revise_root",
+                    "rationale": (
+                        f"Promoted node {revise_signal['promoted_node_id']} collapsed "
+                        f"({len(revise_signal['negative_children'])} pruned, 0 promoted children); "
+                        f"unseeded formulation {top['formulation_id']!r} "
+                        f"({top.get('scope_kind')}) is the next-priority alternative."
+                    ),
+                    "confidence": "high",
+                }
+            response = {
                 "status": "must_revise_root",
                 "active_stage": stage["name"],
                 "promoted_node_id": revise_signal["promoted_node_id"],
@@ -1231,6 +1254,10 @@ def handle_get_next_admissible_node(args: dict[str, Any]) -> dict[str, Any]:
                 ),
                 "next_tool_choices": next_choices,
             }
+            if auto_action is not None:
+                response["auto_action_suggestion"] = auto_action
+                response = _maybe_auto_dispatch(tid, response)
+            return response
         return {
             "status": "no_admissible_node",
             "active_stage": stage["name"],
@@ -2719,6 +2746,87 @@ def _detect_must_revise_root_signal(state: dict[str, Any]) -> dict[str, Any] | N
     return None
 
 
+# Map of tool_name → handler used by the inline auto-dispatcher. Kept narrow
+# on purpose: only rails whose auto-action is genuinely "fire and continue"
+# should be listed here. Adding a new entry implies operator-grade trust that
+# the action is non-destructive and idempotent within chain_safety_check.
+def _auto_dispatchable_handlers() -> dict[str, Any]:
+    return {
+        "seed_alternative_root_formulation": handle_seed_alternative_root_formulation,
+    }
+
+
+def _maybe_auto_dispatch(tid: str, response: dict[str, Any]) -> dict[str, Any]:
+    """If response carries an auto_action_suggestion that passes safety, run it.
+
+    Mutates the response by appending an ``auto_resolved`` field describing
+    what was dispatched (or refused, with the safety reason). The original
+    detection fields (status, reason, etc.) are preserved so the audit trail
+    of why the auto-action fired is never lost.
+    """
+    from research_harness.orchestrator.auto_resolver import (
+        chain_safety_check, pick_auto_action, record_auto_action,
+    )
+
+    suggestion = pick_auto_action(response)
+    if suggestion is None:
+        return response
+    handlers = _auto_dispatchable_handlers()
+    handler = handlers.get(suggestion.tool)
+    if handler is None:
+        response["auto_resolved"] = {
+            "dispatched": False,
+            "reason": f"tool {suggestion.tool!r} not in auto-dispatchable allowlist",
+        }
+        record_auto_action(
+            _thread_dir(tid), suggestion,
+            outcome="refused_by_safety_check",
+            refusal_reason="not in auto-dispatchable allowlist",
+        )
+        return response
+    verdict = chain_safety_check(_thread_dir(tid), suggestion)
+    if not verdict.ok:
+        response["auto_resolved"] = {
+            "dispatched": False,
+            "reason": verdict.reason,
+            "history_length": verdict.history_length,
+        }
+        record_auto_action(
+            _thread_dir(tid), suggestion,
+            outcome="refused_by_safety_check",
+            refusal_reason=verdict.reason,
+        )
+        return response
+    try:
+        chained = handler(suggestion.args)
+    except Exception as exc:  # noqa: BLE001
+        response["auto_resolved"] = {
+            "dispatched": True,
+            "tool": suggestion.tool,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+        record_auto_action(
+            _thread_dir(tid), suggestion,
+            outcome="dispatch_error",
+            refusal_reason=str(exc),
+        )
+        return response
+    response["auto_resolved"] = {
+        "dispatched": True,
+        "tool": suggestion.tool,
+        "args": suggestion.args,
+        "rationale": suggestion.rationale,
+        "source_rail": suggestion.source_rail,
+        "result": chained,
+    }
+    record_auto_action(
+        _thread_dir(tid), suggestion,
+        outcome="ok" if chained.get("status") == "ok" else "rejected",
+        dispatch_result=chained,
+    )
+    return response
+
+
 def handle_seed_alternative_root_formulation(args: dict[str, Any]) -> dict[str, Any]:
     """Multi-root: add a second/third root from grilling.alternative_claim_formulations.
 
@@ -2865,7 +2973,7 @@ def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
     if decision.get("decision") == "accept" and successor_agg["evaluated"] >= 2:
         ratio = successor_agg["negative_count"] / successor_agg["evaluated"]
         if ratio >= 2 / 3:
-            return {
+            response: dict[str, Any] = {
                 "status": "rejected",
                 "reason": (
                     f"accept blocked by successor-verdict rail: "
@@ -2875,6 +2983,43 @@ def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
                     f"or call revise_root_after_reject to swap the root before re-attempting accept."
                 ),
             }
+            # Hands-free: if an unseeded alternative_claim_formulation is
+            # available, attach an auto_action_suggestion so the auto-resolver
+            # can pivot to it without operator selection.
+            grilling = _read_json(_thread_dir(tid) / "grilling" / "grilling_session.json") or {}
+            formulations = (grilling.get("extracted") or {}).get("alternative_claim_formulations") or []
+            try:
+                state_for_ids = _read_json(
+                    _thread_dir(tid) / "production" / "tree" / "search_state.json"
+                ) or {}
+                existing_root_ids = {n["id"] for n in state_for_ids.get("nodes", []) if n.get("parent") is None}
+            except (OSError, ValueError):
+                existing_root_ids = set()
+            unseeded = [
+                f for f in formulations
+                if isinstance(f, dict)
+                and not any(rid.endswith(f"_root_{f.get('formulation_id')}") for rid in existing_root_ids)
+            ]
+            if unseeded:
+                ranked = sorted(
+                    unseeded,
+                    key=lambda f: (f.get("ranked_priority") or 99, f.get("formulation_id") or ""),
+                )
+                top = ranked[0]
+                response["auto_action_suggestion"] = {
+                    "tool": "seed_alternative_root_formulation",
+                    "args": {"thread_id": tid, "formulation_id": top["formulation_id"]},
+                    "source_rail": "rail_1_accept_block_two_thirds_negative",
+                    "rationale": (
+                        f"accept blocked because {successor_agg['negative_count']}/"
+                        f"{successor_agg['evaluated']} successors negative; unseeded "
+                        f"formulation {top['formulation_id']!r} ({top.get('scope_kind')}) "
+                        f"is next-priority alternative — pivot instead of revising the dead root."
+                    ),
+                    "confidence": "high",
+                }
+                response = _maybe_auto_dispatch(tid, response)
+            return response
         if successor_agg["blocking_children"]:
             return {
                 "status": "rejected",

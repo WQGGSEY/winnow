@@ -387,6 +387,51 @@ def test_ac_accept_blocked_when_two_thirds_successors_negative(isolated_thread, 
     assert "3/3" in out["reason"]
 
 
+def test_rail1_auto_dispatches_seed_alternative_when_unseeded_exists(isolated_thread, tmp_path, monkeypatch):
+    """Hands-free: Rail 1 accept-block + unseeded formulation → server inline
+    seeds the alternative root and returns auto_resolved."""
+    monkeypatch.setattr(M, "_repo_root", lambda: Path(__file__).resolve().parents[1])
+    tid, node_id = isolated_thread
+    for i, verdict in enumerate(["contradicted", "contradicted", "contradicted"]):
+        _write_child_decision(tmp_path, tid, f"{node_id}_succ0{i+1}", node_id, verdict)
+    # Populate grilling with an unseeded formulation.
+    gdir = tmp_path / "runs" / "threads" / tid / "grilling"
+    gdir.mkdir(parents=True, exist_ok=True)
+    (gdir / "grilling_session.json").write_text(json.dumps({
+        "session_id": "grill_x", "status": "done", "user_goal": "g",
+        "max_rounds": 1, "rounds": [], "model": "mock",
+        "created_at": "2026-05-29T00:00:00+00:00",
+        "usage_estimate": {"rounds_used": 0, "total_cost_usd": 0.0,
+                            "total_input_tokens": 0, "total_output_tokens": 0},
+        "extracted": {
+            "root_goal_id": "rg_test", "domain": "test", "node_type": "validity",
+            "claim_under_test": "primary", "mandatory_baselines": ["b"],
+            "success_criteria": ["s"], "disproof_conditions": ["d"],
+            "goal_facets": [], "taste_constraints": [], "search_query_seed": "x",
+            "alternative_claim_formulations": [
+                {"formulation_id": "acf_feasibility_alt", "scope_kind": "feasibility_narrowed",
+                 "scope_note": "narrower", "ranked_priority": 1,
+                 "claim_under_test": "primary at feasibility"},
+            ],
+        },
+    }), encoding="utf-8")
+    _run_to_ac(tid, node_id)
+    out = M.handle_submit_ac_decision({"thread_id": tid, "ac_decision": _minimal_ac("accept")})
+    assert out["status"] == "rejected"
+    assert out["auto_action_suggestion"]["source_rail"] == "rail_1_accept_block_two_thirds_negative"
+    # The inline auto-dispatcher fired. The chained handler's happy path is
+    # covered separately in test_seed_alternative_root_formulation_adds_parallel_root;
+    # here we just verify the Rail 1 → auto-dispatch wiring works end-to-end.
+    assert out["auto_resolved"]["dispatched"] is True
+    assert out["auto_resolved"]["tool"] == "seed_alternative_root_formulation"
+    # An auto_actions.jsonl entry was written, capturing the attempt.
+    hist = tmp_path / "runs" / "threads" / tid / "production" / "auto_actions.jsonl"
+    assert hist.exists()
+    entries = [json.loads(line) for line in hist.read_text(encoding="utf-8").splitlines() if line]
+    assert entries[-1]["tool"] == "seed_alternative_root_formulation"
+    assert entries[-1]["source_rail"] == "rail_1_accept_block_two_thirds_negative"
+
+
 def test_ac_accept_blocked_when_any_blocking_successor(isolated_thread, tmp_path):
     """Rail 1: one confounded/blocked child blocks accept even if others passed."""
     tid, node_id = isolated_thread

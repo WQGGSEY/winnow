@@ -528,3 +528,144 @@ def test_seed_alternative_root_formulation_requires_grilling(tmp_path, monkeypat
     })
     assert out["status"] == "rejected"
     assert "grilling_session" in out["reason"]
+
+
+# --- Hands-free auto-resolver: inline dispatch from Rail 5 -------------- #
+
+
+def _grilling_with_two_formulations(tmp_path, tid):
+    gdir = tmp_path / "runs" / "threads" / tid / "grilling"
+    gdir.mkdir(parents=True, exist_ok=True)
+    (gdir / "grilling_session.json").write_text(json.dumps({
+        "session_id": "grill_test", "status": "done", "user_goal": "primary",
+        "max_rounds": 1, "rounds": [], "model": "mock",
+        "created_at": "2026-05-29T00:00:00+00:00",
+        "usage_estimate": {"rounds_used": 0, "total_cost_usd": 0.0,
+                            "total_input_tokens": 0, "total_output_tokens": 0},
+        "extracted": {
+            "root_goal_id": "rg_thing", "domain": "d", "node_type": "validity",
+            "claim_under_test": "primary claim",
+            "mandatory_baselines": ["b"], "success_criteria": ["s"],
+            "disproof_conditions": ["d"], "goal_facets": [], "taste_constraints": [],
+            "search_query_seed": "x",
+            "alternative_claim_formulations": [
+                {"formulation_id": "acf_strong_primary", "scope_kind": "strong",
+                 "scope_note": "strong", "ranked_priority": 1,
+                 "claim_under_test": "primary claim"},
+                {"formulation_id": "acf_feasibility_primary",
+                 "scope_kind": "feasibility_narrowed",
+                 "scope_note": "feasibility variant", "ranked_priority": 2,
+                 "claim_under_test": "primary at feasibility scope"},
+            ],
+        },
+    }), encoding="utf-8")
+
+
+def _seeded_primary_state(tmp_path, tid, primary_root_id="n_synth_test_root"):
+    from research_harness.orchestrator.search_state import initialize_search_state
+
+    tree_dir = tmp_path / "runs" / "threads" / tid / "production" / "tree"
+    tree_dir.mkdir(parents=True, exist_ok=True)
+    primary_root = {
+        "id": primary_root_id, "type": "validity", "status": "promoted",
+        "stage": "promotion", "domain": "d", "parent": None,
+        "claim_contract": {"claim_under_test": "primary",
+                            "mandatory_baselines": ["b"], "success_criteria": ["s"],
+                            "disproof_conditions": ["d"]},
+        "baseline_refs": [{"baseline_dossier_id": "bd_x", "candidate_ids": [],
+                            "roles": ["current_best_known"]}],
+        "lineage": {"root_goal_id": "rg_thing", "inherited_assumptions": [],
+                     "introduced_assumptions": [], "covers_goal_facets": [],
+                     "taste_constraints_applied": []},
+        "runtime_profile": {"worker_type": "experiment_worker",
+                             "timeout_policy": "task_class_dependent", "turn_budget": 6},
+        "failure_retrieval": {"query_tags": [], "selected_fail_files": []},
+        "outputs": {"artifacts": [], "verdict": None},
+    }
+    policy = {"max_depth": 3, "max_debug_depth": 1, "sunk_cost_policy": "default",
+              "scaleup_policy": "default", "num_drafts": 2}
+    state = initialize_search_state(search_id="s_x", root_node=primary_root, policy=policy)
+    # Three pruned children → Rail 5 fires.
+    for i in range(1, 4):
+        cid = f"{primary_root_id}_c{i}"
+        state["nodes"].append({**primary_root, "id": cid, "parent": primary_root_id, "status": "pruned"})
+        state["frontier"].append({"node_id": cid, "parent": primary_root_id, "depth": 1,
+                                   "priority": 0.5, "stage": "promotion", "status": "pruned",
+                                   "reason": "test"})
+    state["promoted_node_ids"] = [primary_root_id]
+    # Empty frontier so get_next_admissible_node falls through to the
+    # no-admissible-node branch where Rail 5 fires.
+    state["frontier"] = []
+    (tree_dir / "search_state.json").write_text(json.dumps(state), encoding="utf-8")
+    return state
+
+
+def test_rail5_auto_dispatches_seed_alternative_root(tmp_path, monkeypatch):
+    """Hands-free: must_revise_root with unseeded formulation → server inline
+    calls seed_alternative_root_formulation; response carries auto_resolved."""
+    monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
+    monkeypatch.setattr(M, "_repo_root", lambda: Path(__file__).resolve().parents[1])
+    tid = "t_handsfree"
+    _seeded_primary_state(tmp_path, tid)
+    _grilling_with_two_formulations(tmp_path, tid)
+    out = M.handle_get_next_admissible_node({"thread_id": tid})
+    assert out["status"] == "must_revise_root"
+    assert "auto_action_suggestion" in out
+    assert out["auto_action_suggestion"]["tool"] == "seed_alternative_root_formulation"
+    assert out["auto_action_suggestion"]["args"]["formulation_id"] == "acf_strong_primary"  # priority 1
+    # Server auto-dispatched the suggestion inline.
+    assert "auto_resolved" in out
+    assert out["auto_resolved"]["dispatched"] is True
+    assert out["auto_resolved"]["result"]["status"] == "ok"
+    # The new root is now in search_state.
+    state_after = json.loads(
+        (tmp_path / "runs" / "threads" / tid / "production" / "tree" / "search_state.json").read_text(encoding="utf-8")
+    )
+    parent_null = [n for n in state_after["nodes"] if n.get("parent") is None]
+    assert len(parent_null) == 2
+    # Auto-action persisted to history.
+    history_path = tmp_path / "runs" / "threads" / tid / "production" / "auto_actions.jsonl"
+    assert history_path.exists()
+    history = [json.loads(line) for line in history_path.read_text(encoding="utf-8").splitlines() if line]
+    assert history[-1]["outcome"] == "ok"
+
+
+def test_rail5_no_auto_dispatch_when_no_unseeded_formulations(tmp_path, monkeypatch):
+    """Rail 5 fires but grilling has no alternatives → no auto_action_suggestion."""
+    monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
+    tid = "t_no_alt"
+    _seeded_primary_state(tmp_path, tid)
+    # No grilling file → no formulations.
+    out = M.handle_get_next_admissible_node({"thread_id": tid})
+    assert out["status"] == "must_revise_root"
+    assert "auto_action_suggestion" not in out
+    assert "auto_resolved" not in out
+
+
+def test_auto_dispatch_refuses_loop_on_repeated_failure(tmp_path, monkeypatch):
+    """Safety: if the same auto-action already failed, server records the
+    refusal and does NOT dispatch again — chain breaks, operator escalates."""
+    from research_harness.orchestrator.auto_resolver import (
+        pick_auto_action, record_auto_action,
+    )
+
+    monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
+    monkeypatch.setattr(M, "_repo_root", lambda: Path(__file__).resolve().parents[1])
+    tid = "t_loop"
+    _seeded_primary_state(tmp_path, tid)
+    _grilling_with_two_formulations(tmp_path, tid)
+    # Pre-poison history with a failed attempt for the priority-1 formulation.
+    poisoned_action = pick_auto_action({"auto_action_suggestion": {
+        "tool": "seed_alternative_root_formulation",
+        "args": {"thread_id": tid, "formulation_id": "acf_strong_primary"},
+        "source_rail": "rail_5_must_revise_root",
+        "rationale": "earlier attempt", "confidence": "high",
+    }})
+    record_auto_action(
+        tmp_path / "runs" / "threads" / tid, poisoned_action,
+        outcome="rejected", dispatch_result={"status": "rejected"},
+    )
+    out = M.handle_get_next_admissible_node({"thread_id": tid})
+    assert out["status"] == "must_revise_root"
+    assert out["auto_resolved"]["dispatched"] is False
+    assert "identical" in out["auto_resolved"]["reason"]
