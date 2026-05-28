@@ -171,7 +171,41 @@
           "type": "array",
           "items": { "type": "string" }
         },
-        "search_query_seed": { "type": "string", "minLength": 1 }
+        "search_query_seed": { "type": "string", "minLength": 1 },
+        "user_goal_anchors": {
+          "type": "array",
+          "description": "Rail 3: load-bearing tokens from the user_goal text that the AC will check evidence for at accept-time. Auto-populated by a heuristic extractor at grilling time; operator or LLM can refine and bind each anchor to a worker_report.metrics key.",
+          "items": {
+            "type": "object",
+            "required": ["anchor_text", "must_be_measured"],
+            "properties": {
+              "anchor_text": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Verbatim or near-verbatim phrase from the user_goal (e.g., '실제 데이터', 'real WorldQuant', 'millions of rows')."
+              },
+              "anchor_kind": {
+                "type": "string",
+                "enum": ["data_source", "scale", "metric", "method", "constraint", "other"],
+                "description": "What kind of claim load this anchor carries. Drives which worker_report fields are valid bindings."
+              },
+              "must_be_measured": {
+                "type": "boolean",
+                "description": "When true, the AC accept-gate requires either a bound_metric_key with a non-null value in worker_report.metrics OR explicit operator-acknowledged scope narrowing in the camera_ready_directives."
+              },
+              "bound_metric_key": {
+                "type": ["string", "null"],
+                "description": "Key in worker_report.metrics whose non-null value witnesses this anchor. Null until operator/LLM binds it; unbound anchors trigger confidence down-clamp."
+              },
+              "extraction_source": {
+                "type": "string",
+                "enum": ["auto_heuristic", "operator", "llm_grilling"],
+                "description": "Provenance of the anchor record."
+              }
+            },
+            "additionalProperties": false
+          }
+        }
       },
       "additionalProperties": false
     },

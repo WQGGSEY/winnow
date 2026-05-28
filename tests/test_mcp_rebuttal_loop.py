@@ -434,6 +434,51 @@ def test_ac_confidence_downclamped_when_no_real_adapter(isolated_thread, tmp_pat
     assert any("real_adapter" in r for r in persisted["confidence_downclamp_reasons"])
 
 
+def test_ac_accept_blocked_when_bound_anchor_unmeasured(isolated_thread, tmp_path):
+    """Rail 3: operator-bound anchor with no metric value → accept blocked."""
+    tid, node_id = isolated_thread
+    gdir = tmp_path / "runs" / "threads" / tid / "grilling"
+    gdir.mkdir(parents=True, exist_ok=True)
+    (gdir / "grilling_session.json").write_text(
+        json.dumps({"extracted": {"user_goal_anchors": [{
+            "anchor_text": "real WorldQuant intranet transfer",
+            "anchor_kind": "data_source", "must_be_measured": True,
+            "bound_metric_key": "real_wq_transfer_ir_mean",
+            "extraction_source": "operator",
+        }]}}),
+        encoding="utf-8",
+    )
+    _run_to_ac(tid, node_id)
+    out = M.handle_submit_ac_decision({"thread_id": tid, "ac_decision": _minimal_ac("accept")})
+    assert out["status"] == "rejected"
+    assert "user_goal anchor-binding rail" in out["reason"]
+    assert "real_wq_transfer_ir_mean" in out["reason"]
+
+
+def test_ac_confidence_downclamped_on_unbound_anchor(isolated_thread, tmp_path):
+    """Rail 3: unbound must_be_measured anchors → confidence clamp (not block)."""
+    tid, node_id = isolated_thread
+    gdir = tmp_path / "runs" / "threads" / tid / "grilling"
+    gdir.mkdir(parents=True, exist_ok=True)
+    (gdir / "grilling_session.json").write_text(
+        json.dumps({"extracted": {"user_goal_anchors": [{
+            "anchor_text": "실제 WorldQuant 데이터",
+            "anchor_kind": "data_source", "must_be_measured": True,
+            "bound_metric_key": None,
+            "extraction_source": "auto_heuristic",
+        }]}}),
+        encoding="utf-8",
+    )
+    _run_to_ac(tid, node_id)
+    out = M.handle_submit_ac_decision({"thread_id": tid, "ac_decision": _minimal_ac("accept")})
+    assert out["status"] == "ok"
+    persisted = json.loads(
+        (tmp_path / "runs" / "threads" / tid / "production" / "rebuttal" / "ac_decision.json").read_text(encoding="utf-8")
+    )
+    assert persisted["confidence"] == "low"
+    assert any("user_goal_anchors_unbound" in r for r in persisted["confidence_downclamp_reasons"])
+
+
 def test_ac_confidence_downclamped_on_deterministic_dump_dossier(isolated_thread, tmp_path):
     """Rail 4 / Rail 2 signal: dossier with placeholder reason + TBD candidates clamps confidence."""
     tid, node_id = isolated_thread

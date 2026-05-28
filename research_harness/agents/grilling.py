@@ -809,6 +809,10 @@ def _coerce_extracted(
     extracted["taste_constraints"] = [str(item) for item in extracted["taste_constraints"]]
     for key in required_lists:
         extracted[key] = [str(item) for item in extracted[key]]
+    # Rail 3: ensure user_goal_anchors are present; default to the heuristic
+    # extractor if the LLM didn't fill them in. Operator can refine later.
+    if not isinstance(extracted.get("user_goal_anchors"), list):
+        extracted["user_goal_anchors"] = extract_user_goal_anchor_candidates(user_goal)
     return extracted
 
 
@@ -824,7 +828,82 @@ def _placeholder_extracted(user_goal: str) -> dict[str, Any]:
         "goal_facets": [],
         "taste_constraints": [],
         "search_query_seed": user_goal.strip(),
+        "user_goal_anchors": extract_user_goal_anchor_candidates(user_goal),
     }
+
+
+# --- Rail 3: user_goal anchor extraction -------------------------------- #
+# Load-bearing tokens in the user's original text that the AC will demand
+# evidence for at accept-time. v1 is a rule-based extractor seeded with
+# Korean + English triggers; the LLM grilling pass can refine each anchor.
+
+_ANCHOR_TRIGGERS: tuple[tuple[str, str], ...] = (
+    # (trigger_substring_lowercased, anchor_kind)
+    ("실제", "data_source"),
+    ("real ", "data_source"),
+    ("real-world", "data_source"),
+    ("real world", "data_source"),
+    ("production", "data_source"),
+    ("프로덕션", "data_source"),
+    ("intranet", "data_source"),
+    ("live ", "data_source"),
+    ("라이브", "data_source"),
+    ("deploy", "data_source"),
+    ("배포", "data_source"),
+    ("수백만", "scale"),
+    ("수천만", "scale"),
+    ("수십만", "scale"),
+    ("million", "scale"),
+    ("billion", "scale"),
+    ("transfer", "method"),
+    ("전이", "method"),
+)
+
+
+def extract_user_goal_anchor_candidates(user_goal: str) -> list[dict[str, Any]]:
+    """Heuristic extraction of load-bearing anchors from the user_goal text.
+
+    Returns a deduped list of {anchor_text, anchor_kind, must_be_measured,
+    bound_metric_key, extraction_source} suitable for the
+    grilling_session.extracted.user_goal_anchors schema slot.
+
+    Heuristic: for each trigger substring that appears in the goal text,
+    capture a short surrounding window as the anchor_text. The window is
+    bounded by sentence-ish delimiters so we don't overflow into unrelated
+    clauses. Operators or the LLM grilling pass can refine these.
+    """
+    if not user_goal:
+        return []
+    text = user_goal.strip()
+    lower = text.lower()
+    delimiters = ".,;\n!?·。、，；"
+    anchors: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for trigger, kind in _ANCHOR_TRIGGERS:
+        idx = 0
+        while True:
+            pos = lower.find(trigger, idx)
+            if pos < 0:
+                break
+            start = pos
+            while start > 0 and text[start - 1] not in delimiters and pos - start < 40:
+                start -= 1
+            end = pos + len(trigger)
+            while end < len(text) and text[end] not in delimiters and end - pos < 60:
+                end += 1
+            window = text[start:end].strip()
+            key = (window.lower(), kind)
+            if window and key not in seen_keys:
+                anchors.append({
+                    "anchor_text": window,
+                    "anchor_kind": kind,
+                    "must_be_measured": True,
+                    "bound_metric_key": None,
+                    "extraction_source": "auto_heuristic",
+                })
+                seen_keys.add(key)
+            idx = pos + len(trigger)
+    return anchors
 
 
 def _slugify(text: str) -> str:

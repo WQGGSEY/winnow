@@ -2561,7 +2561,44 @@ def _has_real_data_adapter(tid: str) -> bool | None:
     return False
 
 
-def _compute_ac_downclamp_signals(tid: str, successor_agg: dict[str, Any]) -> list[str]:
+def _check_user_goal_anchor_bindings(
+    tid: str, worker_report: dict[str, Any]
+) -> dict[str, list[Any]]:
+    """Rail 3: verify grilling-time user_goal_anchors against worker_report.metrics.
+
+    Returns {
+        "unbound": [anchor_text, ...],            # must_be_measured AND bound_metric_key is None
+        "unmeasured": [(anchor_text, key), ...],  # bound key absent/null in metrics
+    }
+    Unbound drives confidence down-clamp (soft signal). Unmeasured drives a
+    hard accept-block — operator committed to a measurement that the
+    experiment never produced.
+    """
+    grilling = _read_json(_thread_dir(tid) / "grilling" / "grilling_session.json") or {}
+    anchors = (grilling.get("extracted") or {}).get("user_goal_anchors") or []
+    if not anchors:
+        return {"unbound": [], "unmeasured": []}
+    metrics = (worker_report or {}).get("metrics") or {}
+    unbound: list[str] = []
+    unmeasured: list[tuple[str, str]] = []
+    for anchor in anchors:
+        if not isinstance(anchor, dict) or not anchor.get("must_be_measured"):
+            continue
+        bound = anchor.get("bound_metric_key")
+        text = str(anchor.get("anchor_text") or "")
+        if not bound:
+            unbound.append(text)
+            continue
+        if bound not in metrics or metrics.get(bound) is None:
+            unmeasured.append((text, str(bound)))
+    return {"unbound": unbound, "unmeasured": unmeasured}
+
+
+def _compute_ac_downclamp_signals(
+    tid: str,
+    successor_agg: dict[str, Any],
+    anchor_check: dict[str, list[Any]] | None = None,
+) -> list[str]:
     """Collect signals that justify auto-clamping AC confidence to 'low'."""
     reasons: list[str] = []
     if successor_agg["evaluated"] > 0:
@@ -2577,6 +2614,12 @@ def _compute_ac_downclamp_signals(tid: str, successor_agg: dict[str, Any]) -> li
     dump_signals = _detect_deterministic_dump_dossier(bd_path)
     if dump_signals:
         reasons.append("baseline_dossier_substance=deterministic_dump: " + "; ".join(dump_signals))
+    if anchor_check and anchor_check.get("unbound"):
+        truncated = anchor_check["unbound"][:5]
+        suffix = "" if len(anchor_check["unbound"]) <= 5 else f" (+{len(anchor_check['unbound']) - 5} more)"
+        reasons.append(
+            "user_goal_anchors_unbound: " + " | ".join(str(t) for t in truncated) + suffix
+        )
     return reasons
 
 
@@ -2680,6 +2723,36 @@ def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
                 ),
             }
 
+    # --- Rail 3: user_goal anchor binding check. -------------------------
+    # If the operator explicitly bound an anchor to a metric key, that key
+    # MUST exist with a non-null value in the promoted node's worker_report
+    # — otherwise the accept is silently overclaiming on the user's
+    # original intent (the thread_e5b277f9 failure mode).
+    anchor_check: dict[str, list[Any]] = {"unbound": [], "unmeasured": []}
+    try:
+        promoted_ctx = _resolve_promoted_node(tid)
+        wr_path = (
+            _thread_dir(tid) / "production" / "tree" / "nodes"
+            / promoted_ctx["promoted_id"] / "worker_report.json"
+        )
+        worker_report = _read_json(wr_path) or {}
+        anchor_check = _check_user_goal_anchor_bindings(tid, worker_report)
+    except (OSError, ValueError):
+        pass
+    if decision.get("decision") == "accept" and anchor_check["unmeasured"]:
+        return {
+            "status": "rejected",
+            "reason": (
+                "accept blocked by user_goal anchor-binding rail: "
+                + "; ".join(
+                    f"anchor {a!r} bound to metric_key {k!r} but worker_report.metrics has no measured value"
+                    for a, k in anchor_check["unmeasured"]
+                )
+                + ". Either run the missing measurement or unbind the anchor (must_be_measured=false) "
+                + "with explicit scope-narrowing in a camera-ready directive."
+            ),
+        }
+
     # Anti-laziness: at least one directive must demand a new measurement
     # (not just paper-text disclaimers) when AC chooses revise. Accept can
     # be all-disclaimer in principle but in practice the rebuttal usually
@@ -2698,7 +2771,7 @@ def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
             return {"status": "rejected", "reason": dir_check.reject_message()}
 
     # --- Rail 4: confidence down-clamp based on uncertainty signals. -----
-    downclamp_reasons = _compute_ac_downclamp_signals(tid, successor_agg)
+    downclamp_reasons = _compute_ac_downclamp_signals(tid, successor_agg, anchor_check)
     if downclamp_reasons:
         decision = dict(decision)
         decision["confidence"] = "low"

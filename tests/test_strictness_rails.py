@@ -223,6 +223,97 @@ def test_must_revise_root_silent_below_threshold():
     assert M._detect_must_revise_root_signal(state) is None
 
 
+# --- Rail 3: user_goal anchor extraction + AC binding check ------------- #
+
+
+def test_anchor_extractor_picks_korean_real_and_scale_triggers():
+    from research_harness.agents.grilling import extract_user_goal_anchor_candidates
+    ug = ("worldquant에서는 수백만개의 data가 있어. 그런데 실제 데이터들은 "
+          "intranet 환경에 있어. 모방한 데이터셋을 수백만 단위로 구성하고 싶어.")
+    anchors = extract_user_goal_anchor_candidates(ug)
+    kinds = {a["anchor_kind"] for a in anchors}
+    assert "data_source" in kinds
+    assert "scale" in kinds
+    assert all(a["must_be_measured"] for a in anchors)
+    assert all(a["bound_metric_key"] is None for a in anchors)
+    assert all(a["extraction_source"] == "auto_heuristic" for a in anchors)
+
+
+def test_anchor_extractor_picks_english_real_and_transfer_triggers():
+    from research_harness.agents.grilling import extract_user_goal_anchor_candidates
+    ug = "Can a model trained on synthetic data transfer to real production traffic?"
+    anchors = extract_user_goal_anchor_candidates(ug)
+    kinds = {a["anchor_kind"] for a in anchors}
+    assert "data_source" in kinds  # 'real ' and 'production' triggers
+    assert "method" in kinds       # 'transfer' trigger
+
+
+def test_anchor_extractor_empty_goal_returns_empty():
+    from research_harness.agents.grilling import extract_user_goal_anchor_candidates
+    assert extract_user_goal_anchor_candidates("") == []
+
+
+def test_anchor_extractor_dedupes_same_window_same_kind():
+    from research_harness.agents.grilling import extract_user_goal_anchor_candidates
+    # "real" and "real " both match the same window — should dedupe.
+    ug = "real data real data"
+    anchors = extract_user_goal_anchor_candidates(ug)
+    texts = [a["anchor_text"] for a in anchors]
+    assert len(texts) == len(set(texts))
+
+
+def _write_grilling_with_anchors(tmp_path, tid, anchors):
+    gdir = tmp_path / "runs" / "threads" / tid / "grilling"
+    gdir.mkdir(parents=True, exist_ok=True)
+    (gdir / "grilling_session.json").write_text(
+        json.dumps({"extracted": {"user_goal_anchors": anchors}}),
+        encoding="utf-8",
+    )
+
+
+def test_anchor_check_flags_unbound_anchor(tmp_path, monkeypatch):
+    monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
+    tid = "t_anchor"
+    _write_grilling_with_anchors(tmp_path, tid, [
+        {"anchor_text": "real WorldQuant data", "must_be_measured": True, "bound_metric_key": None},
+    ])
+    out = M._check_user_goal_anchor_bindings(tid, {"metrics": {"x": 1}})
+    assert out["unbound"] == ["real WorldQuant data"]
+    assert out["unmeasured"] == []
+
+
+def test_anchor_check_flags_bound_but_unmeasured(tmp_path, monkeypatch):
+    monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
+    tid = "t_anchor"
+    _write_grilling_with_anchors(tmp_path, tid, [
+        {"anchor_text": "real WQ ir", "must_be_measured": True, "bound_metric_key": "real_wq_ir_mean"},
+    ])
+    out = M._check_user_goal_anchor_bindings(tid, {"metrics": {"synthetic_ir": 0.65}})
+    assert out["unbound"] == []
+    assert out["unmeasured"] == [("real WQ ir", "real_wq_ir_mean")]
+
+
+def test_anchor_check_passes_when_bound_and_measured(tmp_path, monkeypatch):
+    monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
+    tid = "t_anchor"
+    _write_grilling_with_anchors(tmp_path, tid, [
+        {"anchor_text": "real WQ ir", "must_be_measured": True, "bound_metric_key": "real_wq_ir_mean"},
+    ])
+    out = M._check_user_goal_anchor_bindings(tid, {"metrics": {"real_wq_ir_mean": 0.42}})
+    assert out["unbound"] == []
+    assert out["unmeasured"] == []
+
+
+def test_anchor_check_skips_must_not_measure(tmp_path, monkeypatch):
+    monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
+    tid = "t_anchor"
+    _write_grilling_with_anchors(tmp_path, tid, [
+        {"anchor_text": "real WQ", "must_be_measured": False, "bound_metric_key": None},
+    ])
+    out = M._check_user_goal_anchor_bindings(tid, {"metrics": {}})
+    assert out == {"unbound": [], "unmeasured": []}
+
+
 def test_get_next_admissible_node_returns_must_revise_sentinel(tmp_path, monkeypatch):
     monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
     tid = "t_revise"
