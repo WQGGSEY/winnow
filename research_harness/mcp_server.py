@@ -313,6 +313,30 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "pin_atlas_version",
+        "description": (
+            f"{PROFESSOR_CONTRACT}\n\n"
+            "ADR 0010 (T1-06): pin a calibration-PASSED MEASURED atlas (the offline "
+            "build's output — co-deployment distances + the calibration verdict) into "
+            "the thread, hash-stamped + IMMUTABLE. Only deployable / bounded_result "
+            "atlases are pinnable; an honest_failure atlas ships nothing and the "
+            "operator table remains (no silent topical fallback). distance_source must "
+            "be co_deployment (measured), not topical. Once pinned, far-framing uses "
+            "measured distance where the atlas covers the projection."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "atlas"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "atlas": {
+                    "type": "object",
+                    "description": "DomainAtlas (domain_atlas.schema.json) from the offline build, including the calibration block. Operator path only — the construction cannot author the atlas it is judged against.",
+                },
+            },
+        },
+    },
+    {
         "name": "submit_construct_adversary_report",
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
@@ -1899,6 +1923,66 @@ def handle_pin_domain_taxonomy(args: dict[str, Any]) -> dict[str, Any]:
             "table. Distance feeds spawn selection ONLY — never promotion."
         ),
     }
+
+
+def handle_pin_atlas_version(args: dict[str, Any]) -> dict[str, Any]:
+    """ADR 0010 (T1-06): pin a calibration-PASSED measured atlas (the offline
+    build's output) into the thread, hash-stamped + IMMUTABLE (mirror of
+    pin_domain_taxonomy). Only deployable / bounded_result atlases are pinnable;
+    an honest_failure atlas ships nothing — the operator table remains (no silent
+    topical fallback). Once pinned, far-framing (Sprint 2) uses measured
+    co-deployment distance where the atlas covers the projection."""
+    from research_harness.atlas.pin import atlas_hash, atlas_pinnable
+    from research_harness.schemas.validator import validate_named_schema
+
+    tid = args["thread_id"]
+    atlas = args.get("atlas")
+    if not isinstance(atlas, dict):
+        return {"status": "rejected", "reason": "atlas (a DomainAtlas object from the offline build) is required."}
+    try:
+        validate_named_schema("domain_atlas", atlas)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
+    ok, reason = atlas_pinnable(atlas)
+    if not ok:
+        return {"status": "rejected", "reason": reason}
+
+    digest = atlas_hash({k: v for k, v in atlas.items() if k != "source_provenance"})
+    pinned = {**atlas, "source_provenance": f"atlas_sha256:{digest}"}
+    out_path = _thread_dir(tid) / "production" / "domain_atlas.json"
+    if out_path.exists():
+        existing = _read_json(out_path) or {}
+        if existing.get("source_provenance") != pinned["source_provenance"]:
+            return {
+                "status": "rejected",
+                "reason": (
+                    "a domain_atlas is already pinned and is IMMUTABLE; the construction "
+                    "may not swap the atlas it is judged against."
+                ),
+            }
+        return {"status": "ok", "atlas_hash": digest, "note": "already pinned (idempotent)"}
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(pinned, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    cal = atlas.get("calibration") or {}
+    return {
+        "status": "ok",
+        "atlas_hash": digest,
+        "domain_atlas_path": str(out_path),
+        "calibration_verdict": cal.get("verdict"),
+        "domains": [d["id"] for d in atlas.get("domains", [])],
+        "next_step": (
+            "Measured atlas pinned. Far-framing will use measured co-deployment distance "
+            "where this atlas covers the projection; the operator table elsewhere. "
+            "honest_failure atlases are not pinnable."
+        ),
+    }
+
+
+def _pinned_atlas(tid: str) -> dict[str, Any] | None:
+    return _read_json(_thread_dir(tid) / "production" / "domain_atlas.json")
 
 
 def _pinned_taxonomy(tid: str) -> dict[str, Any] | None:
@@ -5299,6 +5383,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_pin_frozen_question(args)
             elif name == "pin_domain_taxonomy":
                 result = handle_pin_domain_taxonomy(args)
+            elif name == "pin_atlas_version":
+                result = handle_pin_atlas_version(args)
             elif name == "submit_construct_adversary_report":
                 result = handle_submit_construct_adversary_report(args)
             elif name == "design_initial_claim_contract":

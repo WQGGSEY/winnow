@@ -12,6 +12,14 @@ frontend = [
   "jinja2>=3.1",
   "python-multipart>=0.0.7",
 ]
+# ADR 0010 (TRACK 1): the OFFLINE atlas build only. These are never imported by
+# the air-gapped harness (which reads only a pinned, calibration-passed atlas
+# artifact); they are needed solely to harvest concepts and MEASURE co-deployment
+# distance offline. Keeps the core stdlib-first (dependencies = []).
+atlas-builder = [
+  "requests>=2.31",
+  "numpy>=1.26",
+]
 
 [project.scripts]
 research-harness-demo = "research_harness.orchestrator.demo:main"
