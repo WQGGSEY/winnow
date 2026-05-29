@@ -21,6 +21,10 @@ from research_harness.config import (
 )
 from research_harness.memory.baseline_dossier import validate_baseline_dossier
 from research_harness.schemas.validator import validate_named_schema
+from research_harness.settings_scoped import (
+    resolve_for_thread,
+    thread_id_from_run_dir,
+)
 
 
 BILLING_ACK_ENV = "RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE"
@@ -452,7 +456,12 @@ def _generate_baseline_analysis_md(
         )
         return "deterministic_metadata", default_usage
 
-    settings = load_settings(repo_root)
+    load_settings(repo_root)  # retained for its policy / framework_invariants check
+    # output_path lives at <run_dir>/baseline_analysis.md; .parent gives run_dir,
+    # which encodes the thread context when launched from the frontend.
+    settings = resolve_for_thread(
+        repo_root, thread_id_from_run_dir(output_path.parent)
+    )
     live_backend = (
         settings.get("runtime", {})
         .get("worker_backends", {})

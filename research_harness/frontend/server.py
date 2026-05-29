@@ -40,8 +40,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -53,7 +53,7 @@ from research_harness.agents.market_research import run_market_research
 from research_harness.config import load_settings
 # research_refiner removed from the frontend pipeline — Professor designs
 # the real claim contract at production entry instead.
-from research_harness.frontend import acks, threads
+from research_harness.frontend import acks, datasets, threads
 from research_harness.frontend.lock import LockBusyError, SingleActiveRunLock
 from research_harness.schemas.validator import validate_named_schema
 
@@ -165,6 +165,8 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
 
     _register_routes(app, state)
     _register_file_route(app, state)
+    _register_datasets_routes(app, state)
+    _register_settings_routes(app, state)
     return app
 
 
@@ -1498,3 +1500,288 @@ def _register_file_route(app: FastAPI, s: AppState) -> None:
         if not candidate.is_file():
             raise HTTPException(404)
         return FileResponse(str(candidate))
+
+
+# --------------------------------------------------------------- datasets (Phase 1b)
+
+
+def _register_datasets_routes(app: FastAPI, s: AppState) -> None:
+    """Operator-scope data adapter management: list, upload, register-by-path, delete.
+
+    Writes land in ``settings.local.json`` under ``data_adapters.registered``.
+    Upload streams the file into ``.dataset_cache/operator_uploads/<id>/`` so
+    the local-path materializer can pick it up without a second copy.
+    """
+    env = s.env
+
+    def _render_page(flash: str | None = None, error: str | None = None) -> HTMLResponse:
+        tmpl = env.get_template("datasets.html")
+        return HTMLResponse(
+            tmpl.render(
+                adapters=datasets.list_adapters(s.repo_root),
+                allowed_kinds=sorted(datasets.ALLOWED_KINDS),
+                max_upload_mb=datasets.MAX_UPLOAD_BYTES // (1 << 20),
+                flash=flash,
+                error=error,
+                full_auto_mode=acks.full_auto_mode(s.repo_root),
+                has_subscription_ack=acks.has_subscription_ack(s.repo_root),
+                ack_state=acks.get_state(s.repo_root),
+                lock_holder=s.lock.holder,
+            )
+        )
+
+    @app.get("/datasets", response_class=HTMLResponse)
+    async def datasets_page() -> HTMLResponse:
+        return _render_page()
+
+    @app.post("/datasets/upload")
+    async def upload_dataset(
+        adapter_id: str = Form(...),
+        kind: str = Form(...),
+        provenance: str = Form(...),
+        file: UploadFile = File(...),
+    ) -> HTMLResponse:
+        try:
+            result = datasets.upload_file(
+                s.repo_root,
+                adapter_id=adapter_id,
+                original_filename=file.filename or "uploaded.bin",
+                source=file.file,
+            )
+            datasets.register_adapter(
+                s.repo_root,
+                adapter_id=result.adapter_id,
+                kind=kind,
+                source=f"file://{result.materialized_path}",
+                provenance=provenance,
+                upload_meta={
+                    "uploaded_at": result.uploaded_at,
+                    "sha256": result.sha256,
+                    "size_bytes": result.size_bytes,
+                    "original_filename": result.original_filename,
+                },
+            )
+        except datasets.DatasetError as exc:
+            return _render_page(error=str(exc))
+        return _render_page(
+            flash=(
+                f"Uploaded and registered {result.adapter_id} "
+                f"({result.size_bytes:,} bytes, sha256={result.sha256[:12]}…)"
+            )
+        )
+
+    @app.post("/datasets/register")
+    async def register_by_path(
+        adapter_id: str = Form(...),
+        kind: str = Form(...),
+        source: str = Form(...),
+        provenance: str = Form(...),
+    ) -> HTMLResponse:
+        try:
+            entry = datasets.register_adapter(
+                s.repo_root,
+                adapter_id=adapter_id,
+                kind=kind,
+                source=source,
+                provenance=provenance,
+            )
+        except datasets.DatasetError as exc:
+            return _render_page(error=str(exc))
+        return _render_page(flash=f"Registered {entry['id']}.")
+
+    @app.post("/datasets/{adapter_id}/delete")
+    async def delete_dataset(adapter_id: str) -> HTMLResponse:
+        try:
+            removed = datasets.delete_adapter(s.repo_root, adapter_id)
+        except datasets.DatasetError as exc:
+            return _render_page(error=str(exc))
+        if not removed:
+            return _render_page(
+                error=f"adapter {adapter_id!r} not found at operator scope (project entries are read-only)"
+            )
+        return _render_page(flash=f"Removed {adapter_id}.")
+
+
+# --------------------------------------------------------------- settings (Phase 3)
+
+
+def _register_settings_routes(app: FastAPI, s: AppState) -> None:
+    """FIELD_REGISTRY-driven Settings page (ADR 0005, Phase 3).
+
+    - GET /settings?scope=project|operator|thread&thread_id=... — render
+    - POST /api/settings/project|operator — bulk save for that scope
+    - POST /api/settings/thread/{thread_id} — add/update one thread override
+    - POST /api/settings/thread/{thread_id}/remove — drop one thread override
+    """
+    from research_harness.settings_scoped import (
+        FIELD_REGISTRY,
+        coerce_input,
+        field_groups,
+        fields_for_scope,
+        find_spec,
+        list_thread_overrides,
+        resolve_for_thread,
+        validate_resolved,
+        validate_write,
+        write_setting,
+    )
+
+    env = s.env
+
+    def _enum_lookup_for(resolved):
+        def lookup(spec):
+            if spec.enum is not None:
+                return list(spec.enum)
+            if spec.enum_source:
+                val = resolved.get_dotted(spec.enum_source)
+                return list(val) if isinstance(val, list) else None
+            return None
+
+        return lookup
+
+    def _render(
+        scope: str,
+        thread_id: str | None,
+        *,
+        flash: str | None = None,
+        error: str | None = None,
+        submitted_values: dict | None = None,
+    ) -> HTMLResponse:
+        resolved = resolve_for_thread(s.repo_root, thread_id)
+        violations = validate_resolved(resolved)
+        ctx = {
+            "scope": scope,
+            "active_thread_id": thread_id,
+            "flash": flash,
+            "error": error,
+            "violations": violations,
+            "project_dirty": False,  # git-state check could go here later
+            "find_spec_func": find_spec,
+            "enum_lookup": _enum_lookup_for(resolved),
+        }
+        if scope in ("project", "operator"):
+            specs = fields_for_scope(scope)  # type: ignore[arg-type]
+            grouped = field_groups(specs)
+            values = {sp.path: resolved.get_dotted(sp.path) for sp in specs}
+            sources = {sp.path: resolved.source_of(sp.path) for sp in specs}
+            if submitted_values:
+                values.update(submitted_values)
+            ctx.update({"grouped": grouped, "values": values, "sources": sources})
+        else:
+            overrides = list_thread_overrides(s.repo_root, thread_id) if thread_id else {}
+            thread_specs = [sp for sp in FIELD_REGISTRY if "thread" in sp.effective_ui_editable_in]
+            ctx.update(
+                {
+                    "thread_overrides": overrides,
+                    "thread_overridable": thread_specs,
+                }
+            )
+        tmpl = env.get_template("settings_page.html")
+        return HTMLResponse(tmpl.render(**ctx))
+
+    @app.get("/settings", response_class=HTMLResponse)
+    async def settings_page(scope: str = "project", thread_id: str | None = None) -> HTMLResponse:
+        if scope not in {"project", "operator", "thread"}:
+            scope = "project"
+        if scope == "thread" and not thread_id:
+            scope = "project"
+        return _render(scope, thread_id)
+
+    async def _bulk_save(scope: str, request: Request) -> HTMLResponse:
+        """Save every editable field for one scope from one big form."""
+        form = await request.form()
+        specs = [sp for sp in fields_for_scope(scope) if scope in sp.effective_ui_editable_in]  # type: ignore[arg-type]
+
+        # Phase 1: validate everything. Don't write yet.
+        planned: list[tuple[str, object]] = []  # (path, coerced_value | _UNSET)
+        submitted_for_redisplay: dict = {}
+        for spec in specs:
+            raw = form.get(spec.path)
+            if spec.type == "boolean":
+                # If the bool field's marker is present, treat absence as False.
+                marker = form.get(f"__bool__{spec.path}")
+                if marker is not None:
+                    raw = "true" if form.get(spec.path) else "false"
+                elif raw is None:
+                    continue  # field wasn't on this form at all
+            if raw is None:
+                continue
+            try:
+                value = coerce_input(spec, str(raw))
+            except (ValueError, TypeError) as exc:
+                return _render(
+                    scope, None,
+                    error=f"{spec.path}: cannot parse {raw!r} as {spec.type} ({exc})",
+                    submitted_values={spec.path: raw},
+                )
+            # _UNSET sentinel is a non-public marker — detect via singleton identity
+            from research_harness.settings_scoped import _UNSET as UNSET
+
+            if value is UNSET:
+                planned.append((spec.path, UNSET))
+                continue
+            try:
+                validate_write(
+                    spec.path, value, scope,  # type: ignore[arg-type]
+                    enum_resolver=lambda p, _r=resolve_for_thread(s.repo_root): (
+                        _r.get_dotted(p) if isinstance(_r.get_dotted(p), list) else None
+                    ),
+                )
+            except ValueError as exc:
+                submitted_for_redisplay[spec.path] = raw
+                return _render(scope, None, error=str(exc), submitted_values=submitted_for_redisplay)
+            planned.append((spec.path, value))
+            submitted_for_redisplay[spec.path] = raw
+
+        # Phase 2: all valid — write.
+        for path, value in planned:
+            write_setting(s.repo_root, scope, path, value)  # type: ignore[arg-type]
+
+        return _render(scope, None, flash=f"Saved {len(planned)} field(s) at {scope} scope.")
+
+    @app.post("/api/settings/project", response_class=HTMLResponse)
+    async def save_project(request: Request) -> HTMLResponse:
+        return await _bulk_save("project", request)
+
+    @app.post("/api/settings/operator", response_class=HTMLResponse)
+    async def save_operator(request: Request) -> HTMLResponse:
+        return await _bulk_save("operator", request)
+
+    @app.post("/api/settings/thread/{thread_id}", response_class=HTMLResponse)
+    async def add_thread_override(thread_id: str, request: Request) -> HTMLResponse:
+        form = await request.form()
+        path = str(form.get("path", "")).strip()
+        raw_value = str(form.get("value", ""))
+        if not path:
+            return _render("thread", thread_id, error="path is required")
+        spec = find_spec(path)
+        if spec is None:
+            return _render("thread", thread_id, error=f"unknown field {path!r}")
+        if "thread" not in spec.writable_at:
+            return _render(
+                "thread", thread_id,
+                error=f"{path!r} is not thread-overridable (writable_at={list(spec.writable_at)})",
+            )
+        try:
+            value = coerce_input(spec, raw_value)
+        except (ValueError, TypeError) as exc:
+            return _render(
+                "thread", thread_id,
+                error=f"{path}: cannot parse {raw_value!r} as {spec.type} ({exc})",
+            )
+        try:
+            write_setting(s.repo_root, "thread", path, value, thread_id=thread_id)
+        except ValueError as exc:
+            return _render("thread", thread_id, error=str(exc))
+        return _render("thread", thread_id, flash=f"Added override for {path}.")
+
+    @app.post("/api/settings/thread/{thread_id}/remove", response_class=HTMLResponse)
+    async def remove_thread_override(thread_id: str, request: Request) -> HTMLResponse:
+        from research_harness.settings_scoped import _UNSET as UNSET
+
+        form = await request.form()
+        path = str(form.get("path", "")).strip()
+        if not path:
+            return _render("thread", thread_id, error="path is required")
+        write_setting(s.repo_root, "thread", path, UNSET, thread_id=thread_id)
+        return _render("thread", thread_id, flash=f"Removed override for {path}.")

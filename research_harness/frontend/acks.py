@@ -85,8 +85,30 @@ def revoke_subscription_ack(repo_root: Path) -> None:
     _save_local(repo_root, local)
 
 
-def full_auto_mode(repo_root: Path) -> bool:
-    return bool(get_state(repo_root).get("full_auto_mode"))
+def full_auto_mode(repo_root: Path, thread_id: str | None = None) -> bool:
+    """Effective full_auto_mode for ``(repo_root, thread_id)``.
+
+    Operator scope is the baseline. Thread scope may **tighten** (disable)
+    full_auto when operator left it on; the inverse — thread enabling
+    full_auto when operator left it off — is **not** honoured. This
+    mirrors the CONTEXT.md::full_auto_mode rule and the ADR 0005 cross-cut
+    "tightening only at narrower scope" invariant.
+
+    Callers without a thread context pass ``thread_id=None`` and get the
+    plain operator-scope value, identical to the pre-Phase-4 behaviour.
+    """
+    operator_value = bool(get_state(repo_root).get("full_auto_mode"))
+    if not operator_value or thread_id is None:
+        return operator_value
+    # Operator said yes — let the thread tighten it back down if it wants.
+    # Local import keeps acks.py free of a hard dependency on the broader
+    # settings_scoped module for non-thread callers.
+    from research_harness.settings_scoped import resolve_for_thread
+
+    resolved = resolve_for_thread(repo_root, thread_id)
+    if resolved.source_of("frontend.full_auto_mode") == "thread":
+        return bool(resolved.get_dotted("frontend.full_auto_mode"))
+    return operator_value
 
 
 def set_full_auto_mode(repo_root: Path, enabled: bool) -> None:
@@ -96,13 +118,16 @@ def set_full_auto_mode(repo_root: Path, enabled: bool) -> None:
     _save_local(repo_root, local)
 
 
-def requires_modal(repo_root: Path) -> bool:
+def requires_modal(repo_root: Path, thread_id: str | None = None) -> bool:
     """True iff the operator should see the per-phase execute_ack modal.
 
     Skipped when full_auto_mode is on. (subscription_ack is *not*
     bypassed by full_auto_mode — that's a deliberate safety choice.)
+
+    A thread may tighten this back on by disabling full_auto at thread
+    scope even when operator left it enabled — see :func:`full_auto_mode`.
     """
-    return not full_auto_mode(repo_root)
+    return not full_auto_mode(repo_root, thread_id)
 
 
 def make_execute_ack_record(phase: str, *, mode: str) -> dict[str, Any]:

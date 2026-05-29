@@ -345,6 +345,223 @@ completes the badge flips to either the matched existing domain or the
 newly scaffolded name. The transition is the user-visible signal that
 domain selection / scaffolding finished.
 
+## setting_scope
+
+The tier at which a configuration value lives. The harness recognises **three
+disjoint scopes**, surfaced and editable through [[operator_frontend]]:
+
+- **`project`** — checked-in defaults shared by everyone who clones the repo.
+  Lives in `settings.json` (git-tracked). Answers "what is this harness's
+  baseline behaviour?".
+- **`operator`** — single-machine, single-user choices that should *not*
+  travel with the code. Lives in `settings.local.json` (gitignored). Answers
+  "what has *this* operator on *this* machine consented to / installed?".
+  Examples: `frontend.full_auto_mode`, `frontend.subscription_ack_at`, the
+  set of data adapters this machine actually has on disk.
+- **`thread`** — choices that belong to one [[research_thread]] and should
+  not leak across threads. Lives inside `runs/threads/<thread_id>/thread.json`
+  (or a sibling override file). Answers "what did the operator decide for
+  *this* research arc specifically?". Example: MCP model selection, agent
+  max_rounds for this thread, which registered data adapter this thread
+  anchors against.
+
+Resolution order is **project → operator → thread**, with later scopes
+overriding earlier ones for the same field. Each field declares a
+`writable_at` permission list (subset of `{project, operator, thread}`);
+scopes outside that list cannot set the field. A field's resolved value
+is the highest-priority scope that has *any* value, falling through to
+the next scope only when absent — not deep-merged. Array fields follow
+the same rule: whole-array replace, no concat. (Concat-by-id semantics
+are deferred until a concrete use case demands them.)
+
+## setting_classification
+
+Working principle for assigning each settings field its
+[[setting_scope]] `writable_at` permission list:
+
+- **`project` = structural** — what kind of research this harness recognises
+  (auth policy, persona enforcement rules, schemas, publishing format,
+  backend definitions, the memory/lesson system's shape).
+- **`operator` = environmental** — what *this machine* / *this user* can do
+  and has consented to (data adapters actually installed on disk, subscription
+  consent, the active runtime backend choice, rate-limit backoff tuning).
+- **`thread` = experimental** — what *this research arc* chose (which MCP /
+  agent model, per-agent budgets and max_rounds, runner timeouts, AC accept
+  thresholds, rebuttal policy, production milestone count, memory
+  retrieval breadth, publication-gate on/off, optional `full_auto_mode`
+  *tightening*).
+
+Cross-cutting rules:
+
+- Tightening safety gates is always allowed at a narrower scope. Loosening
+  is never allowed at a narrower scope — e.g. `full_auto_mode` may be
+  *disabled* at thread scope even if operator enabled it, but cannot be
+  *enabled* at thread scope when operator left it off.
+- The `runtime.default_backend` / `llm_orchestrator.backend` choice does
+  not descend to thread scope: a thread-level backend swap would silently
+  break the reproducibility of that thread's phase artifacts.
+- The lesson / failure-distillation memory parameters stay project-scoped:
+  the system's purpose is cross-thread learning, so per-thread overrides
+  defeat the design.
+
+## resolved_settings_snapshot
+
+Per-phase immutable record of the resolved [[setting_scope]] values that a
+given phase actually saw. Written into the phase's artifact directory at
+phase start (e.g. `runs/threads/<tid>/grilling/resolved_settings_snapshot.json`,
+`market/...`, `refine/...`, `production/...`). Allows thread-level
+settings to remain mutable between phases without sacrificing the
+reproducibility audit trail.
+
+Shape per field: `{value, source}` where `source ∈ {project, operator,
+thread, schema_default}`. Recording the source — not just the value —
+makes it possible to answer "why did this phase use X instead of the
+default?" without re-resolving from scratch.
+
+Retroactive editing of past phase snapshots is disallowed. Re-running
+a phase under different settings goes into a sibling attempt directory
+(`<phase>.attempt2/`, mirroring the existing
+`production.attempt_reject_<ts>/` pattern), each attempt carrying its
+own snapshot.
+
+## field_registry
+
+Single in-code dictionary that drives the entire [[setting_scope]]
+system. Each entry keys a **dotted path** (e.g.
+`"runtime.llm_orchestrator.mcp.default_model"`) to its `FieldSpec`,
+which carries: `writable_at` (subset of `{project, operator, thread}`),
+the field's type and validation rules (enum, min/max, regex), and an
+optional `enum_source` dotted path for enums whose allowed values live
+elsewhere in settings (e.g. the MCP model dropdown reads its options
+from `runtime.llm_orchestrator.mcp.allowed_models`).
+
+Glob keys (e.g. `"runtime.agent_max_rounds.*"`) cover families of
+dynamically-keyed fields without one entry per role.
+
+Registration policy is **whole-surface (D-2)**: every leaf in
+`settings.json` plus `settings.local.json` plus thread-overridable
+fields gets a registry entry. Fields whose `writable_at` is `["project"]`
+appear in [[operator_frontend]] as read-only — the goal is "one screen
+shows the full configuration of this harness", not just "the editable
+parts". Population of the registry is incremental; until a field is
+registered it falls back to direct settings.json reads (project-only
+behaviour), so adoption can land in slices.
+
+Resolved values, ad-hoc resolvers (`resolve_agent_model`,
+`resolve_agent_budget`, `resolve_agent_max_rounds`) and the JSON Schema
+that [[operator_frontend]] consumes to auto-generate forms all derive
+from this single registry. No second source of truth.
+
+## resolved_settings
+
+In-memory dict-like view of every [[field_registry]] entry's value
+after [[setting_scope]] resolution for one (thread, phase) context.
+Constructed once at phase entry, written verbatim to
+[[resolved_settings_snapshot]] on disk, and passed downstream in place
+of the raw `settings: dict[str, Any]` argument every existing call site
+takes today.
+
+Implements `Mapping`, so existing `settings.get(...)` /
+`settings["runtime"]["agent_max_rounds"]` call sites keep working
+unchanged. New call sites prefer the dotted-path API
+(`resolved["runtime.agent_max_rounds.grilling_agent"]`) and the
+`source_of(path)` accessor for "did this come from thread, operator,
+project, or default?".
+
+`to_dict()` serialises to plain JSON for subprocess hand-off (LocalRunner,
+experiment template entrypoints), so downstream code that runs in a
+spawned Python interpreter does not need any new code paths.
+
+The MCP server is stateless across threads, so it does *not* hold a
+ResolvedSettings instance; every tool handler that needs settings
+resolves on demand using the `thread_id` argument already present in
+its request payload.
+
+## thread_settings_file
+
+Per-thread file `runs/threads/<thread_id>/thread_settings.json` holding
+the thread-scope override values for that [[research_thread]]. Kept
+separate from `thread.json` to isolate user-driven edits from
+supervisor-driven runtime state — the supervisor rewrites `thread.json`
+(phase status, `execute_acks[]`) on every phase transition, while the
+operator may edit settings at any time through [[operator_frontend]];
+splitting the files removes the race entirely and lets each side use
+plain tempfile + atomic-rename writes without locks.
+
+Shape: a flat dotted-path → value map, matching the [[field_registry]]
+key shape, so write paths can patch-update a single key without
+round-tripping nested dicts:
+
+```json
+{
+  "runtime.llm_orchestrator.mcp.default_model": "claude-opus-4-7",
+  "runtime.agent_max_rounds.grilling_agent": 12
+}
+```
+
+Only fields whose `writable_at` includes `thread` may appear in this
+file; any other key fails resolution-time validation.
+
+## settings_validation
+
+Two-layer validation for [[field_registry]] writes:
+
+- **HTTP boundary** — the frontend `POST /settings/...` handler runs the
+  field's registry schema (type / range / enum / regex) over the
+  incoming payload and rejects with 400 on violation. Single-field;
+  cheap; bounces obvious errors before disk touch.
+- **Resolution time** — when [[resolved_settings]] is built at phase
+  entry, a cross-field validator runs (e.g. `mcp.default_model` must
+  lie inside `mcp.allowed_models`; `deployment`-scope claims require
+  at least one `data_adapters.registered` entry). Violations refuse
+  phase launch and surface in [[operator_frontend]] with the offending
+  field + scope highlighted.
+
+Silent fallback on bad values is **not** allowed — every invalid value
+raises explicitly. Quietly substituting a default would hide why the
+operator's edit did not take effect.
+
+`ui_editable_in` on a FieldSpec is a subset of `writable_at` and gates
+*frontend* edits only — values may still be set by hand-editing the
+underlying file. Defaults to equal to `writable_at` when unspecified;
+narrowed only for structurally-sensitive fields (auth policy, persona
+enforcement, schema definitions) where a one-click toggle would be a
+foot-gun.
+
+## settings_ui
+
+[[operator_frontend]] surface for editing every [[field_registry]]
+entry. Three tabs — `Project` / `Operator` / `Thread` — corresponding
+1:1 with [[setting_scope]] tiers. The `Thread` tab is enabled only
+when a [[research_thread]] is selected from the sidebar.
+
+Rendering strategy is **schema-driven hybrid**: a small set of Jinja2
+auto-widgets (scalar string, enum, integer, float, boolean,
+role-keyed dict) covers most fields by reading `FieldSpec.type`
+directly. Complex fields (e.g. `data_adapters.registered`, the
+`mcp.allowed_models` list editor) opt into a named `custom_widget`
+template under `templates/settings/widgets/`. Adding a new field is a
+one-line registry edit by default; the custom widget is a per-field
+override, not the norm.
+
+Cross-tab affordances:
+
+- **Project tab git badge** — a small `M` indicator appears when
+  `settings.json` has uncommitted changes, reminding the operator
+  that other clones won't see the edit until it's committed.
+- **Read-only fields** — entries whose `ui_editable_in` excludes the
+  current scope render as a greyed box with a "structural — edit in
+  source / git" note.
+- **Thread tab inheritance model** — `Thread` shows **only the fields
+  currently overridden**, not the full settings tree. A separate
+  "Add override…" affordance opens a searchable field picker. This
+  keeps the thread page short (95% of fields stay at project default)
+  and makes "what is special about this thread?" instantly legible.
+- **Resolution-time violations** — when a phase launch is refused
+  due to cross-field invariant failure (see [[settings_validation]]),
+  the offending field is highlighted with the violation message in a
+  sticky banner that links directly to the field.
+
 ## grilling action
 
 Action tokens the grilling LLM emits each round. Extends the original
@@ -380,3 +597,129 @@ One of three protocol tokens the research_refiner LLM emits each round:
   after every `dataset_spec` it lists has been verified by a successful
   `PROPOSE_DATASET` in this session (or explicitly marked
   `unresolved_dataset_specs` when max_rounds was hit).
+
+## external_falsifier
+
+The harness-owned check that goal-achievement is graded against, recorded
+on the `feasibility_envelope`. Its defining property (ADR 0006) is that it
+is **registered before the claim is designed and owned by something other
+than the production tree-search that is trying to win** — the operator, or
+the supervisor's auto-bootstrap acting as the operator's stand-in. The
+production run, which is the success-seeking generator, must not author its
+own falsifier; that is why `registered_by` has no `worker` value.
+
+Three kinds:
+
+- `real_holdout` — the strong falsifier: a predicate evaluated on a
+  registered `real_adapter` data source. The only kind that fully closes
+  the generator-judges-itself loop.
+- `cross_generator_transfer` — the weak air-gapped falsifier: the worker's
+  pipeline ranking under generator A must be preserved on a held-out
+  **distinct** generator B (Spearman ρ ≥ threshold). Raises the cost of
+  gaming without eliminating it, because air-gapped even generator B is
+  ultimately LLM-touched.
+- `none` — no falsifier; the envelope's [[max_attestable_status]] is
+  capped at `unverified_screen` and `achieved=true` becomes structurally
+  impossible.
+
+## max_attestable_status
+
+Harness-**stamped** field on the `feasibility_envelope` (never
+operator-writable) that records the ceiling on goal achievement for the
+thread. Derived purely from [[external_falsifier]]: `goal_achieved` when a
+falsifier with `kind != none` is registered, otherwise `unverified_screen`.
+Derived fresh at the gate even for hand-written envelopes, so the operator
+cannot widen the ceiling by stamping the field directly. The attestation
+gate refuses `achieved=true` whenever this is `unverified_screen`.
+
+## falsifier_result
+
+The outcome of evaluating the [[external_falsifier]] predicate over
+held-out data, produced by a harness module (`research_harness/falsifier.py`)
+and **not** by worker experiment code. Carries `{passed, observed,
+predicate, holdout_source_id, produced_by}`. The `passed` boolean is
+derived by the harness from a deterministic comparison — the worker cannot
+stamp it. A `passed=true` result computed against the envelope-registered
+holdout (matching `holdout_source_id` and `kind`) is the **only** path to
+`user_goal_attestation.achieved=true`.
+
+## attested_status
+
+First-class status on the `user_goal_attestation`, harness-stamped (the LLM
+does not assert it):
+
+- `goal_achieved` — `achieved=true`, backed by a passing
+  [[external_falsifier]].
+- `unverified_screen` — a coherent screening result with no falsifier
+  registrable: the **honest air-gapped ceiling**. A recorded terminal
+  outcome (`is_terminal` → `accept_with_unverified_screen`), NOT a failure
+  to retry forever, and distinct from a mid-loop honest_failure.
+- `not_achieved` — a falsifier is registrable but the goal is not met;
+  drives more research or root diversification.
+
+## scope_attainment
+
+Record on the `user_goal_attestation` (ADR 0006 incentive integrity) of how
+far the attested claim narrowed relative to the **frozen seed**:
+`{seed_target_scope, attested_scope, narrowed}`. The seed is the
+`feasibility_envelope.operator_intent.target_deploy_grade_scope`; a
+`narrowed=true` win is meant to rank below a full-scope honest attempt, so
+narrowing-to-win is visible rather than laundered into an indistinguishable
+accept.
+
+## premature_termination
+
+The single disease the harness fights (ADR 0007). The system avoids the
+expensive middle of research (digging) and bolts for an exit. It has two
+exits, and they are the *same* disease, not two: **declare victory and quit**
+(fake strength — scope-narrow, reorder a metric, manufacture a recovered
+sub-claim → [[external_falsifier]] gate locks this door) and **declare
+weakness and quit** (lazy honesty → the [[investigation_depth]] gate locks
+this door). Locking only one door pushes the system out the other; RSTF is
+what happens when the weakness door was the only one shut. The reward axis is
+therefore **earned depth, not polarity**: shallow-positive and
+shallow-negative both score low; deep-positive and deep-negative both score
+high.
+
+## investigation_depth
+
+Harness-computed measure of how much genuine digging a thread did, the reward
+axis of ADR 0007. `{distinct_attempts, tree_distinct_attempts,
+narrowing_pivots, killed_hypotheses, archived_attempts}`. Gates
+`render_honest_failure_paper`: a weak/negative terminal renders only when
+`distinct_attempts >= min_distinct_attempts` AND a [[load_bearing_mechanism]]
+is stated. The mirror of the [[external_falsifier]] gate — one door each.
+
+## distinct_attempt
+
+A genuine, non-relabel research attempt that counts toward
+[[investigation_depth]]. A node that *ran* (status produced evidence) and is
+**not** a scope-narrowing relabel of its parent. Crucially, a narrowing pivot
+(a `feasibility_narrowed` formulation, a `deploy_grade_scope` weaker than the
+root's, or an `acf_feasibility` node) is **excluded** and surfaced as
+`narrowing_pivots` — collapsed-branch → auto-narrow is repackaging the same
+failure smaller, not digging, so the `auto_resolver`'s narrowing
+auto-dispatch earns no depth credit (it is penalised, not rewarded).
+
+## load_bearing_mechanism
+
+Field on the `user_goal_attestation` (ADR 0007): for a weak/negative
+terminal, the EARNED conclusion — *why* the direction fails (or what would
+have to be true to succeed) and how that breakage constrains the future. It
+is condition (a) of the [[investigation_depth]] gate. Not a limitations-section
+flourish: it must name the specific load-bearing assumption that broke and
+what its breakage predicts. A give-up with no mechanism is refused.
+
+## adversarial_dominant_aggregation
+
+ADR 0007 lever 0 (free): a grounded critic kill
+(`critic_review.verdict_candidate == "contradicted"` or `blocking == true`)
+**dominates** aggregation — it freezes the claim. A positive
+`orchestrator_reduction.final_verdict` or AC `accept` is refused while any
+kill is *undefeated*. A kill is **defeated on merits** only when
+`orchestrator_reduction.blocking_objections` names its `critic_id` with
+`defeated=true` and a substantive `defeat_rebuttal` that engages the
+objection's grounds — relabeling / scope-narrowing does not count. The
+harness's persona pack already generates kills; this stops them being
+reconciled into a "provides" synthesis, recovering decorrelation already paid
+for at zero model cost.

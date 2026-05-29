@@ -1,0 +1,137 @@
+{# Auto Jinja2 widgets for FIELD_REGISTRY-driven settings forms.
+
+   Each macro renders one FieldSpec given its resolved value. ``editable``
+   gates whether the input element accepts edits — when False, the value
+   is shown but the input is disabled so the operator still sees the
+   harness's full configuration in one place per ADR 0005.
+
+   Custom widgets (e.g. data_adapters_editor) intercept in the caller
+   based on FieldSpec.custom_widget; everything else falls through to
+   render_auto().
+#}
+
+{% macro _label(spec, source) %}
+  <div class="setting-label">
+    <code class="setting-path">{{ spec.path }}</code>
+    {% if source and source != 'schema_default' %}
+      <span class="badge {% if source == 'thread' %}live{% elif source == 'operator' %}auto{% else %}{% endif %}"
+            style="font-size: 0.7em; margin-left: 0.5em;">{{ source }}</span>
+    {% endif %}
+  </div>
+  {% if spec.description %}
+    <div class="hint" style="font-size: 0.85em;">{{ spec.description }}</div>
+  {% endif %}
+{% endmacro %}
+
+{% macro render_string(spec, value, editable=True, source=None) %}
+  <fieldset class="setting">
+    {{ _label(spec, source) }}
+    <input type="text" name="{{ spec.path }}" value="{{ value|default('', true) }}"
+           {% if spec.regex %}pattern="{{ spec.regex }}"{% endif %}
+           {% if not editable %}disabled{% endif %}>
+  </fieldset>
+{% endmacro %}
+
+{% macro render_integer(spec, value, editable=True, source=None) %}
+  <fieldset class="setting">
+    {{ _label(spec, source) }}
+    <input type="number" step="1" name="{{ spec.path }}"
+           value="{{ value if value is not none else '' }}"
+           {% if spec.min is not none %}min="{{ spec.min }}"{% endif %}
+           {% if spec.max is not none %}max="{{ spec.max }}"{% endif %}
+           {% if not editable %}disabled{% endif %}>
+  </fieldset>
+{% endmacro %}
+
+{% macro render_float(spec, value, editable=True, source=None) %}
+  <fieldset class="setting">
+    {{ _label(spec, source) }}
+    <input type="number" step="any" name="{{ spec.path }}"
+           value="{{ value if value is not none else '' }}"
+           {% if spec.min is not none %}min="{{ spec.min }}"{% endif %}
+           {% if spec.max is not none %}max="{{ spec.max }}"{% endif %}
+           {% if not editable %}disabled{% endif %}>
+  </fieldset>
+{% endmacro %}
+
+{% macro render_boolean(spec, value, editable=True, source=None) %}
+  <fieldset class="setting">
+    {{ _label(spec, source) }}
+    <label class="toggle">
+      <input type="checkbox" name="{{ spec.path }}" value="true"
+             {% if value %}checked{% endif %}
+             {% if not editable %}disabled{% endif %}>
+      <span>{{ "On" if value else "Off" }}</span>
+    </label>
+    {# Hidden field so a bare unchecked-box still posts. Forms only send
+       checkbox names when checked; the hidden 'false' provides a baseline. #}
+    {% if editable %}
+      <input type="hidden" name="__bool__{{ spec.path }}" value="present">
+    {% endif %}
+  </fieldset>
+{% endmacro %}
+
+{% macro render_enum(spec, value, allowed, editable=True, source=None) %}
+  <fieldset class="setting">
+    {{ _label(spec, source) }}
+    <select name="{{ spec.path }}" {% if not editable %}disabled{% endif %}>
+      {% if value is none or value not in (allowed or []) %}
+        <option value="{{ value|default('', true) }}" selected disabled>
+          {{ value if value else "(unset)" }} {% if value and allowed %}(not in allowed_models!){% endif %}
+        </option>
+      {% endif %}
+      {% for v in (allowed or []) %}
+        <option value="{{ v }}" {% if v == value %}selected{% endif %}>{{ v }}</option>
+      {% endfor %}
+    </select>
+  </fieldset>
+{% endmacro %}
+
+{% macro render_int_or_unlimited(spec, value, editable=True, source=None) %}
+  <fieldset class="setting">
+    {{ _label(spec, source) }}
+    <input type="text" name="{{ spec.path }}"
+           value="{{ value if value is not none else 'unlimited' }}"
+           placeholder="integer or 'unlimited'"
+           {% if not editable %}disabled{% endif %}>
+  </fieldset>
+{% endmacro %}
+
+{% macro render_list(spec, value, editable=True, source=None) %}
+  <fieldset class="setting">
+    {{ _label(spec, source) }}
+    <details>
+      <summary style="cursor: pointer;">
+        {{ (value|length) if value is iterable else 0 }} item{% if not value or (value|length) != 1 %}s{% endif %}
+        {% if spec.path == "data_adapters.registered" %}
+          — <a href="/datasets">Manage on Data adapters page →</a>
+        {% endif %}
+      </summary>
+      <pre style="font-size: 0.8em; overflow-x: auto;">{{ value|pretty_json }}</pre>
+    </details>
+  </fieldset>
+{% endmacro %}
+
+{% macro render_timestamp(spec, value, editable=True, source=None) %}
+  <fieldset class="setting">
+    {{ _label(spec, source) }}
+    <code style="opacity: 0.75;">{{ value if value else "(not set)" }}</code>
+  </fieldset>
+{% endmacro %}
+
+{% macro render_auto(spec, value, source=None, allowed=None, editable=True) %}
+  {% if spec.type == "string" %}{{ render_string(spec, value, editable=editable, source=source) }}
+  {% elif spec.type == "integer" %}{{ render_integer(spec, value, editable=editable, source=source) }}
+  {% elif spec.type == "float" %}{{ render_float(spec, value, editable=editable, source=source) }}
+  {% elif spec.type == "boolean" %}{{ render_boolean(spec, value, editable=editable, source=source) }}
+  {% elif spec.type == "enum" %}{{ render_enum(spec, value, allowed, editable=editable, source=source) }}
+  {% elif spec.type == "int_or_unlimited" %}{{ render_int_or_unlimited(spec, value, editable=editable, source=source) }}
+  {% elif spec.type == "list" %}{{ render_list(spec, value, editable=editable, source=source) }}
+  {% elif spec.type == "timestamp" %}{{ render_timestamp(spec, value, editable=editable, source=source) }}
+  {% else %}
+    <fieldset class="setting">
+      {{ _label(spec, source) }}
+      <code style="opacity: 0.75;">{{ value|pretty_json }} <em>(type {{ spec.type }} not yet rendered)</em></code>
+    </fieldset>
+  {% endif %}
+{% endmacro %}

@@ -46,6 +46,7 @@ SCHEMA_FILES = {
     "user_goal_attestation": "user_goal_attestation.schema.json",
     "alternative_root_proposal": "alternative_root_proposal.schema.json",
     "feasibility_envelope": "feasibility_envelope.schema.json",
+    "falsifier_result": "falsifier_result.schema.json",
 }
 
 

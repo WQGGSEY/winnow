@@ -33,6 +33,10 @@ from research_harness.config import (
     resolve_agent_model,
 )
 from research_harness.datasets import materialize
+from research_harness.settings_scoped import (
+    resolve_for_thread,
+    thread_id_from_run_dir,
+)
 from research_harness.orchestrator.experiment_plan import list_available_domains
 from research_harness.schemas.validator import (
     SchemaValidationError,
@@ -98,7 +102,16 @@ def run_research_refiner(
         )
 
     repo_root = repo_root.resolve()
-    settings = load_settings(repo_root)
+    # Resolve plan_id and run_dir up front so we can read thread-scope
+    # overrides via thread_id_from_run_dir before resolving settings.
+    plan_id = plan_id or "rrp_" + uuid.uuid4().hex[:12]
+    run_dir = (run_dir or repo_root / "runs" / "research_refiner" / plan_id).resolve()
+    run_dir.mkdir(parents=True, exist_ok=True)
+    plan_path = run_dir / "refined_research_plan.json"
+    manifest_path = run_dir / "dataset_manifest.json"
+
+    load_settings(repo_root)  # retained for its policy / framework_invariants check
+    settings = resolve_for_thread(repo_root, thread_id_from_run_dir(run_dir))
     live_backend = (
         settings.get("runtime", {})
         .get("worker_backends", {})
@@ -117,12 +130,6 @@ def run_research_refiner(
         except Exception:
             allowed_domains = []
     allowed_domains = list(allowed_domains or [])
-
-    plan_id = plan_id or "rrp_" + uuid.uuid4().hex[:12]
-    run_dir = (run_dir or repo_root / "runs" / "research_refiner" / plan_id).resolve()
-    run_dir.mkdir(parents=True, exist_ok=True)
-    plan_path = run_dir / "refined_research_plan.json"
-    manifest_path = run_dir / "dataset_manifest.json"
 
     created_at = datetime.now(timezone.utc).isoformat()
     base_plan: dict[str, Any] = {

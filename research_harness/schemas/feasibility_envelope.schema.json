@@ -104,6 +104,44 @@
       },
       "additionalProperties": false
     },
+    "external_falsifier": {
+      "type": "object",
+      "description": "ADR 0006: the harness-owned check that goal-achievement is graded against, registered BEFORE the claim is designed and OWNED by the operator (or supervisor auto-bootstrap acting as operator stand-in) — never by the production tree-search. 'kind=none' (or absence) caps max_attestable_status at 'unverified_screen': achieved=true becomes structurally impossible. A passing falsifier_result computed against holdout_source_id is the only path to achieved=true.",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["real_holdout", "cross_generator_transfer", "none"],
+          "description": "real_holdout = predicate evaluated on a registered real_adapter (strong falsifier). cross_generator_transfer = ranking preserved on a held-out DISTINCT generator B (weak air-gapped falsifier). none = no falsifier; ceiling is unverified_screen."
+        },
+        "holdout_source_id": {
+          "type": "string",
+          "description": "real_adapter id (real_holdout) or the held-out generator-B label (cross_generator_transfer). MUST differ from the data source the worker fit on. Required unless kind=none."
+        },
+        "predicate": {
+          "type": "object",
+          "required": ["metric", "op", "threshold"],
+          "description": "The deterministic pass condition the harness computes over the holdout. For cross_generator_transfer, metric is the rank-correlation key (e.g. 'spearman_rho').",
+          "properties": {
+            "metric": { "type": "string", "minLength": 1 },
+            "op": { "type": "string", "enum": [">=", ">", "<=", "<", "=="] },
+            "threshold": { "type": "number" }
+          },
+          "additionalProperties": false
+        },
+        "registered_by": {
+          "type": "string",
+          "enum": ["operator", "supervisor_bootstrap", "adversary_pass"],
+          "description": "Who registered this falsifier. 'worker' is intentionally absent from the enum — the success-seeking run must not author its own falsifier."
+        }
+      },
+      "additionalProperties": false
+    },
+    "max_attestable_status": {
+      "type": "string",
+      "enum": ["goal_achieved", "unverified_screen"],
+      "description": "Harness-STAMPED at submit_feasibility_envelope time from external_falsifier (NOT operator-writable). 'goal_achieved' only when a falsifier with kind!=none is registered; otherwise 'unverified_screen'. The attestation gate refuses achieved=true when this is 'unverified_screen'."
+    },
     "notes": { "type": "string" }
   },
   "additionalProperties": false

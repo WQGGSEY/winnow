@@ -56,6 +56,37 @@
     "synthetic_to_real_caveat": {
       "type": "string",
       "description": "Optional but recommended. If the evidence is synthetic-only, explicitly state how it constrains conclusions about the user's real environment."
+    },
+    "attested_status": {
+      "type": "string",
+      "enum": ["goal_achieved", "unverified_screen", "not_achieved"],
+      "description": "ADR 0006: harness-STAMPED first-class status (not the bare achieved boolean). goal_achieved = achieved=true backed by a passing external falsifier. unverified_screen = a coherent screening result with no falsifier registrable (the air-gapped honest ceiling) — a recorded terminal, NOT a failure. not_achieved = genuine non-achievement requiring more research / diversification. Stamped by submit_professor_user_goal_attestation; the gate derives it, the LLM does not assert it."
+    },
+    "load_bearing_mechanism": {
+      "type": "string",
+      "description": "ADR 0007: for a weak/negative terminal, the EARNED conclusion — WHY the direction fails (or what would have to be true to succeed) and how that constrains the future. This is condition (a) of the depth gate; render_honest_failure_paper refuses a shallow give-up that has no mechanism. Not a limitations-section flourish: name the specific load-bearing assumption that broke and what its breakage predicts.",
+      "minLength": 80
+    },
+    "scope_attainment": {
+      "type": "object",
+      "description": "ADR 0006 (incentive integrity): records narrowing relative to the frozen seed, so a claim that narrowed to win is visibly below a full-scope attempt rather than laundered into an indistinguishable accept.",
+      "properties": {
+        "seed_target_scope": {
+          "type": "string",
+          "enum": ["deployment", "feasibility", "directional"],
+          "description": "feasibility_envelope.operator_intent.target_deploy_grade_scope — what the operator originally asked for."
+        },
+        "attested_scope": {
+          "type": "string",
+          "enum": ["deployment", "feasibility", "directional"],
+          "description": "The scope this attestation actually stands at."
+        },
+        "narrowed": {
+          "type": "boolean",
+          "description": "True when attested_scope is weaker than seed_target_scope. A narrowed=true win must rank below a full-scope honest attempt."
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

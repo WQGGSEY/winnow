@@ -1,0 +1,181 @@
+{% import "settings_widgets.html" as w %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings — Winnow</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js"></script>
+  <style>
+    .scope-tabs { display: flex; gap: 0; margin-bottom: 2rem; border-bottom: 1px solid #444; }
+    .scope-tabs a {
+      padding: 0.75rem 1.5rem; text-decoration: none; color: inherit; opacity: 0.6;
+      border-bottom: 2px solid transparent;
+    }
+    .scope-tabs a.active { opacity: 1; border-bottom-color: currentColor; }
+    .scope-tabs a.disabled { opacity: 0.3; pointer-events: none; }
+    .scope-tabs .tab-badge { font-size: 0.7em; margin-left: 0.5em; opacity: 0.7; }
+    .setting { margin-bottom: 1.25rem; border: none; padding: 0; }
+    .setting-label { margin-bottom: 0.3rem; }
+    .setting-path { font-size: 0.85em; opacity: 0.85; }
+    .setting input[type="text"], .setting input[type="number"], .setting select {
+      width: 100%; max-width: 480px;
+    }
+    .setting-group {
+      margin-bottom: 2rem; padding: 1rem 1.25rem;
+      border: 1px solid #2a2a2a; border-radius: 4px;
+    }
+    .setting-group h3 {
+      margin: 0 0 1rem 0; font-size: 1em;
+      text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.75;
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-title">
+      <a href="/" style="color: inherit; text-decoration: none;">← Winnow</a>
+    </div>
+    <div class="topbar-meta">
+      <span style="opacity: 0.7">Settings</span>
+    </div>
+  </header>
+
+  <main class="app" style="grid-template-columns: 1fr;">
+    <section class="main-pane" style="max-width: 960px; margin: 0 auto; padding: 2rem;">
+
+      <h1 style="margin-top: 0;">Settings</h1>
+
+      <div class="scope-tabs">
+        <a href="/settings?scope=project"
+           class="{% if scope == 'project' %}active{% endif %}">
+          Project
+          {% if project_dirty %}<span class="tab-badge" title="settings.json has uncommitted changes">M</span>{% endif %}
+        </a>
+        <a href="/settings?scope=operator"
+           class="{% if scope == 'operator' %}active{% endif %}">
+          Operator
+          <span class="tab-badge">this machine</span>
+        </a>
+        {% if active_thread_id %}
+          <a href="/settings?scope=thread&thread_id={{ active_thread_id }}"
+             class="{% if scope == 'thread' %}active{% endif %}">
+            Thread
+            <span class="tab-badge">{{ active_thread_id|truncate_chars(18) }}</span>
+          </a>
+        {% else %}
+          <a class="disabled" title="Pick a thread from the sidebar first.">Thread <span class="tab-badge">none selected</span></a>
+        {% endif %}
+      </div>
+
+      {% if flash %}
+        <div class="callout" style="margin-bottom: 1.5rem;">{{ flash }}</div>
+      {% endif %}
+      {% if error %}
+        <div class="callout" style="margin-bottom: 1.5rem; border-color: #c33; background: rgba(204,51,51,0.08);">
+          <strong>Validation error:</strong> {{ error }}
+        </div>
+      {% endif %}
+      {% if violations %}
+        <div class="callout" style="margin-bottom: 1.5rem; border-color: #c33; background: rgba(204,51,51,0.08);">
+          <strong>Cross-field violations (would block phase launch):</strong>
+          <ul style="margin: 0.5rem 0 0 1.25rem;">
+            {% for v in violations %}<li>{{ v }}</li>{% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+
+      {% if scope == 'project' %}
+        <p class="hint">
+          Project defaults live in <code>settings.json</code> and are checked into git.
+          Edits here become a regular git diff — commit them to share with other clones.
+        </p>
+      {% elif scope == 'operator' %}
+        <p class="hint">
+          Operator state lives in <code>settings.local.json</code>, which is gitignored.
+          Edits here stay on this machine and never travel with the code.
+        </p>
+      {% endif %}
+
+      {% if scope in ('project', 'operator') %}
+        <form method="post" action="/api/settings/{{ scope }}"
+              style="display: flex; flex-direction: column; gap: 0;">
+          {% for group, specs in grouped.items() %}
+            <div class="setting-group">
+              <h3>{{ group }}</h3>
+              {% for spec in specs %}
+                {% set editable = scope in spec.effective_ui_editable_in %}
+                {% set src = sources.get(spec.path) %}
+                {% set val = values.get(spec.path) %}
+                {% set allowed = enum_lookup(spec) %}
+                {{ w.render_auto(spec, val, source=src, allowed=allowed, editable=editable) }}
+              {% endfor %}
+            </div>
+          {% endfor %}
+          <div style="display: flex; gap: 0.75rem;">
+            <button type="submit" class="btn primary">Save {{ scope }} settings</button>
+            <a class="btn" href="/settings?scope={{ scope }}">Cancel</a>
+          </div>
+        </form>
+      {% else %}
+        {# Thread tab — override-only view + add picker #}
+        <p class="hint">
+          Only fields where this thread *overrides* the project/operator default are shown.
+          Most threads will have zero overrides — that's expected. Tighten what you need to tighten, leave the rest alone.
+        </p>
+
+        {% if thread_overrides %}
+          <div class="setting-group">
+            <h3>Current overrides</h3>
+            {% for path, val in thread_overrides.items() %}
+              {% set spec = find_spec_func(path) %}
+              <div class="setting" style="display: flex; align-items: flex-start; gap: 1rem;">
+                <div style="flex: 1;">
+                  <code class="setting-path">{{ path }}</code>
+                  <span class="badge live" style="font-size: 0.7em; margin-left: 0.5em;">thread</span>
+                  <pre style="margin: 0.3rem 0 0 0; font-size: 0.85em;">{{ val|pretty_json }}</pre>
+                </div>
+                <form method="post" action="/api/settings/thread/{{ active_thread_id }}/remove"
+                      style="margin: 0;">
+                  <input type="hidden" name="path" value="{{ path }}">
+                  <button type="submit" class="btn" style="font-size: 0.85em;">Remove</button>
+                </form>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p style="opacity: 0.6; margin-bottom: 2rem;">No thread-scope overrides set.</p>
+        {% endif %}
+
+        <div class="setting-group">
+          <h3>Add override</h3>
+          <form method="post" action="/api/settings/thread/{{ active_thread_id }}"
+                style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <label>
+              <span>Field</span>
+              <select name="path" required onchange="this.form.value.placeholder = this.options[this.selectedIndex].dataset.placeholder || ''">
+                <option value="" disabled selected>Pick a field to override…</option>
+                {% for spec in thread_overridable %}
+                  <option value="{{ spec.path }}"
+                          data-placeholder="{{ spec.type }}"
+                          {% if spec.path in thread_overrides %}disabled{% endif %}>
+                    {{ spec.path }} ({{ spec.type }})
+                  </option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>Value (typed; booleans accept "true"/"false")</span>
+              <input type="text" name="value" required>
+            </label>
+            <button type="submit" class="btn primary">Add override</button>
+          </form>
+        </div>
+      {% endif %}
+
+    </section>
+  </main>
+</body>
+</html>

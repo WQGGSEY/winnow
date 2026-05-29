@@ -25,6 +25,10 @@ from research_harness.schemas.validator import (
     SchemaValidationError,
     validate_named_schema,
 )
+from research_harness.settings_scoped import (
+    resolve_for_thread,
+    thread_id_from_run_dir,
+)
 
 
 BILLING_ACK_ENV = "RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE"
@@ -117,7 +121,16 @@ def run_grilling_session(
         )
 
     repo_root = repo_root.resolve()
-    settings = load_settings(repo_root)
+    # Compute run_dir first so we can infer the thread context (if any)
+    # before resolving thread-overridable settings. CLI-driven runs land
+    # outside the runs/threads/<tid>/... layout and resolve to project +
+    # operator scope only.
+    session_id = session_id or _new_session_id()
+    run_dir = (run_dir or repo_root / "runs" / "grilling" / session_id).resolve()
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    load_settings(repo_root)  # retained for its policy / framework_invariants check
+    settings = resolve_for_thread(repo_root, thread_id_from_run_dir(run_dir))
     live_backend = (
         settings.get("runtime", {})
         .get("worker_backends", {})
@@ -125,8 +138,9 @@ def run_grilling_session(
     )
     model = resolve_agent_model(settings, "grilling_agent")
     max_budget = resolve_agent_budget(settings, "grilling_agent")
-    # If the caller passed the default sentinel, let settings.json
-    # override it (including the "unlimited" option which maps to None).
+    # If the caller passed the default sentinel, let settings (now
+    # thread-aware) override it — including the "unlimited" option which
+    # maps to None.
     if max_rounds == DEFAULT_MAX_ROUNDS:
         max_rounds = resolve_agent_max_rounds(
             settings, "grilling_agent", fallback=DEFAULT_MAX_ROUNDS
@@ -138,10 +152,6 @@ def run_grilling_session(
         except Exception:
             allowed_domains = []
     allowed_domains = list(allowed_domains or [])
-
-    session_id = session_id or _new_session_id()
-    run_dir = (run_dir or repo_root / "runs" / "grilling" / session_id).resolve()
-    run_dir.mkdir(parents=True, exist_ok=True)
     session_path = run_dir / "grilling_session.json"
 
     created_at = created_at_override or datetime.now(timezone.utc).isoformat()
@@ -951,6 +961,8 @@ def extract_user_goal_anchor_candidates(user_goal: str) -> list[dict[str, Any]]:
             pos = lower.find(trigger, idx)
             if pos < 0:
                 break
+            # Capture a window around the trigger: back to nearest delimiter,
+            # forward to nearest delimiter, capped at 80 chars.
             start = pos
             while start > 0 and text[start - 1] not in delimiters and pos - start < 40:
                 start -= 1
