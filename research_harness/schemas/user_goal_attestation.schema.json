@@ -59,8 +59,18 @@
     },
     "attested_status": {
       "type": "string",
-      "enum": ["goal_achieved", "unverified_screen", "not_achieved"],
-      "description": "ADR 0006: harness-STAMPED first-class status (not the bare achieved boolean). goal_achieved = achieved=true backed by a passing external falsifier. unverified_screen = a coherent screening result with no falsifier registrable (the air-gapped honest ceiling) — a recorded terminal, NOT a failure. not_achieved = genuine non-achievement requiring more research / diversification. Stamped by submit_professor_user_goal_attestation; the gate derives it, the LLM does not assert it."
+      "enum": ["goal_achieved", "construct_valid_screen", "unverified_screen", "not_achieved"],
+      "description": "Harness-STAMPED first-class status (not the bare achieved boolean), keyed to verdict_strength (ADR 0008). goal_achieved = transfer_valid (a real referent's falsifier passed — reality-close). construct_valid_screen = a funded construct-adversary failed to break the frozen question (Axis 1; strongest air-gapped terminal; necessary, NOT sufficient). unverified_screen = internally_valid floor (no funded adversary survived yet). not_achieved = a real referent is registered but its falsifier hasn't passed (retry). The gate derives it; the LLM does not assert it."
+    },
+    "verdict_strength": {
+      "type": "string",
+      "enum": ["internally_valid", "construct_valid", "transfer_valid"],
+      "description": "ADR 0008: harness-DERIVED maximum verdict strength from the referent ledger. internally_valid (internal referent only) < construct_valid (funded construct-adversary survived the frozen question) < transfer_valid (a real referent's falsifier passed). A verdict above the available referent is unconstructable — the LLM cannot author this field."
+    },
+    "referent_ledger": {
+      "type": "object",
+      "description": "ADR 0008: the harness-computed ledger {has_real_referent, has_construct_referent, max_reachable_verdict} that produced verdict_strength. Recorded for audit.",
+      "additionalProperties": true
     },
     "load_bearing_mechanism": {
       "type": "string",

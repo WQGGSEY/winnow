@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/construct_adversary_report.schema.json",
+  "title": "ConstructAdversaryReport",
+  "description": "ADR 0008 Axis 1 — the funded construct-adversary's enumerated search. The adversary is authored to BREAK the construction (referent = the frozen question, NOT the proposer's reasoning) and has no accept authority. construct_valid is earned ONLY by a funded failure: budget spent, a real search over distinct pass_but_wrong worlds, and no breaking instance. The harness RE-DERIVES the verdict from worlds_tested (research_harness/construct_adversary.py) — a self-reported 'survived' that enumerates a breaking world is overruled.",
+  "type": "object",
+  "required": [
+    "thread_id",
+    "question_id",
+    "construction_ref",
+    "budget_total",
+    "pass_but_wrong_region",
+    "worlds_tested",
+    "produced_by"
+  ],
+  "properties": {
+    "thread_id": { "type": "string" },
+    "question_id": {
+      "type": "string",
+      "description": "Must match the pinned frozen_question.question_id — the adversary must attack the frozen question, not a restated one."
+    },
+    "construction_ref": {
+      "type": "string",
+      "description": "Which construction (node id / claim) is under attack."
+    },
+    "budget_total": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Search budget the adversary was funded for (iterations / candidate worlds). budget-0 → auto-invalid: a certification that did not search proves nothing."
+    },
+    "pass_but_wrong_region": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 10 },
+      "description": "The declared region the adversary searched: classes of worlds where the construction's measurement could pass yet the frozen answer is NO. Empty/absent → invalid (every non-trivial measurement has such worlds; claiming none is a lie)."
+    },
+    "worlds_tested": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The enumerated search. Each world states whether the construction's MEASUREMENT passes there and what the FROZEN question's true answer is — a world with measurement_passes=true AND frozen_answer='no' is a break.",
+      "items": {
+        "type": "object",
+        "required": ["world_id", "world_description", "measurement_passes", "frozen_answer"],
+        "properties": {
+          "world_id": { "type": "string", "minLength": 1 },
+          "world_description": { "type": "string", "minLength": 10 },
+          "measurement_passes": { "type": "boolean" },
+          "frozen_answer": { "type": "string", "enum": ["yes", "no", "unknown"] },
+          "rationale": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "breaking_instance": {
+      "type": ["object", "null"],
+      "description": "Set when the adversary explicitly found a pass-but-wrong world. Non-null → broken (construct-invalid)."
+    },
+    "produced_by": {
+      "type": "string",
+      "enum": ["construct_adversary"],
+      "description": "Provenance stamp. The adversary persona — not the proposer — authors this report."
+    },
+    "search_summary": { "type": "string" }
+  },
+  "additionalProperties": false
+}

@@ -135,9 +135,13 @@ class MCPServerTests(unittest.TestCase):
         }
         # PR7: feasibility envelope tool.
         # ADR 0006: external-falsifier gate adds compute_falsifier_result.
+        # ADR 0008: construct-adversary (Axis 1) adds pin_frozen_question +
+        # submit_construct_adversary_report.
         envelope_expected = {
             "submit_feasibility_envelope",
             "compute_falsifier_result",
+            "pin_frozen_question",
+            "submit_construct_adversary_report",
         }
         # Multi-root tournament: alternative root formulations.
         multi_root_expected = {

@@ -1,12 +1,19 @@
-{# Auto-refresh wrapper: while production is not complete, poll the
-   partial endpoint every 4s so Claude Code's MCP commits show up live in
-   the browser. Stops polling once phase_status == "complete". #}
+{# Auto-refresh wrapper. The panel ALWAYS listens for supervisor-state-changed
+   (fired by Start/Stop) so the card flips idle↔running immediately — even when
+   thread.phase_status == "complete", which is the steady state for a
+   supervisor-driven production phase (the thread finished the market phase; the
+   supervisor runs production independently and never sets phase_status=running).
+   The 4s poll is armed only while there is live activity (production incomplete
+   OR a supervisor is running) so a truly-done thread isn't polled forever. #}
+{% set sup = p.supervisor or {} %}
 <div class="production-panel-poll"
-     {% if thread.phase_status != "complete" %}
-       hx-get="/partials/thread/{{ thread.thread_id }}/phase/production"
-       hx-trigger="every 4s, supervisor-state-changed from:body"
-       hx-swap="outerHTML"
-     {% endif %}>
+     hx-get="/partials/thread/{{ thread.thread_id }}/phase/production"
+     {% if thread.phase_status != "complete" or sup.running %}
+     hx-trigger="every 4s, supervisor-state-changed from:body"
+     {% else %}
+     hx-trigger="supervisor-state-changed from:body"
+     {% endif %}
+     hx-swap="outerHTML">
 {# Always-visible graph link — the graph page itself polls and shows an
    empty-state message until the first node lands, so it's safe to surface
    the link the moment a thread exists. #}
@@ -20,7 +27,6 @@
 {# PR10: supervisor control card — visible whether production has started
    or not, so the operator can launch the never-quit supervisor with a
    single click. Mirrors the supervisor state from disk every poll. #}
-{% set sup = p.supervisor or {} %}
 <section class="supervisor-card {% if sup.running %}running{% else %}idle{% endif %}">
   <div class="supervisor-header">
     <h3>

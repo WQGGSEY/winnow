@@ -723,3 +723,53 @@ objection's grounds — relabeling / scope-narrowing does not count. The
 harness's persona pack already generates kills; this stops them being
 reconciled into a "provides" synthesis, recovering decorrelation already paid
 for at zero model cost.
+
+## verdict_strength
+
+The referent-keyed strength of an attestation (ADR 0008), the type that makes
+reality-closeness *unsayable* air-gapped. A ladder —
+`internally_valid < construct_valid < transfer_valid` — where a verdict's
+maximum is bounded by the strongest referent its falsifier was harness-checked
+against: internal metrics → `internally_valid`; a survived funded
+[[construct_adversary]] against the [[frozen_question]] → `construct_valid`; a
+passing falsifier against a real referent → `transfer_valid`. The harness
+DERIVES it from the [[referent_ledger]] and stamps it; the LLM cannot author
+it. A verdict above the available referent is **unconstructable** — not
+rejected after the fact, absent from the reachable vocabulary. `achieved=true`
+requires `transfer_valid`, so it is refused on every air-gapped thread until
+the operator registers a real referent.
+
+## referent_ledger
+
+The harness-computed record `{has_real_referent, has_construct_referent,
+max_reachable_verdict}` from which [[verdict_strength]] is derived. Built only
+from executed, harness-checked evidence (a passing `real_holdout`
+falsifier_result; a survived [[construct_adversary]] report) — never from a
+proposer assertion. This is the `unverified` typing meta-invariant in force:
+proposer-controlled inputs do not raise strength.
+
+## frozen_question
+
+The formal question object the [[construct_adversary]] is funded against
+(ADR 0008 Axis 1). Its defining property is **authorship separation**: pinned
+(`pin_frozen_question`) from a pre-construction artifact (grilling) with a
+provenance hash, and **immutable** — the construction cannot restate or modify
+the referent it is judged against. Carries `formal_statement` and `true_iff`
+(the condition under which the answer is YES, used to label each tested
+world's true answer independently of whether the construction's measurement
+passes).
+
+## construct_adversary
+
+The funded adversary that earns `construct_valid` (ADR 0008 Axis 1). Authored
+to BREAK (referent = the [[frozen_question]], not the proposer's reasoning) and
+with no accept authority. It searches the construction's **pass_but_wrong
+region** — worlds where the measurement passes yet the frozen answer is NO —
+and submits an enumerated search (`submit_construct_adversary_report`). The
+verdict is harness-RE-DERIVED (`construct_adversary.py`): `survived` (→
+construct_valid) only on a **funded failure** — budget spent, ≥ min distinct
+worlds tested, and no breaking world; `broken` if any enumerated world is
+pass-but-wrong (a self-reported `survived` that lists a break is overruled);
+`invalid` if budget-0 / shallow (a certification that did not search proves
+nothing). Construct validity is **necessary, not sufficient** — it says
+nothing about reality.

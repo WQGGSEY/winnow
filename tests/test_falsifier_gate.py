@@ -213,75 +213,69 @@ def _setup_thread(tmp_path, monkeypatch, tid, envelope, *, gate=True):
     (pdir / "rebuttal").mkdir(parents=True, exist_ok=True)
 
 
-def test_gate_refuses_achieved_true_without_falsifier(tmp_path, monkeypatch):
-    tid = "t_gate1"
-    _setup_thread(tmp_path, monkeypatch, tid, _base_envelope(tid))  # no falsifier
-    out = M.handle_submit_professor_user_goal_attestation(
-        {"thread_id": tid, "attestation": _attestation(True, with_followup=False)}
-    )
-    assert out["status"] == "rejected"
-    assert "unverified_screen" in out["reason"]
+def _real_falsifier(holdout="wq_intranet"):
+    return {
+        "kind": "real_holdout",
+        "holdout_source_id": holdout,
+        "predicate": {"metric": "ir_mean", "op": ">=", "threshold": 0.4},
+    }
 
 
-def test_gate_refuses_achieved_true_when_falsifier_registered_but_no_result(tmp_path, monkeypatch):
-    tid = "t_gate2"
-    env = _base_envelope(tid, external_falsifier=_xgen_falsifier(),
-                         max_attestable_status="goal_achieved")
-    _setup_thread(tmp_path, monkeypatch, tid, env)
-    out = M.handle_submit_professor_user_goal_attestation(
-        {"thread_id": tid, "attestation": _attestation(True, with_followup=False)}
-    )
-    assert out["status"] == "rejected"
-    assert "falsifier_result" in out["reason"]
-
-
-def test_gate_allows_achieved_true_with_passing_falsifier(tmp_path, monkeypatch):
-    tid = "t_gate3"
-    env = _base_envelope(tid, external_falsifier=_xgen_falsifier(),
-                         max_attestable_status="goal_achieved")
-    _setup_thread(tmp_path, monkeypatch, tid, env)
-    # Harness-produced passing result against the registered holdout.
+def _write_real_falsifier_result(tmp_path, tid, *, observed, holdout="wq_intranet"):
     fr = F.compute_falsifier_result(
-        thread_id=tid, falsifier=_xgen_falsifier(),
-        evidence={"ranking_a": [3, 1, 2, 4], "ranking_b": [3, 1, 2, 4]},
+        thread_id=tid, falsifier=_real_falsifier(holdout),
+        evidence={"observed": observed},
     )
     (tmp_path / "runs" / "threads" / tid / "production" / "rebuttal"
      / "falsifier_result.json").write_text(json.dumps(fr))
+
+
+def test_gate_refuses_achieved_true_without_referent(tmp_path, monkeypatch):
+    # ADR 0008: no referent -> internally_valid -> transfer_valid unconstructable.
+    tid = "t_gate1"
+    _setup_thread(tmp_path, monkeypatch, tid, _base_envelope(tid))
+    out = M.handle_submit_professor_user_goal_attestation(
+        {"thread_id": tid, "attestation": _attestation(True, with_followup=False)}
+    )
+    assert out["status"] == "rejected"
+    assert "UNCONSTRUCTABLE" in out["reason"]
+    assert out["referent_ledger"]["max_reachable_verdict"] == "internally_valid"
+
+
+def test_gate_refuses_achieved_true_when_real_referent_registered_but_no_result(tmp_path, monkeypatch):
+    tid = "t_gate2"
+    env = _base_envelope(tid, external_falsifier=_real_falsifier())
+    _setup_thread(tmp_path, monkeypatch, tid, env)  # no falsifier_result on disk
+    out = M.handle_submit_professor_user_goal_attestation(
+        {"thread_id": tid, "attestation": _attestation(True, with_followup=False)}
+    )
+    assert out["status"] == "rejected"
+    assert "transfer_valid" in out["reason"]
+
+
+def test_gate_allows_achieved_true_with_passing_real_referent(tmp_path, monkeypatch):
+    # ADR 0008: only a REAL referent reaches transfer_valid -> goal_achieved.
+    tid = "t_gate3"
+    env = _base_envelope(tid, external_falsifier=_real_falsifier())
+    _setup_thread(tmp_path, monkeypatch, tid, env)
+    _write_real_falsifier_result(tmp_path, tid, observed=0.55)  # >= 0.4 -> passes
     out = M.handle_submit_professor_user_goal_attestation(
         {"thread_id": tid, "attestation": _attestation(True, with_followup=False)}
     )
     assert out["status"] == "ok"
     assert out["attested_status"] == "goal_achieved"
+    assert out["verdict_strength"] == "transfer_valid"
 
 
-def test_gate_refuses_when_falsifier_failed(tmp_path, monkeypatch):
-    tid = "t_gate4"
-    env = _base_envelope(tid, external_falsifier=_xgen_falsifier(),
-                         max_attestable_status="goal_achieved")
+def test_cross_generator_transfer_does_not_unlock_goal_achieved(tmp_path, monkeypatch):
+    # ADR 0008 reclassification: cross_generator_transfer is proposer-authored;
+    # a passing result is a screen, NOT a strength-certifier. achieved=true stays
+    # refused (transfer_valid unconstructable).
+    tid = "t_gate3b"
+    env = _base_envelope(tid, external_falsifier=_xgen_falsifier())
     _setup_thread(tmp_path, monkeypatch, tid, env)
     fr = F.compute_falsifier_result(
         thread_id=tid, falsifier=_xgen_falsifier(),
-        evidence={"ranking_a": [1, 2, 3, 4], "ranking_b": [4, 3, 2, 1]},  # rho=-1
-    )
-    (tmp_path / "runs" / "threads" / tid / "production" / "rebuttal"
-     / "falsifier_result.json").write_text(json.dumps(fr))
-    out = M.handle_submit_professor_user_goal_attestation(
-        {"thread_id": tid, "attestation": _attestation(True, with_followup=False)}
-    )
-    assert out["status"] == "rejected"
-    assert "passed is false" in out["reason"]
-
-
-def test_gate_refuses_on_holdout_mismatch(tmp_path, monkeypatch):
-    tid = "t_gate5"
-    env = _base_envelope(tid, external_falsifier=_xgen_falsifier(),
-                         max_attestable_status="goal_achieved")
-    _setup_thread(tmp_path, monkeypatch, tid, env)
-    # Passing result, but computed against a DIFFERENT (easier) holdout.
-    other = _xgen_falsifier()
-    other["holdout_source_id"] = "some_other_source"
-    fr = F.compute_falsifier_result(
-        thread_id=tid, falsifier=other,
         evidence={"ranking_a": [3, 1, 2, 4], "ranking_b": [3, 1, 2, 4]},
     )
     (tmp_path / "runs" / "threads" / tid / "production" / "rebuttal"
@@ -290,10 +284,33 @@ def test_gate_refuses_on_holdout_mismatch(tmp_path, monkeypatch):
         {"thread_id": tid, "attestation": _attestation(True, with_followup=False)}
     )
     assert out["status"] == "rejected"
-    assert "registered holdout" in out["reason"]
+    assert out["referent_ledger"]["has_real_referent"] is False
 
 
-def test_achieved_false_stamps_unverified_screen_when_no_falsifier(tmp_path, monkeypatch):
+def test_gate_refuses_when_real_falsifier_failed(tmp_path, monkeypatch):
+    tid = "t_gate4"
+    env = _base_envelope(tid, external_falsifier=_real_falsifier())
+    _setup_thread(tmp_path, monkeypatch, tid, env)
+    _write_real_falsifier_result(tmp_path, tid, observed=0.1)  # < 0.4 -> fails
+    out = M.handle_submit_professor_user_goal_attestation(
+        {"thread_id": tid, "attestation": _attestation(True, with_followup=False)}
+    )
+    assert out["status"] == "rejected"
+
+
+def test_gate_refuses_on_holdout_mismatch(tmp_path, monkeypatch):
+    tid = "t_gate5"
+    env = _base_envelope(tid, external_falsifier=_real_falsifier(holdout="wq_intranet"))
+    _setup_thread(tmp_path, monkeypatch, tid, env)
+    # Passing result, but computed against a DIFFERENT (easier) holdout.
+    _write_real_falsifier_result(tmp_path, tid, observed=0.9, holdout="some_other_source")
+    out = M.handle_submit_professor_user_goal_attestation(
+        {"thread_id": tid, "attestation": _attestation(True, with_followup=False)}
+    )
+    assert out["status"] == "rejected"  # holdout mismatch -> real referent not verified
+
+
+def test_achieved_false_stamps_unverified_screen_when_no_referent(tmp_path, monkeypatch):
     tid = "t_gate6"
     _setup_thread(tmp_path, monkeypatch, tid, _base_envelope(tid))
     out = M.handle_submit_professor_user_goal_attestation(
@@ -301,12 +318,13 @@ def test_achieved_false_stamps_unverified_screen_when_no_falsifier(tmp_path, mon
     )
     assert out["status"] == "ok"
     assert out["attested_status"] == "unverified_screen"
+    assert out["verdict_strength"] == "internally_valid"
 
 
-def test_achieved_false_stamps_not_achieved_when_falsifier_registrable(tmp_path, monkeypatch):
+def test_achieved_false_stamps_not_achieved_when_real_referent_registered(tmp_path, monkeypatch):
+    # A real referent is registered but its falsifier hasn't passed -> retry.
     tid = "t_gate7"
-    env = _base_envelope(tid, external_falsifier=_xgen_falsifier(),
-                         max_attestable_status="goal_achieved")
+    env = _base_envelope(tid, external_falsifier=_real_falsifier())
     _setup_thread(tmp_path, monkeypatch, tid, env)
     out = M.handle_submit_professor_user_goal_attestation(
         {"thread_id": tid, "attestation": _attestation(False, with_followup=True)}
@@ -315,13 +333,13 @@ def test_achieved_false_stamps_not_achieved_when_falsifier_registrable(tmp_path,
     assert out["attested_status"] == "not_achieved"
 
 
-def test_gate_disabled_allows_achieved_true_without_falsifier(tmp_path, monkeypatch):
+def test_gate_disabled_allows_achieved_true_without_referent(tmp_path, monkeypatch):
     tid = "t_gate8"
     _setup_thread(tmp_path, monkeypatch, tid, _base_envelope(tid), gate=False)
     out = M.handle_submit_professor_user_goal_attestation(
         {"thread_id": tid, "attestation": _attestation(True, with_followup=False)}
     )
-    assert out["status"] == "ok"  # toggle off reverts to pre-ADR-0006 behaviour
+    assert out["status"] == "ok"  # toggle off reverts to pre-gate behaviour
 
 
 # --- is_terminal: unverified_screen is first-class ---------------------- #

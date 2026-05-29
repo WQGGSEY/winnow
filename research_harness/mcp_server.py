@@ -254,8 +254,61 @@ TOOL_DEFINITIONS = [
                     "description": (
                         "Kind-specific. cross_generator_transfer: {ranking_a, "
                         "ranking_b, pipeline_labels?}. real_holdout: {observed, "
-                        "adapter_provenance?}."
+                        "adapter_provenance?}. ADR 0008: cross_generator_transfer "
+                        "is proposer-authored — it is a kill-capable SCREEN, not a "
+                        "strength-certifier. Only real_holdout reaches transfer_valid."
                     ),
+                },
+            },
+        },
+    },
+    {
+        "name": "pin_frozen_question",
+        "description": (
+            f"{PROFESSOR_CONTRACT}\n\n"
+            "ADR 0008 Axis 1: pin the FORMAL QUESTION the construct-adversary is "
+            "funded against, BEFORE the construction loop. Authorship separation — "
+            "the question is frozen from grilling (a pre-construction artifact) with "
+            "a provenance hash and is IMMUTABLE; the construction cannot restate or "
+            "modify the referent it is judged against. Required before "
+            "submit_construct_adversary_report. Earning construct_valid (close to "
+            "the QUESTION) is air-gapped-possible; reality-closeness (transfer_valid) "
+            "is NOT — it needs a real referent the operator holds."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "question"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "question": {
+                    "type": "object",
+                    "description": "FrozenQuestion — see frozen_question.schema.json. source_provenance is stamped by the harness from the grilling artifact.",
+                },
+            },
+        },
+    },
+    {
+        "name": "submit_construct_adversary_report",
+        "description": (
+            f"{PROFESSOR_CONTRACT}\n\n"
+            "ADR 0008 Axis 1: submit the funded construct-adversary's ENUMERATED "
+            "search of the construction's pass_but_wrong region against the frozen "
+            "question. The adversary is authored to BREAK (referent = frozen "
+            "question, not the proposer's reasoning) and has no accept authority. "
+            "construct_valid is earned ONLY by a funded FAILURE: budget spent, "
+            ">= min distinct pass_but_wrong worlds tested, and NO world where the "
+            "measurement passes but the frozen answer is NO. The harness RE-DERIVES "
+            "the verdict — a self-reported 'survived' enumerating a breaking world is "
+            "overruled, and budget-0 is auto-invalid."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "report"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "report": {
+                    "type": "object",
+                    "description": "ConstructAdversaryReport — see construct_adversary_report.schema.json.",
                 },
             },
         },
@@ -1628,6 +1681,139 @@ def handle_compute_falsifier_result(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def handle_pin_frozen_question(args: dict[str, Any]) -> dict[str, Any]:
+    """ADR 0008 Axis 1: pin the formal question the construct-adversary will be
+    funded against. Authorship separation — the question is frozen from a
+    PRE-construction artifact (grilling) with a provenance hash and is
+    IMMUTABLE, so the construction loop cannot restate or modify the referent
+    it is judged against."""
+    import hashlib
+    from research_harness.schemas.validator import validate_named_schema
+
+    tid = args["thread_id"]
+    question = args["question"]
+
+    grilling_path = _thread_dir(tid) / "grilling" / "grilling_session.json"
+    if question.get("source_artifact") == "grilling_session" and not grilling_path.exists():
+        return {
+            "status": "rejected",
+            "reason": "source_artifact=grilling_session but no grilling_session.json exists to freeze from.",
+        }
+    # Stamp provenance from the pre-construction source so a later construction
+    # cannot silently re-author the question.
+    if question.get("source_artifact") == "grilling_session":
+        digest = hashlib.sha256(grilling_path.read_bytes()).hexdigest()[:16]
+        question["source_provenance"] = f"grilling_sha256:{digest}"
+
+    try:
+        validate_named_schema("frozen_question", question)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
+
+    out_path = _thread_dir(tid) / "production" / "frozen_question.json"
+    if out_path.exists():
+        existing = _read_json(out_path) or {}
+        if existing.get("formal_statement") != question.get("formal_statement"):
+            return {
+                "status": "rejected",
+                "reason": (
+                    "a frozen_question is already pinned and is IMMUTABLE "
+                    f"(question_id={existing.get('question_id')!r}). The construction "
+                    "may not re-author the question it is judged against. Remove the "
+                    "file manually only if the operator is re-pinning before construction."
+                ),
+            }
+        return {"status": "ok", "question_id": existing.get("question_id"), "note": "already pinned (idempotent)"}
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(question, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "status": "ok",
+        "question_id": question["question_id"],
+        "frozen_question_path": str(out_path),
+        "next_step": (
+            "Question frozen. To earn construct_valid (Axis 1), the construction "
+            "must declare its pass_but_wrong region and a construct-adversary must "
+            "search it and FAIL to break it (submit_construct_adversary_report). "
+            "Reality-closeness (transfer_valid) stays unreachable without a real referent."
+        ),
+    }
+
+
+def handle_submit_construct_adversary_report(args: dict[str, Any]) -> dict[str, Any]:
+    """ADR 0008 Axis 1: record the funded construct-adversary's enumerated
+    search. The harness RE-DERIVES the verdict (construct_adversary.py) from the
+    search — a self-reported 'survived' that enumerated a breaking world is
+    overruled. construct_valid is earned only by a funded FAILURE."""
+    from research_harness.config import load_settings as _ls
+    from research_harness.construct_adversary import evaluate_construct_adversary_report
+    from research_harness.schemas.validator import validate_named_schema
+
+    tid = args["thread_id"]
+    report = args["report"]
+
+    fq = _frozen_question(tid)
+    if not fq:
+        return {
+            "status": "rejected",
+            "reason": "no frozen_question pinned — call pin_frozen_question first. The adversary must attack the FROZEN (proposer-un-authored) question.",
+        }
+    try:
+        validate_named_schema("construct_adversary_report", report)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
+    if report.get("question_id") != fq.get("question_id"):
+        return {
+            "status": "rejected",
+            "reason": (
+                f"report.question_id ({report.get('question_id')!r}) does not match the "
+                f"pinned frozen_question.question_id ({fq.get('question_id')!r}). The "
+                "adversary must attack the frozen question, not a restated one."
+            ),
+        }
+
+    minb, minw = _construct_adversary_thresholds(_ls(_repo_root()))
+    verdict = evaluate_construct_adversary_report(report, min_budget=minb, min_distinct_worlds=minw)
+    stamped = dict(report)
+    stamped["harness_verdict"] = verdict["verdict"]
+    stamped["harness_reasons"] = verdict["reasons"]
+
+    out_path = _rebuttal_dir(tid) / "construct_adversary_report.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(stamped, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    if verdict["verdict"] == "survived":
+        nxt = (
+            "construct_valid EARNED (funded adversary failed to break the frozen "
+            "question). This is Axis 1 — necessary, NOT sufficient. It says nothing "
+            "about reality: transfer_valid stays unreachable without a real referent."
+        )
+    elif verdict["verdict"] == "broken":
+        nxt = (
+            "construct-INVALID: the adversary found a pass-but-wrong instance. The "
+            "construction passes its measurement where the frozen answer is NO — fix "
+            "the construction (close the pass_but_wrong world), do not narrow the claim."
+        )
+    else:
+        nxt = (
+            "INVALID (not a funded failure): " + "; ".join(verdict["reasons"])
+            + ". A certification that did not actually search proves nothing — fund the "
+            "adversary and enumerate distinct pass_but_wrong worlds."
+        )
+    return {
+        "status": "ok",
+        "harness_verdict": verdict["verdict"],
+        "distinct_worlds": verdict["distinct_worlds"],
+        "result_path": str(out_path),
+        "next_step": nxt,
+    }
+
+
 def handle_design_initial_claim_contract(
     args: dict[str, Any], settings: dict[str, Any]
 ) -> dict[str, Any]:
@@ -2937,6 +3123,70 @@ def _falsifier_result_blocks_achievement(
     return None
 
 
+# --- ADR 0008: verdict-strength type system + referent ledger ----------- #
+
+
+def _frozen_question(tid: str) -> dict[str, Any] | None:
+    return _read_json(_thread_dir(tid) / "production" / "frozen_question.json")
+
+
+def _construct_adversary_thresholds(settings: dict[str, Any]) -> tuple[int, int]:
+    from research_harness.construct_adversary import (
+        DEFAULT_MIN_BUDGET, DEFAULT_MIN_DISTINCT_WORLDS,
+    )
+    cfg = _persona_cfg(settings).get("construct_adversary")
+    minb, minw = DEFAULT_MIN_BUDGET, DEFAULT_MIN_DISTINCT_WORLDS
+    if isinstance(cfg, dict):
+        if isinstance(cfg.get("min_budget"), int) and cfg["min_budget"] >= 0:
+            minb = cfg["min_budget"]
+        if isinstance(cfg.get("min_distinct_worlds"), int) and cfg["min_distinct_worlds"] >= 1:
+            minw = cfg["min_distinct_worlds"]
+    return minb, minw
+
+
+def _real_referent_verified(tid: str) -> bool:
+    """ADR 0008 Axis 2: a REAL referent is verified iff the envelope registered
+    a real_holdout falsifier AND a passing harness-computed falsifier_result
+    exists against it. cross_generator_transfer is proposer-authored and does
+    NOT count — it cannot unlock reality-closeness."""
+    envelope = _read_json(_thread_dir(tid) / "production" / "feasibility_envelope.json") or {}
+    falsifier = envelope.get("external_falsifier") or {}
+    if falsifier.get("kind") != "real_holdout":
+        return False
+    fr = _read_json(_rebuttal_dir(tid) / "falsifier_result.json")
+    return _falsifier_result_blocks_achievement(fr, falsifier) is None
+
+
+def _construct_referent_verified(tid: str, settings: dict[str, Any]) -> bool:
+    """ADR 0008 Axis 1: a CONSTRUCT referent is verified iff a funded
+    construct-adversary survived against the pinned frozen question. The
+    harness RE-DERIVES the verdict from the adversary's enumerated search."""
+    fq = _frozen_question(tid)
+    if not fq:
+        return False
+    report = _read_json(_rebuttal_dir(tid) / "construct_adversary_report.json")
+    if not report:
+        return False
+    if report.get("question_id") != fq.get("question_id"):
+        return False  # adversary must attack the frozen (un-authored) question
+    from research_harness.construct_adversary import evaluate_construct_adversary_report
+    minb, minw = _construct_adversary_thresholds(settings)
+    out = evaluate_construct_adversary_report(
+        report, min_budget=minb, min_distinct_worlds=minw
+    )
+    return out.get("verdict") == "survived"
+
+
+def _thread_referent_ledger(tid: str, settings: dict[str, Any]) -> dict[str, Any]:
+    """ADR 0008: harness-derived strength ceiling. The proposer authors none of
+    these signals — they are computed from executed, harness-checked evidence."""
+    from research_harness import verdict_strength as _V
+    return _V.referent_ledger(
+        real_referent_verified=_real_referent_verified(tid),
+        construct_referent_verified=_construct_referent_verified(tid, settings),
+    )
+
+
 _SCOPE_RANK = {"directional": 1, "feasibility": 2, "deployment": 3}
 
 
@@ -3981,45 +4231,60 @@ def handle_submit_professor_user_goal_attestation(args: dict[str, Any]) -> dict[
             ),
         }
 
-    # --- ADR 0006: external-falsifier gate. ----------------------------------
-    # achieved=true is structurally unreachable without a harness-owned
-    # falsifier result the run could not author. This is the spine: it makes
-    # the RSTF same-DGP self-grading failure impossible rather than merely
-    # down-clamped. The honest air-gapped ceiling is unverified_screen.
+    # --- ADR 0008: verdict-strength type system. ----------------------------
+    # closeness is proven only by a funded adversary FAILING against a referent
+    # the proposer did not author. The harness DERIVES verdict strength from the
+    # referent ledger; the LLM cannot author it. A verdict above the available
+    # referent is unconstructable:
+    #   transfer_valid (reality-close)   <- real referent  [UNSAYABLE air-gapped]
+    #   construct_valid (question-close) <- funded construct-adversary survived
+    #   internally_valid                 <- internal referent only (honest floor)
     from research_harness.config import load_settings as _ls
+    from research_harness import verdict_strength as _V
     settings = _ls(_repo_root())
     envelope = _read_json(_thread_dir(tid) / "production" / "feasibility_envelope.json")
-    max_status = _derive_max_attestable_status(envelope)
+    ledger = _thread_referent_ledger(tid, settings)
+    strength = ledger["max_reachable_verdict"]
+
     if attestation.get("achieved") and _falsification_gate_enabled(settings):
-        if max_status != "goal_achieved":
+        # achieved=true asserts the result is usable for the user's REAL
+        # decision — reality-closeness — which is transfer_valid. Air-gapped
+        # that verdict is unconstructable.
+        if strength != _V.REALITY_VERDICT:
             return {
                 "status": "rejected",
                 "reason": (
-                    "ADR 0006: achieved=true is REFUSED — the feasibility "
-                    "envelope registers no external_falsifier (max_attestable_"
-                    "status=unverified_screen). 'goal achieved' cannot be proved "
-                    "from inside the run. Either (a) attest honestly with "
-                    "achieved=false (the harness will stamp attested_status="
-                    "unverified_screen, a recorded terminal — NOT a failure), or "
-                    "(b) register an external_falsifier (real_holdout / "
-                    "cross_generator_transfer) via submit_feasibility_envelope and "
-                    "produce a passing compute_falsifier_result."
+                    "ADR 0008: achieved=true asserts the result is usable for the "
+                    "user's REAL decision (reality-close = transfer_valid), but that "
+                    f"verdict is UNCONSTRUCTABLE here — max reachable strength is "
+                    f"{strength!r}. No air-gapped adversary can certify reality-"
+                    "closeness (it has no contact with reality). Unlock transfer_valid "
+                    "ONLY by registering a real referent: a real_holdout "
+                    "external_falsifier + a passing compute_falsifier_result (the "
+                    "operator's intranet scalar). Otherwise attest achieved=false — "
+                    f"the harness stamps the honest verdict ({strength}). "
+                    "construct_valid (a funded construct-adversary that FAILED to break "
+                    "the frozen question) is the strongest air-gapped terminal: "
+                    "necessary, NOT sufficient."
                 ),
+                "referent_ledger": ledger,
             }
-        fr = _read_json(_rebuttal_dir(tid) / "falsifier_result.json")
-        falsifier = (envelope or {}).get("external_falsifier") or {}
-        gate_err = _falsifier_result_blocks_achievement(fr, falsifier)
-        if gate_err:
-            return {"status": "rejected", "reason": gate_err}
 
-    # Harness-stamp the first-class status + seed-relative scope record. The
-    # LLM does not get to pick attested_status — it is derived.
+    # Harness-stamp verdict strength + first-class status. The LLM authors none
+    # of these — they are derived from executed, harness-checked evidence.
+    attestation["verdict_strength"] = strength
+    attestation["referent_ledger"] = ledger
+    falsifier_kind = ((envelope or {}).get("external_falsifier") or {}).get("kind")
     if attestation.get("achieved"):
-        attestation["attested_status"] = "goal_achieved"
-    elif max_status == "unverified_screen":
-        attestation["attested_status"] = "unverified_screen"
-    else:
+        attestation["attested_status"] = "goal_achieved"            # transfer_valid
+    elif falsifier_kind == "real_holdout" and not ledger["has_real_referent"]:
+        # A real referent is registered but its falsifier hasn't passed yet —
+        # the run is mid-way to transfer_valid; keep going (retry), don't terminate.
         attestation["attested_status"] = "not_achieved"
+    elif strength == "construct_valid":
+        attestation["attested_status"] = "construct_valid_screen"   # strongest air-gapped terminal
+    else:
+        attestation["attested_status"] = "unverified_screen"        # honest floor terminal
     attestation["scope_attainment"] = _compute_scope_attainment(tid, envelope)
 
     out_path = _rebuttal_dir(tid) / "user_goal_attestation.json"
@@ -4032,36 +4297,41 @@ def handle_submit_professor_user_goal_attestation(args: dict[str, Any]) -> dict[
     status = attestation["attested_status"]
     if status == "goal_achieved":
         next_step = (
-            "Dual gate cleared: AC decision + user-goal attestation both pass, "
-            "backed by a passing external falsifier. Proceed to "
-            "prepare_paper_writing_context / submit_paper_outline / "
-            "register_paper_figure / submit_paper_section / render_final_paper."
+            "transfer_valid: a real referent's falsifier passed. Dual gate "
+            "cleared — proceed to prepare_paper_writing_context / "
+            "submit_paper_outline / register_paper_figure / submit_paper_section "
+            "/ render_final_paper."
+        )
+    elif status == "construct_valid_screen":
+        next_step = (
+            "attested_status=construct_valid_screen (Axis 1): a funded "
+            "construct-adversary FAILED to break the frozen question — the "
+            "strongest air-gapped terminal. NECESSARY, NOT SUFFICIENT: it says "
+            "nothing about reality (transfer_valid stays unsayable without a real "
+            "referent). Publish the screen honestly via render_honest_failure_paper; "
+            "the manuscript must state narrowing ≠ closing."
         )
     elif status == "unverified_screen":
         next_step = (
-            "attested_status=unverified_screen — the honest air-gapped ceiling. "
-            "This is a RECORDED TERMINAL outcome, not a failure to retry: no "
-            "external falsifier is registrable, so 'goal achieved' is not "
-            "claimable, but the screening result stands. Call "
-            "render_honest_failure_paper to publish the screen honestly. To "
-            "upgrade to goal_achieved later, register a real_holdout / "
-            "cross_generator_transfer falsifier and re-attest."
+            "attested_status=unverified_screen (internally_valid floor): no funded "
+            "adversary has survived against the frozen question yet. Before "
+            "terminating, EARN construct_valid — pin_frozen_question (if not pinned) "
+            "then submit_construct_adversary_report with a real funded search. If "
+            "genuinely exhausted, render_honest_failure_paper (depth gate applies)."
         )
     else:  # not_achieved
         next_step = (
-            "attested_status=not_achieved. A falsifier IS registrable but the "
-            "goal isn't met. Two paths: (a) trigger required_additional_research "
-            "via the tree-search loop (get_next_admissible_node → "
-            "execute_node_experiment → submit_professor_decision), run "
-            "compute_falsifier_result, and re-attest when it passes; (b) if the "
-            "direction is hopeless, propose_alternative_root_directions to fan "
-            "out, OR render_honest_failure_paper for the final exit."
+            "attested_status=not_achieved. A real referent IS registered but its "
+            "falsifier has not passed. Run/repair compute_falsifier_result against "
+            "the real holdout and re-attest; or if the direction is hopeless, "
+            "propose_alternative_root_directions / render_honest_failure_paper."
         )
     return {
         "status": "ok",
         "achieved": attestation.get("achieved"),
         "attested_status": status,
-        "max_attestable_status": max_status,
+        "verdict_strength": strength,
+        "referent_ledger": ledger,
         "next_step": next_step,
     }
 
@@ -4480,6 +4750,10 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_submit_feasibility_envelope(args, settings)
             elif name == "compute_falsifier_result":
                 result = handle_compute_falsifier_result(args)
+            elif name == "pin_frozen_question":
+                result = handle_pin_frozen_question(args)
+            elif name == "submit_construct_adversary_report":
+                result = handle_submit_construct_adversary_report(args)
             elif name == "design_initial_claim_contract":
                 result = handle_design_initial_claim_contract(args, settings)
             elif name == "design_experiment_template":

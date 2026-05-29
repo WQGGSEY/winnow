@@ -165,6 +165,11 @@
             "_comment": "ADR 0006: achieved=true is unreachable without a harness-owned external falsifier result. When disabled (a loosening), the attestation reverts to the pre-ADR-0006 behaviour where the run could self-attest goal achievement. Keep enabled.",
             "enabled": true
           },
+          "construct_adversary": {
+            "_comment": "ADR 0008 Axis 1: thresholds for the funded construct-adversary. construct_valid is earned only when the adversary spends >= min_budget and tests >= min_distinct_worlds distinct pass_but_wrong worlds against the frozen question without finding a break. A certification that did not search is auto-invalid.",
+            "min_budget": 8,
+            "min_distinct_worlds": 3
+          },
           "min_baseline_role_specificity_chars": 40,
           "premature_termination_gate": {
             "_comment": "ADR 0007: the depth gate on the lazy door. A weak/negative honest-failure terminal renders only when distinct genuine attempts (scope-narrowing relabels excluded) are exhausted AND a load-bearing mechanism is stated. min_distinct_attempts is how many genuinely distinct attempts must precede a give-up. Disabling reverts to ADR 0006's unconditional honest-failure exit (= lazy honesty).",

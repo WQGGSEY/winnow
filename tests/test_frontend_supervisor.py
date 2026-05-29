@@ -117,6 +117,33 @@ class SupervisorRoutesTests(unittest.TestCase):
             self.assertEqual(data["pid"], 12345)
             self.assertEqual(data["target_scope"], "directional")
 
+    def test_start_waits_for_lock_and_reports_running(self):
+        # Fix 1: supervisor_start should return only once the subprocess has
+        # acquired its lock, so the frontend's immediate panel swap renders the
+        # running branch (with logs) without a manual reload.
+        with TemporaryDirectory() as tmp:
+            repo = _setup_repo(Path(tmp))
+            client = self._client(repo)
+            lock_path = repo / "runs" / "threads" / "thread_t1" / ".supervisor.lock"
+            with mock.patch.object(fserver, "subprocess") as proc_mod:
+                fake_proc = mock.MagicMock(pid=777)
+                fake_proc.poll.return_value = None  # alive
+
+                def _spawn(*_a, **_k):
+                    # Simulate the subprocess acquiring its lock during startup.
+                    lock_path.write_text("777", encoding="utf-8")
+                    return fake_proc
+
+                proc_mod.Popen.side_effect = _spawn
+                proc_mod.STDOUT = -2
+                proc_mod.DEVNULL = -3
+                r = client.post(
+                    "/api/threads/thread_t1/supervisor/start",
+                    json={"target_scope": "directional"},
+                )
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertTrue(r.json()["running"])
+
     def test_start_rejects_if_already_running(self):
         with TemporaryDirectory() as tmp:
             repo = _setup_repo(Path(tmp))
