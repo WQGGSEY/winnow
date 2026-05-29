@@ -17,7 +17,8 @@ class LocalPreflightTests(unittest.TestCase):
         result = run_preflight(REPO_ROOT)
 
         self.assertEqual(result["status"], "passed")
-        self.assertEqual(result["settings_backend"], "mock")
+        # Tracks the operational backend committed in settings.json.
+        self.assertEqual(result["settings_backend"], "claude_code_live")
         self.assertEqual(result["runner_result_status"], "completed")
         self.assertIn("observed_result", result["worker_task_output_kinds"])
         self.assertIn("source_patch", result["worker_task_output_kinds"])

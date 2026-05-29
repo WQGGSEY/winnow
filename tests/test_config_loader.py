@@ -25,7 +25,9 @@ class ConfigLoaderTests(unittest.TestCase):
         profile = load_research_profile(REPO_ROOT)
         lessons = load_lessons(REPO_ROOT)
 
-        self.assertEqual(settings["runtime"]["default_backend"], "mock")
+        # Tracks the operational backend committed in settings.json (the
+        # operator runs live via claude_code_live).
+        self.assertEqual(settings["runtime"]["default_backend"], "claude_code_live")
         self.assertGreaterEqual(settings["runtime"]["runner_timeouts"]["training"], 3600)
         self.assertIn("harness_semantics", harness)
         self.assertEqual(profile["profile_id"], "seongje_research_v1")
