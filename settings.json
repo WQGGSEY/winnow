@@ -170,6 +170,19 @@
             "min_budget": 8,
             "min_distinct_worlds": 3
           },
+          "falsifier_guards": {
+            "_comment": "ADR 0006 rev.2: cross_generator_transfer guard thresholds. A passing rho is reportable as transfer evidence ONLY when the harness MEASURES that generator B is structurally distinct from A (min_behavioral_distance, computed by running both generators on a fixed probe — not a worker label), the rankings discriminate the pipelines (min_rank_variance / max_tie_fraction), and the predicate beats the permutation-null noise band (null_floor_k). The guard is intrinsic to an honest verdict (not disableable); only these thresholds are tunable. Closes the thread_c8919361 hollow-pass.",
+            "min_behavioral_distance": 0.15,
+            "min_rank_variance": 0.05,
+            "max_tie_fraction": 0.5,
+            "null_floor_k": 1.0
+          },
+          "far_framing": {
+            "_comment": "ADR 0009 (B1): forced distant-transfer successor policy. When enabled and a domain_taxonomy is pinned, promotion / needs_child_branch mints up to top_k far-framing successors — one per domain at conceptual distance >= distance_threshold from the node's native domain, chosen by DETERMINISTIC top-k over the frozen table. Distance feeds spawn selection ONLY (never promotion). Far-framing is low-hit-rate by design (it needs budget); the gates (A1) are what make it pay off over patchwork.",
+            "enabled": true,
+            "top_k": 3,
+            "distance_threshold": 0.6
+          },
           "min_baseline_role_specificity_chars": 40,
           "premature_termination_gate": {
             "_comment": "ADR 0007: the depth gate on the lazy door. A weak/negative honest-failure terminal renders only when distinct genuine attempts (scope-narrowing relabels excluded) are exhausted AND a load-bearing mechanism is stated. min_distinct_attempts is how many genuinely distinct attempts must precede a give-up. Disabling reverts to ADR 0006's unconditional honest-failure exit (= lazy honesty).",

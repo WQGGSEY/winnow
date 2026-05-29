@@ -134,3 +134,112 @@ def test_ac_decision_rejects_missing_methodology_assessment():
     del d["rebuttal_synthesis"]["methodology_assessment"]
     with pytest.raises(SchemaValidationError, match="methodology_assessment"):
         validate_named_schema("ac_decision", d)
+
+
+# --- ADR 0008 rev.2 (A3): methodology clamp to the weaker path ---------- #
+
+import json
+
+import research_harness.mcp_server as M
+
+
+def _set_verdict(decision, verdict):
+    decision["rebuttal_synthesis"]["methodology_assessment"]["aggregate_verdict"] = verdict
+    return decision
+
+
+def _survived_adversary_report(qid="q1"):
+    return {
+        "thread_id": "t", "question_id": qid, "construction_ref": "c1",
+        "produced_by": "construct_adversary", "budget_total": 8,
+        "pass_but_wrong_region": ["a world where measurement passes yet answer is no"],
+        "worlds_tested": [
+            {"world_id": f"w{i}", "world_description": "d" * 12,
+             "measurement_passes": True, "frozen_answer": "yes"}
+            for i in range(3)
+        ],
+        "breaking_instance": None,
+    }
+
+
+def _broken_adversary_report(qid="q1"):
+    rep = _survived_adversary_report(qid)
+    rep["worlds_tested"][0]["frozen_answer"] = "no"  # pass-but-wrong -> broken
+    return rep
+
+
+def _setup_rebuttal(tmp_path, monkeypatch, tid, *, falsifier=None, adversary=None, frozen_q=None):
+    monkeypatch.setattr(M, "_thread_dir", lambda t: tmp_path / "runs" / "threads" / t)
+    rdir = tmp_path / "runs" / "threads" / tid / "production" / "rebuttal"
+    rdir.mkdir(parents=True, exist_ok=True)
+    pdir = tmp_path / "runs" / "threads" / tid / "production"
+    if falsifier is not None:
+        (rdir / "falsifier_result.json").write_text(json.dumps(falsifier))
+    if adversary is not None:
+        (rdir / "construct_adversary_report.json").write_text(json.dumps(adversary))
+    if frozen_q is not None:
+        (pdir / "frozen_question.json").write_text(json.dumps(frozen_q))
+
+
+def test_methodology_clamped_when_falsifier_uninformative(tmp_path, monkeypatch):
+    # The PM case: construct-adversary survived (clean) but falsifier uninformative.
+    # 'provides' must be clamped to 'partial' (construct-valid by design,
+    # unverified by measurement) — a clean pass cannot launder over a weak path.
+    tid = "t_a3a"
+    _setup_rebuttal(
+        tmp_path, monkeypatch, tid,
+        falsifier={"kind": "cross_generator_transfer", "passed": False, "verdict": "uninformative"},
+        adversary=_survived_adversary_report("q1"),
+        frozen_q={"question_id": "q1"},
+    )
+    d = _set_verdict(_valid_ac_decision(), "provides")
+    out = M._clamp_methodology_assessment(tid, {}, d)
+    ms = out["rebuttal_synthesis"]["methodology_assessment"]
+    assert ms["aggregate_verdict"] == "partial"
+    assert "clamp_reason" in ms and "uninformative" in ms["clamp_reason"]
+    validate_named_schema("ac_decision", out)
+
+
+def test_methodology_not_clamped_when_real_holdout_passed(tmp_path, monkeypatch):
+    tid = "t_a3b"
+    _setup_rebuttal(
+        tmp_path, monkeypatch, tid,
+        falsifier={"kind": "real_holdout", "passed": True, "verdict": "passed"},
+    )
+    d = _set_verdict(_valid_ac_decision(), "provides")
+    out = M._clamp_methodology_assessment(tid, {}, d)
+    assert out["rebuttal_synthesis"]["methodology_assessment"]["aggregate_verdict"] == "provides"
+    assert "clamp_reason" not in out["rebuttal_synthesis"]["methodology_assessment"]
+
+
+def test_methodology_clamped_to_absent_when_adversary_broken(tmp_path, monkeypatch):
+    tid = "t_a3c"
+    _setup_rebuttal(
+        tmp_path, monkeypatch, tid,
+        adversary=_broken_adversary_report("q1"),
+        frozen_q={"question_id": "q1"},
+    )
+    d = _set_verdict(_valid_ac_decision(), "provides")
+    out = M._clamp_methodology_assessment(tid, {}, d)
+    assert out["rebuttal_synthesis"]["methodology_assessment"]["aggregate_verdict"] == "absent"
+
+
+def test_methodology_unchanged_when_no_verification_paths(tmp_path, monkeypatch):
+    # No falsifier, no adversary -> nothing to clamp against; authored stands.
+    tid = "t_a3d"
+    _setup_rebuttal(tmp_path, monkeypatch, tid)
+    d = _set_verdict(_valid_ac_decision(), "provides")
+    out = M._clamp_methodology_assessment(tid, {}, d)
+    assert out["rebuttal_synthesis"]["methodology_assessment"]["aggregate_verdict"] == "provides"
+
+
+def test_methodology_clamp_never_raises_authored(tmp_path, monkeypatch):
+    # Cap only LOWERS: an authored 'absent' is never raised even with clean paths.
+    tid = "t_a3e"
+    _setup_rebuttal(
+        tmp_path, monkeypatch, tid,
+        falsifier={"kind": "real_holdout", "passed": True, "verdict": "passed"},
+    )
+    d = _set_verdict(_valid_ac_decision(), "absent")
+    out = M._clamp_methodology_assessment(tid, {}, d)
+    assert out["rebuttal_synthesis"]["methodology_assessment"]["aggregate_verdict"] == "absent"

@@ -288,6 +288,31 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "pin_domain_taxonomy",
+        "description": (
+            f"{PROFESSOR_CONTRACT}\n\n"
+            "ADR 0009 (B1): pin the operator-curated domain taxonomy (the OFFLINE "
+            "domain graph + conceptual distances) into the thread, hash-stamped + "
+            "IMMUTABLE. Defaults to configs/domain_taxonomy.json. Once pinned, "
+            "far-framing successors are minted on promotion / needs_child_branch by "
+            "DETERMINISTIC top-k policy over this frozen table — the construction "
+            "never chooses its own (easy) domain, and distance feeds spawn selection "
+            "ONLY, never promotion. Coverage == the operator's concept coverage (an "
+            "explicit, auditable, un-gameable bound)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "taxonomy": {
+                    "type": "object",
+                    "description": "Optional DomainTaxonomy (domain_taxonomy.schema.json). Omit to pin configs/domain_taxonomy.json. Operator / supervisor-bootstrap path only — the construction cannot author the table it is judged against.",
+                },
+            },
+        },
+    },
+    {
         "name": "submit_construct_adversary_report",
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
@@ -1250,14 +1275,19 @@ _TYPE_WEIGHTS = {
     "constraint": 5,
     "operational": 6,
     "taste": 7,
+    # ADR 0009 (B2): synthesis runs last — it recombines completed far-framing
+    # siblings. No scheduling privilege; it earns nothing for being a synthesis.
+    "synthesis": 8,
 }
 
 # 4-stage claim-typed search (same as AgentManager.DEFAULT_STAGES_SPEC).
+# 'synthesis' (ADR 0009 B2) is admitted in the final stage so it is scheduled
+# after the far-framing siblings it recombines have run.
 _STAGES: list[dict[str, Any]] = [
     {"name": "scope_pinning", "admits": {"validity", "taste", "operational"}},
     {"name": "baseline_evidence", "admits": {"capability"}},
     {"name": "mechanism_or_necessity", "admits": {"mechanism", "necessity"}},
-    {"name": "boundary_ablation", "admits": {"boundary", "constraint"}},
+    {"name": "boundary_ablation", "admits": {"boundary", "constraint", "synthesis"}},
 ]
 
 
@@ -1621,6 +1651,7 @@ def handle_compute_falsifier_result(args: dict[str, Any]) -> dict[str, Any]:
     the attestation gate checks for achieved=true."""
     from research_harness.falsifier import FalsifierError, compute_falsifier_result
     from research_harness.schemas.validator import validate_named_schema
+    from research_harness.config import load_settings as _ls
 
     tid = args["thread_id"]
     evidence = args.get("evidence") or {}
@@ -1642,9 +1673,33 @@ def handle_compute_falsifier_result(args: dict[str, Any]) -> dict[str, Any]:
                 "capped at unverified_screen and achieved=true is refused."
             ),
         }
+
+    guard_thresholds = _falsifier_guard_thresholds(_ls(_repo_root()))
+
+    # ADR 0006 rev.2: for the air-gapped weak falsifier, the harness MEASURES
+    # that generator B is structurally distinct from A by running both on a
+    # harness-fixed probe — never trusting a worker-supplied "distinct" label.
+    # A non-distinct B yields a below-threshold distance → uninformative,
+    # closing the thread_c8919361 hole (a passing rho on a non-distinct B).
+    measured_distance: float | None = None
+    probe: dict[str, Any] = {}
+    if falsifier.get("kind") == "cross_generator_transfer":
+        from research_harness import falsifier_probe
+        probe = falsifier_probe.measure_behavioral_distance(
+            evidence.get("generator_a"),
+            evidence.get("generator_b"),
+            repo_root=_repo_root(),
+            thread_id=tid,
+        )
+        measured_distance = probe.get("distance")
+
     try:
         result = compute_falsifier_result(
-            thread_id=tid, falsifier=falsifier, evidence=evidence
+            thread_id=tid,
+            falsifier=falsifier,
+            evidence=evidence,
+            measured_behavioral_distance=measured_distance,
+            guard_thresholds=guard_thresholds,
         )
         validate_named_schema("falsifier_result", result)
     except FalsifierError as exc:
@@ -1652,19 +1707,55 @@ def handle_compute_falsifier_result(args: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
 
+    # ADR 0009 (B3): record which axis the patchwork-insufficiency probe (the
+    # null floor) gates, read from the IMMUTABLE frozen question — never a
+    # per-node judgment, so a node cannot relabel itself to switch the probe off
+    # its own claim. method_is_subject (e.g. this screen) routes the probe to the
+    # generator/screen DESIGN axis; method_is_solution gates the claim falsifier.
+    from research_harness.falsifier import patchwork_probe_applies_to_claim
+    role = _frozen_subject_role(tid)
+    result.setdefault("guards", {})["patchwork_probe_axis"] = {
+        "subject_role": role or "method_is_solution",
+        "subject_role_source": "frozen_question" if role else "default",
+        "applies_to": "claim_falsifier" if patchwork_probe_applies_to_claim(role) else "screen_design_axis",
+    }
+
     out_path = _rebuttal_dir(tid) / "falsifier_result.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
         json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    if result["passed"]:
+    verdict = result.get("verdict", "passed" if result["passed"] else "failed")
+    if verdict == "passed":
         next_step = (
-            "Falsifier PASSED. The dual gate's falsifier precondition is met — "
-            "submit_professor_user_goal_attestation may now set achieved=true "
-            "(attested_status=goal_achieved)."
+            "Falsifier PASSED (predicate met AND guards ok). The dual gate's "
+            "falsifier precondition is satisfied — submit_professor_user_goal_"
+            "attestation may set achieved=true only if a real referent unlocks "
+            "transfer_valid (cross_generator_transfer remains a screen, not a "
+            "strength-certifier)."
         )
-    else:
+    elif verdict == "degenerate":
+        next_step = (
+            "Falsifier DEGENERATE — the supplied rankings do not discriminate "
+            "the pipelines (near-constant / heavily tied), so rho carries no "
+            "transferable signal. rho MUST NOT be reported as transfer evidence. "
+            "Supply rankings that actually separate the pipelines."
+        )
+    elif verdict == "uninformative":
+        reason = probe.get("reason") or (
+            "generator B is not measurably distinct from A on the harness probe "
+            "(behavioral distance below threshold), or the predicate sits at the "
+            "permutation-null noise band"
+        )
+        next_step = (
+            f"Falsifier UNINFORMATIVE — {reason}. rho MUST NOT be reported as "
+            "transfer evidence. Supply harness-loadable generator_a / generator_b "
+            "synthetic recipes for a structurally DISTINCT held-out B (same "
+            "family, different structure), or raise the predicate above the null "
+            "floor."
+        )
+    else:  # failed
         next_step = (
             f"Falsifier FAILED (observed {result['observed']:.4g} vs "
             f"{result['predicate']['op']} {result['predicate']['threshold']}). "
@@ -1675,7 +1766,9 @@ def handle_compute_falsifier_result(args: dict[str, Any]) -> dict[str, Any]:
     return {
         "status": "ok",
         "passed": result["passed"],
+        "verdict": verdict,
         "observed": result["observed"],
+        "guards": result.get("guards", {}),
         "result_path": str(out_path),
         "next_step": next_step,
     }
@@ -1741,6 +1834,180 @@ def handle_pin_frozen_question(args: dict[str, Any]) -> dict[str, Any]:
             "Reality-closeness (transfer_valid) stays unreachable without a real referent."
         ),
     }
+
+
+def handle_pin_domain_taxonomy(args: dict[str, Any]) -> dict[str, Any]:
+    """ADR 0009 (B1): pin the operator-curated domain taxonomy into the thread,
+    hash-stamped + IMMUTABLE (mirror of pin_frozen_question). The construction
+    loop can neither author nor edit it — far-framing D_i selection is pure
+    policy over this frozen table. Source defaults to configs/domain_taxonomy.json
+    (operator-curated offline); an explicit taxonomy may be supplied only on the
+    operator / supervisor-bootstrap path."""
+    from research_harness import domain_taxonomy as _DT
+    from research_harness.schemas.validator import validate_named_schema
+
+    tid = args["thread_id"]
+    taxonomy = args.get("taxonomy")
+    if taxonomy is None:
+        taxonomy = _read_json(_repo_root() / "configs" / "domain_taxonomy.json")
+        if not taxonomy:
+            return {
+                "status": "rejected",
+                "reason": (
+                    "no taxonomy supplied and configs/domain_taxonomy.json is "
+                    "missing — the operator must curate the domain taxonomy "
+                    "offline before far-framing successors can be minted."
+                ),
+            }
+    try:
+        validate_named_schema("domain_taxonomy", taxonomy)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
+
+    digest = _DT.taxonomy_hash(
+        {k: v for k, v in taxonomy.items() if k != "source_provenance"}
+    )
+    pinned = {**taxonomy, "source_provenance": f"taxonomy_sha256:{digest}"}
+    out_path = _thread_dir(tid) / "production" / "domain_taxonomy.json"
+    if out_path.exists():
+        existing = _read_json(out_path) or {}
+        if existing.get("source_provenance") != pinned["source_provenance"]:
+            return {
+                "status": "rejected",
+                "reason": (
+                    "a domain_taxonomy is already pinned and is IMMUTABLE; the "
+                    "construction may not swap the table it is judged against."
+                ),
+            }
+        return {"status": "ok", "taxonomy_hash": digest, "note": "already pinned (idempotent)"}
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(pinned, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "status": "ok",
+        "taxonomy_hash": digest,
+        "domain_taxonomy_path": str(out_path),
+        "domains": [d["id"] for d in pinned.get("domains", [])],
+        "next_step": (
+            "Domain taxonomy frozen. Far-framing successors will now be minted on "
+            "promotion / needs_child_branch by deterministic top-k policy over this "
+            "table. Distance feeds spawn selection ONLY — never promotion."
+        ),
+    }
+
+
+def _pinned_taxonomy(tid: str) -> dict[str, Any] | None:
+    return _read_json(_thread_dir(tid) / "production" / "domain_taxonomy.json")
+
+
+def _far_framing_config(settings: dict[str, Any]) -> dict[str, Any]:
+    """ADR 0009 (B1) successor policy: enabled / top_k / distance_threshold."""
+    out = {"enabled": True, "top_k": 3, "distance_threshold": 0.6}
+    cfg = _persona_cfg(settings).get("far_framing")
+    if isinstance(cfg, dict):
+        if cfg.get("enabled") is False:
+            out["enabled"] = False
+        if isinstance(cfg.get("top_k"), int) and cfg["top_k"] >= 0:
+            out["top_k"] = cfg["top_k"]
+        if isinstance(cfg.get("distance_threshold"), (int, float)) and not isinstance(
+            cfg.get("distance_threshold"), bool
+        ):
+            out["distance_threshold"] = float(cfg["distance_threshold"])
+    return out
+
+
+def _maybe_mint_far_framing(
+    tid: str, state: dict[str, Any], node: dict[str, Any], *, forbid: bool
+) -> list[str]:
+    """ADR 0009 (B1): mint far-framing successors, selecting D_i by deterministic
+    top-k policy over the pinned frozen taxonomy. No-op when far-framing is
+    disabled or no taxonomy is pinned. Self-contained + defensive: an additive
+    enhancement that must never break the core promotion flow. Distance is
+    consumed ONLY here (spawn selection) — never in promotion/winner-selection
+    (alpha1 / #5)."""
+    from research_harness import domain_taxonomy as _DT
+    from research_harness.config import load_settings as _ls
+    from research_harness.orchestrator.search_state import (
+        add_child_nodes,
+        search_policy_from_config,
+    )
+    from research_harness.orchestrator.treesearch.parallel_agent import (
+        _build_far_framing_successors,
+    )
+
+    # One round only: do not recurse far-framing from a far-framing node or a
+    # synthesis node — the mechanism is distant frames + one synthesis, not
+    # unbounded fan-out (ADR 0009).
+    if node.get("type") == "synthesis" or (node.get("lineage") or {}).get("far_framing_domain"):
+        return []
+
+    try:
+        cfg = _far_framing_config(_ls(_repo_root()))
+        taxonomy = _pinned_taxonomy(tid)
+        max_depth = int(
+            state.get("max_depth")
+            or search_policy_from_config(_repo_root()).get("max_depth")
+            or 5
+        )
+    except Exception:  # noqa: BLE001 — config/IO problem; far-framing is additive
+        return []
+    if not cfg["enabled"] or not taxonomy:
+        return []
+    selected = _DT.select_far_domains(
+        node.get("domain") or "", taxonomy,
+        top_k=cfg["top_k"], threshold=cfg["distance_threshold"],
+    )
+    if not selected:
+        return []
+    frontier_item = next(
+        (it for it in state.get("frontier", []) if it.get("node_id") == node["id"]), None
+    )
+    parent_depth = int(frontier_item["depth"]) if frontier_item else 0
+    far_children = _build_far_framing_successors(
+        node, selected,
+        parent_depth=parent_depth, max_depth=max_depth, forbid_parent_approach=forbid,
+    )
+    if far_children:
+        add_child_nodes(state, node["id"], far_children, reason="ADR 0009 far-framing successors")
+    return [c["id"] for c in far_children]
+
+
+def _maybe_mint_synthesis(tid: str, state: dict[str, Any], far_node: dict[str, Any]) -> str | None:
+    """ADR 0009 (B2): once ALL far-framing siblings of a parent have terminated,
+    mint ONE synthesis node recombining their partial mappings. Triggered when a
+    far-framing node reaches a terminal transition. Inputs are the harness's
+    record of which siblings completed (alpha2), not an LLM choice. No-op if
+    fewer than two far siblings, not all terminal, or a synthesis already exists.
+    Self-contained + defensive — never breaks the decision flow."""
+    from research_harness.orchestrator.search_state import add_child_nodes
+    from research_harness.orchestrator.treesearch.parallel_agent import _build_synthesis_node
+
+    parent_id = far_node.get("parent")
+    if not parent_id:
+        return None
+    nodes = state.get("nodes", [])
+    parent = next((n for n in nodes if n.get("id") == parent_id), None)
+    if not parent:
+        return None
+    far_sibs = [
+        n for n in nodes
+        if n.get("parent") == parent_id and (n.get("lineage") or {}).get("far_framing_domain")
+    ]
+    if len(far_sibs) < 2:
+        return None
+    terminal = {"promoted", "pruned", "blocked", "failed"}
+    if not all(s.get("status") in terminal for s in far_sibs):
+        return None  # wait until every far sibling finishes
+    synth_id = f"{parent_id}_synth"
+    if any(n.get("id") == synth_id for n in nodes):
+        return None  # already minted (idempotent)
+    synth = _build_synthesis_node(parent, far_sibs)
+    if synth is None:
+        return None
+    add_child_nodes(state, parent_id, [synth], reason="ADR 0009 synthesis node")
+    return synth["id"]
 
 
 def handle_submit_construct_adversary_report(args: dict[str, Any]) -> dict[str, Any]:
@@ -2583,16 +2850,38 @@ def handle_submit_professor_decision(
                     state, node_id, children,
                     reason="mcp professor follow-ups",
                 )
+        # ADR 0009 (B1): forced distant-transfer successors — deterministic
+        # top-k D_i over the pinned frozen taxonomy. Pushes search out of the
+        # home-manifold patchwork basin that the gates (A1) now reliably kill.
+        created_child_ids = created_child_ids + _maybe_mint_far_framing(
+            tid, state, node, forbid=False,
+        )
     elif transition == "needs_child_branch":
         transition_node(
             state, node_id, "needs_child_branch",
             event="mcp_branch", reason="mcp accepted child branch",
+        )
+        # forbid-the-familiar (ADR 0009): a negatively-resolved node's far-framing
+        # successors may not reuse the failed approach.
+        created_child_ids = created_child_ids + _maybe_mint_far_framing(
+            tid, state, node, forbid=True,
         )
     elif transition == "pruned":
         transition_node(
             state, node_id, "pruned",
             event="mcp_prune", reason="mcp accepted prune",
         )
+
+    # ADR 0009 (B2): a far-framing node just terminated — if ALL its far-framing
+    # siblings are now done, mint the synthesis node that recombines their
+    # partial mappings. Additive; never breaks the decision flow.
+    if (node.get("lineage") or {}).get("far_framing_domain"):
+        try:
+            synth_id = _maybe_mint_synthesis(tid, state, node)
+            if synth_id:
+                created_child_ids = created_child_ids + [synth_id]
+        except Exception:  # noqa: BLE001
+            pass
 
     # PR4: Failure memory auto-generation. When a node ends in a state the
     # rest of the harness considers a learnable failure (pruned, with an
@@ -3130,6 +3419,13 @@ def _frozen_question(tid: str) -> dict[str, Any] | None:
     return _read_json(_thread_dir(tid) / "production" / "frozen_question.json")
 
 
+def _frozen_subject_role(tid: str) -> str | None:
+    """ADR 0009 (B3): the patchwork-probe axis, read from the IMMUTABLE frozen
+    question (never a per-node judgment). None when unpinned → callers default
+    conservatively to method_is_solution."""
+    return (_frozen_question(tid) or {}).get("subject_role")
+
+
 def _construct_adversary_thresholds(settings: dict[str, Any]) -> tuple[int, int]:
     from research_harness.construct_adversary import (
         DEFAULT_MIN_BUDGET, DEFAULT_MIN_DISTINCT_WORLDS,
@@ -3142,6 +3438,32 @@ def _construct_adversary_thresholds(settings: dict[str, Any]) -> tuple[int, int]
         if isinstance(cfg.get("min_distinct_worlds"), int) and cfg["min_distinct_worlds"] >= 1:
             minw = cfg["min_distinct_worlds"]
     return minb, minw
+
+
+def _falsifier_guard_thresholds(settings: dict[str, Any]) -> dict[str, Any]:
+    """ADR 0006 rev.2: cross_generator_transfer guard thresholds, overridable
+    via persona_enforcement.falsifier_guards. The guard itself is intrinsic to
+    deriving an honest verdict (not a disableable rail) — only the thresholds
+    are tunable."""
+    from research_harness.falsifier import (
+        DEFAULT_MAX_TIE_FRACTION,
+        DEFAULT_MIN_BEHAVIORAL_DISTANCE,
+        DEFAULT_MIN_RANK_VARIANCE,
+        DEFAULT_NULL_FLOOR_K,
+    )
+    out = {
+        "min_behavioral_distance": DEFAULT_MIN_BEHAVIORAL_DISTANCE,
+        "min_rank_variance": DEFAULT_MIN_RANK_VARIANCE,
+        "max_tie_fraction": DEFAULT_MAX_TIE_FRACTION,
+        "null_floor_k": DEFAULT_NULL_FLOOR_K,
+    }
+    cfg = _persona_cfg(settings).get("falsifier_guards")
+    if isinstance(cfg, dict):
+        for key in out:
+            val = cfg.get(key)
+            if isinstance(val, (int, float)) and not isinstance(val, bool) and val >= 0:
+                out[key] = float(val)
+    return out
 
 
 def _real_referent_verified(tid: str) -> bool:
@@ -3185,6 +3507,84 @@ def _thread_referent_ledger(tid: str, settings: dict[str, Any]) -> dict[str, Any
         real_referent_verified=_real_referent_verified(tid),
         construct_referent_verified=_construct_referent_verified(tid, settings),
     )
+
+
+_METHODOLOGY_ORDER = {"absent": 0, "partial": 1, "provides": 2}
+_METHODOLOGY_INV = {0: "absent", 1: "partial", 2: "provides"}
+
+
+def _clamp_methodology_assessment(
+    tid: str, settings: dict[str, Any], decision: dict[str, Any]
+) -> dict[str, Any]:
+    """ADR 0008 rev.2 (A3): the methodology verdict inherits the WEAKER of the
+    executed verification paths. The AC authors aggregate_verdict; the harness
+    CAPS it from the executed evidence so a clean construct-adversary pass cannot
+    launder 'provides' over a falsifier that was run but did not pass
+    (uninformative / degenerate / failed). The cap only LOWERS, and only when a
+    path was actually executed and came back weak — a thread with no falsifier /
+    no adversary keeps its authored verdict (those are bounded elsewhere by
+    verdict_strength / attested_status). Returns decision unchanged or with a
+    clamped aggregate_verdict + clamp_reason."""
+    synthesis = decision.get("rebuttal_synthesis")
+    if not isinstance(synthesis, dict):
+        return decision
+    methodology = synthesis.get("methodology_assessment")
+    if not isinstance(methodology, dict):
+        return decision
+    authored = methodology.get("aggregate_verdict")
+    if authored not in _METHODOLOGY_ORDER:
+        return decision
+
+    cap = 2  # 'provides' unless an executed path forbids it
+    reasons: list[str] = []
+
+    # Falsifier path: a run-but-not-passed result forbids 'provides'. (A1 typed
+    # the verdict — uninformative/degenerate/failed all mean measurement gave no
+    # usable transfer evidence; rho must not be reported as transfer support.)
+    fr = _read_json(_rebuttal_dir(tid) / "falsifier_result.json")
+    if fr and not fr.get("passed"):
+        cap = min(cap, 1)
+        reasons.append(
+            f"falsifier verdict={fr.get('verdict', 'not-passed')!r} — the measurement "
+            "path did not pass, so the methodology cannot be 'provides' (unverified by "
+            "measurement; rho is not transfer evidence)"
+        )
+
+    # Construct-adversary path: a broken construction is construct-invalid
+    # (methodology absent); an invalid certification caps at partial.
+    fq = _frozen_question(tid)
+    report = _read_json(_rebuttal_dir(tid) / "construct_adversary_report.json")
+    if fq and report and report.get("question_id") == fq.get("question_id"):
+        from research_harness.construct_adversary import evaluate_construct_adversary_report
+        minb, minw = _construct_adversary_thresholds(settings)
+        adv = evaluate_construct_adversary_report(report, min_budget=minb, min_distinct_worlds=minw)
+        if adv.get("verdict") == "broken":
+            cap = min(cap, 0)
+            reasons.append(
+                "construct-adversary verdict=broken — the construction is construct-invalid; "
+                "methodology is absent"
+            )
+        elif adv.get("verdict") == "invalid":
+            cap = min(cap, 1)
+            reasons.append(
+                "construct-adversary verdict=invalid — certification unacceptable; "
+                "methodology capped at partial"
+            )
+
+    if _METHODOLOGY_ORDER[authored] <= cap:
+        return decision  # authored already at/below the executed-evidence ceiling
+
+    decision = dict(decision)
+    synthesis = dict(decision["rebuttal_synthesis"])
+    methodology = dict(synthesis["methodology_assessment"])
+    methodology["aggregate_verdict"] = _METHODOLOGY_INV[cap]
+    methodology["clamp_reason"] = (
+        f"harness clamped aggregate_verdict {authored!r} -> "
+        f"{_METHODOLOGY_INV[cap]!r}: " + "; ".join(reasons)
+    )
+    synthesis["methodology_assessment"] = methodology
+    decision["rebuttal_synthesis"] = synthesis
+    return decision
 
 
 _SCOPE_RANK = {"directional": 1, "feasibility": 2, "deployment": 3}
@@ -3957,6 +4357,10 @@ def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
         decision["confidence"] = "low"
         decision["confidence_downclamp_reasons"] = downclamp_reasons
 
+    # --- ADR 0008 rev.2 (A3): methodology inherits the weaker verification path.
+    from research_harness.config import load_settings as _ls_clamp
+    decision = _clamp_methodology_assessment(tid, _ls_clamp(_repo_root()), decision)
+
     (_rebuttal_dir(tid) / "ac_decision.json").write_text(
         json.dumps(decision, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -4188,6 +4592,43 @@ def handle_submit_paper_section(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _attemptable_in_envelope(
+    envelope: dict[str, Any], item: dict[str, Any]
+) -> tuple[bool, list[dict[str, Any]]]:
+    """ADR 0007 rev.2 (A2): DETERMINISTIC attemptability — every declared
+    required_resource must be present in the feasibility_envelope. Absent/empty
+    required_resources → conservatively attemptable (True): an item that names
+    no out-of-envelope dependency cannot be silently treated as un-doable. The
+    boolean is harness-DERIVED from envelope membership (reuses the
+    declared-resource-∈-envelope pattern from persona_validator); the LLM never
+    authors it. Returns (attemptable, absent_resources)."""
+    reqs = item.get("required_resources") or []
+    if not reqs:
+        return True, []
+    ds_ids = {
+        s.get("id") for s in (envelope.get("data_sources_available") or [])
+        if isinstance(s, dict)
+    }
+    oracle_kinds = {
+        o.get("kind") for o in (envelope.get("llm_oracles_available") or [])
+        if isinstance(o, dict)
+    } - {"none"}
+    absent: list[dict[str, Any]] = []
+    for r in reqs:
+        if not isinstance(r, dict):
+            continue
+        kind, ref = r.get("kind"), r.get("ref")
+        if kind == "data_source":
+            present = ref in ds_ids
+        elif kind == "llm_oracle":
+            present = ref in oracle_kinds
+        else:
+            present = True  # unknown kind cannot make an item un-attemptable
+        if not present:
+            absent.append(r)
+    return (len(absent) == 0), absent
+
+
 def handle_submit_professor_user_goal_attestation(args: dict[str, Any]) -> dict[str, Any]:
     """Professor's final attestation that the original intake problem is
     addressable. Second half of the dual publication gate."""
@@ -4286,6 +4727,26 @@ def handle_submit_professor_user_goal_attestation(args: dict[str, Any]) -> dict[
     else:
         attestation["attested_status"] = "unverified_screen"        # honest floor terminal
     attestation["scope_attainment"] = _compute_scope_attainment(tid, envelope)
+
+    # ADR 0007 rev.2 (A2): harness-stamp attemptability per required-research
+    # item (the LLM cannot author the boolean — we overwrite any submitted
+    # value). honest-failure later refuses to render while any
+    # attemptable-in-envelope item is still undone.
+    attemptability_audit: list[dict[str, Any]] = []
+    for item in attestation.get("required_additional_research") or []:
+        if not isinstance(item, dict):
+            continue
+        ok, absent = _attemptable_in_envelope(envelope or {}, item)
+        item["attemptable_in_envelope"] = ok
+        if not ok:
+            attemptability_audit.append(
+                {"experiment": item.get("experiment"), "declared_out_of_envelope": absent}
+            )
+    if attemptability_audit:
+        # Operator-visible: items the run declared un-attemptable. The harness
+        # cannot verify air-gapped that the experiment TRULY needs the named
+        # absent resource — surfaced for audit, not silently honored.
+        attestation["attemptability_audit"] = attemptability_audit
 
     out_path = _rebuttal_dir(tid) / "user_goal_attestation.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -4495,6 +4956,42 @@ def handle_render_honest_failure_paper(args: dict[str, Any]) -> dict[str, Any]:
                 "investigation_depth": depth,
             }
 
+        # ADR 0007 rev.2 (A2): attemptable-in-envelope gate. A give-up is not
+        # honest while work the harness CAN do remains. Block + route to fan-out.
+        # attemptable_in_envelope is harness-stamped at attestation time; only an
+        # item the harness confirmed needs an out-of-envelope resource is exempt.
+        attemptable_undone = [
+            r for r in (attestation.get("required_additional_research") or [])
+            if isinstance(r, dict) and r.get("attemptable_in_envelope") is True
+        ]
+        if attemptable_undone:
+            return {
+                "status": "rejected",
+                "reason": (
+                    "ADR 0007 rev.2 attemptable gate — honest-failure refused: "
+                    f"{len(attemptable_undone)} required-research item(s) are "
+                    "attemptable IN-ENVELOPE and not yet done: "
+                    + "; ".join((r.get("experiment") or "")[:80] for r in attemptable_undone)
+                    + ". A give-up is not honest while in-envelope work remains. Fan "
+                    "out and run them (propose_alternative_root_directions), or — if "
+                    "an item genuinely needs an out-of-envelope resource (real_adapter "
+                    "/ live network / operator) — declare it in required_resources so "
+                    "the harness reclassifies it as not attemptable."
+                ),
+                "attemptable_required_research": [
+                    r.get("experiment") for r in attemptable_undone
+                ],
+                "auto_action_suggestion": {
+                    "tool": "propose_alternative_root_directions",
+                    "source_rail": "attemptable_required_research_blocks_honest_failure",
+                    "rationale": (
+                        "honest-failure blocked because in-envelope required research "
+                        "remains undone; fan out to attempt it before terminating."
+                    ),
+                    "confidence": "high",
+                },
+            }
+
     import html as _h
     pub_dir = pdir / "publication"
     pub_dir.mkdir(parents=True, exist_ok=True)
@@ -4542,6 +5039,20 @@ def handle_render_honest_failure_paper(args: dict[str, Any]) -> dict[str, Any]:
             for a in (proposal.get("alternatives") or [])
         )
         + "</ol>"
+        "<h2>Honest limits of this search</h2>"
+        "<div class='callout'>"
+        "This harness is a full-auto single model. It can reach up to "
+        "<em>unbridged-recombination</em> novelty (recombining known frames in a way "
+        "no single frame gave); it <strong>cannot</strong> reach "
+        "<em>absent-concept</em> novelty (a concept outside its and the taxonomy's "
+        "manifold), and it cannot tell which of the two a given failure is. The "
+        "far-framing domain taxonomy is operator-curated, so its coverage is the "
+        "operator's concept coverage — a domain that could have bridged to the answer "
+        "but was never listed is unreachable. Where a transfer screen was run, "
+        "behavioral distance shows generator B was measurably distinct from A but "
+        "cannot certify the divergence lay on the question's axis (reality-closeness "
+        "needs a real referent the operator holds). These bounds are stated, not hidden."
+        "</div>"
         "</body></html>"
     )
     out_path.write_text(body_html, encoding="utf-8")
@@ -4752,6 +5263,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_compute_falsifier_result(args)
             elif name == "pin_frozen_question":
                 result = handle_pin_frozen_question(args)
+            elif name == "pin_domain_taxonomy":
+                result = handle_pin_domain_taxonomy(args)
             elif name == "submit_construct_adversary_report":
                 result = handle_submit_construct_adversary_report(args)
             elif name == "design_initial_claim_contract":

@@ -141,6 +141,7 @@ class MCPServerTests(unittest.TestCase):
             "submit_feasibility_envelope",
             "compute_falsifier_result",
             "pin_frozen_question",
+            "pin_domain_taxonomy",
             "submit_construct_adversary_report",
         }
         # Multi-root tournament: alternative root formulations.

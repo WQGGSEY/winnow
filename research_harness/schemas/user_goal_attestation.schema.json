@@ -48,7 +48,24 @@
             "enum": ["validity", "capability", "mechanism", "necessity", "boundary", "constraint", "operational", "taste"]
           },
           "experiment": { "type": "string", "minLength": 20 },
-          "rationale": { "type": "string", "minLength": 20 }
+          "rationale": { "type": "string", "minLength": 20 },
+          "required_resources": {
+            "type": "array",
+            "description": "ADR 0007 rev.2 (A2): resources this experiment needs, each CHECKED by the harness against the feasibility_envelope. The harness DERIVES attemptable_in_envelope from membership — the LLM cannot set that boolean. A declaration only RAISES the bar (names more needs); naming a resource that is actually present keeps the item attemptable, so a misdeclaration to dodge in-envelope work is caught.",
+            "items": {
+              "type": "object",
+              "required": ["kind", "ref"],
+              "properties": {
+                "kind": { "type": "string", "enum": ["data_source", "llm_oracle"] },
+                "ref": { "type": "string", "description": "data_source: an envelope data_sources_available id (adapter_id / synthetic label). llm_oracle: an envelope llm_oracles_available kind (e.g. live_anthropic_api)." }
+              },
+              "additionalProperties": false
+            }
+          },
+          "attemptable_in_envelope": {
+            "type": "boolean",
+            "description": "ADR 0007 rev.2 (A2): HARNESS-STAMPED, not LLM-authored (the harness overwrites any submitted value). True iff every required_resource is present in the feasibility_envelope (absent/empty required_resources -> conservatively true). honest-failure is refused while any attemptable_in_envelope=true item is still undone — a give-up is not honest while in-envelope work remains; the system fans out instead."
+          }
         },
         "additionalProperties": false
       }
@@ -97,6 +114,11 @@
         }
       },
       "additionalProperties": false
+    },
+    "attemptability_audit": {
+      "type": "array",
+      "description": "ADR 0007 rev.2 (A2): harness-stamped list of required-research items the run declared as needing an out-of-envelope resource (so they were classified NOT attemptable, exempting them from the honest-failure block). Surfaced for operator audit — the harness cannot verify air-gapped that the experiment truly needs the named absent resource.",
+      "items": { "type": "object", "additionalProperties": true }
     }
   },
   "additionalProperties": false

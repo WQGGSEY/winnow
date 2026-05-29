@@ -26,6 +26,11 @@
       "minLength": 20,
       "description": "The condition under which the frozen question's answer is YES. The construct-adversary uses this to label each tested world's true answer independently of whether the construction's measurement passes there."
     },
+    "subject_role": {
+      "type": "string",
+      "enum": ["method_is_solution", "method_is_subject"],
+      "description": "ADR 0009 (B3): which axis the patchwork-insufficiency probe gates, derived from the question STRUCTURE (does true_iff quantify the method as the solution, or as the test subject?). Pinned PRE-construction and IMMUTABLE, so a node cannot flip its own axis to switch the probe off its claim. 'method_is_solution' = X is the target -> the probe gates the CLAIM's falsifier (a known-methods baseline must not clear the bar). 'method_is_subject' = the method is the thing under test (e.g. a screen) -> the probe hangs on the generator/screen DESIGN axis, not the claim's falsifier. Absent defaults conservatively to method_is_solution (probe gates the claim)."
+    },
     "decision_context": {
       "type": "string",
       "description": "Why the operator cares — the real decision riding on the answer."

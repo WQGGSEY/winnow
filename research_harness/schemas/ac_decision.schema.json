@@ -138,6 +138,10 @@
             "remaining_gap": {
               "type": "string",
               "description": "Any gap left to close, even when aggregate_verdict=provides. Empty string if truly nothing remains."
+            },
+            "clamp_reason": {
+              "type": "string",
+              "description": "ADR 0008 rev.2 (A3): harness-stamped when aggregate_verdict was clamped DOWN to the weaker of the executed verification paths (e.g. a clean construct-adversary pass cannot launder 'provides' over a falsifier that ran but came back uninformative/degenerate/failed). The AC does not author this; absence means no clamp was applied."
             }
           },
           "additionalProperties": false

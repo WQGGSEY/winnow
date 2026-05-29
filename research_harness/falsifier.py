@@ -34,9 +34,112 @@ PRODUCED_BY = "harness_falsifier_module"
 _TRANSFER_METRIC = "spearman_rho"
 _MIN_RANK_VECTOR_LEN = 3
 
+# --- ADR 0006 rev.2: cross_generator_transfer guard verdicts ------------- #
+# A cross_generator_transfer rho is reportable as transfer evidence ONLY when
+# the harness can MEASURE that generator B is structurally distinct from A
+# (behavioral distance), the rankings actually discriminate the pipelines
+# (rank variance), and the predicate is not a chance artifact (null floor).
+# Any guard failing types the result as not-passed so a degenerate / hollow
+# rho (the thread_c8919361 failure: rho on a non-distinct B) cannot launder
+# into a passing screen. The distinctness is MEASURED by the harness running
+# both generators, never asserted by a worker-supplied label/hash.
+VERDICT_PASSED = "passed"            # predicate true AND all guards ok
+VERDICT_FAILED = "failed"            # predicate false, guards ok (clean non-transfer)
+VERDICT_DEGENERATE = "degenerate"    # rankings do not discriminate the pipelines
+VERDICT_UNINFORMATIVE = "uninformative"  # B not measurably distinct, or chance artifact
+VERDICT_INVALID = "invalid"          # malformed input
+
+# Guard thresholds (overridable via settings persona_enforcement.falsifier_guards).
+DEFAULT_MIN_BEHAVIORAL_DISTANCE = 0.15  # min A/B output-distribution divergence
+DEFAULT_MIN_RANK_VARIANCE = 0.05        # rank-vector variance floor (normalized)
+DEFAULT_MAX_TIE_FRACTION = 0.5          # max fraction of tied entries
+DEFAULT_NULL_FLOOR_K = 1.0              # threshold must beat k * null std (1/sqrt(n-1))
+
 
 class FalsifierError(ValueError):
     """Raised when a falsifier predicate cannot be evaluated."""
+
+
+def rank_discrimination(values: list[float]) -> dict[str, Any]:
+    """Pure: does this ranking actually distinguish the pipelines? Returns
+    {variance, tie_fraction, ok}. A near-constant or heavily-tied ranking
+    carries no transferable signal regardless of the rho it produces."""
+    n = len(values)
+    if n < _MIN_RANK_VECTOR_LEN:
+        return {"variance": 0.0, "tie_fraction": 1.0, "ok": False}
+    ranks = _ranks(values)
+    mean_r = sum(ranks) / n
+    raw_var = sum((r - mean_r) ** 2 for r in ranks) / n
+    # Normalize by the variance of a perfect 1..n ranking so the floor is
+    # scale-free across vector lengths.
+    perfect = _ranks(list(range(n)))
+    mean_p = sum(perfect) / n
+    perfect_var = sum((r - mean_p) ** 2 for r in perfect) / n or 1.0
+    norm_var = raw_var / perfect_var
+    distinct = len({round(v, 12) for v in values})
+    tie_fraction = 1.0 - (distinct / n)
+    return {"variance": norm_var, "tie_fraction": tie_fraction, "ok": None}
+
+
+def behavioral_distance(
+    samples_a: dict[str, list[float]], samples_b: dict[str, list[float]]
+) -> float:
+    """Pure: structural divergence between two generators' outputs on the SAME
+    harness-chosen probe. Per shared numeric column, the max of the
+    pooled-std-normalized mean gap and the std gap; overall = max over columns.
+    Disjoint column schemas → 1.0 (trivially distinct). Identical generators on
+    the same seed → 0.0. This is the MEASURED replacement for label-distinctness:
+    it expresses 'same family yet structurally distinct', which a label cannot."""
+    cols_a = {k for k, v in samples_a.items() if v}
+    cols_b = {k for k, v in samples_b.items() if v}
+    shared = cols_a & cols_b
+    if not shared:
+        return 1.0 if (cols_a or cols_b) else 0.0
+
+    def _mean(xs: list[float]) -> float:
+        return sum(xs) / len(xs)
+
+    def _std(xs: list[float], m: float) -> float:
+        return (sum((x - m) ** 2 for x in xs) / len(xs)) ** 0.5
+
+    worst = 0.0
+    for col in shared:
+        a, b = samples_a[col], samples_b[col]
+        ma, mb = _mean(a), _mean(b)
+        sa, sb = _std(a, ma), _std(b, mb)
+        pooled = (sa + sb) / 2.0 or 1e-9
+        mean_gap = abs(ma - mb) / pooled
+        std_gap = abs(sa - sb) / pooled
+        worst = max(worst, mean_gap, std_gap)
+    return worst
+
+
+def null_floor_satisfied(n: int, op: str, threshold: float, k: float) -> bool:
+    """Pure: would a no-information ranking plausibly clear this predicate? The
+    permutation null for Spearman rho has mean 0 and std ~1/sqrt(n-1). For a
+    '>=' / '>' predicate the bar must sit at least k null-stds above 0, else a
+    chance ranking clears it and the screen is uninformative. Non-directional
+    ops are not floored here."""
+    if n < 2:
+        return False
+    null_std = 1.0 / ((n - 1) ** 0.5)
+    if op in (">=", ">"):
+        return threshold >= k * null_std
+    # '<=' / '<' / '==' are not chance-clearable in the transfer direction.
+    return True
+
+
+def patchwork_probe_applies_to_claim(subject_role: str | None) -> bool:
+    """ADR 0009 (B3): does the patchwork-insufficiency probe (a known-methods
+    baseline must NOT clear the bar — the null floor above) gate the CLAIM's
+    falsifier? True when X is the target (``method_is_solution``): a baseline
+    clearing the bar means the bar is too low to force a structurally new
+    construction. False when the method is the test subject
+    (``method_is_subject``, e.g. a screen): the probe is a generator/screen
+    DESIGN-axis concern, not a claim gate. The axis is read from the FROZEN
+    question — the construction cannot author it, so a node cannot relabel
+    itself to switch the probe off. Absent defaults conservatively to True."""
+    return subject_role != "method_is_subject"
 
 
 def derive_max_attestable_status(envelope: dict[str, Any] | None) -> str:
@@ -124,6 +227,8 @@ def compute_falsifier_result(
     thread_id: str,
     falsifier: dict[str, Any],
     evidence: dict[str, Any],
+    measured_behavioral_distance: float | None = None,
+    guard_thresholds: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Evaluate the envelope's external_falsifier predicate over held-out
     evidence and return a FalsifierResult dict.
@@ -134,8 +239,14 @@ def compute_falsifier_result(
         (ranking_b is the HELD-OUT generator B; same pipeline order).
       - real_holdout: {observed: <number measured on the real adapter>}.
 
-    Raises FalsifierError on malformed input. The pass/fail is derived
-    here, never supplied by the caller.
+    ``measured_behavioral_distance`` (cross_generator_transfer only) is the
+    HARNESS-measured A/B output divergence from falsifier_probe — it is passed
+    in by the handler that actually ran the two generators, never read from the
+    worker's evidence. None means the harness could not measure distinctness
+    (no harness-loadable generators supplied) → the result is uninformative.
+
+    Raises FalsifierError on malformed input. The verdict/pass is derived here,
+    never supplied by the caller.
     """
     kind = falsifier.get("kind")
     if kind == "none" or not kind:
@@ -158,7 +269,16 @@ def compute_falsifier_result(
     op = predicate["op"]
     threshold = float(predicate["threshold"])
 
+    gt = {
+        "min_behavioral_distance": DEFAULT_MIN_BEHAVIORAL_DISTANCE,
+        "min_rank_variance": DEFAULT_MIN_RANK_VARIANCE,
+        "max_tie_fraction": DEFAULT_MAX_TIE_FRACTION,
+        "null_floor_k": DEFAULT_NULL_FLOOR_K,
+        **(guard_thresholds or {}),
+    }
+
     result_evidence: dict[str, Any] = {}
+    guards: dict[str, Any] = {}
     if kind == "cross_generator_transfer":
         if predicate["metric"] != _TRANSFER_METRIC:
             raise FalsifierError(
@@ -172,16 +292,56 @@ def compute_falsifier_result(
                 "cross_generator_transfer evidence requires list ranking_a "
                 "(generator A) and ranking_b (held-out generator B)."
             )
-        observed = spearman_rho(
-            [float(x) for x in ranking_a],
-            [float(x) for x in ranking_b],
-        )
+        ra = [float(x) for x in ranking_a]
+        rb = [float(x) for x in ranking_b]
         result_evidence = {
             "ranking_a": ranking_a,
             "ranking_b": ranking_b,
             "pipeline_labels": evidence.get("pipeline_labels"),
         }
-    else:  # real_holdout
+
+        # Guard (b): the rankings must actually discriminate the pipelines.
+        disc_a = rank_discrimination(ra)
+        disc_b = rank_discrimination(rb)
+        rank_ok = (
+            disc_a["variance"] >= gt["min_rank_variance"]
+            and disc_b["variance"] >= gt["min_rank_variance"]
+            and disc_a["tie_fraction"] <= gt["max_tie_fraction"]
+            and disc_b["tie_fraction"] <= gt["max_tie_fraction"]
+        )
+        guards["rank_discrimination"] = {"ranking_a": disc_a, "ranking_b": disc_b, "ok": rank_ok}
+
+        try:
+            observed = spearman_rho(ra, rb)
+        except FalsifierError:
+            observed = None  # constant vector — degenerate, handled below
+
+        # Guard (c): the predicate must beat the permutation-null noise band.
+        null_ok = null_floor_satisfied(len(ra), op, threshold, gt["null_floor_k"])
+        guards["null_floor"] = {"n": len(ra), "k": gt["null_floor_k"], "ok": null_ok}
+
+        # Guard (a): generator B must be MEASURABLY distinct from A. Computed by
+        # the harness running both generators; absence (None) = cannot certify.
+        behavioral_ok = (
+            measured_behavioral_distance is not None
+            and measured_behavioral_distance >= gt["min_behavioral_distance"]
+        )
+        guards["behavioral_distance"] = {
+            "observed": measured_behavioral_distance,
+            "min": gt["min_behavioral_distance"],
+            "ok": behavioral_ok,
+        }
+
+        if observed is None or not rank_ok:
+            verdict = VERDICT_DEGENERATE
+            observed = observed if observed is not None else 0.0
+        elif not behavioral_ok or not null_ok:
+            verdict = VERDICT_UNINFORMATIVE
+        elif evaluate_predicate(observed, op, threshold):
+            verdict = VERDICT_PASSED
+        else:
+            verdict = VERDICT_FAILED
+    else:  # real_holdout — the strong scalar; no air-gapped distinctness guards.
         if "observed" not in evidence:
             raise FalsifierError(
                 "real_holdout evidence requires 'observed' (the metric value "
@@ -192,8 +352,9 @@ def compute_falsifier_result(
             "observed": observed,
             "adapter_provenance": evidence.get("adapter_provenance"),
         }
+        verdict = VERDICT_PASSED if evaluate_predicate(observed, op, threshold) else VERDICT_FAILED
 
-    passed = evaluate_predicate(observed, op, threshold)
+    passed = verdict == VERDICT_PASSED
     return {
         "thread_id": thread_id,
         "kind": kind,
@@ -201,6 +362,8 @@ def compute_falsifier_result(
         "predicate": {"metric": predicate["metric"], "op": op, "threshold": threshold},
         "observed": observed,
         "passed": passed,
+        "verdict": verdict,
+        "guards": guards,
         "produced_by": PRODUCED_BY,
         "evidence": {k: v for k, v in result_evidence.items() if v is not None},
         "computed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

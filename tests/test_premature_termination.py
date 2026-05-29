@@ -154,6 +154,52 @@ def test_honest_failure_allowed_when_deep_with_mechanism(tmp_path, monkeypatch):
     assert summary["investigation_depth"]["distinct_attempts"] == 2
 
 
+def test_honest_failure_blocked_by_attemptable_required_research(tmp_path, monkeypatch):
+    # ADR 0007 rev.2 (A2): a give-up is not honest while an in-envelope item remains.
+    _patch(monkeypatch, tmp_path)
+    monkeypatch.setattr(M, "_premature_termination_gate_enabled", lambda s: True)
+    monkeypatch.setattr(M, "_min_distinct_attempts", lambda s: 2)
+    tid = "t_attemptable_block"
+    _write_state(tmp_path, tid, [
+        _node("root", None, "promoted", scope="deployment"),
+        _node("a", "root", "pruned", scope="deployment"),
+    ])  # depth satisfied
+    att = _attestation_neg(mechanism="m" * 90)
+    att["required_additional_research"] = [
+        {"axis": "validity", "experiment": "e" * 25, "rationale": "r" * 25,
+         "attemptable_in_envelope": True}
+    ]
+    _write_attestation(tmp_path, tid, att)
+    out = M.handle_render_honest_failure_paper({"thread_id": tid})
+    assert out["status"] == "rejected"
+    assert "attemptable" in out["reason"]
+    assert out["auto_action_suggestion"]["tool"] == "propose_alternative_root_directions"
+
+
+def test_honest_failure_renders_when_required_research_out_of_envelope(tmp_path, monkeypatch):
+    _patch(monkeypatch, tmp_path)
+    monkeypatch.setattr(M, "_premature_termination_gate_enabled", lambda s: True)
+    monkeypatch.setattr(M, "_min_distinct_attempts", lambda s: 2)
+    tid = "t_oo_env"
+    _write_state(tmp_path, tid, [
+        _node("root", None, "promoted", scope="deployment"),
+        _node("a", "root", "pruned", scope="deployment"),
+    ])
+    att = _attestation_neg(mechanism="m" * 90)
+    att["required_additional_research"] = [
+        {"axis": "validity", "experiment": "e" * 25, "rationale": "r" * 25,
+         "attemptable_in_envelope": False}  # genuinely needs out-of-envelope real data
+    ]
+    _write_attestation(tmp_path, tid, att)
+    out = M.handle_render_honest_failure_paper({"thread_id": tid})
+    assert out["status"] == "ok"
+    assert out["outcome"] == "honest_failure"
+    # ADR 0009 (alpha3): the rendered report states the honest limits.
+    html = (tmp_path / "runs" / "threads" / tid / "production" / "publication"
+            / "honest_failure.html").read_text()
+    assert "Honest limits" in html and "absent-concept" in html
+
+
 def test_honest_failure_gate_disabled_renders_shallow(tmp_path, monkeypatch):
     _patch(monkeypatch, tmp_path)
     monkeypatch.setattr(M, "_premature_termination_gate_enabled", lambda s: False)

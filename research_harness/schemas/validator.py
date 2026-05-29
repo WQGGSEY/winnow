@@ -49,6 +49,7 @@ SCHEMA_FILES = {
     "falsifier_result": "falsifier_result.schema.json",
     "frozen_question": "frozen_question.schema.json",
     "construct_adversary_report": "construct_adversary_report.schema.json",
+    "domain_taxonomy": "domain_taxonomy.schema.json",
 }
 
 

@@ -42,7 +42,17 @@
     },
     "passed": {
       "type": "boolean",
-      "description": "Harness-derived: predicate(observed) is true. The worker cannot set this directly; it falls out of the deterministic comparison."
+      "description": "Harness-derived: predicate(observed) is true AND (cross_generator_transfer) all guards ok. The worker cannot set this directly; it falls out of the deterministic comparison. passed == (verdict == 'passed')."
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["passed", "failed", "degenerate", "uninformative", "invalid"],
+      "description": "ADR 0006 rev.2: harness-derived verdict. 'passed' = predicate true AND all guards ok. 'failed' = clean non-transfer (guards ok, predicate not met). 'degenerate' = the rankings do not discriminate the pipelines (near-constant / heavily tied). 'uninformative' = generator B is not measurably distinct from A on the harness probe (behavioral distance below threshold, or no harness-loadable generators supplied), or the predicate sits at the permutation-null floor. For 'degenerate'/'uninformative', rho MUST NOT be reported as transfer evidence."
+    },
+    "guards": {
+      "type": "object",
+      "description": "ADR 0006 rev.2: per-guard signals the harness computed for cross_generator_transfer (behavioral_distance — MEASURED by running both generators; rank_discrimination; null_floor). Empty {} for real_holdout. Additive/back-compatible: absent on results produced before rev.2.",
+      "additionalProperties": true
     },
     "produced_by": {
       "type": "string",
