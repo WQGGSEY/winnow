@@ -83,19 +83,19 @@ def test_inv_delta_is_pre_registered_not_fit_to_gap():
     assert out["verdict"] == V.ATLAS_HONEST_FAILURE  # 0.6 > 0.5 gap
 
 
-def test_inv_pre_registration_floor_rejects_tiny_delta():
-    # delta must clear the held-out-size noise floor (independent ground), so an
-    # operator cannot pre-register an arbitrarily tiny delta to wave the atlas
-    # through. Smaller held-out set ⇒ higher floor.
-    assert V.noise_floor(4) == pytest.approx(0.5)
+def test_inv_pre_registration_wellformedness():
+    # The 1/sqrt(n) floor was ABOLISHED by ratification: delta now comes from the
+    # frozen permutation-null rule (atlas.distance.permutation_delta), so a small
+    # delta is admissible (the rule sets its value, not a fixed floor).
+    # validate_pre_registration now only checks well-formedness.
+    V.validate_pre_registration(_crit(0.1, 0.5, n=4))  # small delta now admissible
+    for bad_delta in (-0.1, 1.5):
+        with pytest.raises(V.CalibrationError):
+            V.validate_pre_registration(_crit(bad_delta, 0.5))
     with pytest.raises(V.CalibrationError):
-        V.validate_pre_registration(_crit(0.1, 0.5, n=4))  # 0.1 < floor 0.5
-    V.validate_pre_registration(_crit(0.5, 0.5, n=4))  # exactly the floor → admissible
-    # the verdict path enforces it too
+        V.validate_pre_registration(_crit(0.2, 1.5))  # band out of [0,1]
     with pytest.raises(V.CalibrationError):
-        V.calibration_verdict(
-            co_deploy_separation=0.9, strong_topical_separation=0.0, criterion=_crit(0.1, 0.5, n=4)
-        )
+        V.validate_pre_registration(Crit(delta=0.2, band_threshold=0.5, holdout_set_id="x", holdout_size=0))
 
 
 def test_inv_bounded_ships_only_passing_regions_on_same_criterion():

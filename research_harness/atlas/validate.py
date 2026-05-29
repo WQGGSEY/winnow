@@ -39,24 +39,22 @@ class CalibrationError(ValueError):
     """Raised when the pre-registered criterion is itself inadmissible."""
 
 
-def noise_floor(holdout_size: int) -> float:
-    """Independent-ground lower bound for ``delta``: a separation gain smaller
-    than the sampling noise of a held-out set this size is meaningless. ~1/sqrt(n)
-    (the standard error scale). This is what stops an operator from pre-
-    registering an arbitrarily tiny delta to wave the atlas through — delta must
-    clear it, and it is a function of the set size alone, not the measurement."""
-    return 1.0 if holdout_size <= 1 else 1.0 / (holdout_size ** 0.5)
-
-
 @dataclass(frozen=True)
 class PreRegisteredCriterion:
     """The atlas's 'frozen question' — fixed BEFORE co-deployment is measured.
 
     ``delta``           required margin: co-deployment separation must exceed the
                         strongest topical baseline's separation by at least this.
-    ``band_threshold``  minimum separation to count the metric as 'separable' at all.
-    ``holdout_set_id``  provenance of the operator/literature-authored held-out set.
-    ``holdout_size``    its size (sets the noise floor delta must clear).
+                        Its VALUE is computed by the operator-frozen
+                        permutation-null rule (atlas.distance.permutation_delta:
+                        the 95th percentile of the gain under label shuffles of
+                        the frozen held-out) — NOT a hand-set number and NOT fit
+                        to the observed gain. (The earlier 1/sqrt(n) floor was
+                        abolished by ratification in favour of this stronger,
+                        empirical rule.)
+    ``band_threshold``  minimum separation to count the metric as 'separable'.
+    ``holdout_set_id``  provenance of the operator-frozen held-out set.
+    ``holdout_size``    its size (recorded for provenance).
     """
 
     delta: float
@@ -66,19 +64,19 @@ class PreRegisteredCriterion:
 
 
 def validate_pre_registration(crit: PreRegisteredCriterion) -> None:
-    """Reject a criterion that is inadmissible *on its own terms* — independent
-    of any measurement. ``delta`` must clear the held-out-size noise floor, so it
-    cannot be set arbitrarily small; the band threshold must be a fraction."""
+    """Reject a criterion that is malformed *on its own terms*. ``delta`` is
+    produced by the frozen permutation-null rule (computed on the frozen held-out
+    before the real-label gain is compared), so the protection against a
+    hand-tuned tiny delta is the rule itself, not a fixed floor; here we only
+    check well-formedness."""
     if not crit.holdout_set_id:
         raise CalibrationError("held-out set has no provenance id — authorship separation unverifiable.")
     if crit.holdout_size < 1:
         raise CalibrationError("held-out set is empty; cannot pre-register a criterion.")
-    floor = noise_floor(crit.holdout_size)
-    if crit.delta < floor:
+    if not (0.0 <= crit.delta <= 1.0):
         raise CalibrationError(
-            f"pre-registered delta={crit.delta:.4g} is below the held-out-set noise floor "
-            f"{floor:.4g} (n={crit.holdout_size}); a separation gain under sampling noise "
-            "is meaningless. Enlarge the held-out set or raise delta on independent grounds."
+            f"delta={crit.delta!r} must be in [0,1]; it is computed by the frozen "
+            "permutation-null rule, never hand-set."
         )
     if not (0.0 <= crit.band_threshold <= 1.0):
         raise CalibrationError("band_threshold must be in [0,1].")

@@ -1,0 +1,39 @@
+{
+  "_note": "ADR 0010 (T1-04) — PRE-REGISTERED before any co-deployment measurement. The frozen_transfers and delta_rule are OPERATOR-FROZEN and are NOT authored or modified by the build. The node_pair_mapping is DERIVED by the build from each transfer's documented methods and FLAGGED for operator audit (grounded in citable method content, not co-deployment intuition); where a transfer is not cleanly expressible in the 10-node vocab it is flagged, not forced.",
+  "frozen_by": "operator",
+  "frozen_before_measurement": true,
+  "frozen_transfers": [
+    {"id": "T1", "transfer": "Statistical mechanics -> Economics (econophysics)", "citation": "Mantegna & Stanley, Intro to Econophysics (2000)"},
+    {"id": "T3", "transfer": "Ecology (Lotka-Volterra) -> Economics (Goodwin growth cycle)", "citation": "Goodwin (1967)"},
+    {"id": "T5", "transfer": "Epidemiology (SIR) -> Marketing (Bass diffusion)", "citation": "Bass (1969)"},
+    {"id": "T6", "transfer": "Statistical physics (Ising) -> Neuroscience (Hopfield associative memory)", "citation": "Hopfield (1982)"},
+    {"id": "T7", "transfer": "Population genetics (selection) -> Optimization (genetic algorithms)", "citation": "Holland (1975)"}
+  ],
+  "node_pair_mapping": {
+    "_status": "DERIVED by build from documented methods; FLAGGED for operator audit; not authored to pass.",
+    "positives": [
+      {"pair": ["equilibrium_fixed_point", "phase_transition"], "from": "T1", "why": "econophysics applies statmech criticality/scaling to market equilibrium & crashes"},
+      {"pair": ["equilibrium_fixed_point", "stochastic_sampling"], "from": "T1", "why": "statmech ensemble / Monte-Carlo methods applied to market dynamics"},
+      {"pair": ["compartmental_dynamics", "equilibrium_fixed_point"], "from": "T3", "why": "predator-prey coupled ODEs redeployed as economic growth-cycle dynamics"},
+      {"pair": ["compartmental_dynamics", "network_flow"], "from": "T5", "why": "epidemic compartments redeployed as marketing diffusion / contagion"},
+      {"pair": ["network_flow", "phase_transition"], "from": "T6", "why": "Ising criticality redeployed in a recurrent associative network"},
+      {"pair": ["maximum_entropy", "network_flow"], "from": "T6", "why": "energy-based (maxent / Gibbs) formulation of the Hopfield network"},
+      {"pair": ["selection_under_constraint", "stochastic_sampling"], "from": "T7", "why": "natural selection redeployed as random-mutation search / optimization"}
+    ],
+    "flags": [
+      "N=8 positives requested but only 7 are cleanly expressible in the 10-node vocab; NOT forcing an 8th (ratification: 'flag, do not force'). Proceeding with 7 positives."
+    ]
+  },
+  "separation_definition": "AUC = P(dist(positive_pair) < dist(noise_pair)) over all positive x noise comparisons; in [0,1], 0.5=chance, higher = the metric ranks documented-bridgeable pairs as nearer (more co-deployed) than non-bridgeable noise pairs.",
+  "noise_pairs": "auto: all C(10,2)=45 node-pairs not in positives (38 pairs) form the noise comparison set.",
+  "delta_rule": {
+    "_status": "OPERATOR-FROZEN; not modified by the build.",
+    "rule": "permutation-null: delta = 95th percentile of (separation(co_deployment) - separation(topical)) over label shuffles of which pairs are labelled 'positive' (same count as the real positives)",
+    "shuffles": 2000,
+    "seed": 1729,
+    "rejects": "fixed-number delta such as 1/sqrt(N) is REJECTED; delta is computed from this rule on the frozen held-out at measurement time."
+  },
+  "band_threshold": 0.6,
+  "n_positives": 7,
+  "measuring_model_id": "filled at measurement time"
+}
