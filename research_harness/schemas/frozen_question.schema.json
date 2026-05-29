@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/frozen_question.schema.json",
+  "title": "FrozenQuestion",
+  "description": "ADR 0008 Axis 1 — the formal question object the construct-adversary is funded against. Its DEFINING property is authorship separation: it is pinned from a PRE-construction artifact (grilling) before the production/construction loop, so the proposer (the construction) did not author it and cannot restate or modify it. 'construction is close to the question' is then a claim about a referent outside the construction's control.",
+  "type": "object",
+  "required": [
+    "thread_id",
+    "question_id",
+    "formal_statement",
+    "true_iff",
+    "source_artifact",
+    "source_provenance",
+    "frozen_at_phase"
+  ],
+  "properties": {
+    "thread_id": { "type": "string" },
+    "question_id": { "type": "string", "minLength": 1 },
+    "formal_statement": {
+      "type": "string",
+      "minLength": 40,
+      "description": "The question as a formal object: a decision the operator faces, stated so that a world either satisfies it or not. NOT the construction's claim — the question the construction must answer."
+    },
+    "true_iff": {
+      "type": "string",
+      "minLength": 20,
+      "description": "The condition under which the frozen question's answer is YES. The construct-adversary uses this to label each tested world's true answer independently of whether the construction's measurement passes there."
+    },
+    "decision_context": {
+      "type": "string",
+      "description": "Why the operator cares — the real decision riding on the answer."
+    },
+    "source_artifact": {
+      "type": "string",
+      "enum": ["grilling_session", "operator_pinned"],
+      "description": "Where the question was frozen FROM. Must be a pre-construction source (grilling) or operator-pinned — never the construction itself."
+    },
+    "source_provenance": {
+      "type": "string",
+      "minLength": 8,
+      "description": "Hash / pin of the source artifact at freeze time, so a later construction cannot silently re-author the question."
+    },
+    "frozen_at_phase": {
+      "type": "string",
+      "enum": ["production_entry"],
+      "description": "Freeze happens at production entry, before any construction node runs."
+    }
+  },
+  "additionalProperties": false
+}

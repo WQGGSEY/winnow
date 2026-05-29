@@ -148,13 +148,18 @@ def is_terminal(repo: Path, tid: str) -> tuple[bool, str | None]:
                 attestation = None
     attestation = attestation or {}
 
-    # ADR 0006: unverified_screen is a first-class terminal once the honest
-    # paper exists. Checked BEFORE the honest_failure retreat below so it does
-    # not get swept into the retry loop.
-    if attestation.get("attested_status") == "unverified_screen" and (
-        rendered or s.get("outcome") == "honest_failure"
-    ):
-        return True, "accept_with_unverified_screen"
+    # ADR 0006/0008: an honest screen is a first-class terminal once the honest
+    # paper exists. construct_valid_screen (Axis 1: funded adversary survived)
+    # and unverified_screen (internally_valid floor) both terminate — distinct
+    # outcome labels. Checked BEFORE the honest_failure retreat so they are not
+    # swept into the retry loop.
+    _screen_terminal = {
+        "construct_valid_screen": "accept_with_construct_valid",
+        "unverified_screen": "accept_with_unverified_screen",
+    }
+    _astatus = attestation.get("attested_status")
+    if _astatus in _screen_terminal and (rendered or s.get("outcome") == "honest_failure"):
+        return True, _screen_terminal[_astatus]
 
     # honest_failure (not_achieved) does not terminate — supervisor retries.
     if s.get("outcome") == "honest_failure":

@@ -47,6 +47,8 @@ SCHEMA_FILES = {
     "alternative_root_proposal": "alternative_root_proposal.schema.json",
     "feasibility_envelope": "feasibility_envelope.schema.json",
     "falsifier_result": "falsifier_result.schema.json",
+    "frozen_question": "frozen_question.schema.json",
+    "construct_adversary_report": "construct_adversary_report.schema.json",
 }
 
 
