@@ -547,5 +547,64 @@ class WhichTests(unittest.TestCase):
         self.assertIsNone(ts._which("definitely-not-a-real-binary-xyz123"))
 
 
+class ResolveSupervisorModelTests(unittest.TestCase):
+    """The production supervisor must honour the operator's configured model
+    (the bug: it always spawned the hard-coded DEFAULT_CLAUDE_MODEL=4.7)."""
+
+    def _repo(self, tmp, *, default_model=None, mcp_model=None):
+        tid = "thread_x"
+        tdir = tmp / "runs" / "threads" / tid
+        tdir.mkdir(parents=True, exist_ok=True)
+        thread_json = {"thread_id": tid}
+        if mcp_model is not None:
+            thread_json["mcp_model"] = mcp_model
+        (tdir / "thread.json").write_text(json.dumps(thread_json), encoding="utf-8")
+        settings = {"runtime": {"llm_orchestrator": {"mcp": {}}}}
+        if default_model is not None:
+            settings["runtime"]["llm_orchestrator"]["mcp"]["default_model"] = default_model
+        (tmp / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+        return tid
+
+    def test_uses_project_default_model(self):
+        with TemporaryDirectory() as d:
+            tmp = Path(d)
+            tid = self._repo(tmp, default_model="claude-opus-4-8[1m]")
+            self.assertEqual(
+                ts.resolve_supervisor_model(tmp, tid), "claude-opus-4-8[1m]"
+            )
+
+    def test_thread_mcp_model_overrides_default(self):
+        with TemporaryDirectory() as d:
+            tmp = Path(d)
+            tid = self._repo(tmp, default_model="claude-opus-4-8[1m]",
+                             mcp_model="claude-opus-4-7")
+            self.assertEqual(
+                ts.resolve_supervisor_model(tmp, tid), "claude-opus-4-7"
+            )
+
+    def test_falls_back_when_unset(self):
+        with TemporaryDirectory() as d:
+            tmp = Path(d)
+            tid = self._repo(tmp)  # no default_model, no mcp_model
+            self.assertEqual(
+                ts.resolve_supervisor_model(tmp, tid), ts.DEFAULT_CLAUDE_MODEL
+            )
+
+    def test_cli_watch_resolves_model_when_not_passed(self):
+        """`watch` with no --model resolves from settings, not the hard default."""
+        with TemporaryDirectory() as d:
+            tmp = Path(d)
+            tid = self._repo(tmp, default_model="claude-opus-4-8[1m]")
+            captured = {}
+
+            def fake_watch_thread(repo, thread_id, **kw):
+                captured["model"] = kw.get("model")
+                return {"status": "terminal", "outcome": "x"}
+
+            with mock.patch.object(ts, "watch_thread", fake_watch_thread):
+                ts.main(["watch", tid, "--repo-root", str(tmp)])
+            self.assertEqual(captured["model"], "claude-opus-4-8[1m]")
+
+
 if __name__ == "__main__":
     unittest.main()

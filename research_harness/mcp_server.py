@@ -229,6 +229,38 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "compute_falsifier_result",
+        "description": (
+            f"{PROFESSOR_CONTRACT}\n\n"
+            "ADR 0006: run the envelope's external_falsifier predicate over "
+            "held-out evidence. The HARNESS computes the pass/fail — you cannot "
+            "assert achieved=true directly. A passing result against the "
+            "registered holdout is the precondition the user-goal attestation "
+            "gate checks. For cross_generator_transfer supply evidence="
+            "{ranking_a:[...], ranking_b:[...]} where ranking_b is the HELD-OUT "
+            "generator B over the SAME pipeline order (the harness computes "
+            "Spearman rho). For real_holdout supply evidence={observed:<number "
+            "measured on the real adapter>}. Without a registered falsifier "
+            "(kind!=none) this is refused and the thread stays at "
+            "unverified_screen."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "evidence"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "evidence": {
+                    "type": "object",
+                    "description": (
+                        "Kind-specific. cross_generator_transfer: {ranking_a, "
+                        "ranking_b, pipeline_labels?}. real_holdout: {observed, "
+                        "adapter_provenance?}."
+                    ),
+                },
+            },
+        },
+    },
+    {
         "name": "design_initial_claim_contract",
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
@@ -256,6 +288,7 @@ TOOL_DEFINITIONS = [
                 "mandatory_baselines",
                 "success_criteria",
                 "disproof_conditions",
+                "deploy_grade_scope",
             ],
             "properties": {
                 "thread_id": {"type": "string"},
@@ -264,6 +297,24 @@ TOOL_DEFINITIONS = [
                 "success_criteria": {"type": "array", "items": {"type": "string"}},
                 "disproof_conditions": {"type": "array", "items": {"type": "string"}},
                 "rationale": {"type": "string"},
+                "deploy_grade_scope": {
+                    "type": "string",
+                    "enum": ["deployment", "feasibility", "directional"],
+                    "description": (
+                        "PR7: required when a feasibility_envelope is on disk. "
+                        "'deployment'=real_adapter-backed end-to-end claim; "
+                        "'feasibility'=synthetic-regime proof-of-concept with "
+                        "explicit bridging; 'directional'=methodology-hint, "
+                        "no deploy-grade utility claim."
+                    ),
+                },
+                "data_source_anchor": {
+                    "type": "string",
+                    "description": (
+                        "PR7: anchor id from the feasibility_envelope — either a "
+                        "registered real_adapter id or 'synthetic:<label>'."
+                    ),
+                },
             },
         },
     },
@@ -411,6 +462,7 @@ TOOL_DEFINITIONS = [
                 "mandatory_baselines",
                 "success_criteria",
                 "disproof_conditions",
+                "deploy_grade_scope",
             ],
             "properties": {
                 "thread_id": {"type": "string"},
@@ -419,6 +471,33 @@ TOOL_DEFINITIONS = [
                 "success_criteria": {"type": "array", "items": {"type": "string"}},
                 "disproof_conditions": {"type": "array", "items": {"type": "string"}},
                 "rationale": {"type": "string"},
+                "deploy_grade_scope": {
+                    "type": "string",
+                    "enum": ["deployment", "feasibility", "directional"],
+                    "description": (
+                        "PR7: required when a feasibility_envelope is on disk. "
+                        "Same semantics as design_initial_claim_contract."
+                    ),
+                },
+                "data_source_anchor": {
+                    "type": "string",
+                    "description": (
+                        "PR7: anchor id from envelope — real_adapter id or "
+                        "'synthetic:<label>'."
+                    ),
+                },
+                "evidence_breadth": {
+                    "type": "object",
+                    "description": (
+                        "Optional. Breadth of the revised claim's evidence "
+                        "(used by validate_revision_after_reject to detect "
+                        "narrowing-without-breadth)."
+                    ),
+                },
+                "previous_evidence_breadth": {
+                    "type": "object",
+                    "description": "Optional. Breadth of the prior rejected claim's evidence.",
+                },
             },
         },
     },
@@ -1446,6 +1525,11 @@ def handle_submit_feasibility_envelope(args: dict[str, Any], settings: dict[str,
                 ),
             }
 
+    # ADR 0006: stamp the harness-owned max_attestable_status from the
+    # registered external_falsifier. This is NOT operator-writable — any
+    # operator-supplied value is overwritten by the derivation.
+    env["max_attestable_status"] = _derive_max_attestable_status(env)
+
     env_path = _thread_dir(tid) / "production" / "feasibility_envelope.json"
     env_path.parent.mkdir(parents=True, exist_ok=True)
     env_path.write_text(
@@ -1457,12 +1541,90 @@ def handle_submit_feasibility_envelope(args: dict[str, Any], settings: dict[str,
         "envelope_path": str(env_path),
         "registered_real_adapters": sorted(registered),
         "target_scope": target,
+        "max_attestable_status": env["max_attestable_status"],
         "next_step": (
             "Now call design_initial_claim_contract. The claim's "
             "deploy_grade_scope MUST fit this envelope (deployment requires "
             "real_adapter; feasibility allows synthetic with bridging; "
-            "directional is methodology-hint only)."
+            "directional is methodology-hint only). "
+            + (
+                "max_attestable_status=goal_achieved: a passing falsifier_result "
+                "(compute_falsifier_result) is required for achieved=true."
+                if env["max_attestable_status"] == "goal_achieved"
+                else "max_attestable_status=unverified_screen: achieved=true is "
+                "refused until an external_falsifier (real_holdout / "
+                "cross_generator_transfer) is registered in this envelope."
+            )
         ),
+    }
+
+
+def handle_compute_falsifier_result(args: dict[str, Any]) -> dict[str, Any]:
+    """ADR 0006: run the envelope's external_falsifier predicate over held-out
+    evidence and persist the harness-produced FalsifierResult. This is the
+    ONLY producer of a passing falsifier_result — the worker cannot stamp
+    passed=true; it falls out of the deterministic predicate the harness
+    owns. A passing result against the registered holdout is the precondition
+    the attestation gate checks for achieved=true."""
+    from research_harness.falsifier import FalsifierError, compute_falsifier_result
+    from research_harness.schemas.validator import validate_named_schema
+
+    tid = args["thread_id"]
+    evidence = args.get("evidence") or {}
+
+    envelope = _read_json(_thread_dir(tid) / "production" / "feasibility_envelope.json")
+    if not envelope:
+        return {
+            "status": "rejected",
+            "reason": "feasibility_envelope.json missing — submit it (with an external_falsifier) before computing a falsifier result.",
+        }
+    falsifier = envelope.get("external_falsifier") or {}
+    if falsifier.get("kind") in (None, "none"):
+        return {
+            "status": "rejected",
+            "reason": (
+                "envelope.external_falsifier.kind is 'none' — register a "
+                "real_holdout or cross_generator_transfer falsifier via "
+                "submit_feasibility_envelope first. Without one the thread is "
+                "capped at unverified_screen and achieved=true is refused."
+            ),
+        }
+    try:
+        result = compute_falsifier_result(
+            thread_id=tid, falsifier=falsifier, evidence=evidence
+        )
+        validate_named_schema("falsifier_result", result)
+    except FalsifierError as exc:
+        return {"status": "rejected", "reason": f"falsifier predicate not evaluable: {exc}"}
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
+
+    out_path = _rebuttal_dir(tid) / "falsifier_result.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    if result["passed"]:
+        next_step = (
+            "Falsifier PASSED. The dual gate's falsifier precondition is met — "
+            "submit_professor_user_goal_attestation may now set achieved=true "
+            "(attested_status=goal_achieved)."
+        )
+    else:
+        next_step = (
+            f"Falsifier FAILED (observed {result['observed']:.4g} vs "
+            f"{result['predicate']['op']} {result['predicate']['threshold']}). "
+            "achieved=true remains refused. Either improve the pipeline so the "
+            "held-out ranking is preserved, or attest honestly with "
+            "attested_status=unverified_screen / not_achieved."
+        )
+    return {
+        "status": "ok",
+        "passed": result["passed"],
+        "observed": result["observed"],
+        "result_path": str(out_path),
+        "next_step": next_step,
     }
 
 
@@ -2569,6 +2731,36 @@ def handle_submit_orchestrator_reduction(args: dict[str, Any]) -> dict[str, Any]
     if len((args.get("synthesis_message") or "").strip()) < 60:
         return {"status": "rejected", "reason": "synthesis_message must be >= 60 chars (operator-language synthesis, not a label)"}
 
+    # --- ADR 0007 lever 0: adversarial-dominant aggregation. -------------
+    # A grounded critic kill (contradicted / blocking) cannot be reconciled
+    # into a positive reduction. It freezes the verdict until DEFEATED on
+    # merits in blocking_objections (critic_id + defeated=true + substantive
+    # rebuttal). This recovers the decorrelation the persona pack already
+    # paid for — RSTF's critics DID kill, the reduction just averaged them in.
+    from research_harness.config import load_settings as _ls
+    if (
+        _adversarial_dominance_enabled(_ls(_repo_root()))
+        and final_verdict in {"supported", "supported_with_scope_narrowing"}
+    ):
+        kills = _collect_rebuttal_kills(tid)
+        undefeated = _undefeated_kills(kills, args.get("blocking_objections"))
+        if undefeated:
+            ids = ", ".join(k["critic_id"] for k in undefeated)
+            return {
+                "status": "rejected",
+                "reason": (
+                    f"adversarial-dominance: critic(s) [{ids}] returned a kill "
+                    "(contradicted / blocking) that is not defeated. You cannot "
+                    f"reduce to {final_verdict!r} by reconciliation. Either (a) "
+                    "defeat each kill on merits — add a blocking_objections entry "
+                    "{critic_id, defeated:true, defeat_rebuttal:<engage the "
+                    "objection's grounds, not relabel>}, or (b) set final_verdict "
+                    "to contradicted / confounded_or_not_evaluable. Narrowing the "
+                    "claim does NOT defeat a kill."
+                ),
+                "undefeated_kills": [k["critic_id"] for k in undefeated],
+            }
+
     reduction = {
         "node_id": node_id,
         "final_verdict": final_verdict,
@@ -2591,7 +2783,7 @@ def handle_submit_orchestrator_reduction(args: dict[str, Any]) -> dict[str, Any]
     return {"status": "ok", "next_step": "Call submit_ac_decision next."}
 
 
-# --- Strictness rails (see post-thread_e5b277f9 review) ----------------- #
+# --- Strictness rails (see docs/adr/0005 + post-thread_e5b277f9 review) -- #
 
 _NEGATIVE_SUCCESSOR_VERDICTS = {
     "contradicted",
@@ -2657,7 +2849,7 @@ _DETERMINISTIC_DUMP_RISK_TAGS = {
 def _detect_deterministic_dump_dossier(bd_path: Path) -> list[str]:
     """Return non-empty signal list if baseline_dossier_candidate.yaml looks
     like a deterministic dump (no operator-reviewed substance). Used both by
-    AC confidence down-clamp and by production preflight (Rail 2)."""
+    AC confidence down-clamp and by future market preflight."""
     if not bd_path.exists():
         return []
     try:
@@ -2684,6 +2876,244 @@ def _detect_deterministic_dump_dossier(bd_path: Path) -> list[str]:
         if decision in {"selected_as_naive", "selected_as_random_or_null"} and method.lower().lstrip().startswith(("naive: tbd", "random_or_null: tbd")):
             signals.append(f"candidate {cand.get('id')} ({decision}) is unresolved placeholder: {method!r}")
     return signals
+
+
+def _derive_max_attestable_status(envelope: dict[str, Any] | None) -> str:
+    """ADR 0006: harness-owned ceiling on goal achievement, derived from the
+    envelope's external_falsifier. Thin re-export of falsifier.derive_max_
+    attestable_status so call sites in this module stay terse."""
+    from research_harness.falsifier import derive_max_attestable_status
+    return derive_max_attestable_status(envelope)
+
+
+def _falsification_gate_enabled(settings: dict[str, Any]) -> bool:
+    """ADR 0006: the gate defaults ON. Disabling is a loosening, allowed only
+    via runtime.llm_orchestrator.mcp.persona_enforcement.falsification_gate."""
+    fg = _persona_cfg(settings).get("falsification_gate")
+    if isinstance(fg, dict):
+        return fg.get("enabled", True) is not False
+    return True
+
+
+def _falsifier_result_blocks_achievement(
+    fr: dict[str, Any] | None, falsifier: dict[str, Any]
+) -> str | None:
+    """ADR 0006: returns a rejection reason if the on-disk falsifier_result
+    does not legitimately support achieved=true, else None. The result must
+    exist, be harness-produced, have passed, and be computed against the
+    SAME holdout + kind the envelope registered (so a result computed against
+    some other, easier source can't be substituted)."""
+    if not fr:
+        return (
+            "ADR 0006: achieved=true requires a passing falsifier_result.json, "
+            "but none exists. Run compute_falsifier_result against the "
+            "envelope's registered holdout first."
+        )
+    from research_harness.falsifier import PRODUCED_BY
+    if fr.get("produced_by") != PRODUCED_BY:
+        return (
+            "falsifier_result.produced_by is not the harness falsifier module — "
+            "the result must be harness-computed, not hand-written."
+        )
+    if not fr.get("passed"):
+        pred = fr.get("predicate") or {}
+        return (
+            f"falsifier_result.passed is false (observed {fr.get('observed')} "
+            f"vs {pred.get('op')} {pred.get('threshold')}). The held-out check "
+            "did not clear the predicate — achieved=true stays refused."
+        )
+    if fr.get("holdout_source_id") != falsifier.get("holdout_source_id"):
+        return (
+            f"falsifier_result.holdout_source_id "
+            f"({fr.get('holdout_source_id')!r}) does not match the envelope's "
+            f"registered holdout ({falsifier.get('holdout_source_id')!r}). The "
+            "result must be computed against the REGISTERED holdout."
+        )
+    if fr.get("kind") != falsifier.get("kind"):
+        return (
+            f"falsifier_result.kind ({fr.get('kind')!r}) does not match the "
+            f"envelope's external_falsifier.kind ({falsifier.get('kind')!r})."
+        )
+    return None
+
+
+_SCOPE_RANK = {"directional": 1, "feasibility": 2, "deployment": 3}
+
+
+def _claim_deploy_scope(tid: str) -> str | None:
+    """Best-effort read of the attested claim's deploy_grade_scope from the
+    search_state — promoted node's claim_contract first, then the root's."""
+    state = _read_json(_thread_dir(tid) / "production" / "tree" / "search_state.json")
+    if not state:
+        return None
+    nodes = state.get("nodes") or []
+    promoted = [n for n in nodes if n.get("status") == "promoted"]
+    roots = [n for n in nodes if n.get("parent") in (None, "")]
+    for bucket in (promoted, roots, nodes):
+        for n in bucket:
+            scope = (n.get("claim_contract") or {}).get("deploy_grade_scope")
+            if scope in _SCOPE_RANK:
+                return scope
+    return None
+
+
+def _compute_scope_attainment(
+    tid: str, envelope: dict[str, Any] | None
+) -> dict[str, Any]:
+    """ADR 0006 incentive integrity: record narrowing relative to the frozen
+    seed so a narrowed win is visibly below a full-scope attempt. Enum-only
+    keys are omitted when unknown (the schema forbids nulls there)."""
+    seed = ((envelope or {}).get("operator_intent") or {}).get("target_deploy_grade_scope")
+    attested = _claim_deploy_scope(tid)
+    out: dict[str, Any] = {}
+    if seed in _SCOPE_RANK:
+        out["seed_target_scope"] = seed
+    if attested in _SCOPE_RANK:
+        out["attested_scope"] = attested
+    if seed in _SCOPE_RANK and attested in _SCOPE_RANK:
+        out["narrowed"] = _SCOPE_RANK[attested] < _SCOPE_RANK[seed]
+    return out
+
+
+# --- ADR 0007: depth gate (premature-termination is the enemy) ---------- #
+
+_DEFAULT_MIN_DISTINCT_ATTEMPTS = 2
+# Nodes that actually ran and produced evidence (vs. proposed/ready/blocked).
+_RAN_STATUSES = {
+    "completed_worker_report", "critic_reviewed", "orchestrator_reduced",
+    "promoted", "needs_child_branch", "pruned",
+}
+
+
+def _premature_termination_gate_enabled(settings: dict[str, Any]) -> bool:
+    """ADR 0007: depth gate on the lazy door. Default ON; disabling is a
+    loosening (reverts to ADR 0006's unconditional honest-failure exit)."""
+    g = _persona_cfg(settings).get("premature_termination_gate")
+    if isinstance(g, dict):
+        return g.get("enabled", True) is not False
+    return True
+
+
+def _min_distinct_attempts(settings: dict[str, Any]) -> int:
+    g = _persona_cfg(settings).get("premature_termination_gate")
+    if isinstance(g, dict):
+        v = g.get("min_distinct_attempts")
+        if isinstance(v, int) and v >= 1:
+            return v
+    return _DEFAULT_MIN_DISTINCT_ATTEMPTS
+
+
+def _adversarial_dominance_enabled(settings: dict[str, Any]) -> bool:
+    """ADR 0007 lever 0: a grounded critic kill freezes accept. Default ON."""
+    g = _persona_cfg(settings).get("adversarial_dominance")
+    if isinstance(g, dict):
+        return g.get("enabled", True) is not False
+    return True
+
+
+def _node_is_narrowing(node: dict[str, Any], root_scope: str | None) -> bool:
+    """ADR 0007: a scope-narrowing relabel is NOT a distinct depth attempt.
+    It repackages the same failure smaller. Detected by feasibility_narrowed
+    scope_kind, a deploy_grade_scope weaker than the root's, or a
+    feasibility-formulation node id."""
+    cc = node.get("claim_contract") or {}
+    if cc.get("scope_kind") == "feasibility_narrowed":
+        return True
+    sc = cc.get("deploy_grade_scope")
+    if (
+        sc in _SCOPE_RANK and root_scope in _SCOPE_RANK
+        and _SCOPE_RANK[sc] < _SCOPE_RANK[root_scope]
+    ):
+        return True
+    if "acf_feasibility" in str(node.get("id") or ""):
+        return True
+    return False
+
+
+def _node_final_verdict(tid: str, node_id: str) -> str:
+    dec = _read_json(
+        _thread_dir(tid) / "production" / "tree" / "nodes" / node_id
+        / "mcp_professor_decision.json"
+    )
+    return str((dec or {}).get("final_verdict") or "")
+
+
+def _investigation_depth(tid: str) -> dict[str, Any]:
+    """ADR 0007: measure earned depth, the reward axis. distinct_attempts
+    counts genuine attempts (ran nodes that are NOT scope-narrowing relabels)
+    plus archived prior root attempts; narrowing pivots are excluded and
+    surfaced separately as the visible penalty. killed_hypotheses counts
+    load-bearing negatives (contradicted) — a deep negative closes hypothesis
+    space."""
+    state = _read_json(_thread_dir(tid) / "production" / "tree" / "search_state.json") or {}
+    nodes = state.get("nodes") or []
+    root_scope: str | None = None
+    for r in nodes:
+        if r.get("parent") in (None, ""):
+            sc = (r.get("claim_contract") or {}).get("deploy_grade_scope")
+            if sc in _SCOPE_RANK:
+                root_scope = sc
+                break
+    ran = [n for n in nodes if n.get("status") in _RAN_STATUSES]
+    narrowing = [n for n in ran if _node_is_narrowing(n, root_scope)]
+    narrowing_ids = {id(n) for n in narrowing}
+    distinct = [n for n in ran if id(n) not in narrowing_ids]
+    killed = [
+        n for n in distinct
+        if _node_final_verdict(tid, n.get("id", "")) == "contradicted"
+    ]
+    archived = [
+        p.name for p in _thread_dir(tid).glob("production.attempt_*") if p.is_dir()
+    ]
+    return {
+        "distinct_attempts": len(distinct) + len(archived),
+        "tree_distinct_attempts": len(distinct),
+        "narrowing_pivots": len(narrowing),
+        "killed_hypotheses": len(killed),
+        "archived_attempts": len(archived),
+    }
+
+
+# --- ADR 0007 lever 0: adversarial-dominant aggregation ----------------- #
+
+_MIN_DEFEAT_REBUTTAL_CHARS = 40
+
+
+def _collect_rebuttal_kills(tid: str) -> list[dict[str, Any]]:
+    """A 'kill' is a rebuttal critic that returned verdict_candidate=
+    contradicted OR blocking=true. The harness's persona diversity already
+    produces these; lever 0 stops them from being reconciled away."""
+    reviews_dir = _rebuttal_dir(tid) / "rebuttal_reviews"
+    kills: list[dict[str, Any]] = []
+    if not reviews_dir.exists():
+        return kills
+    for p in sorted(reviews_dir.glob("*.json")):
+        r = _read_json(p) or {}
+        if r.get("verdict_candidate") == "contradicted" or r.get("blocking") is True:
+            kills.append({
+                "critic_id": r.get("critic_id") or p.stem,
+                "verdict_candidate": r.get("verdict_candidate"),
+                "blocking": bool(r.get("blocking")),
+                "objections": r.get("objections") or [],
+            })
+    return kills
+
+
+def _undefeated_kills(
+    kills: list[dict[str, Any]], blocking_objections: list[Any] | None
+) -> list[dict[str, Any]]:
+    """A kill is DEFEATED on merits only when blocking_objections names its
+    critic_id with defeated=true AND a substantive defeat_rebuttal. Relabeling
+    (scope-narrowing, re-wording) is not defeat — it leaves the kill live."""
+    defeated: set[str] = set()
+    for bo in blocking_objections or []:
+        if not isinstance(bo, dict):
+            continue
+        cid = bo.get("critic_id")
+        rebuttal = str(bo.get("defeat_rebuttal") or "").strip()
+        if cid and bo.get("defeated") is True and len(rebuttal) >= _MIN_DEFEAT_REBUTTAL_CHARS:
+            defeated.add(cid)
+    return [k for k in kills if k["critic_id"] not in defeated]
 
 
 def _has_real_data_adapter(tid: str) -> bool | None:
@@ -2764,14 +3194,17 @@ def _compute_ac_downclamp_signals(
 def _detect_must_revise_root_signal(state: dict[str, Any]) -> dict[str, Any] | None:
     """Rail 5: detect when the deepest promoted node has collapsed branches.
 
-    Triggers when a promoted node has >=3 pruned direct children and 0 promoted
-    children. Returns dict with the promoted_node_id + alternative root
-    candidates already in the tree (queued/pruned root siblings), or None.
+    Triggers when a promoted node has >=3 negative direct children (status pruned
+    AND final_verdict in NEGATIVE set, OR status pruned with no decision-file
+    counted via status alone) and 0 promoted children. Returns dict with the
+    promoted_node_id + alternative root candidates already in the tree, or None.
     """
     nodes = state.get("nodes") or []
     if not nodes:
         return None
     by_id = {n["id"]: n for n in nodes}
+
+    # Find promoted leaves (promoted nodes with no promoted children).
     promoted_ids = {n["id"] for n in nodes if n.get("status") == "promoted"}
     if not promoted_ids:
         return None
@@ -2786,11 +3219,15 @@ def _detect_must_revise_root_signal(state: dict[str, Any]) -> dict[str, Any] | N
         if not children:
             continue
         negative_children = [
-            n["id"] for n in children if n.get("status") == "pruned"
+            n["id"] for n in children
+            if n.get("status") == "pruned"
         ]
         promoted_children = [n["id"] for n in children if n.get("status") == "promoted"]
         if promoted_children or len(negative_children) < 3:
             continue
+        # Surface dangling alternative roots: sibling drafts of leaf_id whose
+        # status is queued/pruned but were never tried — operator may want to
+        # pick them up via revise_root_after_reject.
         parent_id = by_id[leaf_id].get("parent")
         siblings = [
             n["id"] for n in nodes
@@ -2833,6 +3270,8 @@ def _escalate_to_operator(
         f"(source: {suggestion.source_rail}). Reason: {refusal_reason}. "
         f"Rationale that triggered the suggestion: {suggestion.rationale}"
     )
+    # Stable event_id so retries don't pile up duplicate prompts for the
+    # same suggestion+refusal combination.
     event_id = f"opr_esc_{suggestion.source_rail}_{abs(hash(refusal_reason)) & 0xFFFFFFFF:08x}"
     try:
         record = enqueue_prompt(
@@ -2848,6 +3287,8 @@ def _escalate_to_operator(
             event_id=event_id,
         )
     except ValueError:
+        # Idempotent: if a prompt for this exact (source_rail, refusal)
+        # already exists, surface the same event_id without duplicating.
         return {"event_id": event_id, "status": "already_enqueued"}
     return {
         "event_id": record["event_id"],
@@ -3118,6 +3559,29 @@ def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
                       "If the rebuttal truly added nothing, name the scope-sharpening it made explicit.",
         }
 
+    # --- ADR 0007 lever 0: adversarial-dominant aggregation. -------------
+    # A grounded critic kill that the orchestrator_reduction did not defeat on
+    # merits blocks accept outright — the AC cannot accept over a live kill.
+    from research_harness.config import load_settings as _ls_ac
+    if decision.get("decision") == "accept" and _adversarial_dominance_enabled(_ls_ac(_repo_root())):
+        kills = _collect_rebuttal_kills(tid)
+        undefeated = _undefeated_kills(kills, reduction.get("blocking_objections"))
+        if undefeated:
+            ids = ", ".join(k["critic_id"] for k in undefeated)
+            return {
+                "status": "rejected",
+                "reason": (
+                    f"accept blocked by adversarial-dominance: critic(s) [{ids}] "
+                    "returned an undefeated kill (contradicted / blocking). Defeat "
+                    "each on merits in the orchestrator_reduction's "
+                    "blocking_objections (critic_id + defeated=true + substantive "
+                    "defeat_rebuttal) before accepting, or downgrade the decision. "
+                    "Reconciling the kill into the synthesis is exactly the "
+                    "diversity-throwing-away this gate prevents."
+                ),
+                "undefeated_kills": [k["critic_id"] for k in undefeated],
+            }
+
     # --- Rail 1: successor-verdict aggregator + hard accept gate. --------
     # Block accept when the promoted root's direct children largely failed.
     successor_agg = {"total_children": 0, "evaluated": 0, "negative_count": 0,
@@ -3131,6 +3595,9 @@ def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
     if decision.get("decision") == "accept" and successor_agg["evaluated"] >= 2:
         ratio = successor_agg["negative_count"] / successor_agg["evaluated"]
         if ratio >= 2 / 3:
+            # Hands-free: if an unseeded alternative_claim_formulation is
+            # available, attach an auto_action_suggestion so the auto-resolver
+            # can pivot to it without operator selection.
             response: dict[str, Any] = {
                 "status": "rejected",
                 "reason": (
@@ -3141,9 +3608,6 @@ def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
                     f"or call revise_root_after_reject to swap the root before re-attempting accept."
                 ),
             }
-            # Hands-free: if an unseeded alternative_claim_formulation is
-            # available, attach an auto_action_suggestion so the auto-resolver
-            # can pivot to it without operator selection.
             grilling = _read_json(_thread_dir(tid) / "grilling" / "grilling_session.json") or {}
             formulations = (grilling.get("extracted") or {}).get("alternative_claim_formulations") or []
             try:
@@ -3193,15 +3657,16 @@ def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
     # MUST exist with a non-null value in the promoted node's worker_report
     # — otherwise the accept is silently overclaiming on the user's
     # original intent (the thread_e5b277f9 failure mode).
-    anchor_check: dict[str, list[Any]] = {"unbound": [], "unmeasured": []}
+    anchor_check = {"unbound": [], "unmeasured": []}
     try:
-        promoted_ctx = _resolve_promoted_node(tid)
-        wr_path = (
-            _thread_dir(tid) / "production" / "tree" / "nodes"
-            / promoted_ctx["promoted_id"] / "worker_report.json"
-        )
-        worker_report = _read_json(wr_path) or {}
-        anchor_check = _check_user_goal_anchor_bindings(tid, worker_report)
+        if successor_agg["total_children"] >= 0:  # i.e. we resolved a promoted node
+            promoted_ctx = _resolve_promoted_node(tid)
+            wr_path = (
+                _thread_dir(tid) / "production" / "tree" / "nodes"
+                / promoted_ctx["promoted_id"] / "worker_report.json"
+            )
+            worker_report = _read_json(wr_path) or {}
+            anchor_check = _check_user_goal_anchor_bindings(tid, worker_report)
     except (OSError, ValueError):
         pass
     if decision.get("decision") == "accept" and anchor_check["unmeasured"]:
@@ -3516,6 +3981,47 @@ def handle_submit_professor_user_goal_attestation(args: dict[str, Any]) -> dict[
             ),
         }
 
+    # --- ADR 0006: external-falsifier gate. ----------------------------------
+    # achieved=true is structurally unreachable without a harness-owned
+    # falsifier result the run could not author. This is the spine: it makes
+    # the RSTF same-DGP self-grading failure impossible rather than merely
+    # down-clamped. The honest air-gapped ceiling is unverified_screen.
+    from research_harness.config import load_settings as _ls
+    settings = _ls(_repo_root())
+    envelope = _read_json(_thread_dir(tid) / "production" / "feasibility_envelope.json")
+    max_status = _derive_max_attestable_status(envelope)
+    if attestation.get("achieved") and _falsification_gate_enabled(settings):
+        if max_status != "goal_achieved":
+            return {
+                "status": "rejected",
+                "reason": (
+                    "ADR 0006: achieved=true is REFUSED — the feasibility "
+                    "envelope registers no external_falsifier (max_attestable_"
+                    "status=unverified_screen). 'goal achieved' cannot be proved "
+                    "from inside the run. Either (a) attest honestly with "
+                    "achieved=false (the harness will stamp attested_status="
+                    "unverified_screen, a recorded terminal — NOT a failure), or "
+                    "(b) register an external_falsifier (real_holdout / "
+                    "cross_generator_transfer) via submit_feasibility_envelope and "
+                    "produce a passing compute_falsifier_result."
+                ),
+            }
+        fr = _read_json(_rebuttal_dir(tid) / "falsifier_result.json")
+        falsifier = (envelope or {}).get("external_falsifier") or {}
+        gate_err = _falsifier_result_blocks_achievement(fr, falsifier)
+        if gate_err:
+            return {"status": "rejected", "reason": gate_err}
+
+    # Harness-stamp the first-class status + seed-relative scope record. The
+    # LLM does not get to pick attested_status — it is derived.
+    if attestation.get("achieved"):
+        attestation["attested_status"] = "goal_achieved"
+    elif max_status == "unverified_screen":
+        attestation["attested_status"] = "unverified_screen"
+    else:
+        attestation["attested_status"] = "not_achieved"
+    attestation["scope_attainment"] = _compute_scope_attainment(tid, envelope)
+
     out_path = _rebuttal_dir(tid) / "user_goal_attestation.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
@@ -3523,23 +4029,41 @@ def handle_submit_professor_user_goal_attestation(args: dict[str, Any]) -> dict[
         encoding="utf-8",
     )
 
-    if attestation.get("achieved"):
+    status = attestation["attested_status"]
+    if status == "goal_achieved":
         next_step = (
-            "Dual gate cleared: AC decision + user-goal attestation both pass. "
-            "Proceed to prepare_paper_writing_context / submit_paper_outline / "
+            "Dual gate cleared: AC decision + user-goal attestation both pass, "
+            "backed by a passing external falsifier. Proceed to "
+            "prepare_paper_writing_context / submit_paper_outline / "
             "register_paper_figure / submit_paper_section / render_final_paper."
         )
-    else:
+    elif status == "unverified_screen":
         next_step = (
-            "achieved=false. Two paths: (a) trigger the required_additional_"
-            "research experiments via the existing tree-search loop "
-            "(get_next_admissible_node → execute_node_experiment → "
-            "submit_professor_decision) and re-attest when evidence arrives; "
-            "(b) if the gap is structural and the direction is hopeless, call "
-            "propose_alternative_root_directions to fan out to N>=3 different "
-            "angles, OR call render_honest_failure_paper for the final exit."
+            "attested_status=unverified_screen — the honest air-gapped ceiling. "
+            "This is a RECORDED TERMINAL outcome, not a failure to retry: no "
+            "external falsifier is registrable, so 'goal achieved' is not "
+            "claimable, but the screening result stands. Call "
+            "render_honest_failure_paper to publish the screen honestly. To "
+            "upgrade to goal_achieved later, register a real_holdout / "
+            "cross_generator_transfer falsifier and re-attest."
         )
-    return {"status": "ok", "achieved": attestation.get("achieved"), "next_step": next_step}
+    else:  # not_achieved
+        next_step = (
+            "attested_status=not_achieved. A falsifier IS registrable but the "
+            "goal isn't met. Two paths: (a) trigger required_additional_research "
+            "via the tree-search loop (get_next_admissible_node → "
+            "execute_node_experiment → submit_professor_decision), run "
+            "compute_falsifier_result, and re-attest when it passes; (b) if the "
+            "direction is hopeless, propose_alternative_root_directions to fan "
+            "out, OR render_honest_failure_paper for the final exit."
+        )
+    return {
+        "status": "ok",
+        "achieved": attestation.get("achieved"),
+        "attested_status": status,
+        "max_attestable_status": max_status,
+        "next_step": next_step,
+    }
 
 
 def handle_propose_alternative_root_directions(args: dict[str, Any]) -> dict[str, Any]:
@@ -3655,6 +4179,52 @@ def handle_render_honest_failure_paper(args: dict[str, Any]) -> dict[str, Any]:
         p.name for p in _thread_dir(tid).glob("production.attempt_*") if p.is_dir()
     )
 
+    # --- ADR 0007: depth gate on the lazy door. --------------------------
+    # A weak/negative terminal is the MIRROR of the fake-strength terminal:
+    # both are premature termination. It renders only when the give-up was
+    # EARNED — (a) a load-bearing mechanism is stated and (b) distinct
+    # genuine attempts (narrowing relabels excluded) are exhausted.
+    # Otherwise: refuse and send the system back to dig.
+    from research_harness.config import load_settings as _ls
+    settings = _ls(repo)
+    if _premature_termination_gate_enabled(settings):
+        depth = _investigation_depth(tid)
+        min_attempts = _min_distinct_attempts(settings)
+        reduction = _read_json(_rebuttal_dir(tid) / "orchestrator_reduction.json") or {}
+        mechanism = attestation.get("load_bearing_mechanism") or ""
+        has_mechanism = (
+            len(str(mechanism).strip()) >= 80
+            or bool(reduction.get("blocking_objections"))
+        )
+        if depth["distinct_attempts"] < min_attempts or not has_mechanism:
+            problems = []
+            if depth["distinct_attempts"] < min_attempts:
+                problems.append(
+                    f"only {depth['distinct_attempts']} distinct genuine attempt(s) "
+                    f"(need >= {min_attempts}; narrowing_pivots="
+                    f"{depth['narrowing_pivots']} do NOT count — scope-narrowing is "
+                    "relabeling, not depth)"
+                )
+            if not has_mechanism:
+                problems.append(
+                    "no load-bearing mechanism stated (set attestation."
+                    "load_bearing_mechanism: WHY this fails / what must be true to "
+                    "succeed, >=80 chars, or record blocking_objections in the "
+                    "orchestrator_reduction)"
+                )
+            return {
+                "status": "rejected",
+                "reason": (
+                    "ADR 0007 depth gate — premature termination refused: "
+                    + "; ".join(problems)
+                    + ". A shallow give-up scores as low as fake strength. Generate "
+                    "and TRY the next diagnostic hypothesis (why did it fail / what "
+                    "would have to be true / adjacent hypothesis) until it cracks or "
+                    "genuine attempts are exhausted — then re-render."
+                ),
+                "investigation_depth": depth,
+            }
+
     import html as _h
     pub_dir = pdir / "publication"
     pub_dir.mkdir(parents=True, exist_ok=True)
@@ -3714,6 +4284,7 @@ def handle_render_honest_failure_paper(args: dict[str, Any]) -> dict[str, Any]:
         "attestation": attestation,
         "fanout_cycles": fanout.get("count", 0),
         "archived_attempts": archived_attempts,
+        "investigation_depth": _investigation_depth(tid),
         "publication_dispatch": {
             "decision": "honest_failure",
             "rendered_artifacts": [
@@ -3907,6 +4478,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_resume_production_state(args)
             elif name == "submit_feasibility_envelope":
                 result = handle_submit_feasibility_envelope(args, settings)
+            elif name == "compute_falsifier_result":
+                result = handle_compute_falsifier_result(args)
             elif name == "design_initial_claim_contract":
                 result = handle_design_initial_claim_contract(args, settings)
             elif name == "design_experiment_template":

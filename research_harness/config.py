@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -214,7 +215,7 @@ def load_lessons(repo_root: Path) -> dict[str, Any]:
     return lessons
 
 
-def resolve_agent_model(settings: dict[str, Any], role: str) -> str:
+def resolve_agent_model(settings: Mapping[str, Any], role: str) -> str:
     """Pick the model name for a given agent role.
 
     Resolution order:
@@ -222,11 +223,15 @@ def resolve_agent_model(settings: dict[str, Any], role: str) -> str:
       2. settings.runtime.agent_models.default
       3. settings.runtime.worker_backends.claude_code_live.model
       4. literal "claude-sonnet-4-6" as a last-resort default.
+
+    Accepts any ``Mapping`` so that ADR-0005 ``ResolvedSettings`` (which is
+    a Mapping but not a dict subclass) flows through the same path as a
+    raw ``settings`` dict from ``load_settings()``.
     """
 
-    runtime = settings.get("runtime", {}) if isinstance(settings, dict) else {}
+    runtime = settings.get("runtime", {}) if isinstance(settings, Mapping) else {}
     agent_models = runtime.get("agent_models", {}) or {}
-    if isinstance(agent_models, dict):
+    if isinstance(agent_models, Mapping):
         explicit = agent_models.get(role)
         if isinstance(explicit, str) and explicit.strip():
             return explicit
@@ -235,16 +240,16 @@ def resolve_agent_model(settings: dict[str, Any], role: str) -> str:
             return default
     live = (
         runtime.get("worker_backends", {}).get("claude_code_live", {})
-        if isinstance(runtime.get("worker_backends"), dict)
+        if isinstance(runtime.get("worker_backends"), Mapping)
         else {}
     )
-    fallback = live.get("model") if isinstance(live, dict) else None
+    fallback = live.get("model") if isinstance(live, Mapping) else None
     if isinstance(fallback, str) and fallback.strip():
         return fallback
     return "claude-sonnet-4-6"
 
 
-def resolve_agent_budget(settings: dict[str, Any], role: str) -> str:
+def resolve_agent_budget(settings: Mapping[str, Any], role: str) -> str:
     """Pick the per-call USD budget cap for a given agent role.
 
     Resolution order (mirrors ``resolve_agent_model``):
@@ -259,9 +264,9 @@ def resolve_agent_budget(settings: dict[str, Any], role: str) -> str:
     callers don't need to care.
     """
 
-    runtime = settings.get("runtime", {}) if isinstance(settings, dict) else {}
+    runtime = settings.get("runtime", {}) if isinstance(settings, Mapping) else {}
     agent_budgets = runtime.get("agent_budgets", {}) or {}
-    if isinstance(agent_budgets, dict):
+    if isinstance(agent_budgets, Mapping):
         explicit = agent_budgets.get(role)
         if explicit is not None and str(explicit).strip():
             return str(explicit)
@@ -270,10 +275,10 @@ def resolve_agent_budget(settings: dict[str, Any], role: str) -> str:
             return str(default)
     live = (
         runtime.get("worker_backends", {}).get("claude_code_live", {})
-        if isinstance(runtime.get("worker_backends"), dict)
+        if isinstance(runtime.get("worker_backends"), Mapping)
         else {}
     )
-    fallback = live.get("max_budget_usd") if isinstance(live, dict) else None
+    fallback = live.get("max_budget_usd") if isinstance(live, Mapping) else None
     if fallback is not None and str(fallback).strip():
         return str(fallback)
     return "0.25"
@@ -287,7 +292,7 @@ _NOT_SET = _NotSet()
 
 
 def resolve_agent_max_rounds(
-    settings: dict[str, Any], role: str, *, fallback: int = 8
+    settings: Mapping[str, Any], role: str, *, fallback: int = 8
 ) -> int | None:
     """Pick the max_rounds cap for an agent role.
 
@@ -337,9 +342,9 @@ def resolve_agent_max_rounds(
             return n
         return _NOT_SET  # unknown shape — skip and try fallback
 
-    runtime = settings.get("runtime", {}) if isinstance(settings, dict) else {}
+    runtime = settings.get("runtime", {}) if isinstance(settings, Mapping) else {}
     section = runtime.get("agent_max_rounds", {}) or {}
-    if isinstance(section, dict):
+    if isinstance(section, Mapping):
         if role in section:
             result = _coerce(section[role], source=f"agent_max_rounds.{role}")
             if result is not _NOT_SET:
@@ -349,6 +354,54 @@ def resolve_agent_max_rounds(
             if result is not _NOT_SET:
                 return result
     return fallback
+
+
+# ---------------------------------------------------------------------------
+# Thread-aware wrappers (ADR 0005, Phase 2)
+#
+# These import lazily from settings_scoped to keep config.py free of any
+# hard dependency on the scoped-settings system — callers that haven't
+# migrated still call ``resolve_agent_*(settings, role)`` directly with
+# the dict returned by ``load_settings()``.
+# ---------------------------------------------------------------------------
+
+
+def resolve_agent_model_for_thread(
+    repo_root: Path, thread_id: str | None, role: str
+) -> str:
+    """Thread-aware variant of :func:`resolve_agent_model`.
+
+    Constructs a ``ResolvedSettings`` for ``(repo_root, thread_id)`` and
+    delegates. Falls back to project + operator scope when ``thread_id`` is
+    None. Phase 4 will migrate the existing call sites onto this entrypoint.
+    """
+    from research_harness.settings_scoped import resolve_for_thread
+
+    return resolve_agent_model(resolve_for_thread(repo_root, thread_id), role)
+
+
+def resolve_agent_budget_for_thread(
+    repo_root: Path, thread_id: str | None, role: str
+) -> str:
+    """Thread-aware variant of :func:`resolve_agent_budget`."""
+    from research_harness.settings_scoped import resolve_for_thread
+
+    return resolve_agent_budget(resolve_for_thread(repo_root, thread_id), role)
+
+
+def resolve_agent_max_rounds_for_thread(
+    repo_root: Path,
+    thread_id: str | None,
+    role: str,
+    *,
+    fallback: int = 8,
+) -> int | None:
+    """Thread-aware variant of :func:`resolve_agent_max_rounds`."""
+    from research_harness.settings_scoped import resolve_for_thread
+
+    return resolve_agent_max_rounds(
+        resolve_for_thread(repo_root, thread_id), role, fallback=fallback
+    )
 
 
 PRACTITIONER_VOICE_MARKER = "# Practitioner Lens override"

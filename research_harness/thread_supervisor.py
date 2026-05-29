@@ -71,14 +71,59 @@ def _thread_dir(repo: Path, tid: str) -> Path:
     return repo / "runs" / "threads" / tid
 
 
-def is_terminal(repo: Path, tid: str) -> tuple[bool, str | None]:
-    """PR8: ONLY terminate on the dual-gate publication outcome — i.e.,
-    AC decision in {accept, revise} AND submit_professor_user_goal_
-    attestation.achieved=true AND a paper artifact rendered. Everything
-    else (honest_failure, max_cycles, rate limits) is a state to retreat
-    from and retry, not a termination.
+def resolve_supervisor_model(repo: Path, tid: str) -> str:
+    """Model the production supervisor drives `claude` with.
 
-    Returns (is_terminal, 'accept_with_goal_achieved' | None).
+    Implements the documented contract (settings.json _model_comment):
+    'thread.json.mcp_model overrides default_model'. Resolution order:
+      1. thread.json.mcp_model        — per-thread frontend selection
+      2. runtime.llm_orchestrator.mcp.default_model  — operator/project default
+      3. DEFAULT_CLAUDE_MODEL          — last-resort fallback
+
+    Previously the supervisor always spawned DEFAULT_CLAUDE_MODEL, so the
+    production phase ignored every model setting the operator configured.
+    """
+    # 1. per-thread override.
+    try:
+        tj = json.loads((_thread_dir(repo, tid) / "thread.json").read_text(encoding="utf-8"))
+        m = tj.get("mcp_model")
+        if isinstance(m, str) and m.strip():
+            return m.strip()
+    except (OSError, json.JSONDecodeError):
+        pass
+    # 2. operator/project default from settings.json.
+    try:
+        s = json.loads((repo / "settings.json").read_text(encoding="utf-8"))
+        m = (
+            s.get("runtime", {})
+            .get("llm_orchestrator", {})
+            .get("mcp", {})
+            .get("default_model")
+        )
+        if isinstance(m, str) and m.strip():
+            return m.strip()
+    except (OSError, json.JSONDecodeError):
+        pass
+    # 3. fallback.
+    return DEFAULT_CLAUDE_MODEL
+
+
+def is_terminal(repo: Path, tid: str) -> tuple[bool, str | None]:
+    """Terminate on either honest publication outcome:
+
+    - the dual gate: AC decision in {accept, revise} AND a paper rendered
+      AND user_goal_attestation.achieved=true (now backed by an external
+      falsifier — ADR 0006) → 'accept_with_goal_achieved'.
+    - ADR 0006 honest ceiling: attested_status=='unverified_screen' with the
+      honest-failure paper rendered → 'accept_with_unverified_screen'. This
+      is a recorded terminal, NOT an infinite retry — the air-gapped run
+      genuinely cannot register a falsifier, so the screen stands.
+
+    Everything else (not_achieved honest_failure, max_cycles, rate limits)
+    is a state to retreat from and retry.
+
+    Returns (is_terminal, 'accept_with_goal_achieved' |
+    'accept_with_unverified_screen' | None).
     """
     pdir = _thread_dir(repo, tid) / "production"
     summary_path = pdir / "production_run_summary.json"
@@ -89,18 +134,10 @@ def is_terminal(repo: Path, tid: str) -> tuple[bool, str | None]:
     except (OSError, json.JSONDecodeError):
         return False, None
 
-    # honest_failure no longer terminates — supervisor must drive a retry.
-    if s.get("outcome") == "honest_failure":
-        return False, None
-
     rebuttal = s.get("rebuttal_summary") or {}
-    ac_decision = (rebuttal.get("ac_decision") or {}).get("decision")
     rendered = (s.get("publication_dispatch") or {}).get("rendered_artifacts")
-    if ac_decision not in {"accept", "revise"} or not rendered:
-        return False, None
 
-    # Second half of the dual-gate: Professor's user_goal_attestation must
-    # exist with achieved=true. summary may embed it or we read it directly.
+    # Resolve the attestation once (summary may embed it or it's on disk).
     attestation = rebuttal.get("user_goal_attestation")
     if not attestation:
         attestation_path = pdir / "rebuttal" / "user_goal_attestation.json"
@@ -109,7 +146,27 @@ def is_terminal(repo: Path, tid: str) -> tuple[bool, str | None]:
                 attestation = json.loads(attestation_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 attestation = None
-    if not attestation or not attestation.get("achieved"):
+    attestation = attestation or {}
+
+    # ADR 0006: unverified_screen is a first-class terminal once the honest
+    # paper exists. Checked BEFORE the honest_failure retreat below so it does
+    # not get swept into the retry loop.
+    if attestation.get("attested_status") == "unverified_screen" and (
+        rendered or s.get("outcome") == "honest_failure"
+    ):
+        return True, "accept_with_unverified_screen"
+
+    # honest_failure (not_achieved) does not terminate — supervisor retries.
+    if s.get("outcome") == "honest_failure":
+        return False, None
+
+    ac_decision = (rebuttal.get("ac_decision") or {}).get("decision")
+    if ac_decision not in {"accept", "revise"} or not rendered:
+        return False, None
+
+    # Second half of the dual-gate: achieved=true (ADR 0006 ensures this was
+    # only attestable with a passing external falsifier).
+    if not attestation.get("achieved"):
         return False, None
 
     return True, "accept_with_goal_achieved"
@@ -329,12 +386,41 @@ def bootstrap_envelope_if_missing(
     target_idx = alts_order.index(target_scope)
     acceptable = alts_order[target_idx:]
 
+    # ADR 0006: the bootstrap NEVER invents a falsifier — it cannot author a
+    # meaningful predicate or a held-out source the worker doesn't see. It
+    # honestly declares kind="none", which caps the thread at
+    # 'unverified_screen' (achieved=true structurally impossible). To reach
+    # 'goal_achieved' the operator hand-writes a real_holdout falsifier (with
+    # a predicate) before launch, or the Professor registers a
+    # cross_generator_transfer falsifier via submit_feasibility_envelope.
+    has_real = any(s.get("kind") == "real_adapter" for s in data_sources)
+    falsifier = {"kind": "none", "registered_by": "supervisor_bootstrap"}
+    max_attestable = "unverified_screen"
+    bootstrap_note = (
+        "Auto-bootstrapped by thread_supervisor from settings.json + "
+        "market dossier. Operator can override by writing the envelope "
+        "manually before launching supervisor. ADR 0006: external_falsifier "
+        "defaults to kind='none' so max_attestable_status='unverified_screen' "
+        "(achieved=true is refused). "
+    )
+    if has_real:
+        bootstrap_note += (
+            "A real_adapter IS registered — to reach goal_achieved, set "
+            "external_falsifier.kind='real_holdout' with holdout_source_id "
+            "= that adapter id and a predicate, then re-submit the envelope. "
+        )
+    else:
+        bootstrap_note += (
+            "Synthetic-only: the only air-gapped falsifier is "
+            "cross_generator_transfer (held-out generator B), registered by "
+            "the Professor before attestation. "
+        )
     envelope = {
         "thread_id": tid,
         "data_sources_available": data_sources,
         "llm_oracles_available": [{
             "kind": "subscription_claude_code",
-            "model": "claude-opus-4-7",
+            "model": resolve_supervisor_model(repo, tid),
         }],
         "compute_budget": compute,
         "baseline_provenance_available": baseline_prov,
@@ -342,11 +428,9 @@ def bootstrap_envelope_if_missing(
             "target_deploy_grade_scope": target_scope,
             "acceptable_alternative_scopes": acceptable,
         },
-        "notes": (
-            "Auto-bootstrapped by thread_supervisor from settings.json + "
-            "market dossier. Operator can override by writing the envelope "
-            "manually before launching supervisor."
-        ),
+        "external_falsifier": falsifier,
+        "max_attestable_status": max_attestable,
+        "notes": bootstrap_note,
     }
 
     # Validate against the schema before writing. If validation fails, do
@@ -431,13 +515,20 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         f"[supervisor cycle #{cycle}] 이전 세션이 한도로 종료됐어. 새 세션이야.",
         "디스크 상태를 읽고 어디서 멈췄는지 파악해서 이어가.",
         "",
-        "**절대 종료 조건 (PR8):** 이 thread는 오직 DUAL-GATE 양쪽이",
-        "모두 통과할 때만 끝나. 다음 두 조건 동시 성립해야:",
-        "  (1) submit_ac_decision: decision ∈ {accept, revise}",
-        "  (2) submit_professor_user_goal_attestation: achieved=true",
-        "→ 그 외엔 모두 'still working' 상태. honest_failure 호출하지 마.",
-        "→ supervisor가 honest_failure를 종료로 안 받음. 그건 retreat 신호일 뿐이고,",
-        "   다음 cycle에 새 angle / chunk / 자원으로 재시도해야 함.",
+        "**절대 종료 조건 (PR8 + ADR 0006):** 이 thread는 다음 두 honest",
+        "종료 중 하나에 도달해야 끝나:",
+        "  (A) GOAL ACHIEVED: submit_ac_decision ∈ {accept, revise} AND",
+        "      submit_professor_user_goal_attestation achieved=true.",
+        "      ※ ADR 0006: achieved=true는 external falsifier 통과 없이는",
+        "        구조적으로 거부됨. 필요조건: envelope.max_attestable_status=",
+        "        goal_achieved (= falsifier 등록됨) + 통과한 falsifier_result.",
+        "  (B) UNVERIFIED SCREEN: envelope.max_attestable_status=unverified_screen",
+        "      이면 (falsifier 등록 불가 = air-gapped synthetic-only) achieved=true는",
+        "      불가능. achieved=false로 정직하게 attest → harness가 attested_status=",
+        "      unverified_screen로 stamp → render_honest_failure_paper로 publish.",
+        "      이건 retry가 아니라 RECORDED TERMINAL (정직한 screen 종료).",
+        "→ 그 외(attested_status=not_achieved honest_failure)만 'still working'",
+        "  = retreat 신호. 다음 cycle에 새 angle / chunk / 자원 / falsifier로 재시도.",
         "",
         "현재 상태 (디스크 스냅샷):",
         f"  - promoted nodes: {promoted}",
@@ -457,11 +548,19 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "  3. mid-state 노드 있으면 그 노드의 다음 도구 호출 (resume_production_state",
         "     또는 get_next_admissible_node의 status=resume 응답).",
         "  4. 없으면 get_next_admissible_node로 다음 ready 노드 처리.",
-        "  5. publish 직전 단계 도달하면 dual-gate 둘 다 통과 시도:",
-        "       (a) submit_ac_decision (decision ∈ {accept, revise}),",
-        "       (b) submit_professor_user_goal_attestation (achieved=true).",
-        "     achieved=true가 안 나오면 honest_failure 부르지 말고,",
-        "     required_additional_research를 다음 follow-up 노드로 만들고 cycle 계속.",
+        "  5. publish 직전 단계 도달하면 envelope.max_attestable_status 먼저 확인:",
+        "     • goal_achieved (falsifier 등록됨): (a) submit_ac_decision ∈",
+        "       {accept, revise}; (b) compute_falsifier_result로 held-out 검증",
+        "       (cross_generator_transfer면 ranking_a / 다른 generator B의 ranking_b);",
+        "       (c) 통과하면 submit_professor_user_goal_attestation achieved=true.",
+        "       falsifier가 fail하면 achieved=true 불가 — 파이프라인 개선 후 재측정.",
+        "     • unverified_screen (falsifier 등록 불가): achieved=true 시도하지 마.",
+        "       achieved=false로 attest → attested_status=unverified_screen stamp →",
+        "       render_honest_failure_paper로 honest screen publish → TERMINAL.",
+        "  5b. (선택) air-gapped인데 정직한 약-falsifier를 쓰고 싶으면: 별개의",
+        "      generator B를 holdout으로 잡고 submit_feasibility_envelope에",
+        "      external_falsifier(kind=cross_generator_transfer, holdout_source_id,",
+        "      predicate{spearman_rho>=θ}) 등록 → 위 goal_achieved 경로로.",
         "  6. claim 자체가 envelope에 맞지 않으면 revise_root_after_reject로",
         "     scope을 envelope-fit하게 narrow. (예: deployment → feasibility)",
         "",
@@ -488,8 +587,9 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "  - 너의 prune/contradicted 결정은 memory/failures/ 에 자동 기록됨.",
         "",
         "세션 한도 가까워지면 self-judge로 멈춰. 한 줄 status 남기고 종료해.",
-        "supervisor가 곧 새 cycle spawn 해서 이어받을 거야. 절대 honest_failure로",
-        "끝내지 마 — 그건 종료 아니야, retreat 신호일 뿐.",
+        "supervisor가 곧 새 cycle spawn 해서 이어받을 거야. not_achieved 상태에서",
+        "honest_failure로 끝내지 마 — 그건 retreat 신호. 단, max_attestable_status=",
+        "unverified_screen이면 honest_failure render가 정당한 TERMINAL이다 (ADR 0006).",
         "",
         "지금 시작:",
     ]
@@ -944,12 +1044,23 @@ def main(argv: list[str] | None = None) -> int:
             "real adapter for this thread's domain."
         ),
     )
-    p_watch.add_argument("--model", default=DEFAULT_CLAUDE_MODEL)
+    p_watch.add_argument(
+        "--model", default=None,
+        help=(
+            "Override the production model. When omitted (the frontend path), "
+            "the supervisor resolves it via thread.json.mcp_model -> "
+            "settings.runtime.llm_orchestrator.mcp.default_model -> default."
+        ),
+    )
     p_watch.add_argument("--boot-delay", type=float, default=DEFAULT_CLAUDE_BOOT_DELAY)
 
     args = parser.parse_args(argv)
     if args.cmd == "watch":
         repo = (args.repo_root or _repo_root_default()).resolve()
+        # Resolve the model from settings when not explicitly overridden, so
+        # the production phase honours the operator's configured model instead
+        # of the hard-coded default.
+        model = args.model or resolve_supervisor_model(repo, args.thread_id)
         result = watch_thread(
             repo,
             args.thread_id,
@@ -957,7 +1068,7 @@ def main(argv: list[str] | None = None) -> int:
             poll_seconds=args.poll_seconds,
             milestone_cycle=args.milestone_cycle,
             max_cycles=args.max_cycles,
-            model=args.model,
+            model=model,
             boot_delay=args.boot_delay,
             target_scope=args.target_scope,
         )

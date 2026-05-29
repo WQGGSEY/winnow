@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Data adapters — Winnow</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-title">
+      <a href="/" style="color: inherit; text-decoration: none;">← Winnow</a>
+    </div>
+    <div class="topbar-meta">
+      <span style="opacity: 0.7">Data adapters</span>
+    </div>
+  </header>
+
+  <main class="app" style="grid-template-columns: 1fr;">
+    <section class="main-pane" style="max-width: 960px; margin: 0 auto; padding: 2rem;">
+
+      {% if flash %}
+        <div class="callout" style="margin-bottom: 1.5rem;">{{ flash }}</div>
+      {% endif %}
+      {% if error %}
+        <div class="callout" style="margin-bottom: 1.5rem; border-color: #c33; background: rgba(204, 51, 51, 0.08);">
+          <strong>Error:</strong> {{ error }}
+        </div>
+      {% endif %}
+
+      <h2 style="margin-top: 0;">Registered adapters</h2>
+      <p class="hint">
+        Project-scope entries (in <code>settings.json</code>) are checked-in defaults shared with collaborators.
+        Operator-scope entries (in <code>settings.local.json</code>) live on <em>this</em> machine only.
+        Only operator entries can be deleted here.
+      </p>
+
+      {% if adapters %}
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 2rem;">
+          <thead>
+            <tr style="border-bottom: 1px solid #444;">
+              <th style="text-align: left; padding: 0.5rem;">id</th>
+              <th style="text-align: left; padding: 0.5rem;">kind</th>
+              <th style="text-align: left; padding: 0.5rem;">scope</th>
+              <th style="text-align: left; padding: 0.5rem;">source</th>
+              <th style="text-align: left; padding: 0.5rem;">provenance</th>
+              <th style="padding: 0.5rem;"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for a in adapters %}
+              <tr style="border-bottom: 1px solid #2a2a2a;">
+                <td style="padding: 0.5rem;"><code>{{ a.id }}</code></td>
+                <td style="padding: 0.5rem;">{{ a.kind or "—" }}</td>
+                <td style="padding: 0.5rem;">
+                  <span class="badge {% if a._scope == 'operator' %}live{% else %}auto{% endif %}">{{ a._scope }}</span>
+                </td>
+                <td style="padding: 0.5rem; max-width: 300px; overflow: hidden; text-overflow: ellipsis;">
+                  <code style="font-size: 0.8em;">{{ a.source|truncate_chars(60) }}</code>
+                </td>
+                <td style="padding: 0.5rem; max-width: 280px;">{{ a.provenance|truncate_chars(80) }}</td>
+                <td style="padding: 0.5rem; text-align: right;">
+                  {% if a._scope == "operator" %}
+                    <form method="post" action="/datasets/{{ a.id }}/delete" style="display: inline;"
+                          onsubmit="return confirm('Remove adapter {{ a.id }}? Uploaded files in .dataset_cache/operator_uploads/{{ a.id }}/ will also be deleted.');">
+                      <button type="submit" class="btn" style="font-size: 0.85em;">Delete</button>
+                    </form>
+                  {% else %}
+                    <span class="hint" style="font-size: 0.8em;">read-only</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="hint" style="margin-bottom: 2rem;">No adapters registered yet.</p>
+      {% endif %}
+
+      <hr style="border: none; border-top: 1px solid #2a2a2a; margin: 2rem 0;">
+
+      <h2>Add adapter</h2>
+
+      <div style="display: grid; gap: 2rem; grid-template-columns: 1fr 1fr;">
+
+        <fieldset>
+          <legend>Upload a file</legend>
+          <p class="hint">Streams the file into <code>.dataset_cache/operator_uploads/&lt;id&gt;/</code>.
+          Files over {{ max_upload_mb }} MB: place on disk manually and use the right-hand form instead.</p>
+          <form method="post" action="/datasets/upload"
+                enctype="multipart/form-data"
+                style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <label>
+              <span>adapter_id</span>
+              <input type="text" name="adapter_id" required pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,63}"
+                     placeholder="my_dataset_2026">
+            </label>
+            <label>
+              <span>kind</span>
+              <select name="kind" required>
+                {% for k in allowed_kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>provenance</span>
+              <textarea name="provenance" rows="2" required
+                        placeholder="self-curated CSV, n=1234, schema=..."></textarea>
+            </label>
+            <label>
+              <span>file</span>
+              <input type="file" name="file" required>
+            </label>
+            <button type="submit" class="btn primary">Upload &amp; register</button>
+          </form>
+        </fieldset>
+
+        <fieldset>
+          <legend>Register by path</legend>
+          <p class="hint">Point at a file you've already placed on disk. No copy, no upload.
+          Use for multi-GB datasets or pre-existing local data.</p>
+          <form method="post" action="/datasets/register"
+                style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <label>
+              <span>adapter_id</span>
+              <input type="text" name="adapter_id" required pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,63}"
+                     placeholder="wq_brain_snapshot_2024">
+            </label>
+            <label>
+              <span>kind</span>
+              <select name="kind" required>
+                {% for k in allowed_kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>source (file:// URL or absolute path)</span>
+              <input type="text" name="source" required
+                     placeholder="file:///Users/seongje/data/wq_brain/">
+            </label>
+            <label>
+              <span>provenance</span>
+              <textarea name="provenance" rows="2" required
+                        placeholder="WorldQuant Brain S&P 500 2024-01..2025-12, sha256=..."></textarea>
+            </label>
+            <button type="submit" class="btn primary">Register</button>
+          </form>
+        </fieldset>
+
+      </div>
+
+      <hr style="border: none; border-top: 1px solid #2a2a2a; margin: 2rem 0;">
+
+      <details>
+        <summary style="cursor: pointer;">HuggingFace datasets</summary>
+        <p class="hint" style="margin-top: 1rem;">
+          HuggingFace datasets are <em>not</em> registered here. They are referenced
+          directly from an experiment's <code>dataset_spec</code> using
+          <code>source: "hf://&lt;repo_id&gt;"</code>. The
+          <code>HuggingFaceMaterializer</code> downloads them on demand using
+          the HF cache at <code>~/.cache/huggingface/</code>. Install
+          <code>datasets</code> and <code>huggingface_hub</code> (and set
+          <code>HF_TOKEN</code> for gated repos) before running.
+        </p>
+      </details>
+
+    </section>
+  </main>
+</body>
+</html>

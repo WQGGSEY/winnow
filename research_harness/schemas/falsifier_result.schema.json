@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/falsifier_result.schema.json",
+  "title": "FalsifierResult",
+  "description": "ADR 0006: the outcome of evaluating the feasibility_envelope.external_falsifier predicate over held-out data. Produced by research_harness/falsifier.py (a harness module), NOT by worker experiment code — produced_by is stamped by the harness and the attestation gate verifies it. A FalsifierResult with passed=true computed against the envelope-registered holdout is the ONLY path to user_goal_attestation.achieved=true.",
+  "type": "object",
+  "required": [
+    "thread_id",
+    "kind",
+    "holdout_source_id",
+    "predicate",
+    "observed",
+    "passed",
+    "produced_by"
+  ],
+  "properties": {
+    "thread_id": { "type": "string" },
+    "kind": {
+      "type": "string",
+      "enum": ["real_holdout", "cross_generator_transfer"],
+      "description": "Mirrors the envelope's external_falsifier.kind. 'none' cannot produce a result (there is nothing to evaluate)."
+    },
+    "holdout_source_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The held-out source the predicate was computed against. The attestation gate requires this to match feasibility_envelope.external_falsifier.holdout_source_id."
+    },
+    "predicate": {
+      "type": "object",
+      "required": ["metric", "op", "threshold"],
+      "description": "Echo of the envelope predicate that was evaluated (so the result is self-describing).",
+      "properties": {
+        "metric": { "type": "string", "minLength": 1 },
+        "op": { "type": "string", "enum": [">=", ">", "<=", "<", "=="] },
+        "threshold": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "observed": {
+      "type": "number",
+      "description": "The value the harness COMPUTED for predicate.metric over the holdout (e.g. measured Spearman rho). Not an LLM-asserted pass/fail — the boolean is derived from this number by the harness."
+    },
+    "passed": {
+      "type": "boolean",
+      "description": "Harness-derived: predicate(observed) is true. The worker cannot set this directly; it falls out of the deterministic comparison."
+    },
+    "produced_by": {
+      "type": "string",
+      "enum": ["harness_falsifier_module"],
+      "description": "Provenance stamp. The single allowed value marks this as harness-produced; the attestation gate rejects results not stamped here."
+    },
+    "evidence": {
+      "type": "object",
+      "description": "Kind-specific inputs the harness consumed. For cross_generator_transfer: ranking_a / ranking_b (held-out) vectors over the same pipeline set. For real_holdout: the metric reading and adapter provenance.",
+      "additionalProperties": true
+    },
+    "computed_at": { "type": "string" },
+    "notes": { "type": "string" }
+  },
+  "additionalProperties": false
+}

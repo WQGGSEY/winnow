@@ -32,7 +32,9 @@
           ● LIVE: {{ lock_holder.thread_id|truncate_chars(20) }} / {{ lock_holder.phase }}
         </span>
       {% endif %}
-      <button class="topbar-btn" type="button" data-open-settings>Settings</button>
+      <a class="topbar-btn" href="/datasets" style="text-decoration: none;">Data adapters</a>
+      <a class="topbar-btn" href="/settings{% if active_thread %}?scope=thread&thread_id={{ active_thread.thread_id }}{% endif %}" style="text-decoration: none;">All settings</a>
+      <button class="topbar-btn" type="button" data-open-settings>Quick toggles</button>
     </div>
   </header>
 

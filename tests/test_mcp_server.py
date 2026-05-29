@@ -134,8 +134,10 @@ class MCPServerTests(unittest.TestCase):
             "render_honest_failure_paper",
         }
         # PR7: feasibility envelope tool.
+        # ADR 0006: external-falsifier gate adds compute_falsifier_result.
         envelope_expected = {
             "submit_feasibility_envelope",
+            "compute_falsifier_result",
         }
         # Multi-root tournament: alternative root formulations.
         multi_root_expected = {
