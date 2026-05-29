@@ -269,6 +269,82 @@ def test_handler_probe_uninformative_on_identical_recipes(tmp_path, monkeypatch)
     assert out["passed"] is False
 
 
+# --- ADR 0010 (T2-03): strong harness-constructed discrimination baseline #
+
+
+def _multicol_recipe(mus):
+    return {"shape": "tabular", "columns": [
+        {"name": f"c{i}", "distribution": "normal", "params": {"mu": m, "sigma": 1.0}}
+        for i, m in enumerate(mus)
+    ]}
+
+
+def test_known_method_transfer_pure():
+    # >= 3 shared columns whose mean-ordering is preserved A->B -> high transfer.
+    a = {"c0": [0.0, 0.0], "c1": [5.0, 5.0], "c2": [10.0, 10.0]}
+    b = {"c0": [1.0, 1.0], "c1": [6.0, 6.0], "c2": [11.0, 11.0]}
+    assert F.known_method_transfer(a, b) == pytest.approx(1.0)
+    assert F.known_method_transfer({"c0": [1.0]}, {"c0": [1.0]}) is None  # < 3 cols -> N/A
+
+
+def test_inv_discrimination_strong_known_baseline_clears_is_uninformative():
+    # INV-discrimination: even with distinct generators and a passing rho, if the
+    # STRONG known-only baseline already transfers (clears the predicate), the bar
+    # is patchwork-clearable -> uninformative.
+    r = F.compute_falsifier_result(
+        thread_id="t", falsifier=_xgen_falsifier(),
+        evidence={"ranking_a": [1, 2, 3, 4, 5], "ranking_b": [1, 2, 3, 5, 4]},
+        measured_behavioral_distance=0.5,          # genuinely distinct
+        measured_known_baseline_transfer=0.9,      # but a standard method ALSO transfers
+    )
+    assert r["verdict"] == "uninformative"
+    assert r["guards"]["known_baseline"]["clears_predicate"] is True
+
+
+def test_inv_discrimination_baseline_is_harness_param_not_worker_field():
+    # The baseline is the HARNESS param; a worker-supplied strawman field is ignored.
+    r = F.compute_falsifier_result(
+        thread_id="t", falsifier=_xgen_falsifier(),
+        evidence={"ranking_a": [1, 2, 3, 4, 5], "ranking_b": [1, 2, 3, 5, 4],
+                  "known_baseline_transfer": 0.0},  # worker claims 'known fails' — ignored
+        measured_behavioral_distance=0.5,
+        measured_known_baseline_transfer=0.95,      # harness: strong baseline transfers
+    )
+    assert r["verdict"] == "uninformative"  # harness param governs, strawman has no effect
+
+
+def test_inv_discrimination_strong_baseline_does_not_block_when_it_fails():
+    # When the strong known baseline does NOT transfer, a genuine distinct-generator
+    # transfer passes (the guard only fires when patchwork would clear the bar).
+    r = F.compute_falsifier_result(
+        thread_id="t", falsifier=_xgen_falsifier(),
+        evidence={"ranking_a": [1, 2, 3, 4, 5], "ranking_b": [1, 2, 3, 5, 4]},
+        measured_behavioral_distance=0.5,
+        measured_known_baseline_transfer=0.1,      # standard method does NOT transfer
+    )
+    assert r["verdict"] == "passed"
+
+
+def test_handler_known_baseline_clears_is_uninformative(tmp_path, monkeypatch):
+    # End-to-end: generator B is generator A uniformly shifted — genuinely distinct
+    # (behavioral distance high) yet the column-mean ranking is preserved, so the
+    # harness's standard-method baseline transfers -> uninformative.
+    tid = "t_known_clears"
+    _setup_falsifier_repo(tmp_path, monkeypatch, tid, _xgen_falsifier())
+    out = M.handle_compute_falsifier_result({
+        "thread_id": tid,
+        "evidence": {
+            "ranking_a": [1, 2, 3, 4, 5], "ranking_b": [1, 2, 3, 5, 4],
+            "generator_a": _multicol_recipe([0.0, 5.0, 10.0]),
+            "generator_b": _multicol_recipe([1.0, 6.0, 11.0]),  # uniform shift
+        },
+    })
+    assert out["status"] == "ok"
+    assert out["verdict"] == "uninformative"
+    assert out["guards"]["known_baseline"]["clears_predicate"] is True
+    assert out["guards"]["behavioral_distance"]["observed"] >= 0.15  # genuinely distinct
+
+
 # --- ADR 0009 (B3): patchwork-probe axis bound to the frozen referent --- #
 
 
@@ -328,6 +404,43 @@ def test_frozen_question_schema_accepts_subject_role():
         "source_artifact": "operator_pinned", "source_provenance": "pin_abcd1234",
         "frozen_at_phase": "production_entry",
     })
+
+
+# --- ADR 0010 (T2-05): evidence forbiddance ---------------------------- #
+
+
+def test_inv_evidence_transfer_admissible_only_for_passing_real_holdout():
+    # INV-evidence: observed is TRANSFER evidence only for a passing real_holdout.
+    assert F.transfer_evidence_admissible({"verdict": "passed", "kind": "real_holdout"}) is True
+    assert F.transfer_evidence_admissible({"verdict": "passed", "kind": "cross_generator_transfer"}) is False
+    for v in ("failed", "uninformative", "degenerate", "invalid"):
+        assert F.transfer_evidence_admissible({"verdict": v, "kind": "real_holdout"}) is False
+        assert F.transfer_evidence_admissible({"verdict": v, "kind": "cross_generator_transfer"}) is False
+
+
+def test_inv_evidence_compute_stamps_admissibility():
+    real = F.compute_falsifier_result(
+        thread_id="t", falsifier=_real_falsifier(), evidence={"observed": 0.51}
+    )
+    assert real["verdict"] == "passed" and real["transfer_evidence_admissible"] is True
+    # A PASSING cross_generator screen is NOT transfer evidence (air-gapped).
+    screen = F.compute_falsifier_result(
+        thread_id="t", falsifier=_xgen_falsifier(),
+        evidence={"ranking_a": [3, 1, 2, 4], "ranking_b": [3, 1, 2, 4]},
+        measured_behavioral_distance=0.5,
+    )
+    assert screen["verdict"] == "passed" and screen["transfer_evidence_admissible"] is False
+
+
+def test_inv_evidence_falsifier_result_not_cited_in_publishing():
+    # INV-evidence (regression lock): the falsifier result never flows into the
+    # publishing path, so a non-passed observed cannot be cited as transfer
+    # evidence there. If a future change wires it in, it MUST route through
+    # transfer_evidence_admissible — and then update this test deliberately.
+    from pathlib import Path as _P
+    pub = _P(F.__file__).resolve().parent / "publishing"
+    offenders = [str(p) for p in pub.rglob("*.py") if "falsifier_result" in p.read_text(encoding="utf-8")]
+    assert offenders == [], f"falsifier result leaked into publishing: {offenders}"
 
 
 # --- envelope submit stamps max_attestable_status ----------------------- #
@@ -630,6 +743,17 @@ def test_is_terminal_unverified_screen_terminates(tmp_path):
     is_term, label = S.is_terminal(tmp_path, tid)
     assert is_term is True
     assert label == "accept_with_unverified_screen"
+
+
+def test_is_terminal_bounded_result_construct_valid_terminates(tmp_path):
+    # INV-terminal-taxonomy (T2-18): a bounded_result outcome from a
+    # construct_valid_screen is a distinct terminal, not the honest-failure retreat.
+    tid = "t_term_bounded"
+    _write_summary(tmp_path, tid, {"outcome": "bounded_result"})
+    _write_attestation(tmp_path, tid, {"achieved": False, "attested_status": "construct_valid_screen"})
+    is_term, label = S.is_terminal(tmp_path, tid)
+    assert is_term is True
+    assert label == "accept_with_construct_valid"
 
 
 def test_is_terminal_not_achieved_honest_failure_retries(tmp_path):

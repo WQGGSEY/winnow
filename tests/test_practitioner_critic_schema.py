@@ -168,7 +168,7 @@ def _broken_adversary_report(qid="q1"):
     return rep
 
 
-def _setup_rebuttal(tmp_path, monkeypatch, tid, *, falsifier=None, adversary=None, frozen_q=None):
+def _setup_rebuttal(tmp_path, monkeypatch, tid, *, falsifier=None, adversary=None, frozen_q=None, envelope=None):
     monkeypatch.setattr(M, "_thread_dir", lambda t: tmp_path / "runs" / "threads" / t)
     rdir = tmp_path / "runs" / "threads" / tid / "production" / "rebuttal"
     rdir.mkdir(parents=True, exist_ok=True)
@@ -179,6 +179,20 @@ def _setup_rebuttal(tmp_path, monkeypatch, tid, *, falsifier=None, adversary=Non
         (rdir / "construct_adversary_report.json").write_text(json.dumps(adversary))
     if frozen_q is not None:
         (pdir / "frozen_question.json").write_text(json.dumps(frozen_q))
+    if envelope is not None:
+        (pdir / "feasibility_envelope.json").write_text(json.dumps(envelope))
+
+
+def _verified_real_referent():
+    """An envelope + matching passing falsifier_result that makes
+    _real_referent_verified True (INV-reality-cap unlock)."""
+    env = {"external_falsifier": {"kind": "real_holdout", "holdout_source_id": "wq_intranet",
+                                  "predicate": {"metric": "ir_mean", "op": ">=", "threshold": 0.4}}}
+    fr = {"thread_id": "t", "kind": "real_holdout", "holdout_source_id": "wq_intranet",
+          "predicate": {"metric": "ir_mean", "op": ">=", "threshold": 0.4},
+          "observed": 0.51, "passed": True, "verdict": "passed",
+          "produced_by": "harness_falsifier_module"}
+    return env, fr
 
 
 def test_methodology_clamped_when_falsifier_uninformative(tmp_path, monkeypatch):
@@ -200,12 +214,12 @@ def test_methodology_clamped_when_falsifier_uninformative(tmp_path, monkeypatch)
     validate_named_schema("ac_decision", out)
 
 
-def test_methodology_not_clamped_when_real_holdout_passed(tmp_path, monkeypatch):
+def test_methodology_provides_allowed_only_with_verified_real_referent(tmp_path, monkeypatch):
+    # INV-reality-cap: 'provides' stays ONLY with a VERIFIED real referent
+    # (envelope real_holdout + matching passing harness falsifier_result).
     tid = "t_a3b"
-    _setup_rebuttal(
-        tmp_path, monkeypatch, tid,
-        falsifier={"kind": "real_holdout", "passed": True, "verdict": "passed"},
-    )
+    env, fr = _verified_real_referent()
+    _setup_rebuttal(tmp_path, monkeypatch, tid, falsifier=fr, envelope=env)
     d = _set_verdict(_valid_ac_decision(), "provides")
     out = M._clamp_methodology_assessment(tid, {}, d)
     assert out["rebuttal_synthesis"]["methodology_assessment"]["aggregate_verdict"] == "provides"
@@ -224,13 +238,25 @@ def test_methodology_clamped_to_absent_when_adversary_broken(tmp_path, monkeypat
     assert out["rebuttal_synthesis"]["methodology_assessment"]["aggregate_verdict"] == "absent"
 
 
-def test_methodology_unchanged_when_no_verification_paths(tmp_path, monkeypatch):
-    # No falsifier, no adversary -> nothing to clamp against; authored stands.
+def test_methodology_provides_unreachable_without_real_referent(tmp_path, monkeypatch):
+    # INV-reality-cap (T2-10): with NO real referent, 'provides' is structurally
+    # unreachable — capped to 'partial' even though no weak path was executed.
     tid = "t_a3d"
     _setup_rebuttal(tmp_path, monkeypatch, tid)
     d = _set_verdict(_valid_ac_decision(), "provides")
     out = M._clamp_methodology_assessment(tid, {}, d)
-    assert out["rebuttal_synthesis"]["methodology_assessment"]["aggregate_verdict"] == "provides"
+    ms = out["rebuttal_synthesis"]["methodology_assessment"]
+    assert ms["aggregate_verdict"] == "partial"
+    assert "INV-reality-cap" in ms["clamp_reason"]
+
+
+def test_methodology_partial_stands_without_real_referent(tmp_path, monkeypatch):
+    # 'partial' is reachable air-gapped, so it is not clamped by the reality-cap.
+    tid = "t_a3f"
+    _setup_rebuttal(tmp_path, monkeypatch, tid)
+    d = _set_verdict(_valid_ac_decision(), "partial")
+    out = M._clamp_methodology_assessment(tid, {}, d)
+    assert out["rebuttal_synthesis"]["methodology_assessment"]["aggregate_verdict"] == "partial"
 
 
 def test_methodology_clamp_never_raises_authored(tmp_path, monkeypatch):

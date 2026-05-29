@@ -29,7 +29,7 @@
     "subject_role": {
       "type": "string",
       "enum": ["method_is_solution", "method_is_subject"],
-      "description": "ADR 0009 (B3): which axis the patchwork-insufficiency probe gates, derived from the question STRUCTURE (does true_iff quantify the method as the solution, or as the test subject?). Pinned PRE-construction and IMMUTABLE, so a node cannot flip its own axis to switch the probe off its claim. 'method_is_solution' = X is the target -> the probe gates the CLAIM's falsifier (a known-methods baseline must not clear the bar). 'method_is_subject' = the method is the thing under test (e.g. a screen) -> the probe hangs on the generator/screen DESIGN axis, not the claim's falsifier. Absent defaults conservatively to method_is_solution (probe gates the claim)."
+      "description": "ADR 0009/0010 (B3, T2-17): which axis the patchwork-insufficiency probe gates. OPERATOR-SET at intake/grilling (one bit), pinned PRE-construction and IMMUTABLE with the frozen question. It is a GATE-ROUTING value, so it gets the strongest authorship cut: it is NOT auto-derived from true_iff prose (true_iff is free text), and neither the construction nor the grilling LLM authors it — only the operator does. 'method_is_solution' = X is the target -> the probe gates the CLAIM's falsifier (a known-methods baseline must not clear the bar). 'method_is_subject' = the method is the thing under test (e.g. a screen) -> the probe hangs on the generator/screen DESIGN axis. Absent defaults conservatively to method_is_solution (probe gates the claim), so OMISSION can never switch the probe off."
     },
     "decision_context": {
       "type": "string",

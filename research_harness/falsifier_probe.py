@@ -80,10 +80,16 @@ def measure_behavioral_distance(
     if samples_a is None or samples_b is None:
         return {
             "distance": None,
+            "known_baseline_transfer": None,
             "reason": "could not materialize one or both generators on the probe",
         }
     distance = _F.behavioral_distance(samples_a, samples_b)
+    # ADR 0010 (T2-03): the STRONG harness-constructed known-only baseline — the
+    # strongest standard-statistic transfer on the SAME probe. Worker never
+    # supplies it, so it cannot be a weak strawman.
+    known_baseline_transfer = _F.known_method_transfer(samples_a, samples_b)
     return {
         "distance": distance,
+        "known_baseline_transfer": known_baseline_transfer,
         "detail": {"columns_a": sorted(samples_a), "columns_b": sorted(samples_b)},
     }

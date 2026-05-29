@@ -36,34 +36,44 @@ def _taxonomy():
             {"id": "ecology", "label": "Ecology"},
             {"id": "immunology", "label": "Immunology"},
             {"id": "linguistics", "label": "Linguistics"},
+            {"id": "noise_field", "label": "Unbridgeable noise field"},
         ],
         "distances": {
-            "agent_harness|quant_finance": 0.35,
+            "agent_harness|quant_finance": 0.35,   # too NEAR (< band_lo)
             "agent_harness|ecology": 0.78,
             "agent_harness|immunology": 0.84,
             "agent_harness|linguistics": 0.72,
+            "agent_harness|noise_field": 0.97,     # too FAR (> band_hi) — noise
         },
     }
 
 
-# --- pure selector ------------------------------------------------------- #
+# --- pure selector (T2-12a band policy) --------------------------------- #
 
 
-def test_select_far_domains_topk_threshold_and_deterministic():
-    sel = DT.select_far_domains("agent_harness", _taxonomy(), top_k=3, threshold=0.6)
-    # far first, deterministic; quant_finance (0.35) excluded by threshold.
+def test_select_far_domains_band_topk_and_deterministic():
+    # far-but-bridgeable band [0.6, 0.9]: quant_finance (0.35) too near, noise_field
+    # (0.97) too far — both excluded; the rest ordered far-first, deterministic.
+    sel = DT.select_far_domains("agent_harness", _taxonomy(), top_k=3, band_lo=0.6, band_hi=0.9)
     assert sel == ["immunology", "ecology", "linguistics"]
-    # Lower top_k truncates the same ordering.
-    assert DT.select_far_domains("agent_harness", _taxonomy(), top_k=1, threshold=0.6) == ["immunology"]
+    assert DT.select_far_domains("agent_harness", _taxonomy(), top_k=1, band_lo=0.6, band_hi=0.9) == ["immunology"]
+
+
+def test_inv_band_policy_excludes_farthest_noise():
+    # INV-band-policy: the FARTHEST domain (noise_field, 0.97) is excluded by the
+    # band even though it is farthest — top-k-farthest is retired. Dropping the
+    # upper cap (band_hi=1.0) is what would (wrongly) surface it first.
+    banded = DT.select_far_domains("agent_harness", _taxonomy(), top_k=4, band_lo=0.6, band_hi=0.9)
+    assert "noise_field" not in banded
+    farthest_only = DT.select_far_domains("agent_harness", _taxonomy(), top_k=4, band_lo=0.6, band_hi=1.0)
+    assert farthest_only[0] == "noise_field"  # farthest-only would pick noise first
 
 
 def test_select_far_domains_unlisted_native_and_pairs():
     # Native domain not in the table -> nothing selectable.
-    assert DT.select_far_domains("astronomy", _taxonomy(), top_k=3, threshold=0.6) == []
-    # An unlisted pair is unknown distance -> not selectable (quant_finance has
-    # no listed distance to ecology here).
-    sel = DT.select_far_domains("quant_finance", _taxonomy(), top_k=3, threshold=0.6)
-    assert sel == []  # only agent_harness|quant_finance is listed (0.35 < 0.6)
+    assert DT.select_far_domains("astronomy", _taxonomy(), top_k=3, band_lo=0.6, band_hi=0.9) == []
+    # An unlisted pair is unknown distance -> not selectable.
+    assert DT.select_far_domains("quant_finance", _taxonomy(), top_k=3, band_lo=0.6, band_hi=0.9) == []
 
 
 def test_taxonomy_hash_stable_and_content_sensitive():

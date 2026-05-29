@@ -166,7 +166,9 @@ def is_terminal(repo: Path, tid: str) -> tuple[bool, str | None]:
         "unverified_screen": "accept_with_unverified_screen",
     }
     _astatus = attestation.get("attested_status")
-    if _astatus in _screen_terminal and (rendered or s.get("outcome") == "honest_failure"):
+    if _astatus in _screen_terminal and (
+        rendered or s.get("outcome") in {"honest_failure", "bounded_result"}
+    ):
         return True, _screen_terminal[_astatus]
 
     # honest_failure (not_achieved) does not terminate — supervisor retries.

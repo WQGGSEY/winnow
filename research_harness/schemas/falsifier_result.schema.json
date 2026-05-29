@@ -54,6 +54,10 @@
       "description": "ADR 0006 rev.2: per-guard signals the harness computed for cross_generator_transfer (behavioral_distance — MEASURED by running both generators; rank_discrimination; null_floor). Empty {} for real_holdout. Additive/back-compatible: absent on results produced before rev.2.",
       "additionalProperties": true
     },
+    "transfer_evidence_admissible": {
+      "type": "boolean",
+      "description": "ADR 0010 (T2-05 / INV-evidence): harness-stamped. True ONLY for a passing real_holdout (a reality-close referent). False for any non-passed verdict and for cross_generator_transfer (a screen, never transfer evidence). When false, `observed` must not be cited as transfer evidence in any render / paper / methodology path."
+    },
     "produced_by": {
       "type": "string",
       "enum": ["harness_falsifier_module"],

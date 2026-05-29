@@ -1682,6 +1682,7 @@ def handle_compute_falsifier_result(args: dict[str, Any]) -> dict[str, Any]:
     # A non-distinct B yields a below-threshold distance → uninformative,
     # closing the thread_c8919361 hole (a passing rho on a non-distinct B).
     measured_distance: float | None = None
+    measured_known: float | None = None
     probe: dict[str, Any] = {}
     if falsifier.get("kind") == "cross_generator_transfer":
         from research_harness import falsifier_probe
@@ -1692,6 +1693,7 @@ def handle_compute_falsifier_result(args: dict[str, Any]) -> dict[str, Any]:
             thread_id=tid,
         )
         measured_distance = probe.get("distance")
+        measured_known = probe.get("known_baseline_transfer")
 
     try:
         result = compute_falsifier_result(
@@ -1699,6 +1701,7 @@ def handle_compute_falsifier_result(args: dict[str, Any]) -> dict[str, Any]:
             falsifier=falsifier,
             evidence=evidence,
             measured_behavioral_distance=measured_distance,
+            measured_known_baseline_transfer=measured_known,
             guard_thresholds=guard_thresholds,
         )
         validate_named_schema("falsifier_result", result)
@@ -1903,18 +1906,20 @@ def _pinned_taxonomy(tid: str) -> dict[str, Any] | None:
 
 
 def _far_framing_config(settings: dict[str, Any]) -> dict[str, Any]:
-    """ADR 0009 (B1) successor policy: enabled / top_k / distance_threshold."""
-    out = {"enabled": True, "top_k": 3, "distance_threshold": 0.6}
+    """ADR 0009 (B1) + T2-12a band policy: enabled / top_k / band_lo / band_hi.
+    The far-but-bridgeable band retires top-k-farthest. ``distance_threshold`` is
+    accepted as a legacy alias for ``band_lo``."""
+    out = {"enabled": True, "top_k": 3, "band_lo": 0.6, "band_hi": 0.9}
     cfg = _persona_cfg(settings).get("far_framing")
     if isinstance(cfg, dict):
         if cfg.get("enabled") is False:
             out["enabled"] = False
         if isinstance(cfg.get("top_k"), int) and cfg["top_k"] >= 0:
             out["top_k"] = cfg["top_k"]
-        if isinstance(cfg.get("distance_threshold"), (int, float)) and not isinstance(
-            cfg.get("distance_threshold"), bool
-        ):
-            out["distance_threshold"] = float(cfg["distance_threshold"])
+        for key, dst in (("distance_threshold", "band_lo"), ("band_lo", "band_lo"), ("band_hi", "band_hi")):
+            val = cfg.get(key)
+            if isinstance(val, (int, float)) and not isinstance(val, bool) and 0.0 <= val <= 1.0:
+                out[dst] = float(val)
     return out
 
 
@@ -1957,7 +1962,7 @@ def _maybe_mint_far_framing(
         return []
     selected = _DT.select_far_domains(
         node.get("domain") or "", taxonomy,
-        top_k=cfg["top_k"], threshold=cfg["distance_threshold"],
+        top_k=cfg["top_k"], band_lo=cfg["band_lo"], band_hi=cfg["band_hi"],
     )
     if not selected:
         return []
@@ -3535,8 +3540,21 @@ def _clamp_methodology_assessment(
     if authored not in _METHODOLOGY_ORDER:
         return decision
 
-    cap = 2  # 'provides' unless an executed path forbids it
+    cap = 2  # 'provides' unless a path forbids it
     reasons: list[str] = []
+
+    # INV-reality-cap (T2-10): 'provides' asserts a methodology usable for the
+    # user's REAL decision — which is unconstructable air-gapped. It is reachable
+    # ONLY with a passing real referent, STRUCTURALLY — even if no falsifier ran
+    # at all. This is a ceiling on the reachable verdict (mirror verdict_strength),
+    # not a downclamp-on-observed-weakness: absent a real referent, 'provides' is
+    # simply not in the reachable vocabulary.
+    if not _real_referent_verified(tid):
+        cap = min(cap, 1)
+        reasons.append(
+            "no real referent verified (no passing real_holdout falsifier) — 'provides' "
+            "is unconstructable air-gapped; ceiling is 'partial' (INV-reality-cap)"
+        )
 
     # Falsifier path: a run-but-not-passed result forbids 'provides'. (A1 typed
     # the verdict — uninformative/degenerate/failed all mean measurement gave no
@@ -4995,23 +5013,39 @@ def handle_render_honest_failure_paper(args: dict[str, Any]) -> dict[str, Any]:
     import html as _h
     pub_dir = pdir / "publication"
     pub_dir.mkdir(parents=True, exist_ok=True)
-    out_path = pub_dir / "honest_failure.html"
-    body_html = (
-        "<!doctype html><html><head><meta charset='utf-8'>"
-        f"<title>Honest Failure — {_h.escape(tid)}</title>"
-        "<style>body{font-family:Georgia,serif;max-width:900px;margin:2em auto;padding:0 2em;line-height:1.55;}"
-        "h1{color:#c25450;}h2{border-bottom:1px solid #ccc;padding-bottom:4px;}"
-        ".callout{background:#fbeeee;border-left:3px solid #c25450;padding:10px 14px;margin:1em 0;}"
-        "code{background:#f4f4f4;padding:1px 4px;}"
-        "</style></head><body>"
-        "<h1>Honest Failure Report</h1>"
-        f"<p><strong>Thread:</strong> <code>{_h.escape(tid)}</code></p>"
-        "<div class='callout'>"
+    # ADR 0010 (T2-18): construct_valid_screen is a BOUNDED RESULT — a funded
+    # construct-adversary FAILED to break the frozen question, so the construction
+    # is construct-valid (close to the QUESTION). That is a bounded POSITIVE, not a
+    # failure; only unverified_screen / not_achieved render as honest-failure. The
+    # operator-stamped attested_status routes this; a node cannot relabel itself.
+    bounded = attestation.get("attested_status") == "construct_valid_screen"
+    outcome = "bounded_result" if bounded else "honest_failure"
+    out_path = pub_dir / (f"{outcome}.html")
+    title = "Bounded Result" if bounded else "Honest Failure"
+    accent = "#2f7d4f" if bounded else "#c25450"
+    lead = (
+        "A funded construct-adversary FAILED to break this thread's frozen question: "
+        "the construction is construct-valid (close to the QUESTION). This is a "
+        "BOUNDED POSITIVE, not a failure — but it is NOT reality-close (transfer_valid "
+        "is unsayable air-gapped), so narrowing ≠ closing. The user's problem, the "
+        "screen, and what a real referent would add are below."
+        if bounded else
         "This thread did not produce a deployable result. Rather than publish a "
         "weak paper to hide that, the harness terminates with this honest "
         "failure report. The user's original problem, every attempt that was "
         "made, and what would change the answer are below."
-        "</div>"
+    )
+    body_html = (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        f"<title>{title} — {_h.escape(tid)}</title>"
+        "<style>body{font-family:Georgia,serif;max-width:900px;margin:2em auto;padding:0 2em;line-height:1.55;}"
+        f"h1{{color:{accent};}}h2{{border-bottom:1px solid #ccc;padding-bottom:4px;}}"
+        f".callout{{background:#f4f6f4;border-left:3px solid {accent};padding:10px 14px;margin:1em 0;}}"
+        "code{background:#f4f4f4;padding:1px 4px;}"
+        "</style></head><body>"
+        f"<h1>{title} Report</h1>"
+        f"<p><strong>Thread:</strong> <code>{_h.escape(tid)}</code></p>"
+        "<div class='callout'>" + lead + "</div>"
         f"<h2>Original user intake</h2><p>{_h.escape(user_problem)}</p>"
         f"<h2>Final Professor attestation</h2>"
         f"<p>achieved = <strong>{attestation.get('achieved')}</strong></p>"
@@ -5059,7 +5093,7 @@ def handle_render_honest_failure_paper(args: dict[str, Any]) -> dict[str, Any]:
 
     summary = {
         "type": "production_run_summary",
-        "outcome": "honest_failure",
+        "outcome": outcome,
         "thread_id": tid,
         "user_intake": user_problem,
         "attestation": attestation,
@@ -5067,9 +5101,9 @@ def handle_render_honest_failure_paper(args: dict[str, Any]) -> dict[str, Any]:
         "archived_attempts": archived_attempts,
         "investigation_depth": _investigation_depth(tid),
         "publication_dispatch": {
-            "decision": "honest_failure",
+            "decision": outcome,
             "rendered_artifacts": [
-                {"output": "honest_failure_html", "artifact_path": str(out_path)}
+                {"output": f"{outcome}_html", "artifact_path": str(out_path)}
             ],
         },
     }
@@ -5077,7 +5111,7 @@ def handle_render_honest_failure_paper(args: dict[str, Any]) -> dict[str, Any]:
         json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    return {"status": "ok", "outcome": "honest_failure", "artifact_path": str(out_path)}
+    return {"status": "ok", "outcome": outcome, "artifact_path": str(out_path)}
 
 
 def handle_render_final_paper(args: dict[str, Any]) -> dict[str, Any]:

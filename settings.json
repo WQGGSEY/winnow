@@ -178,10 +178,11 @@
             "null_floor_k": 1.0
           },
           "far_framing": {
-            "_comment": "ADR 0009 (B1): forced distant-transfer successor policy. When enabled and a domain_taxonomy is pinned, promotion / needs_child_branch mints up to top_k far-framing successors — one per domain at conceptual distance >= distance_threshold from the node's native domain, chosen by DETERMINISTIC top-k over the frozen table. Distance feeds spawn selection ONLY (never promotion). Far-framing is low-hit-rate by design (it needs budget); the gates (A1) are what make it pay off over patchwork.",
+            "_comment": "ADR 0009 (B1) + T2-12a band policy: forced distant-transfer successor policy. When enabled and a domain_taxonomy is pinned, promotion / needs_child_branch mints up to top_k far-framing successors — one per domain in the FAR-BUT-BRIDGEABLE band band_lo <= distance <= band_hi from the node's native domain, by DETERMINISTIC top-k over the frozen table. NOT top-k-farthest: distance > band_hi is noise (unbridgeable) and excluded however far. band edges are operator-set here (the operator table is already declared, so this is a consistent honest fallback); atlas-calibrated thresholds replace them where an atlas covers the region. Distance feeds spawn selection ONLY (never promotion).",
             "enabled": true,
             "top_k": 3,
-            "distance_threshold": 0.6
+            "band_lo": 0.6,
+            "band_hi": 0.9
           },
           "min_baseline_role_specificity_chars": 40,
           "premature_termination_gate": {

@@ -200,6 +200,36 @@ def test_honest_failure_renders_when_required_research_out_of_envelope(tmp_path,
     assert "Honest limits" in html and "absent-concept" in html
 
 
+def test_construct_valid_screen_renders_bounded_result_not_honest_failure(tmp_path, monkeypatch):
+    # INV-terminal-taxonomy (T2-18): construct-bar passed + literal-goal-unmet ->
+    # bounded_result (a bounded POSITIVE), NOT honest_failure.
+    _patch(monkeypatch, tmp_path)
+    monkeypatch.setattr(M, "_premature_termination_gate_enabled", lambda s: True)
+    monkeypatch.setattr(M, "_min_distinct_attempts", lambda s: 2)
+    tid = "t_bounded"
+    _write_state(tmp_path, tid, [
+        _node("root", None, "promoted", scope="deployment"),
+        _node("a", "root", "pruned", scope="deployment"),
+    ])
+    att = _attestation_neg(mechanism="m" * 90)
+    att["attested_status"] = "construct_valid_screen"
+    att["required_additional_research"] = [
+        {"axis": "validity", "experiment": "e" * 25, "rationale": "r" * 25,
+         "attemptable_in_envelope": False}  # out-of-envelope -> does not block
+    ]
+    _write_attestation(tmp_path, tid, att)
+    out = M.handle_render_honest_failure_paper({"thread_id": tid})
+    assert out["status"] == "ok"
+    assert out["outcome"] == "bounded_result"
+    summary = json.loads(
+        (tmp_path / "runs" / "threads" / tid / "production" / "production_run_summary.json").read_text()
+    )
+    assert summary["outcome"] == "bounded_result"
+    html = (tmp_path / "runs" / "threads" / tid / "production" / "publication"
+            / "bounded_result.html").read_text()
+    assert "Bounded Result" in html and "construct-valid" in html
+
+
 def test_honest_failure_gate_disabled_renders_shallow(tmp_path, monkeypatch):
     _patch(monkeypatch, tmp_path)
     monkeypatch.setattr(M, "_premature_termination_gate_enabled", lambda s: False)

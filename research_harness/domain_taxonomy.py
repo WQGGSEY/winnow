@@ -41,19 +41,34 @@ def distance(taxonomy: dict[str, Any], a: str, b: str) -> float | None:
 
 
 def select_far_domains(
-    native_id: str, taxonomy: dict[str, Any], *, top_k: int, threshold: float
+    native_id: str,
+    taxonomy: dict[str, Any],
+    *,
+    top_k: int,
+    band_lo: float,
+    band_hi: float = 1.0,
 ) -> list[str]:
-    """Deterministic top-k domains at distance >= threshold from native_id.
-    Sorted by distance desc, ties broken by id asc, so the same table always
-    yields the same set. Returns [] if the native domain is absent or nothing
-    clears the threshold."""
+    """ADR 0009 / T2-12a — deterministic top-k domains in the FAR-BUT-BRIDGEABLE
+    band ``band_lo <= distance <= band_hi`` from native_id.
+
+    This is **not** top-k-farthest: a domain beyond ``band_hi`` is treated as
+    noise (too far to bridge) and excluded *however far it is* — the farthest
+    domain is the most likely to be unbridgeable, so selecting it was a
+    known-wrong policy. Within the band, ordered by distance desc (the far end of
+    the bridgeable region first), ties by id asc — deterministic over the frozen
+    table. Returns [] if the native domain is absent or nothing falls in the
+    band. The band edges are the SOURCE-dependent threshold (operator-set on the
+    operator table, atlas-calibrated where an atlas covers the region); the band
+    *policy* itself is independent of the distance source (INV-band-policy-independent)."""
+    if band_hi < band_lo:
+        return []
     scored: list[tuple[float, str]] = []
     for d in taxonomy.get("domains") or []:
         did = d.get("id") if isinstance(d, dict) else None
         if not did or did == native_id:
             continue
         dist = distance(taxonomy, native_id, did)
-        if dist is None or dist < threshold:
+        if dist is None or dist < band_lo or dist > band_hi:
             continue
         scored.append((float(dist), str(did)))
     scored.sort(key=lambda x: (-x[0], x[1]))

@@ -114,6 +114,49 @@ def behavioral_distance(
     return worst
 
 
+def _median(xs: list[float]) -> float:
+    s = sorted(xs)
+    n = len(s)
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2.0
+
+
+def known_method_transfer(
+    samples_a: dict[str, list[float]], samples_b: dict[str, list[float]]
+) -> float | None:
+    """ADR 0010 (T2-03): the harness's STRONG known-only baseline transfer. For
+    each shared numeric column compute a standard statistic (mean, std, median)
+    on A and on B, rank the columns by it, and take the Spearman rho of the
+    A-ranking vs the B-ranking; return the MAX over statistics — the strongest
+    standard ('known') method's transfer (best-effort known recombination).
+
+    HARNESS-constructed from the harness-chosen probe — the worker never supplies
+    it, so it can never be a weak strawman (the hole T2-03 closes). If even this
+    strongest standard method clears the transfer predicate, the bar is
+    patchwork-clearable and the result is uninformative. None when fewer than
+    _MIN_RANK_VECTOR_LEN shared numeric columns make the baseline uncomputable."""
+    shared = sorted(c for c in (set(samples_a) & set(samples_b)) if samples_a[c] and samples_b[c])
+    if len(shared) < _MIN_RANK_VECTOR_LEN:
+        return None
+
+    def _mean(xs: list[float]) -> float:
+        return sum(xs) / len(xs)
+
+    def _std(xs: list[float]) -> float:
+        m = _mean(xs)
+        return (sum((x - m) ** 2 for x in xs) / len(xs)) ** 0.5
+
+    best: float | None = None
+    for stat in (_mean, _std, _median):
+        a_vec = [stat(samples_a[c]) for c in shared]
+        b_vec = [stat(samples_b[c]) for c in shared]
+        try:
+            rho = spearman_rho(a_vec, b_vec)
+        except FalsifierError:
+            continue  # degenerate stat vector (all columns equal under this stat)
+        best = rho if best is None else max(best, rho)
+    return best
+
+
 def null_floor_satisfied(n: int, op: str, threshold: float, k: float) -> bool:
     """Pure: would a no-information ranking plausibly clear this predicate? The
     permutation null for Spearman rho has mean 0 and std ~1/sqrt(n-1). For a
@@ -140,6 +183,16 @@ def patchwork_probe_applies_to_claim(subject_role: str | None) -> bool:
     question — the construction cannot author it, so a node cannot relabel
     itself to switch the probe off. Absent defaults conservatively to True."""
     return subject_role != "method_is_subject"
+
+
+def transfer_evidence_admissible(result: dict[str, Any]) -> bool:
+    """ADR 0010 (T2-05 / INV-evidence): may this result's ``observed`` be cited as
+    TRANSFER evidence downstream (render / paper / methodology)? Only a PASSING
+    REAL referent counts — a passing cross_generator_transfer is a SCREEN
+    (air-gapped, not reality-close), and any non-passed verdict
+    (uninformative / degenerate / failed / invalid) is nothing. When this is
+    False, ``observed`` must not appear as transfer evidence anywhere downstream."""
+    return result.get("verdict") == VERDICT_PASSED and result.get("kind") == "real_holdout"
 
 
 def derive_max_attestable_status(envelope: dict[str, Any] | None) -> str:
@@ -228,6 +281,7 @@ def compute_falsifier_result(
     falsifier: dict[str, Any],
     evidence: dict[str, Any],
     measured_behavioral_distance: float | None = None,
+    measured_known_baseline_transfer: float | None = None,
     guard_thresholds: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Evaluate the envelope's external_falsifier predicate over held-out
@@ -332,10 +386,24 @@ def compute_falsifier_result(
             "ok": behavioral_ok,
         }
 
+        # Guard (d): a STRONG harness-constructed known-only baseline. If the best
+        # standard method already transfers across A,B (clears the predicate), the
+        # transfer bar is patchwork-clearable. Harness-computed from the probe
+        # (never worker-supplied, so no weak strawman). None = uncomputable, N/A.
+        known_clears = (
+            measured_known_baseline_transfer is not None
+            and evaluate_predicate(measured_known_baseline_transfer, op, threshold)
+        )
+        guards["known_baseline"] = {
+            "observed": measured_known_baseline_transfer,
+            "clears_predicate": known_clears,
+            "ok": not known_clears,
+        }
+
         if observed is None or not rank_ok:
             verdict = VERDICT_DEGENERATE
             observed = observed if observed is not None else 0.0
-        elif not behavioral_ok or not null_ok:
+        elif not behavioral_ok or not null_ok or known_clears:
             verdict = VERDICT_UNINFORMATIVE
         elif evaluate_predicate(observed, op, threshold):
             verdict = VERDICT_PASSED
@@ -363,6 +431,7 @@ def compute_falsifier_result(
         "observed": observed,
         "passed": passed,
         "verdict": verdict,
+        "transfer_evidence_admissible": passed and kind == "real_holdout",
         "guards": guards,
         "produced_by": PRODUCED_BY,
         "evidence": {k: v for k, v in result_evidence.items() if v is not None},
