@@ -638,11 +638,24 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
             start_new_session=True,
             close_fds=True,
         )
-        # We DON'T wait. The subprocess writes its own lock file as it
-        # starts up; that's the canonical liveness signal.
+        # Wait briefly for the subprocess to acquire its lock (watch_thread
+        # writes .supervisor.lock early, before bootstrap + the idle loop).
+        # Returning only once the lock exists means the frontend's immediate
+        # refreshProductionPanel() swap renders the running branch (with the
+        # live-log section) on the first try — no manual reload, and no
+        # dependence on the 4s poll catching the lock-write race.
+        running = False
+        for _ in range(50):  # up to ~5s
+            if lock_path.exists():
+                running = True
+                break
+            if proc.poll() is not None:
+                break  # subprocess died during startup — stop waiting
+            await asyncio.sleep(0.1)
         return JSONResponse({
             "ok": True,
             "pid": proc.pid,
+            "running": running,
             "target_scope": target_scope,
             "log_path": str(stdout_path),
         })

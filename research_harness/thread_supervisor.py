@@ -35,6 +35,7 @@ import re
 import select
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -54,6 +55,13 @@ DEFAULT_MILESTONE_CYCLE = 10       # informational logging milestone (PR8:
 DEFAULT_CLAUDE_BOOT_DELAY = 3.0    # seconds to wait after fork before
                                    #          writing the resume prompt
 DEFAULT_CLAUDE_MODEL = "claude-opus-4-7"
+DEFAULT_CLAUDE_STALL_TIMEOUT = 600.0  # kill a claude cycle that emits NO output
+                                      #   for this long (a hang — e.g. model/API
+                                      #   stall after a tool call). Distinct from
+                                      #   the fast-fail EXIT detector, which never
+                                      #   fires on a hang because the process
+                                      #   never exits. A healthy cycle streams
+                                      #   tool_use/tool_result lines continuously.
 
 # PR8: rate-limit backoff. When claude subprocess fails fast (exit < 30s)
 # we treat it as a likely rate-limit and back off exponentially. Backoff
@@ -684,6 +692,21 @@ def _format_stream_json_event(line: str) -> str | None:
     return None
 
 
+def _kill_process_tree(proc, sig: int) -> None:
+    """Signal the whole process group (claude + any children, e.g. the MCP
+    server) so a hung subprocess whose child still holds the stdout pipe is
+    actually torn down — terminating only the leader can leave the readline
+    loop blocked on a child that inherited the pipe. Falls back to signalling
+    just the process if the group lookup fails (e.g. it already exited)."""
+    try:
+        os.killpg(os.getpgid(proc.pid), sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.send_signal(sig)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def spawn_claude_session(
     prompt: str,
     *,
@@ -691,6 +714,7 @@ def spawn_claude_session(
     boot_delay: float = DEFAULT_CLAUDE_BOOT_DELAY,
     log_path: Path | None = None,
     active_child_ref: dict | None = None,
+    stall_timeout: float = DEFAULT_CLAUDE_STALL_TIMEOUT,
 ) -> int:
     """Run `claude -p <prompt>` (non-interactive) as a managed
     subprocess with stream-json output. Each event (assistant text,
@@ -732,6 +756,8 @@ def spawn_claude_session(
         text=True,
         bufsize=1,  # line-buffered
         close_fds=True,
+        start_new_session=True,  # own process group so the watchdog can tear
+                                 # down claude + its MCP-server children together
     )
     if active_child_ref is not None:
         active_child_ref["pid"] = proc.pid
@@ -740,9 +766,42 @@ def spawn_claude_session(
         log_fh.write(f"\n=== claude spawn pid={proc.pid} {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
         log_fh.flush()
 
+    # Stall watchdog: a healthy cycle streams events continuously. If the
+    # subprocess emits NO output for stall_timeout (a hang — e.g. a model/API
+    # stall after a tool call, which the fast-fail EXIT detector cannot catch
+    # because the process never exits), terminate it so the supervisor recovers
+    # instead of blocking forever in the readline loop below.
+    last_activity = [time.time()]
+    stop_watchdog = threading.Event()
+
+    def _watchdog() -> None:
+        check = max(1.0, min(15.0, stall_timeout / 4.0))
+        while not stop_watchdog.wait(timeout=check):
+            if time.time() - last_activity[0] <= stall_timeout:
+                continue
+            msg = (f"\n=== watchdog: no output for {stall_timeout:.0f}s — "
+                   f"terminating hung claude (pid={proc.pid}) ===\n")
+            for fh in (log_fh, LOG):
+                try:
+                    if fh:
+                        fh.write(msg)
+                        fh.flush()
+                except Exception:  # noqa: BLE001
+                    pass
+            _kill_process_tree(proc, signal.SIGTERM)
+            try:
+                proc.wait(timeout=5)
+            except _subprocess.TimeoutExpired:
+                _kill_process_tree(proc, signal.SIGKILL)
+            return
+
+    watchdog = threading.Thread(target=_watchdog, daemon=True)
+    watchdog.start()
+
     try:
         assert proc.stdout is not None
         for line in proc.stdout:
+            last_activity[0] = time.time()
             clean = _strip_ansi(line).rstrip("\n")
             formatted = _format_stream_json_event(clean)
             if formatted is None:
@@ -768,13 +827,15 @@ def spawn_claude_session(
         proc.wait()
         return proc.returncode if proc.returncode is not None else 1
     except KeyboardInterrupt:
+        _kill_process_tree(proc, signal.SIGTERM)
         try:
-            proc.terminate()
             proc.wait(timeout=3)
         except _subprocess.TimeoutExpired:
-            proc.kill()
+            _kill_process_tree(proc, signal.SIGKILL)
         raise
     finally:
+        stop_watchdog.set()
+        watchdog.join(timeout=1.0)
         if active_child_ref is not None:
             active_child_ref["pid"] = None
         if log_fh:
@@ -960,17 +1021,25 @@ def watch_thread(
             )
 
         idle = mcp_idle_seconds(repo, tid)
-        if idle <= max_idle_seconds:
+        # Cold start: on the very first cycle there is no prior claude session to
+        # be "idle" relative to — the only recent write is the envelope
+        # auto-bootstrap, which would otherwise force a full max_idle wait before
+        # the first spawn (the ~10-min cold-start delay). Spawn cycle #1
+        # immediately; the idle gate governs only subsequent (resume) cycles.
+        if cycle > 0 and idle <= max_idle_seconds:
             # Recent activity — MCP still being driven. Wait.
             time.sleep(poll_seconds)
             continue
 
-        # Idle past threshold — spawn a new claude cycle. update needed_resources
-        # before generating the resume prompt so the LLM sees the latest gaps.
+        # Spawn a (new) claude cycle. update needed_resources before generating
+        # the resume prompt so the LLM sees the latest gaps.
         update_needed_resources_file(repo, tid)
         cycle += 1
         prompt = build_resume_prompt(repo, tid, cycle)
-        _log(log_path, f"cycle #{cycle}: idle={idle:.0f}s > {max_idle_seconds:.0f}s — spawning claude")
+        if cycle == 1:
+            _log(log_path, "cycle #1: cold start — spawning first claude immediately (idle gate applies from cycle #2)")
+        else:
+            _log(log_path, f"cycle #{cycle}: idle={idle:.0f}s > {max_idle_seconds:.0f}s — spawning claude")
         spawn_started = time.time()
         try:
             exit_code = spawn_claude_session(

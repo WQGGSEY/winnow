@@ -264,6 +264,39 @@ class WatchLoopTests(unittest.TestCase):
             self.assertEqual(result["status"], "terminal")
             self.assertEqual(result["outcome"], "accept_with_goal_achieved")
 
+    def test_cold_start_spawns_first_cycle_despite_low_idle(self):
+        # Fix 2: on cold start the only recent production/ write is the envelope
+        # auto-bootstrap, so idle ~= 0 << max_idle. The first cycle must spawn
+        # immediately instead of waiting the full max_idle window (the ~10-min
+        # cold-start delay). Pre-fix, this loop would sleep forever and never
+        # spawn (idle 5s never exceeds 9999s).
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            _make_thread(repo, "t1")
+            with mock.patch.object(ts, "spawn_claude_session", return_value=0) as spawn, \
+                 mock.patch.object(ts, "mcp_idle_seconds", return_value=5.0):
+                result = ts.watch_thread(
+                    repo, "t1", max_idle_seconds=9999.0, poll_seconds=0.01,
+                    max_cycles=1, rate_limit_backoff_initial=0.001,
+                )
+            self.assertEqual(spawn.call_count, 1)
+            self.assertEqual(result["status"], "max_cycles_exceeded")
+
+    def test_spawn_watchdog_kills_hung_cycle(self):
+        # Fix 3: a cycle that produces NO output and never exits (a hang — the
+        # observed ToolSearch freeze) must be killed by the stall watchdog so
+        # the supervisor recovers, instead of blocking forever on readline.
+        with TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "fake_claude.sh"
+            fake.write_text("#!/bin/sh\nsleep 30\n")  # ignores args, emits nothing
+            fake.chmod(0o755)
+            with mock.patch.object(ts, "_which", return_value=str(fake)):
+                t0 = time.time()
+                rc = ts.spawn_claude_session("prompt", stall_timeout=0.5)
+                elapsed = time.time() - t0
+            self.assertLess(elapsed, 8.0, "watchdog should kill the hung cycle, not wait 30s")
+            self.assertNotEqual(rc, 0, "killed cycle returns a non-zero exit code")
+
     def test_honest_failure_alone_does_NOT_terminate_under_pr8(self):
         # PR8: honest_failure is a retreat state. Supervisor keeps trying.
         # We use max_cycles=2 as emergency override to bound the test.
