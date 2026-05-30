@@ -1,0 +1,783 @@
+{
+  "schema": "arxiv_category_field_list",
+  "retrieved_from": "https://arxiv.org/category_taxonomy",
+  "note": "Frozen arXiv category taxonomy. Sampled UNIFORMLY at random for field-forcing (no distance metric). Re-fetch + re-freeze only on an explicit refresh; do not auto-update.",
+  "count": 155,
+  "categories": [
+    {
+      "code": "astro-ph.CO",
+      "name": "Cosmology and Nongalactic Astrophysics",
+      "archive": "astro-ph"
+    },
+    {
+      "code": "astro-ph.EP",
+      "name": "Earth and Planetary Astrophysics",
+      "archive": "astro-ph"
+    },
+    {
+      "code": "astro-ph.GA",
+      "name": "Astrophysics of Galaxies",
+      "archive": "astro-ph"
+    },
+    {
+      "code": "astro-ph.HE",
+      "name": "High Energy Astrophysical Phenomena",
+      "archive": "astro-ph"
+    },
+    {
+      "code": "astro-ph.IM",
+      "name": "Instrumentation and Methods for Astrophysics",
+      "archive": "astro-ph"
+    },
+    {
+      "code": "astro-ph.SR",
+      "name": "Solar and Stellar Astrophysics",
+      "archive": "astro-ph"
+    },
+    {
+      "code": "cond-mat.dis-nn",
+      "name": "Disordered Systems and Neural Networks",
+      "archive": "cond-mat"
+    },
+    {
+      "code": "cond-mat.mes-hall",
+      "name": "Mesoscale and Nanoscale Physics",
+      "archive": "cond-mat"
+    },
+    {
+      "code": "cond-mat.mtrl-sci",
+      "name": "Materials Science",
+      "archive": "cond-mat"
+    },
+    {
+      "code": "cond-mat.other",
+      "name": "Other Condensed Matter",
+      "archive": "cond-mat"
+    },
+    {
+      "code": "cond-mat.quant-gas",
+      "name": "Quantum Gases",
+      "archive": "cond-mat"
+    },
+    {
+      "code": "cond-mat.soft",
+      "name": "Soft Condensed Matter",
+      "archive": "cond-mat"
+    },
+    {
+      "code": "cond-mat.stat-mech",
+      "name": "Statistical Mechanics",
+      "archive": "cond-mat"
+    },
+    {
+      "code": "cond-mat.str-el",
+      "name": "Strongly Correlated Electrons",
+      "archive": "cond-mat"
+    },
+    {
+      "code": "cond-mat.supr-con",
+      "name": "Superconductivity",
+      "archive": "cond-mat"
+    },
+    {
+      "code": "cs.AI",
+      "name": "Artificial Intelligence",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.AR",
+      "name": "Hardware Architecture",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.CC",
+      "name": "Computational Complexity",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.CE",
+      "name": "Computational Engineering, Finance, and Science",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.CG",
+      "name": "Computational Geometry",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.CL",
+      "name": "Computation and Language",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.CR",
+      "name": "Cryptography and Security",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.CV",
+      "name": "Computer Vision and Pattern Recognition",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.CY",
+      "name": "Computers and Society",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.DB",
+      "name": "Databases",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.DC",
+      "name": "Distributed, Parallel, and Cluster Computing",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.DL",
+      "name": "Digital Libraries",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.DM",
+      "name": "Discrete Mathematics",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.DS",
+      "name": "Data Structures and Algorithms",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.ET",
+      "name": "Emerging Technologies",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.FL",
+      "name": "Formal Languages and Automata Theory",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.GL",
+      "name": "General Literature",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.GR",
+      "name": "Graphics",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.GT",
+      "name": "Computer Science and Game Theory",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.HC",
+      "name": "Human-Computer Interaction",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.IR",
+      "name": "Information Retrieval",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.IT",
+      "name": "Information Theory",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.LG",
+      "name": "Machine Learning",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.LO",
+      "name": "Logic in Computer Science",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.MA",
+      "name": "Multiagent Systems",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.MM",
+      "name": "Multimedia",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.MS",
+      "name": "Mathematical Software",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.NA",
+      "name": "Numerical Analysis",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.NE",
+      "name": "Neural and Evolutionary Computing",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.NI",
+      "name": "Networking and Internet Architecture",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.OH",
+      "name": "Other Computer Science",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.OS",
+      "name": "Operating Systems",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.PF",
+      "name": "Performance",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.PL",
+      "name": "Programming Languages",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.RO",
+      "name": "Robotics",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.SC",
+      "name": "Symbolic Computation",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.SD",
+      "name": "Sound",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.SE",
+      "name": "Software Engineering",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.SI",
+      "name": "Social and Information Networks",
+      "archive": "cs"
+    },
+    {
+      "code": "cs.SY",
+      "name": "Systems and Control",
+      "archive": "cs"
+    },
+    {
+      "code": "econ.EM",
+      "name": "Econometrics",
+      "archive": "econ"
+    },
+    {
+      "code": "econ.GN",
+      "name": "General Economics",
+      "archive": "econ"
+    },
+    {
+      "code": "econ.TH",
+      "name": "Theoretical Economics",
+      "archive": "econ"
+    },
+    {
+      "code": "eess.AS",
+      "name": "Audio and Speech Processing",
+      "archive": "eess"
+    },
+    {
+      "code": "eess.IV",
+      "name": "Image and Video Processing",
+      "archive": "eess"
+    },
+    {
+      "code": "eess.SP",
+      "name": "Signal Processing",
+      "archive": "eess"
+    },
+    {
+      "code": "eess.SY",
+      "name": "Systems and Control",
+      "archive": "eess"
+    },
+    {
+      "code": "gr-qc",
+      "name": "General Relativity and Quantum Cosmology",
+      "archive": "gr-qc"
+    },
+    {
+      "code": "hep-ex",
+      "name": "High Energy Physics - Experiment",
+      "archive": "hep-ex"
+    },
+    {
+      "code": "hep-lat",
+      "name": "High Energy Physics - Lattice",
+      "archive": "hep-lat"
+    },
+    {
+      "code": "hep-ph",
+      "name": "High Energy Physics - Phenomenology",
+      "archive": "hep-ph"
+    },
+    {
+      "code": "hep-th",
+      "name": "High Energy Physics - Theory",
+      "archive": "hep-th"
+    },
+    {
+      "code": "math-ph",
+      "name": "Mathematical Physics",
+      "archive": "math-ph"
+    },
+    {
+      "code": "math.AC",
+      "name": "Commutative Algebra",
+      "archive": "math"
+    },
+    {
+      "code": "math.AG",
+      "name": "Algebraic Geometry",
+      "archive": "math"
+    },
+    {
+      "code": "math.AP",
+      "name": "Analysis of PDEs",
+      "archive": "math"
+    },
+    {
+      "code": "math.AT",
+      "name": "Algebraic Topology",
+      "archive": "math"
+    },
+    {
+      "code": "math.CA",
+      "name": "Classical Analysis and ODEs",
+      "archive": "math"
+    },
+    {
+      "code": "math.CO",
+      "name": "Combinatorics",
+      "archive": "math"
+    },
+    {
+      "code": "math.CT",
+      "name": "Category Theory",
+      "archive": "math"
+    },
+    {
+      "code": "math.CV",
+      "name": "Complex Variables",
+      "archive": "math"
+    },
+    {
+      "code": "math.DG",
+      "name": "Differential Geometry",
+      "archive": "math"
+    },
+    {
+      "code": "math.DS",
+      "name": "Dynamical Systems",
+      "archive": "math"
+    },
+    {
+      "code": "math.FA",
+      "name": "Functional Analysis",
+      "archive": "math"
+    },
+    {
+      "code": "math.GM",
+      "name": "General Mathematics",
+      "archive": "math"
+    },
+    {
+      "code": "math.GN",
+      "name": "General Topology",
+      "archive": "math"
+    },
+    {
+      "code": "math.GR",
+      "name": "Group Theory",
+      "archive": "math"
+    },
+    {
+      "code": "math.GT",
+      "name": "Geometric Topology",
+      "archive": "math"
+    },
+    {
+      "code": "math.HO",
+      "name": "History and Overview",
+      "archive": "math"
+    },
+    {
+      "code": "math.IT",
+      "name": "Information Theory",
+      "archive": "math"
+    },
+    {
+      "code": "math.KT",
+      "name": "K-Theory and Homology",
+      "archive": "math"
+    },
+    {
+      "code": "math.LO",
+      "name": "Logic",
+      "archive": "math"
+    },
+    {
+      "code": "math.MG",
+      "name": "Metric Geometry",
+      "archive": "math"
+    },
+    {
+      "code": "math.MP",
+      "name": "Mathematical Physics",
+      "archive": "math"
+    },
+    {
+      "code": "math.NA",
+      "name": "Numerical Analysis",
+      "archive": "math"
+    },
+    {
+      "code": "math.NT",
+      "name": "Number Theory",
+      "archive": "math"
+    },
+    {
+      "code": "math.OA",
+      "name": "Operator Algebras",
+      "archive": "math"
+    },
+    {
+      "code": "math.OC",
+      "name": "Optimization and Control",
+      "archive": "math"
+    },
+    {
+      "code": "math.PR",
+      "name": "Probability",
+      "archive": "math"
+    },
+    {
+      "code": "math.QA",
+      "name": "Quantum Algebra",
+      "archive": "math"
+    },
+    {
+      "code": "math.RA",
+      "name": "Rings and Algebras",
+      "archive": "math"
+    },
+    {
+      "code": "math.RT",
+      "name": "Representation Theory",
+      "archive": "math"
+    },
+    {
+      "code": "math.SG",
+      "name": "Symplectic Geometry",
+      "archive": "math"
+    },
+    {
+      "code": "math.SP",
+      "name": "Spectral Theory",
+      "archive": "math"
+    },
+    {
+      "code": "math.ST",
+      "name": "Statistics Theory",
+      "archive": "math"
+    },
+    {
+      "code": "nlin.AO",
+      "name": "Adaptation and Self-Organizing Systems",
+      "archive": "nlin"
+    },
+    {
+      "code": "nlin.CD",
+      "name": "Chaotic Dynamics",
+      "archive": "nlin"
+    },
+    {
+      "code": "nlin.CG",
+      "name": "Cellular Automata and Lattice Gases",
+      "archive": "nlin"
+    },
+    {
+      "code": "nlin.PS",
+      "name": "Pattern Formation and Solitons",
+      "archive": "nlin"
+    },
+    {
+      "code": "nlin.SI",
+      "name": "Exactly Solvable and Integrable Systems",
+      "archive": "nlin"
+    },
+    {
+      "code": "nucl-ex",
+      "name": "Nuclear Experiment",
+      "archive": "nucl-ex"
+    },
+    {
+      "code": "nucl-th",
+      "name": "Nuclear Theory",
+      "archive": "nucl-th"
+    },
+    {
+      "code": "physics.acc-ph",
+      "name": "Accelerator Physics",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.ao-ph",
+      "name": "Atmospheric and Oceanic Physics",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.app-ph",
+      "name": "Applied Physics",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.atm-clus",
+      "name": "Atomic and Molecular Clusters",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.atom-ph",
+      "name": "Atomic Physics",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.bio-ph",
+      "name": "Biological Physics",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.chem-ph",
+      "name": "Chemical Physics",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.class-ph",
+      "name": "Classical Physics",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.comp-ph",
+      "name": "Computational Physics",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.data-an",
+      "name": "Data Analysis, Statistics and Probability",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.ed-ph",
+      "name": "Physics Education",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.flu-dyn",
+      "name": "Fluid Dynamics",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.gen-ph",
+      "name": "General Physics",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.geo-ph",
+      "name": "Geophysics",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.hist-ph",
+      "name": "History and Philosophy of Physics",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.ins-det",
+      "name": "Instrumentation and Detectors",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.med-ph",
+      "name": "Medical Physics",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.optics",
+      "name": "Optics",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.plasm-ph",
+      "name": "Plasma Physics",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.pop-ph",
+      "name": "Popular Physics",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.soc-ph",
+      "name": "Physics and Society",
+      "archive": "physics"
+    },
+    {
+      "code": "physics.space-ph",
+      "name": "Space Physics",
+      "archive": "physics"
+    },
+    {
+      "code": "q-bio.BM",
+      "name": "Biomolecules",
+      "archive": "q-bio"
+    },
+    {
+      "code": "q-bio.CB",
+      "name": "Cell Behavior",
+      "archive": "q-bio"
+    },
+    {
+      "code": "q-bio.GN",
+      "name": "Genomics",
+      "archive": "q-bio"
+    },
+    {
+      "code": "q-bio.MN",
+      "name": "Molecular Networks",
+      "archive": "q-bio"
+    },
+    {
+      "code": "q-bio.NC",
+      "name": "Neurons and Cognition",
+      "archive": "q-bio"
+    },
+    {
+      "code": "q-bio.OT",
+      "name": "Other Quantitative Biology",
+      "archive": "q-bio"
+    },
+    {
+      "code": "q-bio.PE",
+      "name": "Populations and Evolution",
+      "archive": "q-bio"
+    },
+    {
+      "code": "q-bio.QM",
+      "name": "Quantitative Methods",
+      "archive": "q-bio"
+    },
+    {
+      "code": "q-bio.SC",
+      "name": "Subcellular Processes",
+      "archive": "q-bio"
+    },
+    {
+      "code": "q-bio.TO",
+      "name": "Tissues and Organs",
+      "archive": "q-bio"
+    },
+    {
+      "code": "q-fin.CP",
+      "name": "Computational Finance",
+      "archive": "q-fin"
+    },
+    {
+      "code": "q-fin.EC",
+      "name": "Economics",
+      "archive": "q-fin"
+    },
+    {
+      "code": "q-fin.GN",
+      "name": "General Finance",
+      "archive": "q-fin"
+    },
+    {
+      "code": "q-fin.MF",
+      "name": "Mathematical Finance",
+      "archive": "q-fin"
+    },
+    {
+      "code": "q-fin.PM",
+      "name": "Portfolio Management",
+      "archive": "q-fin"
+    },
+    {
+      "code": "q-fin.PR",
+      "name": "Pricing of Securities",
+      "archive": "q-fin"
+    },
+    {
+      "code": "q-fin.RM",
+      "name": "Risk Management",
+      "archive": "q-fin"
+    },
+    {
+      "code": "q-fin.ST",
+      "name": "Statistical Finance",
+      "archive": "q-fin"
+    },
+    {
+      "code": "q-fin.TR",
+      "name": "Trading and Market Microstructure",
+      "archive": "q-fin"
+    },
+    {
+      "code": "quant-ph",
+      "name": "Quantum Physics",
+      "archive": "quant-ph"
+    },
+    {
+      "code": "stat.AP",
+      "name": "Applications",
+      "archive": "stat"
+    },
+    {
+      "code": "stat.CO",
+      "name": "Computation",
+      "archive": "stat"
+    },
+    {
+      "code": "stat.ME",
+      "name": "Methodology",
+      "archive": "stat"
+    },
+    {
+      "code": "stat.ML",
+      "name": "Machine Learning",
+      "archive": "stat"
+    },
+    {
+      "code": "stat.OT",
+      "name": "Other Statistics",
+      "archive": "stat"
+    },
+    {
+      "code": "stat.TH",
+      "name": "Statistics Theory",
+      "archive": "stat"
+    }
+  ]
+}
