@@ -891,6 +891,25 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "seed_forest_from_connector",
+        "description": (
+            f"{PROFESSOR_CONTRACT}\n\n"
+            "ADR 0012 connector->production handoff. Reads the connector_session's "
+            "kept claim_contracts (the diverse far-framings of P that cleared "
+            "prune-1 + reduction) and seeds a MULTI-ROOT forest search_state: each "
+            "claim becomes a coexisting root (parent=null), each draft-seeded. "
+            "Replaces design_initial_claim_contract for the multi-root path; the "
+            "existing per-node gate then runs every tree, and select_strongest_survivor "
+            "picks the single output at the end. Refuses if production is already "
+            "seeded; 0 claims -> no_claims (render honest-failure)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id"],
+            "properties": {"thread_id": {"type": "string"}},
+        },
+    },
+    {
         "name": "enqueue_operator_prompt",
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
@@ -3975,6 +3994,65 @@ def handle_seed_alternative_root_formulation(args: dict[str, Any]) -> dict[str, 
     }
 
 
+def handle_seed_forest_from_connector(args: dict[str, Any]) -> dict[str, Any]:
+    """ADR 0012 connector->production handoff.
+
+    Reads the connector_session's kept claim_contracts and seeds a MULTI-ROOT
+    forest search_state (each claim = a coexisting parent=null root, draft-seeded
+    via the existing scaffold). Replaces design_initial_claim_contract for the
+    multi-root path. Refuses if production is already seeded; 0 claims ->
+    no_claims (the production phase then renders honest-failure).
+    """
+    from research_harness.connector.forest import build_forest_search_state
+    from research_harness.orchestrator.search_state import search_policy_from_config
+
+    tid = args["thread_id"]
+    grilling = _read_json(_thread_dir(tid) / "grilling" / "grilling_session.json")
+    if not grilling:
+        return {"status": "rejected", "reason": "grilling_session.json missing — run grilling first"}
+    connector = _read_json(_thread_dir(tid) / "connector" / "connector_session.json")
+    if not connector:
+        return {
+            "status": "rejected",
+            "reason": "connector_session.json missing — run the connector phase first",
+        }
+
+    conn_status = connector.get("status")
+    claims = connector.get("claims") or []
+    if conn_status in {"blocked_by_gate", "blocked_by_execution_ack", "aborted", "in_progress"}:
+        return {"status": "rejected", "reason": f"connector did not complete (status={conn_status!r})"}
+    if not claims:
+        return {
+            "status": "no_claims",
+            "reason": "connector produced 0 claims (completed_no_claims) — no forest to seed",
+            "next_step": "render_honest_failure_paper: the connector found no reducible far-framing.",
+        }
+
+    state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
+    if state_path.exists():
+        return {
+            "status": "rejected",
+            "reason": "production already seeded (search_state.json exists) — refusing to clobber",
+        }
+
+    policy = search_policy_from_config(_repo_root())
+    state = build_forest_search_state(grilling, claims, search_id=f"s_{tid}", policy=policy)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    root_ids = [n["id"] for n in state["nodes"] if n.get("parent") is None]
+    return {
+        "status": "ok",
+        "num_roots": len(root_ids),
+        "root_ids": root_ids,
+        "search_state_path": str(state_path),
+        "next_step": (
+            "Call get_next_admissible_node — the forest's N roots + their drafts are in "
+            "the frontier. The existing per-node gate runs every tree; at the end, "
+            "select_strongest_survivor picks the single earned output (per-survivor terminal)."
+        ),
+    }
+
+
 def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.schemas.validator import validate_named_schema
 
@@ -5113,6 +5191,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_select_alternative_root(args, settings)
             elif name == "seed_alternative_root_formulation":
                 result = handle_seed_alternative_root_formulation(args)
+            elif name == "seed_forest_from_connector":
+                result = handle_seed_forest_from_connector(args)
             elif name == "enqueue_operator_prompt":
                 result = handle_enqueue_operator_prompt(args)
             elif name == "get_pending_operator_response":

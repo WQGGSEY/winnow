@@ -79,6 +79,7 @@
     "agent_budgets": {
       "*": "0.5",
       "default": "0.5",
+      "domain_connector_agent": "0.5",
       "grilling_agent": "0.5",
       "lesson_distillation_agent": "0.25",
       "market_research_agent": "0.5",
@@ -94,6 +95,7 @@
     "agent_models": {
       "*": "",
       "default": "claude-sonnet-4-6",
+      "domain_connector_agent": "claude-opus-4-8[1m]",
       "grilling_agent": "claude-opus-4-8[1m]",
       "lesson_distillation_agent": "claude-sonnet-4-6",
       "market_research_agent": "claude-opus-4-8[1m]",

@@ -143,9 +143,11 @@ class MCPServerTests(unittest.TestCase):
             "pin_frozen_question",
             "submit_construct_adversary_report",
         }
-        # Multi-root tournament: alternative root formulations.
+        # Multi-root tournament: alternative root formulations + the ADR 0012
+        # connector->production forest handoff.
         multi_root_expected = {
             "seed_alternative_root_formulation",
+            "seed_forest_from_connector",
         }
         # Hands-free: operator-prompt channel for auto-resolver escalations.
         operator_prompt_expected = {
