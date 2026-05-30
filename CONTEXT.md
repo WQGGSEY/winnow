@@ -27,6 +27,15 @@ universe / time range, and any other metadata the fetcher needs.
 
 ## research_refiner (agent)
 
+**STATUS — removed from the live (frontend) pipeline** (`frontend/server.py`
+comment: "research_refiner removed from the frontend pipeline"; `frontend/threads.py`
+`PHASES = ("grilling", "market", "production")`). In the live flow the **Professor
+designs the claim in production** (`design_initial_claim_contract` →
+`build_root_node_from_grilling`, reading grilling directly). This entry — and the
+[[refined_research_plan]] / [[validation_procedure]] / [[dataset materializer]] /
+[[dataset_manifest]] / [[sota_reconciliation]] entries below — describe the removed
+refine phase (legacy CLI `research_runner` only).
+
 Agent-level role (not a worker) that runs **after market_research** and
 **before root_node generation**. Multi-turn live interview with the user
 to sharpen the research plan into something the orchestrator can act on.
@@ -175,7 +184,8 @@ Safety affordances baked in:
 ## research_thread
 
 First-class entity owning one full research arc — the chain
-`grilling -> market_research -> research_refiner -> production`. A
+`grilling -> market -> production` (frontend `threads.py` `PHASES`; the
+former `research_refiner` step was removed — see [[research_refiner (agent)]]). A
 thread is the unit the [[operator_frontend]] sidebar enumerates (one
 sidebar row = one thread), the unit the pipeline wizard advances, and
 the unit the [[single_active_run]] lock is acquired against.
@@ -188,7 +198,6 @@ runs/threads/<thread_id>/
   thread.json                  # title, created_at, current_phase, status
   grilling/grilling_session.json
   market/market_research_brief.json, baseline_analysis.md, reference_papers/
-  refine/refined_research_plan.json, dataset_manifest.json
   production/production_run_summary.json, interactive_summary.html, ...
 ```
 
@@ -229,7 +238,7 @@ phase artifacts. Schema:
   "title": "Alpha factor combo ensemble Sharpe",
   "created_at": "2026-05-25T08:14:00Z",
   "updated_at": "2026-05-25T09:02:11Z",
-  "current_phase": "grilling | market | refine | production",
+  "current_phase": "grilling | market | production",
   "phase_status": "idle | running | awaiting_input | complete | failed",
   "outcome": "accept | reject | inconclusive | null",
   "domain": "alpha_factor_combo",
@@ -240,8 +249,8 @@ phase artifacts. Schema:
 State model is **two-axis**: `current_phase` × `phase_status`, not a
 single flat enum. The 1:1 mapping is "the [[single_active_run]] lock is
 held by exactly the thread whose `phase_status === "running"`". The
-`awaiting_input` value applies only to multi-turn phases (grilling,
-refine); other phases never enter it. `outcome` stays `null` until
+`awaiting_input` value applies only to the multi-turn grilling phase;
+other phases never enter it. `outcome` stays `null` until
 production reaches an AC decision; it is intentionally separate from
 `phase_status` because a `reject` production run is still a `complete`
 phase. Event-log–derived status is deliberately deferred — if audit /
@@ -255,7 +264,7 @@ output so they do not go stale.
 ## phase_accordion
 
 Main-pane layout of [[operator_frontend]]: when a [[research_thread]]
-is selected in the sidebar, its four phases (grilling, market, refine,
+is selected in the sidebar, its three phases (grilling, market,
 production) are rendered as a vertical accordion in fixed pipeline
 order. Top-to-bottom order mirrors the strict phase dependency; tabs
 were rejected because tabs imply peers, not a chain.
@@ -773,3 +782,123 @@ pass-but-wrong (a self-reported `survived` that lists a break is overruled);
 `invalid` if budget-0 / shallow (a certification that did not search proves
 nothing). Construct validity is **necessary, not sufficient** — it says
 nothing about reality.
+
+## creativity
+
+The target of the diversity-generation front-end under design. A research
+**claim** counts as creative only when it is BOTH (a) **non-obvious** — far from
+the problem's home framing, reached by the vagueness-driven diversity mechanism —
+AND (b) **earned** — it survives the existing claim-gate (validity / mechanism /
+necessity / falsifier / [[construct_adversary]] / AC). Generation-diversity alone
+is **not** creativity: a far-but-unearned claim that fails the gate is noise.
+Judgement is harness-derived (the gate), never asserted — the same "earned, not
+declared" rule as [[premature_termination]]. In short: **creativity = diverse
+generation × earned gate-survival.**
+
+## abstraction (de-domained)
+
+The single de-domained restatement of the problem **P** the diversity front-end
+works from. Strips source-domain vocabulary ("stock", "market") while
+**preserving P's structural skeleton** (its relational form), and is made
+deliberately **vague** — under-specified enough that the skeleton admits many
+readings. **Single, not multi-grain**: varying the abstraction's vagueness level
+across several `A_i` was considered and dropped — diversity comes from the
+**readings** of the one vague abstraction, not from the number of abstractions;
+a mis-set vagueness level is caught downstream (too-vague readings fail reduction
+to P, too-concrete ones fail the non-obvious bar). One skeleton per P (P's
+fundamental structure is preserved, not re-framed into alternative skeletons).
+
+## reading (field-forced)
+
+How the diversity front-end *realizes* the diversity the vague
+[[abstraction (de-domained)]] merely permits. The LLM is **forced to read the
+one vague abstraction through a specific field**, and the field is chosen by
+**random sampling** from a large external list — never by the LLM (asking it to
+"be diverse" mode-collapses to obvious neighbours) and never by picking the
+"best" field (also collapses). Each forced read yields a reading, from which a
+method and a research claim emerge (**reading-first**: the field seeds the read,
+the read is the LLM's act — not field-first shoehorning). Vagueness is necessary
+but **not sufficient** — it lets a randomly-assigned field "take"; the random
+forcing is what spreads the readings. So **diversity = vagueness (permits) ×
+random field-forcing (realizes).** Random sampling continues until a target
+number of readings clear [[prune-1]].
+
+## prune-1
+
+Cheap **P-blind** triage at the front of the diversity pipeline (before
+[[reduction]] — P still firewalled). Judges a [[reading (field-forced)]] only
+for **coherence against the [[abstraction (de-domained)]]**: an **independent**
+LLM call must **construct the correspondence skeleton** between the forced field
+and the abstraction — *demonstration*, never a self-reported confidence (a
+declared value the harness rejects). **Binary + lenient**: any constructible
+skeleton passes (near or far); only blatant nonsense is cut; random forcing
+resamples until a quota clears it (quota = a compute budget, not statistical).
+**Unreliable by acceptance**: prune-1's own LLM may hallucinate a skeleton for
+nonsense — tolerated, because its errors are biased to *false-pass* (nonsense
+slips to the gate, costing only compute) over *false-cut* (which would lose a
+creative reading). Reliability is **not** stacked here via more LLM judges; it
+lives in the executed gate. Best-effort garbage reduction — if it cuts almost
+nothing, drop it and let the production validity stage triage instead.
+
+## reduction
+
+The mandatory **P-aware** step that turns a coherent [[reading (field-forced)]]
+into a testable claim — the **construction-worker**. Given the far-domain
+reading, its field↔abstraction skeleton, and **P** (the firewall lifts here), it
+builds a **P-claim_contract**: maps the field's method onto P's actual
+observables (a correspondence table), states `claim_under_test` in P's terms,
+plus baselines / success / disproof. **Faithful, not creative** — it
+*translates* the far method onto P and must preserve its far-ness (no flattening
+to a generic P-approach, or the creativity evaporates); the creativity already
+happened in the [[reading (field-forced)]]. **Implicit filter**: readings whose
+correspondence breaks once P's specifics return die here. **Honesty (same pattern
+as [[prune-1]])**: the reduction LLM can force a hollow correspondence — its
+reliability is not propped up by more LLM judging; the resulting P-claim goes to
+the executed gate, where a hollow mapping fails validity / mechanism / necessity
+(a forced mapping has no real mechanism and won't reproduce). The professor stays
+a judge; construction is separated from judgement.
+
+## market research (per-reading, far-method)
+
+The existing market_research role, **extended** from once-per-thread to **once
+per coherent [[reading (field-forced)]]**: for each reading that clears
+[[prune-1]] it researches the **far-domain method in its own field** — whether
+the method exists, its canonical form, known results — so [[reduction]] has
+material and the claim does not reinvent the wheel. **P-blind** (a distinct
+invocation from the legacy P-aware market): the field was already chosen behind
+the firewall, so showing P here would bias the method-research toward
+P-convenient findings. Distinct from the P-claim's **baselines** (current_best /
+naive / random for the capability gate), which are resolved later in the
+production validity stage (P-aware).
+
+## research forest + single output
+
+After [[reduction]], each P-claim becomes the root of its own claim-tree, and
+the N trees run the **existing per-claim gate** unchanged (typed decomposition
+validity→capability→mechanism→necessity→boundary, critic axes, falsifier,
+[[construct_adversary]], AC, [[verdict_strength]]). The multi-root **forest** is
+operationally NEW — real threads have only ever been single-root; the code
+scaffold for multiple roots (`seed_drafts_from_root` `root_id`, `alternative_root`
+tools) exists but is unused, so it must be activated. **The final output is ONE,
+not a set** ("there are no scattered papers"): of the claims that survive the
+gate, the harness **selects the single strongest-earned one** — by
+[[verdict_strength]] then [[investigation_depth]], a claim-native choice (not a
+metric). This introduces no multiple-comparison problem: each survivor already
+cleared the full gate (earned, not lucky), and a lucky-shallow survivor scores
+low on earned strength so it is not chosen. Zero survivors → honest-failure; the
+other survivors are search by-products, not separate papers.
+
+## firewall (P-withholding)
+
+The boundary that keeps diversity generation from collapsing onto P's home
+framing. **P is visible** to grilling (captures P), abstraction-generation (must
+see P to strip its domain), and [[reduction]] + production (P re-enters).
+**P-blind** are the [[reading (field-forced)]], [[prune-1]], and
+[[market research (per-reading, far-method)]] steps — they see only the
+[[abstraction (de-domained)]] text. Enforced two ways: **structural** — those are
+separate LLM calls whose context contains the abstraction only, never P — and a
+**de-domaining scan** of the abstraction (regenerate if P's source-domain
+vocabulary leaks; behavioral, not a self-report). Unlike [[prune-1]], the
+firewall **must be reliable**: a prune-1 miss is absorbed by the gate, but a
+firewall leak (P's domain seeping in → readings collapse to P-adjacent) is **not**
+recoverable — the gate only filters, it cannot regenerate lost diversity.
