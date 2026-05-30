@@ -77,7 +77,13 @@ def call_claude_json(
         max_budget,
     ]
     env = os.environ.copy()
+    # Subscription-only: strip BOTH the API key and any base-URL override so the
+    # call uses the default subscription (OAuth) path. A launching context (e.g.
+    # an SDK/agent session) can inject ANTHROPIC_API_KEY + ANTHROPIC_BASE_URL the
+    # operator never set; popping only the key still leaves the call routed at the
+    # base_url endpoint with no key -> 401. Pop both.
     env.pop("ANTHROPIC_API_KEY", None)
+    env.pop("ANTHROPIC_BASE_URL", None)
     try:
         completed = runner(
             cmd,

@@ -54,6 +54,7 @@ class FakeClaude:
 
 def test_call_claude_json_parses_inner_and_pops_api_key(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-should-be-removed")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://injected.example/proxy")
     fake = FakeClaude([{"abstraction": "x", "domain_terms_stripped": []}])
     parsed, usage = call_claude_json(
         system_prompt="sys",
@@ -65,8 +66,10 @@ def test_call_claude_json_parses_inner_and_pops_api_key(monkeypatch):
     )
     assert parsed["abstraction"] == "x"
     assert usage["input_tokens"] == 11 and usage["output_tokens"] == 22
-    # subscription-only: the API key must be stripped from the child env.
+    # subscription-only: BOTH the API key and base-URL override must be stripped
+    # from the child env so the call uses the default subscription path.
     assert "ANTHROPIC_API_KEY" not in fake.calls[0]["env"]
+    assert "ANTHROPIC_BASE_URL" not in fake.calls[0]["env"]
 
 
 def test_call_claude_json_raises_on_cli_error_envelope():
