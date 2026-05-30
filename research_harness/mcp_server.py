@@ -929,6 +929,29 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "snapshot_root_terminal",
+        "description": (
+            f"{PROFESSOR_CONTRACT}\n\n"
+            "ADR 0012 forest (snapshot-and-reset): after a survivor root's full "
+            "terminal has run flat under production/rebuttal/, snapshot those "
+            "artifacts to production/rebuttal/<root_id>/ and reset the flat dir so "
+            "the next root's terminal starts clean. Call once per survivor root "
+            "right after its terminal completes; when all survivors are snapshotted, "
+            "call select_strongest_survivor. Single-root threads never call this."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "root_id"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "root_id": {
+                    "type": "string",
+                    "description": "The forest root (parent=null node id) whose just-completed flat terminal to snapshot.",
+                },
+            },
+        },
+    },
+    {
         "name": "enqueue_operator_prompt",
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
@@ -2769,6 +2792,59 @@ def _rebuttal_dir(tid: str) -> Path:
     return _thread_dir(tid) / "production" / "rebuttal"
 
 
+# ADR 0012 forest: the terminal's flat artifacts under production/rebuttal/.
+# An explicit allowlist (not a name heuristic) so snapshot/reset/restore never
+# touch the per-root snapshot subdirs themselves.
+_TERMINAL_ARTIFACTS: tuple[str, ...] = (
+    "falsifier_result.json",
+    "construct_adversary_report.json",
+    "rebuttal_packet.md",
+    "rebuttal_routing.json",
+    "orchestrator_reduction.json",
+    "ac_decision.json",
+    "camera_ready_revision.json",
+    "user_goal_attestation.json",
+)
+_TERMINAL_ARTIFACT_DIRS: tuple[str, ...] = ("rebuttal_reviews",)
+
+
+def _copy_terminal_artifacts(src: Path, dst: Path) -> list[str]:
+    """Copy the flat terminal artifacts present in ``src`` into ``dst``."""
+    import shutil
+
+    dst.mkdir(parents=True, exist_ok=True)
+    copied: list[str] = []
+    for name in _TERMINAL_ARTIFACTS:
+        f = src / name
+        if f.is_file():
+            shutil.copy2(f, dst / name)
+            copied.append(name)
+    for name in _TERMINAL_ARTIFACT_DIRS:
+        d = src / name
+        if d.is_dir():
+            shutil.copytree(d, dst / name, dirs_exist_ok=True)
+            copied.append(name + "/")
+    return copied
+
+
+def _clear_terminal_artifacts(rebuttal: Path) -> None:
+    """Remove the flat terminal artifacts so the next root starts clean.
+
+    Only the allowlisted artifacts are removed — per-root snapshot subdirs and
+    anything else under rebuttal/ are left intact.
+    """
+    import shutil
+
+    for name in _TERMINAL_ARTIFACTS:
+        f = rebuttal / name
+        if f.is_file():
+            f.unlink()
+    for name in _TERMINAL_ARTIFACT_DIRS:
+        d = rebuttal / name
+        if d.is_dir():
+            shutil.rmtree(d)
+
+
 def _publication_dir(tid: str) -> Path:
     return _thread_dir(tid) / "production" / "publication"
 
@@ -4137,6 +4213,41 @@ def handle_seed_forest_from_connector(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def handle_snapshot_root_terminal(args: dict[str, Any]) -> dict[str, Any]:
+    """ADR 0012 forest (snapshot-and-reset): after a survivor root's full terminal
+    has run flat under production/rebuttal/, snapshot those artifacts into
+    production/rebuttal/<root_id>/ and RESET the flat dir so the next root's
+    terminal starts clean. select_strongest_survivor then reads the per-root
+    snapshots. Single-root threads never call this (they keep the flat path)."""
+    tid = args["thread_id"]
+    root_id = args["root_id"]
+    rebuttal = _rebuttal_dir(tid)
+    dest = rebuttal / root_id
+    copied = _copy_terminal_artifacts(rebuttal, dest)
+    if not copied:
+        return {
+            "status": "rejected",
+            "reason": (
+                "no flat terminal artifacts under production/rebuttal/ to snapshot — "
+                "run this root's terminal first (compute_falsifier_result -> "
+                "submit_construct_adversary_report -> ... -> "
+                "submit_professor_user_goal_attestation)."
+            ),
+        }
+    _clear_terminal_artifacts(rebuttal)
+    return {
+        "status": "ok",
+        "root_id": root_id,
+        "snapshot_dir": str(dest),
+        "snapshotted": copied,
+        "reset": True,
+        "next_step": (
+            "Run the next survivor root's terminal (flat) + snapshot_root_terminal "
+            "again. When every survivor is snapshotted, call select_strongest_survivor."
+        ),
+    }
+
+
 def handle_select_strongest_survivor(args: dict[str, Any]) -> dict[str, Any]:
     """ADR 0012 forest terminal: pick the single strongest-earned survivor.
 
@@ -4199,6 +4310,13 @@ def handle_select_strongest_survivor(args: dict[str, Any]) -> dict[str, Any]:
     sel_path = _thread_dir(tid) / "production" / "tree" / "forest_selection.json"
     sel_path.parent.mkdir(parents=True, exist_ok=True)
     sel_path.write_text(json.dumps(selection, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    # Restore the winner's snapshotted terminal to the flat rebuttal/ dir so
+    # render_final_paper (which reads flat, unchanged) renders the winner. The
+    # winner's snapshot subdir is left intact for audit.
+    if winner:
+        rebuttal = _rebuttal_dir(tid)
+        _clear_terminal_artifacts(rebuttal)
+        _copy_terminal_artifacts(rebuttal / winner["node_id"], rebuttal)
     return {
         "status": "ok",
         "selected_root_id": selection["selected_root_id"],
@@ -5355,6 +5473,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_seed_forest_from_connector(args)
             elif name == "select_strongest_survivor":
                 result = handle_select_strongest_survivor(args)
+            elif name == "snapshot_root_terminal":
+                result = handle_snapshot_root_terminal(args)
             elif name == "enqueue_operator_prompt":
                 result = handle_enqueue_operator_prompt(args)
             elif name == "get_pending_operator_response":
