@@ -221,6 +221,7 @@ def _call_distillation_claude(
     ]
     env = os.environ.copy()
     env.pop("ANTHROPIC_API_KEY", None)
+    env.pop("ANTHROPIC_BASE_URL", None)  # subscription-only: strip base_url override too
     try:
         completed = runner(
             cmd,

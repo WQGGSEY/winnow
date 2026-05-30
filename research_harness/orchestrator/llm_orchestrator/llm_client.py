@@ -291,6 +291,7 @@ class ClaudeCliLLMClient(LLMClient):
         # Subscription OAuth path forbids ANTHROPIC_API_KEY (matches the
         # worker invoker policy).
         env.pop("ANTHROPIC_API_KEY", None)
+        env.pop("ANTHROPIC_BASE_URL", None)  # subscription-only: strip base_url override too
         completed = subprocess.run(
             cmd,
             input=user_prompt,

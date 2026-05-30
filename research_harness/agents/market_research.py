@@ -624,6 +624,7 @@ def _call_sonnet_for_baseline_md(
     ]
     env = os.environ.copy()
     env.pop("ANTHROPIC_API_KEY", None)
+    env.pop("ANTHROPIC_BASE_URL", None)  # subscription-only: strip base_url override too
     completed = runner(
         cmd,
         input=user_prompt,

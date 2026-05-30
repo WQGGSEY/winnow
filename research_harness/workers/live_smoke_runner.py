@@ -138,6 +138,7 @@ def run_live_node_once(
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env.pop("ANTHROPIC_API_KEY", None)
+    env.pop("ANTHROPIC_BASE_URL", None)  # subscription-only: strip base_url override too
 
     timed_out = False
     returncode: int | None = None
