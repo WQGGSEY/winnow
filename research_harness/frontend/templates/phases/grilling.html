@@ -200,11 +200,11 @@
         <button class="btn primary advance-btn"
                 type="button"
                 data-execute-ack
-                data-phase="market"
+                data-phase="connector"
                 data-thread-id="{{ thread.thread_id }}"
-                data-endpoint="/api/threads/{{ thread.thread_id }}/market/start"
-                data-cost-note="Market research (paper search + PDF download). No live LLM unless enable_sonnet_analysis.">
-          Advance to market research →
+                data-endpoint="/api/threads/{{ thread.thread_id }}/connector/start"
+                data-cost-note="Domain connector (ADR 0012): de-domains P and force-reads it through randomly-sampled fields to generate diverse far-framed claims. Makes several live claude calls under your subscription.">
+          Advance to domain connector →
         </button>
       {% endif %}
     {% endif %}

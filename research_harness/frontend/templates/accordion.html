@@ -54,14 +54,14 @@
      data-phase-status="{{ active_thread.phase_status }}">
   {% set phases = [
     ("grilling", "Grilling"),
-    ("market",   "Market research"),
+    ("connector", "Domain connector"),
     ("production","Production"),
   ] %}
   {% for slug, label in phases %}
     {% set is_current = active_thread.current_phase == slug %}
     {% set is_done = phase_data[slug].present and (
       (slug == "grilling" and phase_data[slug].session and phase_data[slug].session.status in ["done", "max_rounds_reached"])
-      or (slug == "market" and phase_data[slug].brief is defined)
+      or (slug == "connector" and phase_data[slug].session and phase_data[slug].session.status in ["completed", "completed_no_claims"])
       or (slug == "production" and phase_data[slug].summary is defined)
     ) %}
     {% set open_now = is_current or (is_current and active_thread.phase_status in ["running", "awaiting_input", "complete"]) %}

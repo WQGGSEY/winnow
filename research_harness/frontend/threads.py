@@ -20,7 +20,13 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-PHASES: tuple[str, ...] = ("grilling", "market", "production")
+# Active pipeline for NEW threads (ADR 0012): the connector folds market in.
+PHASES: tuple[str, ...] = ("grilling", "connector", "production")
+# Retired-but-recognized phase tokens. Pre-connector threads sit in
+# current_phase="market"; keeping it recognized means they still validate and
+# their artifacts stay readable (they just aren't part of the new pipeline).
+LEGACY_PHASES: tuple[str, ...] = ("market",)
+RECOGNIZED_PHASES: tuple[str, ...] = PHASES + LEGACY_PHASES
 PHASE_STATUSES: tuple[str, ...] = (
     "idle",
     "running",
@@ -148,7 +154,7 @@ def update_thread(
     if title is not None:
         index["title"] = title[:140]
     if current_phase is not None:
-        if current_phase not in PHASES:
+        if current_phase not in RECOGNIZED_PHASES:
             raise ThreadError(f"unknown current_phase {current_phase!r}")
         index["current_phase"] = current_phase
     if phase_status is not None:
@@ -198,7 +204,7 @@ def delete_thread(repo_root: Path, thread_id: str) -> None:
 
 
 def phase_dir(repo_root: Path, thread_id: str, phase: str) -> Path:
-    if phase not in PHASES:
+    if phase not in RECOGNIZED_PHASES:
         raise ThreadError(f"unknown phase {phase!r}")
     return threads_root(repo_root) / thread_id / phase
 
@@ -349,7 +355,7 @@ def _validate_index(index: Any, *, source: str) -> None:
             raise ThreadError(f"{source}: missing required field {key!r}")
     if not isinstance(index["thread_id"], str) or not index["thread_id"].startswith("thread_"):
         raise ThreadError(f"{source}: thread_id must be a string starting with 'thread_'")
-    if index["current_phase"] not in PHASES:
+    if index["current_phase"] not in RECOGNIZED_PHASES:
         raise ThreadError(f"{source}: unknown current_phase {index['current_phase']!r}")
     if index["phase_status"] not in PHASE_STATUSES:
         raise ThreadError(f"{source}: unknown phase_status {index['phase_status']!r}")

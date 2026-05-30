@@ -54,9 +54,9 @@ class ServerSmokeTests(unittest.TestCase):
         t = threads.create_thread(self.repo, user_goal="thread for accordion")
         resp = self.client.get(f"/threads/{t['thread_id']}")
         self.assertEqual(resp.status_code, 200)
-        # Accordion lists the three phases (refine removed; Professor
-        # designs the real claim contract at production entry instead).
-        for phase in ("Grilling", "Market research", "Production"):
+        # Accordion lists the three active phases (ADR 0012: the domain
+        # connector folds market in; market is retired from the pipeline).
+        for phase in ("Grilling", "Domain connector", "Production"):
             self.assertIn(phase, resp.text)
         self.assertNotIn("Refiner", resp.text)
 

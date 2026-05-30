@@ -288,7 +288,7 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
             active = threads.load_thread(s.repo_root, thread_id)
         except threads.ThreadError as exc:
             raise HTTPException(404, str(exc))
-        if phase not in threads.PHASES:
+        if phase not in threads.RECOGNIZED_PHASES:
             raise HTTPException(400, f"unknown phase {phase!r}")
         data = _collect_phase_data(s.repo_root, thread_id)
         return render(
@@ -463,7 +463,7 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
         drops). Without this the only escape from a failed phase was to
         hand-edit thread.json or delete the thread entirely.
         """
-        if phase not in threads.PHASES:
+        if phase not in threads.RECOGNIZED_PHASES:
             raise HTTPException(400, f"unknown phase {phase!r}")
         index = _require_thread(s.repo_root, thread_id)
         # Retry is allowed in two cases:
@@ -516,6 +516,8 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
             await _launch_grilling(s, index, mode=mode)
         elif phase == "market":
             await _launch_market(s, index)
+        elif phase == "connector":
+            await _launch_connector(s, index)
         else:  # production
             await _launch_production(s, index)
         return JSONResponse({"ok": True, "archived_attempt": attempt_idx})
@@ -571,6 +573,22 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
         session = s.sessions.get(thread_id)
         if session is None or session.phase != "market":
             raise HTTPException(409, "no live market session for this thread")
+        return StreamingResponse(
+            _sse_stream(session), media_type="text/event-stream"
+        )
+
+    @app.post("/api/threads/{thread_id}/connector/start")
+    async def connector_start(thread_id: str) -> JSONResponse:
+        index = _require_thread(s.repo_root, thread_id)
+        await _launch_connector(s, index)
+        return JSONResponse({"ok": True})
+
+    @app.get("/api/threads/{thread_id}/connector/stream")
+    async def connector_stream(thread_id: str) -> StreamingResponse:
+        _require_thread(s.repo_root, thread_id)
+        session = s.sessions.get(thread_id)
+        if session is None or session.phase != "connector":
+            raise HTTPException(409, "no live connector session for this thread")
         return StreamingResponse(
             _sse_stream(session), media_type="text/event-stream"
         )
@@ -1182,6 +1200,60 @@ async def _launch_market(s: AppState, index: dict[str, Any]) -> None:
     session.task = asyncio.create_task(run_loop())
 
 
+async def _launch_connector(s: AppState, index: dict[str, Any]) -> None:
+    """ADR 0012 domain-connector phase: P -> diverse far-framed claim_contracts.
+
+    Mirrors _launch_market (background, no user input) but is live-claude, so it
+    passes acks=True — the operator's per-phase execute-ack modal click is the
+    consent. Reads the thread's grilling_session and writes connector_session.json
+    under the connector/ phase dir."""
+    from research_harness.connector.orchestrator import run_domain_connector
+
+    thread_id = index["thread_id"]
+    if thread_id in s.sessions:
+        return
+    _refuse_if_lock_held_by_other(s, thread_id)
+    grilling_path = (
+        threads.phase_dir(s.repo_root, thread_id, "grilling") / "grilling_session.json"
+    )
+    if not grilling_path.exists():
+        raise HTTPException(409, "connector requires grilling to be complete")
+    grilling_session = json.loads(grilling_path.read_text(encoding="utf-8"))
+    validate_named_schema("grilling_session", grilling_session)
+
+    loop = asyncio.get_running_loop()
+    session = LiveSession(thread_id=thread_id, phase="connector", loop=loop)
+    s.sessions[thread_id] = session
+
+    threads.update_thread(
+        s.repo_root, thread_id, current_phase="connector", phase_status="running"
+    )
+    run_dir = threads.phase_dir(s.repo_root, thread_id, "connector")
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    async def run_loop():
+        try:
+            async with s.lock.acquire(thread_id, "connector"):
+                await asyncio.to_thread(
+                    run_domain_connector,
+                    s.repo_root,
+                    grilling_session,
+                    run_dir=run_dir,
+                    billing_ack=True,
+                    execution_ack=True,
+                )
+            threads.update_thread(s.repo_root, thread_id, phase_status="complete")
+            await session.emit({"type": "phase_complete"})
+        except Exception as exc:  # noqa: BLE001
+            LOG.exception("connector failed for %s", thread_id)
+            threads.update_thread(s.repo_root, thread_id, phase_status="failed")
+            await session.emit({"type": "phase_failed", "error": str(exc)})
+        finally:
+            s.sessions.pop(thread_id, None)
+
+    session.task = asyncio.create_task(run_loop())
+
+
 async def _launch_production(s: AppState, index: dict[str, Any]) -> None:
     """Production launch is always refused from the frontend.
 
@@ -1328,6 +1400,13 @@ def _read_phase_artifacts(
         # searching…" indicator. Use the market dir's mtime (set when
         # the launch route mkdir's it) as the phase-start anchor; that
         # mutates exactly once per phase start, including on retry.
+        with contextlib.suppress(OSError):
+            result["phase_started_unix"] = pdir.stat().st_mtime
+    elif phase == "connector":
+        sp = pdir / "connector_session.json"
+        if sp.exists():
+            with contextlib.suppress(json.JSONDecodeError, OSError):
+                result["session"] = json.loads(sp.read_text(encoding="utf-8"))
         with contextlib.suppress(OSError):
             result["phase_started_unix"] = pdir.stat().st_mtime
     elif phase == "production":
@@ -1503,7 +1582,7 @@ def _register_file_route(app: FastAPI, s: AppState) -> None:
 
     @app.get("/files/{thread_id}/{phase}/{filename:path}")
     async def _serve(thread_id: str, phase: str, filename: str) -> FileResponse:
-        if phase not in threads.PHASES:
+        if phase not in threads.RECOGNIZED_PHASES:
             raise HTTPException(404)
         # Stay inside the thread's phase directory — block path traversal.
         pdir = threads.phase_dir(s.repo_root, thread_id, phase)

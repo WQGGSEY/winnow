@@ -1,0 +1,121 @@
+{% if not p.present %}
+  <div class="phase-empty">
+    <p>The domain connector has not been run for this thread.</p>
+    {% if thread.current_phase in ["grilling", "connector"] %}
+      <button class="btn primary"
+              type="button"
+              data-execute-ack
+              data-phase="connector"
+              data-thread-id="{{ thread.thread_id }}"
+              data-endpoint="/api/threads/{{ thread.thread_id }}/connector/start"
+              data-cost-note="Domain connector (ADR 0012): de-domains P + force-reads it through random fields to generate diverse far-framed claims. Several live claude calls under your subscription.">
+        ▶ Run domain connector
+      </button>
+    {% endif %}
+  </div>
+{% elif thread.current_phase == "connector" and thread.phase_status == "running" %}
+  <div class="phase-thinking">
+    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+    <span>Domain connector is generating diverse far-framed claims…</span>
+    <span class="thinking-elapsed"
+          data-elapsed-since="{{ p.phase_started_unix }}">computing…</span>
+  </div>
+  <p class="muted" style="font-size:12px;">
+    Abstraction → (read through a random field → prune-1)* until quota →
+    per-reading market → reduction. Sequential claude calls; panel auto-refreshes.
+    The abstraction, field attempts, and far-framed claims appear here when done.
+  </p>
+{% elif thread.current_phase == "connector" and thread.phase_status in ("failed", "awaiting_input") %}
+  <div class="phase-empty">
+    <p><strong>Domain connector {{ thread.phase_status }}.</strong>
+       Check server logs for the exception.</p>
+    <button class="btn primary"
+            type="button"
+            data-execute-ack
+            data-phase="connector"
+            data-thread-id="{{ thread.thread_id }}"
+            data-endpoint="/api/threads/{{ thread.thread_id }}/connector/retry"
+            data-cost-note="Retry the domain connector. Previous attempt archived as connector.attempt<N>/.">
+      Retry domain connector
+    </button>
+  </div>
+{% else %}
+  {% set sess = p.session %}
+  <section class="connector-view">
+    {% if sess %}
+      <header class="phase-mini-head">
+        <span>status: <code>{{ sess.status }}</code></span>
+        <span>claims: {{ sess.claims|length if sess.claims else 0 }}</span>
+        <span>fields tried: {{ sess.fields_tried }}</span>
+        <span>stopped: <code>{{ sess.stopped_reason }}</code></span>
+      </header>
+
+      {% if sess.abstraction %}
+        <h3>De-domained abstraction (the vague skeleton)</h3>
+        <blockquote>{{ sess.abstraction.abstraction }}</blockquote>
+        <p class="muted" style="font-size:12px;">
+          firewall_clean: {{ sess.abstraction.firewall_clean }}
+          · regen_attempts: {{ sess.abstraction.regen_attempts }}
+          {% if sess.abstraction.residual_leaked_terms %}
+            · residual leak: {{ sess.abstraction.residual_leaked_terms|join(", ") }}
+          {% endif %}
+        </p>
+      {% endif %}
+
+      {% if sess.claims %}
+        <h3>Far-framed claims ({{ sess.claims|length }}) → forest roots</h3>
+        <table class="papers-table">
+          <thead><tr><th>Field (random)</th><th>Claim on P</th><th>method papers</th></tr></thead>
+          <tbody>
+            {% for c in sess.claims %}
+              <tr>
+                <td><code>{{ c.field.code }}</code> {{ c.field.name }}</td>
+                <td>{{ c.claim_contract.claim_under_test|truncate_chars(160) }}</td>
+                <td>{{ c.method_num_papers }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
+
+      {% if sess.attempts %}
+        <details>
+          <summary>Field attempts ({{ sess.attempts|length }})</summary>
+          <table class="papers-table">
+            <thead><tr><th>Field</th><th>prune-1</th><th>pairs</th><th>reduced</th></tr></thead>
+            <tbody>
+              {% for a in sess.attempts %}
+                <tr>
+                  <td><code>{{ a.field.code }}</code> {{ a.field.name }}</td>
+                  <td>{{ "pass" if a.prune1_passed else "cut" }}</td>
+                  <td>{{ a.num_pairs }}</td>
+                  <td>{{ "yes" if a.reduced else "—" }}{% if a.error %} (err){% endif %}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </details>
+      {% endif %}
+
+      {% if thread.current_phase == "connector" and thread.phase_status == "complete" %}
+        <div class="market-next-step callout">
+          {% if sess.claims %}
+            <strong>{{ sess.claims|length }} far-framed claim(s) generated.</strong>
+            In a Claude Code production session, call
+            <code>seed_forest_from_connector</code> to build the multi-root forest,
+            then run the per-node gate + per-survivor terminal +
+            <code>select_strongest_survivor</code> for the single earned output.
+          {% else %}
+            <strong>No reducible far-framing found</strong> (0 claims) — production
+            would render honest-failure.
+          {% endif %}
+        </div>
+      {% endif %}
+    {% endif %}
+
+    <details class="raw-json">
+      <summary>connector_session.json</summary>
+      <pre>{{ sess|pretty_json if sess else "(no session)" }}</pre>
+    </details>
+  </section>
+{% endif %}
