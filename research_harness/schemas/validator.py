@@ -33,6 +33,7 @@ SCHEMA_FILES = {
     "search_state": "search_state.schema.json",
     "runner_result": "runner_result.schema.json",
     "grilling_session": "grilling_session.schema.json",
+    "connector_session": "connector_session.schema.json",
     "market_research_brief": "market_research_brief.schema.json",
     "reference_paper": "reference_paper.schema.json",
     "lesson_distillation_summary": "lesson_distillation_summary.schema.json",

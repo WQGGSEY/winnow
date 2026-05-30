@@ -1,0 +1,288 @@
+"""[[research forest + single output]] front-half — the connector orchestrator.
+
+Ties the per-step engine into the resample-to-quota loop (ADR 0012):
+
+    abstraction (P-visible)
+      ⟂ firewall: below here P-blind, abstraction text only ⟂
+    → for each randomly-sampled field (uniform, no replacement):
+          reading (P-blind) → prune-1 (P-blind)
+          if prune-1 passes:  per-reading market (P-blind) → reduction (P-aware)
+              if reduction yields a well-formed claim_contract: keep it
+      stop when `quota` claims are kept, the field namespace is exhausted, or
+      `max_fields_tried` is hit (a compute cap — recorded in `stopped_reason`,
+      never silently swallowed).
+
+Emits a schema-validated ``connector_session.json``. The N kept claim_contracts
+are the forest seed (Slice D builds the multi-root search_state from them).
+
+Reliability is the production gate's job, not this loop's: prune-1 / reduction
+are best-effort and may pass garbage, absorbed downstream. A single field's LLM
+error is logged on that attempt and skipped; only an abstraction failure aborts.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import uuid
+from dataclasses import dataclass, field as dc_field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from research_harness.config import resolve_agent_budget, resolve_agent_model
+from research_harness.connector.abstraction import generate_abstraction
+from research_harness.connector.claude_call import CommandRunner, ConnectorLLMError
+from research_harness.connector.far_method_market import research_far_method
+from research_harness.connector.field_sampler import field_permutation
+from research_harness.connector.prune1 import prune1_check
+from research_harness.connector.reading import generate_reading
+from research_harness.connector.reduction import reduce_to_claim
+from research_harness.agents.market_research import HttpFetcher
+from research_harness.schemas.validator import validate_named_schema
+from research_harness.settings_scoped import resolve_for_thread, thread_id_from_run_dir
+
+BILLING_ACK_ENV = "RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE"
+BILLING_ACK_VALUE = "subscription_ack"
+EXECUTION_ACK_ENV = "RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE"
+EXECUTION_ACK_VALUE = "live_smoke_ack"
+
+DEFAULT_QUOTA = 6
+DEFAULT_MAX_FIELDS_TRIED = 40
+DEFAULT_MAX_REGEN = 2
+
+
+@dataclass
+class DomainConnectorOutcome:
+    session: dict[str, Any]
+    claims: list[dict[str, Any]] = dc_field(default_factory=list)
+
+
+def _billing_ack_ok(billing_ack: bool | None) -> bool:
+    if billing_ack is not None:
+        return bool(billing_ack)
+    return os.environ.get(BILLING_ACK_ENV) == BILLING_ACK_VALUE
+
+
+def _execution_ack_ok(execution_ack: bool | None) -> bool:
+    if execution_ack is not None:
+        return bool(execution_ack)
+    return os.environ.get(EXECUTION_ACK_ENV) == EXECUTION_ACK_VALUE
+
+
+def _seed_from_session(session_id: str) -> int:
+    """Deterministic field-draw seed from the grilling session id — same thread
+    re-runs draw the same field order (reproducible), different threads differ."""
+    return int.from_bytes(hashlib.sha256(session_id.encode("utf-8")).digest()[:8], "big")
+
+
+def _resolve_knob(settings: Any, key: str, default: int) -> int:
+    block = settings.get("domain_connector", {}) if hasattr(settings, "get") else {}
+    if isinstance(block, dict):
+        value = block.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+            return value
+    return default
+
+
+def run_domain_connector(
+    repo_root: Path,
+    grilling_session: dict[str, Any],
+    *,
+    run_dir: Path | None = None,
+    billing_ack: bool | None = None,
+    execution_ack: bool | None = None,
+    claude_path: str | None = None,
+    command_runner: CommandRunner | None = None,
+    http_fetcher: HttpFetcher | None = None,
+    quota: int | None = None,
+    max_fields_tried: int | None = None,
+    max_regen: int = DEFAULT_MAX_REGEN,
+    field_seed: int | None = None,
+    timeout_seconds: int = 180,
+) -> DomainConnectorOutcome:
+    """Run the connector front-half and emit a connector_session.json.
+
+    Returns a :class:`DomainConnectorOutcome` whose ``claims`` are the kept
+    P-claim_contracts (the forest seed).
+    """
+    import shutil
+    import subprocess
+
+    validate_named_schema("grilling_session", grilling_session)
+    repo_root = repo_root.resolve()
+    grilling_id = grilling_session["session_id"]
+    session_id = "conn_" + uuid.uuid4().hex[:12]
+    run_dir = (
+        run_dir or repo_root / "runs" / "connector" / grilling_id
+    ).resolve()
+    run_dir.mkdir(parents=True, exist_ok=True)
+    session_path = run_dir / "connector_session.json"
+
+    settings = resolve_for_thread(repo_root, thread_id_from_run_dir(run_dir))
+    model = resolve_agent_model(settings, "domain_connector_agent")
+    max_budget = resolve_agent_budget(settings, "domain_connector_agent")
+    quota = quota if quota is not None else _resolve_knob(settings, "quota", DEFAULT_QUOTA)
+    max_fields_tried = (
+        max_fields_tried
+        if max_fields_tried is not None
+        else _resolve_knob(settings, "max_fields_tried", DEFAULT_MAX_FIELDS_TRIED)
+    )
+    seed = field_seed if field_seed is not None else _seed_from_session(grilling_id)
+
+    base_session: dict[str, Any] = {
+        "session_id": session_id,
+        "type": "connector_session",
+        "status": "in_progress",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "grilling_session_id": grilling_id,
+        "model": model,
+        "field_seed": seed,
+        "quota": quota,
+        "max_fields_tried": max_fields_tried,
+        "fields_tried": 0,
+        "quota_met": False,
+        "stopped_reason": "not_started",
+        "abstraction": None,
+        "attempts": [],
+        "claims": [],
+        "usage_estimate": {
+            "llm_calls": 0,
+            "total_cost_usd": 0.0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+        },
+        "session_path": str(session_path),
+        "error": None,
+    }
+
+    def _finish(session: dict[str, Any]) -> DomainConnectorOutcome:
+        validate_named_schema("connector_session", session)
+        session_path.write_text(
+            json.dumps(session, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return DomainConnectorOutcome(session=session, claims=list(session["claims"]))
+
+    if not _billing_ack_ok(billing_ack):
+        return _finish({**base_session, "status": "blocked_by_gate",
+                        "error": f"set {BILLING_ACK_ENV}={BILLING_ACK_VALUE} to enable the connector"})
+    if not _execution_ack_ok(execution_ack):
+        return _finish({**base_session, "status": "blocked_by_execution_ack",
+                        "error": f"set {EXECUTION_ACK_ENV}={EXECUTION_ACK_VALUE} to invoke Claude"})
+
+    runner = command_runner or subprocess.run
+    detected_claude = claude_path or shutil.which("claude") or "claude"
+    usage = dict(base_session["usage_estimate"])
+
+    def _add_usage(u: dict[str, Any]) -> None:
+        usage["llm_calls"] += 1
+        usage["total_cost_usd"] += float(u.get("cost_usd") or 0.0)
+        usage["total_input_tokens"] += int(u.get("input_tokens") or 0)
+        usage["total_output_tokens"] += int(u.get("output_tokens") or 0)
+
+    # --- abstraction (load-bearing; failure aborts) ---
+    try:
+        abstraction = generate_abstraction(
+            grilling_session, model=model, max_budget=max_budget,
+            claude_path=detected_claude, runner=runner, max_regen=max_regen,
+            timeout_seconds=timeout_seconds,
+        )
+    except (ConnectorLLMError, ValueError) as exc:
+        return _finish({**base_session, "status": "aborted",
+                        "error": f"abstraction step failed: {exc}"})
+    for _ in range(abstraction["regen_attempts"]):
+        usage["llm_calls"] += 1
+    usage["total_cost_usd"] += float(abstraction["usage"]["cost_usd"])
+    usage["total_input_tokens"] += int(abstraction["usage"]["input_tokens"])
+    usage["total_output_tokens"] += int(abstraction["usage"]["output_tokens"])
+    abstraction_text = abstraction["abstraction"]
+    abstraction_record = {
+        "abstraction": abstraction_text,
+        "scanned_domain_terms": abstraction["scanned_domain_terms"],
+        "residual_leaked_terms": abstraction["residual_leaked_terms"],
+        "firewall_clean": abstraction["firewall_clean"],
+        "regen_attempts": abstraction["regen_attempts"],
+    }
+
+    # --- resample-to-quota loop (P-blind below the firewall) ---
+    perm = field_permutation(seed=seed)
+    attempts: list[dict[str, Any]] = []
+    claims: list[dict[str, Any]] = []
+    fields_tried = 0
+    stopped_reason = "namespace_exhausted"
+
+    for fld in perm:
+        if len(claims) >= quota:
+            stopped_reason = "quota_met"
+            break
+        if fields_tried >= max_fields_tried:
+            stopped_reason = "max_fields_tried"
+            break
+        fields_tried += 1
+        attempt: dict[str, Any] = {
+            "field": {"code": fld.get("code"), "name": fld.get("name"), "archive": fld.get("archive")},
+            "prune1_passed": False,
+            "num_pairs": 0,
+            "reduced": False,
+            "error": None,
+        }
+        try:
+            reading = generate_reading(
+                abstraction_text, fld, model=model, max_budget=max_budget,
+                claude_path=detected_claude, runner=runner, timeout_seconds=timeout_seconds,
+            )
+            _add_usage(reading["usage"])
+            p1 = prune1_check(
+                abstraction_text, reading, model=model, max_budget=max_budget,
+                claude_path=detected_claude, runner=runner, timeout_seconds=timeout_seconds,
+            )
+            _add_usage(p1["usage"])
+            attempt["prune1_passed"] = p1["passed"]
+            attempt["num_pairs"] = p1["num_pairs"]
+            if p1["passed"]:
+                material = research_far_method(
+                    fld, reading["field_method"], http_fetcher=http_fetcher
+                )
+                red = reduce_to_claim(
+                    grilling_session, reading, p1, method_research=material,
+                    model=model, max_budget=max_budget, claude_path=detected_claude,
+                    runner=runner, timeout_seconds=timeout_seconds,
+                )
+                _add_usage(red["usage"])
+                attempt["reduced"] = red["reduced"]
+                if red["reduced"]:
+                    claims.append({
+                        "field": red["field"],
+                        "claim_contract": red["claim_contract"],
+                        "far_ness_note": red["far_ness_note"],
+                        "method_num_papers": material["num_papers"],
+                    })
+        except (ConnectorLLMError, ValueError) as exc:
+            # Best-effort: one bad field is logged + skipped, never fatal.
+            attempt["error"] = str(exc)[:300]
+        attempts.append(attempt)
+    else:
+        # Loop fell through without break: namespace exhausted (or quota/cap
+        # coincided with the last field). Re-derive the honest reason.
+        if len(claims) >= quota:
+            stopped_reason = "quota_met"
+        elif fields_tried >= max_fields_tried:
+            stopped_reason = "max_fields_tried"
+        else:
+            stopped_reason = "namespace_exhausted"
+
+    status = "completed" if claims else "completed_no_claims"
+    session = {
+        **base_session,
+        "status": status,
+        "fields_tried": fields_tried,
+        "quota_met": len(claims) >= quota,
+        "stopped_reason": stopped_reason,
+        "abstraction": abstraction_record,
+        "attempts": attempts,
+        "claims": claims,
+        "usage_estimate": usage,
+        "error": None,
+    }
+    return _finish(session)

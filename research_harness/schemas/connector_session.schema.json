@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/connector_session.schema.json",
+  "title": "ConnectorSession",
+  "description": "Artifact of the domain-connector phase (ADR 0012): the de-domained abstraction, the per-field reading/prune-1/reduction attempts, and the kept P-claim_contracts that seed the production forest.",
+  "type": "object",
+  "required": [
+    "session_id",
+    "type",
+    "status",
+    "created_at",
+    "grilling_session_id",
+    "model",
+    "field_seed",
+    "quota",
+    "max_fields_tried",
+    "fields_tried",
+    "quota_met",
+    "stopped_reason",
+    "attempts",
+    "claims",
+    "usage_estimate"
+  ],
+  "properties": {
+    "session_id": { "type": "string", "pattern": "^conn_[A-Za-z0-9_\\-]+$" },
+    "type": { "type": "string", "enum": ["connector_session"] },
+    "status": {
+      "type": "string",
+      "enum": [
+        "in_progress",
+        "completed",
+        "completed_no_claims",
+        "blocked_by_gate",
+        "blocked_by_execution_ack",
+        "aborted"
+      ]
+    },
+    "created_at": { "type": "string", "minLength": 1 },
+    "grilling_session_id": { "type": "string", "minLength": 1 },
+    "model": { "type": "string", "minLength": 1 },
+    "field_seed": { "type": "integer" },
+    "quota": { "type": "integer", "minimum": 1 },
+    "max_fields_tried": { "type": "integer", "minimum": 1 },
+    "fields_tried": { "type": "integer", "minimum": 0 },
+    "quota_met": { "type": "boolean" },
+    "stopped_reason": {
+      "type": "string",
+      "enum": ["not_started", "quota_met", "max_fields_tried", "namespace_exhausted"]
+    },
+    "abstraction": {
+      "type": ["object", "null"],
+      "required": [
+        "abstraction",
+        "scanned_domain_terms",
+        "residual_leaked_terms",
+        "firewall_clean",
+        "regen_attempts"
+      ],
+      "properties": {
+        "abstraction": { "type": "string", "minLength": 1 },
+        "scanned_domain_terms": { "type": "array", "items": { "type": "string" } },
+        "residual_leaked_terms": { "type": "array", "items": { "type": "string" } },
+        "firewall_clean": { "type": "boolean" },
+        "regen_attempts": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "attempts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["field", "prune1_passed", "num_pairs", "reduced", "error"],
+        "properties": {
+          "field": {
+            "type": "object",
+            "required": ["code", "name", "archive"],
+            "properties": {
+              "code": { "type": "string" },
+              "name": { "type": "string" },
+              "archive": { "type": "string" }
+            },
+            "additionalProperties": false
+          },
+          "prune1_passed": { "type": "boolean" },
+          "num_pairs": { "type": "integer", "minimum": 0 },
+          "reduced": { "type": "boolean" },
+          "error": { "type": ["string", "null"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["field", "claim_contract", "far_ness_note", "method_num_papers"],
+        "properties": {
+          "field": {
+            "type": "object",
+            "required": ["code", "name", "archive"],
+            "properties": {
+              "code": { "type": "string" },
+              "name": { "type": "string" },
+              "archive": { "type": "string" }
+            },
+            "additionalProperties": false
+          },
+          "claim_contract": {
+            "type": "object",
+            "required": [
+              "claim_under_test",
+              "mandatory_baselines",
+              "success_criteria",
+              "disproof_conditions"
+            ],
+            "properties": {
+              "claim_under_test": { "type": "string", "minLength": 1 },
+              "mandatory_baselines": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+              "success_criteria": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+              "disproof_conditions": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+            },
+            "additionalProperties": false
+          },
+          "far_ness_note": { "type": "string" },
+          "method_num_papers": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "usage_estimate": {
+      "type": "object",
+      "required": ["llm_calls", "total_cost_usd", "total_input_tokens", "total_output_tokens"],
+      "properties": {
+        "llm_calls": { "type": "integer", "minimum": 0 },
+        "total_cost_usd": { "type": ["number", "null"] },
+        "total_input_tokens": { "type": "integer", "minimum": 0 },
+        "total_output_tokens": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "session_path": { "type": "string" },
+    "error": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}
