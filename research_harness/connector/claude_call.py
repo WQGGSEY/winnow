@@ -93,9 +93,14 @@ def call_claude_json(
             f"{label}: claude CLI timed out after {timeout_seconds}s"
         ) from exc
     if completed.returncode not in (0, None):
+        # claude prints API errors (auth/401, budget, etc.) to STDOUT as a JSON
+        # result, not stderr — surface both so the failure is diagnosable rather
+        # than a cryptic "exit code N".
+        detail = (
+            (completed.stderr or "").strip() + " " + (completed.stdout or "").strip()
+        ).strip()
         raise ConnectorLLMError(
-            f"{label}: claude CLI exit code {completed.returncode}: "
-            f"{(completed.stderr or '').strip()[:200]}"
+            f"{label}: claude CLI exit code {completed.returncode}: {detail[:400]}"
         )
     try:
         cli_result = json.loads(completed.stdout or "")
@@ -106,8 +111,12 @@ def call_claude_json(
     if not isinstance(cli_result, dict) or cli_result.get("type") != "result":
         raise ConnectorLLMError(f"{label}: claude CLI returned unexpected payload")
     if cli_result.get("is_error"):
+        # Surface the API error reason (e.g. 401 auth) — the `result` field holds
+        # the human-readable error even when subtype is nominally "success".
         raise ConnectorLLMError(
-            f"{label}: claude CLI reported error subtype {cli_result.get('subtype')!r}"
+            f"{label}: claude CLI error (api_status="
+            f"{cli_result.get('api_error_status')}): "
+            f"{str(cli_result.get('result') or cli_result.get('subtype'))[:300]}"
         )
     inner = cli_result.get("result")
     if not isinstance(inner, str) or not inner.strip():
