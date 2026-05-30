@@ -159,6 +159,7 @@
      how the streamer re-binds after every htmx swap. #}
   {% if sup.running %}
     <details open class="supervisor-log live"
+             id="sup-log-{{ thread.thread_id }}" hx-preserve="true"
              data-supervisor-log-section
              data-thread-id="{{ thread.thread_id }}">
       <summary><strong>supervisor.log</strong>
@@ -169,7 +170,8 @@
       <pre data-supervisor-log="supervisor"
            data-thread-id="{{ thread.thread_id }}"></pre>
     </details>
-    <details class="supervisor-claude-log live"
+    <details open class="supervisor-claude-log live"
+             id="sup-claude-log-{{ thread.thread_id }}" hx-preserve="true"
              data-supervisor-log-section
              data-thread-id="{{ thread.thread_id }}">
       <summary><strong>claude_subprocess.log</strong>
