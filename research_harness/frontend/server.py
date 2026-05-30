@@ -1235,6 +1235,11 @@ async def _launch_connector(s: AppState, index: dict[str, Any]) -> None:
     run_dir = threads.phase_dir(s.repo_root, thread_id, "connector")
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    def sync_event_emitter(event: dict) -> None:
+        # Bridge per-step connector progress (emitted from the worker thread)
+        # onto the SSE stream the operator's browser is watching live.
+        asyncio.run_coroutine_threadsafe(session.out_queue.put(event), loop).result()
+
     async def run_loop():
         try:
             async with s.lock.acquire(thread_id, "connector"):
@@ -1245,6 +1250,7 @@ async def _launch_connector(s: AppState, index: dict[str, Any]) -> None:
                     run_dir=run_dir,
                     billing_ack=True,
                     execution_ack=True,
+                    event_emitter=sync_event_emitter,
                 )
             status = (outcome.session or {}).get("status")
             if status in {"aborted", "blocked_by_gate", "blocked_by_execution_ack"}:

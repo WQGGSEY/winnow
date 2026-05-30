@@ -220,6 +220,7 @@
       location.reload();
       return;
     }
+    if (phase === 'connector') { renderConnectorEvent(threadId, ev); return; }
     // Thinking + reply-form state — do this BEFORE the chat-list lookup
     // so refine (which has its own refine-rounds renderer, no chat-${tid}
     // list) still gets the live counter and form toggle.
@@ -300,6 +301,64 @@
     li.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }
 
+  // ADR 0012: live connector progress feed. Each randomly-sampled field gets a
+  // row that advances through reading -> prune-1 -> (market ->) reduction, so the
+  // operator watches the de-domaining + far-framing happen step by step.
+  function renderConnectorEvent(threadId, ev) {
+    const feed = document.getElementById(`connector-feed-${threadId}`);
+    if (!feed) return;
+    const fieldRow = (code) => {
+      let row = document.getElementById(`cfield-${threadId}-${code}`);
+      if (!row) {
+        row = document.createElement('li');
+        row.id = `cfield-${threadId}-${code}`;
+        row.className = 'connector-field';
+        feed.appendChild(row);
+        row.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      }
+      return row;
+    };
+    const setStage = (code, html, done) => {
+      const row = fieldRow(code);
+      let s = row.querySelector('.cstage');
+      if (!s) {
+        row.innerHTML = `<code>${escapeHTML(code)}</code> <span class="cstage"></span>`;
+        s = row.querySelector('.cstage');
+      }
+      s.innerHTML = html;
+      if (done) row.classList.add('cdone');
+    };
+    if (ev.type === 'abstraction_start') {
+      const ab = document.getElementById(`connector-abstraction-${threadId}`);
+      if (ab) ab.textContent = 'de-domaining P into a vague skeleton…';
+    } else if (ev.type === 'abstraction_done') {
+      const ab = document.getElementById(`connector-abstraction-${threadId}`);
+      if (ab) {
+        ab.classList.remove('muted');
+        ab.innerHTML = `<strong>Abstraction</strong> <span class="${ev.firewall_clean ? 'cok' : 'cwarn'}">firewall ${ev.firewall_clean ? 'clean ✓' : 'leak ⚠'}</span><div class="cabs"></div>`;
+        ab.querySelector('.cabs').textContent = ev.abstraction || '';
+      }
+    } else if (ev.type === 'field_start') {
+      const row = fieldRow(ev.code);
+      row.innerHTML = `<code>${escapeHTML(ev.code)}</code> <span class="cname">${escapeHTML(ev.name || '')}</span> <span class="cstage">reading…</span>`;
+    } else if (ev.type === 'reading_done') {
+      setStage(ev.code, `method: <em>${escapeHTML(ev.field_method || '—')}</em> · prune-1…`);
+    } else if (ev.type === 'prune1_done') {
+      setStage(ev.code, ev.passed ? `prune-1 ✓ (${ev.num_pairs}) · reducing…`
+                                  : `<span class="cwarn">prune-1 ✗ cut</span>`, !ev.passed);
+    } else if (ev.type === 'market_done') {
+      setStage(ev.code, `papers: ${ev.num_papers} · reducing…`);
+    } else if (ev.type === 'reduction_done') {
+      setStage(ev.code, ev.reduced ? `<span class="cok">✓ reduced → claim</span>`
+                                   : `<span class="cwarn">✗ not reducible</span>`, true);
+    } else if (ev.type === 'field_error') {
+      setStage(ev.code, `<span class="cwarn">⚠ ${escapeHTML((ev.error || '').slice(0, 80))}</span>`, true);
+    } else if (ev.type === 'claim_kept') {
+      const c = document.getElementById(`connector-count-${threadId}`);
+      if (c) c.textContent = `claims kept: ${ev.kept}${ev.quota ? ' / quota ' + ev.quota : ''}`;
+    }
+  }
+
   function setReplyEnabled(threadId, enabled) {
     const forms = document.querySelectorAll(`form[data-thread-id="${threadId}"]`);
     forms.forEach((f) => {
@@ -363,7 +422,7 @@
     const threadId = accordion.dataset.threadId;
     const phase = accordion.dataset.currentPhase;
     const status = accordion.dataset.phaseStatus;
-    const livePhases = new Set(['grilling', 'market', 'production']);
+    const livePhases = new Set(['grilling', 'connector', 'market', 'production']);
     if (threadId && livePhases.has(phase)
         && (status === 'running' || status === 'awaiting_input')) {
       openStream(threadId, phase);

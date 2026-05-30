@@ -101,6 +101,7 @@ def run_domain_connector(
     max_regen: int = DEFAULT_MAX_REGEN,
     field_seed: int | None = None,
     timeout_seconds: int = 180,
+    event_emitter: Any = None,
 ) -> DomainConnectorOutcome:
     """Run the connector front-half and emit a connector_session.json.
 
@@ -174,6 +175,9 @@ def run_domain_connector(
     runner = command_runner or subprocess.run
     detected_claude = claude_path or shutil.which("claude") or "claude"
     usage = dict(base_session["usage_estimate"])
+    # Optional live-progress sink (the frontend bridges this to the SSE stream
+    # so the operator watches the connector work step by step). No-op by default.
+    emit = event_emitter if callable(event_emitter) else (lambda _e: None)
 
     def _add_usage(u: dict[str, Any]) -> None:
         usage["llm_calls"] += 1
@@ -182,6 +186,7 @@ def run_domain_connector(
         usage["total_output_tokens"] += int(u.get("output_tokens") or 0)
 
     # --- abstraction (load-bearing; failure aborts) ---
+    emit({"type": "abstraction_start"})
     try:
         abstraction = generate_abstraction(
             grilling_session, model=model, max_budget=max_budget,
@@ -204,6 +209,9 @@ def run_domain_connector(
         "firewall_clean": abstraction["firewall_clean"],
         "regen_attempts": abstraction["regen_attempts"],
     }
+    emit({"type": "abstraction_done", "abstraction": abstraction_text,
+          "firewall_clean": abstraction["firewall_clean"],
+          "regen_attempts": abstraction["regen_attempts"], "quota": quota})
 
     # --- resample-to-quota loop (P-blind below the firewall) ---
     perm = field_permutation(seed=seed)
@@ -220,19 +228,24 @@ def run_domain_connector(
             stopped_reason = "max_fields_tried"
             break
         fields_tried += 1
+        field_meta = {"code": fld.get("code"), "name": fld.get("name"), "archive": fld.get("archive")}
         attempt: dict[str, Any] = {
-            "field": {"code": fld.get("code"), "name": fld.get("name"), "archive": fld.get("archive")},
+            "field": field_meta,
             "prune1_passed": False,
             "num_pairs": 0,
             "reduced": False,
             "error": None,
         }
+        emit({"type": "field_start", "index": fields_tried, **field_meta})
         try:
             reading = generate_reading(
                 abstraction_text, fld, model=model, max_budget=max_budget,
                 claude_path=detected_claude, runner=runner, timeout_seconds=timeout_seconds,
             )
             _add_usage(reading["usage"])
+            emit({"type": "reading_done", "code": field_meta["code"],
+                  "field_method": reading.get("field_method"),
+                  "emergent_claim": reading.get("emergent_claim")})
             p1 = prune1_check(
                 abstraction_text, reading, model=model, max_budget=max_budget,
                 claude_path=detected_claude, runner=runner, timeout_seconds=timeout_seconds,
@@ -240,10 +253,14 @@ def run_domain_connector(
             _add_usage(p1["usage"])
             attempt["prune1_passed"] = p1["passed"]
             attempt["num_pairs"] = p1["num_pairs"]
+            emit({"type": "prune1_done", "code": field_meta["code"],
+                  "passed": p1["passed"], "num_pairs": p1["num_pairs"]})
             if p1["passed"]:
                 material = research_far_method(
                     fld, reading["field_method"], http_fetcher=http_fetcher
                 )
+                emit({"type": "market_done", "code": field_meta["code"],
+                      "num_papers": material["num_papers"]})
                 red = reduce_to_claim(
                     grilling_session, reading, p1, method_research=material,
                     model=model, max_budget=max_budget, claude_path=detected_claude,
@@ -251,6 +268,8 @@ def run_domain_connector(
                 )
                 _add_usage(red["usage"])
                 attempt["reduced"] = red["reduced"]
+                emit({"type": "reduction_done", "code": field_meta["code"],
+                      "reduced": red["reduced"]})
                 if red["reduced"]:
                     claims.append({
                         "field": red["field"],
@@ -258,9 +277,13 @@ def run_domain_connector(
                         "far_ness_note": red["far_ness_note"],
                         "method_num_papers": material["num_papers"],
                     })
+                    emit({"type": "claim_kept", "code": field_meta["code"],
+                          "kept": len(claims), "quota": quota,
+                          "claim_under_test": red["claim_contract"]["claim_under_test"]})
         except (ConnectorLLMError, ValueError) as exc:
             # Best-effort: one bad field is logged + skipped, never fatal.
             attempt["error"] = str(exc)[:300]
+            emit({"type": "field_error", "code": field_meta["code"], "error": str(exc)[:200]})
         attempts.append(attempt)
     else:
         # Loop fell through without break: namespace exhausted (or quota/cap

@@ -217,3 +217,28 @@ def test_per_field_llm_error_is_logged_not_fatal(tmp_path):
     assert s["status"] == "completed_no_claims"
     assert s["fields_tried"] == 2
     assert all(a["error"] for a in s["attempts"])
+
+
+def test_emits_live_progress_events(tmp_path):
+    # The event_emitter (bridged to SSE by the frontend) sees the full narrative:
+    # abstraction -> per-field reading/prune-1/reduction -> claim kept.
+    fake = RoutingFakeClaude({
+        "abstraction": _ABSTRACTION_OK, "reading": _READING_OK,
+        "prune1": _PRUNE1_PASS, "reduction": _REDUCE_OK,
+    })
+    events = []
+    run_domain_connector(
+        REPO_ROOT, _valid_grilling(), run_dir=tmp_path / "connector",
+        billing_ack=True, execution_ack=True, command_runner=fake,
+        http_fetcher=_fetcher, quota=1, max_fields_tried=3, field_seed=1,
+        event_emitter=events.append,
+    )
+    types = [e["type"] for e in events]
+    assert types[0] == "abstraction_start"
+    for t in ("abstraction_done", "field_start", "reading_done", "prune1_done",
+              "market_done", "reduction_done", "claim_kept"):
+        assert t in types, f"missing event {t!r} in {types}"
+    kept = next(e for e in events if e["type"] == "claim_kept")
+    assert kept["kept"] == 1 and kept["claim_under_test"]
+    abst = next(e for e in events if e["type"] == "abstraction_done")
+    assert abst["firewall_clean"] is True and abst["abstraction"]

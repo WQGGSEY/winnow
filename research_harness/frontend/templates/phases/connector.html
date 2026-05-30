@@ -20,10 +20,16 @@
     <span class="thinking-elapsed"
           data-elapsed-since="{{ p.phase_started_unix }}">computing…</span>
   </div>
-  <p class="muted" style="font-size:12px;">
-    Abstraction → (read through a random field → prune-1)* until quota →
-    per-reading market → reduction. Sequential claude calls; panel auto-refreshes.
-    The abstraction, field attempts, and far-framed claims appear here when done.
+  <div class="connector-live">
+    <div id="connector-count-{{ thread.thread_id }}" class="connector-count">claims kept: 0</div>
+    <div id="connector-abstraction-{{ thread.thread_id }}" class="connector-abstraction muted">
+      de-domaining P into a vague skeleton…
+    </div>
+    <ol id="connector-feed-{{ thread.thread_id }}" class="connector-feed"></ol>
+  </div>
+  <p class="muted" style="font-size:11px;">
+    Live: P → de-domained abstraction → each randomly-sampled field is read,
+    triaged (prune-1), and reduced onto P. Readings that survive become forest roots.
   </p>
 {% elif thread.current_phase == "connector" and thread.phase_status in ("failed", "awaiting_input") %}
   <div class="phase-empty">

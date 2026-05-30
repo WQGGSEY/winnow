@@ -838,3 +838,52 @@ code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-
 .market-next-step a.advance-to-production-link {
   color: #2845a8; text-decoration: underline; font-weight: 600;
 }
+
+/* ADR 0012: live connector progress feed */
+.connector-live {
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid #e2e3e8;
+  border-radius: 8px;
+  background: #fafbfc;
+}
+.connector-count {
+  font-weight: 700;
+  font-size: 13px;
+  color: #1f5132;
+  margin-bottom: 6px;
+}
+.connector-abstraction {
+  font-size: 12px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed #e2e3e8;
+}
+.connector-abstraction .cabs {
+  margin-top: 4px;
+  color: #333;
+  font-style: italic;
+}
+.connector-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.connector-field {
+  padding: 5px 6px;
+  font-size: 12px;
+  border-radius: 5px;
+  border-left: 3px solid #c7d2fe;
+  margin-bottom: 3px;
+  background: #fff;
+  animation: cfade 0.25s ease-in;
+}
+.connector-field.cdone { opacity: 0.78; border-left-color: #d4d6dd; }
+.connector-field code { background: #eef1ff; padding: 1px 5px; border-radius: 4px; color: #2845a8; }
+.connector-field .cname { color: #555; }
+.connector-field .cstage { color: #444; }
+.connector-field .cok { color: #1f8f4e; font-weight: 600; }
+.connector-field .cwarn { color: #b3541e; }
+@keyframes cfade { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
