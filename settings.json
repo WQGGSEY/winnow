@@ -177,13 +177,6 @@
             "max_tie_fraction": 0.5,
             "null_floor_k": 1.0
           },
-          "far_framing": {
-            "_comment": "ADR 0009 (B1) + T2-12a band policy: forced distant-transfer successor policy. When enabled and a domain_taxonomy is pinned, promotion / needs_child_branch mints up to top_k far-framing successors — one per domain in the FAR-BUT-BRIDGEABLE band band_lo <= distance <= band_hi from the node's native domain, by DETERMINISTIC top-k over the frozen table. NOT top-k-farthest: distance > band_hi is noise (unbridgeable) and excluded however far. band edges are operator-set here (the operator table is already declared, so this is a consistent honest fallback); atlas-calibrated thresholds replace them where an atlas covers the region. Distance feeds spawn selection ONLY (never promotion).",
-            "enabled": true,
-            "top_k": 3,
-            "band_lo": 0.6,
-            "band_hi": 0.9
-          },
           "min_baseline_role_specificity_chars": 40,
           "premature_termination_gate": {
             "_comment": "ADR 0007: the depth gate on the lazy door. A weak/negative honest-failure terminal renders only when distinct genuine attempts (scope-narrowing relabels excluded) are exhausted AND a load-bearing mechanism is stated. min_distinct_attempts is how many genuinely distinct attempts must precede a give-up. Disabling reverts to ADR 0006's unconditional honest-failure exit (= lazy honesty).",

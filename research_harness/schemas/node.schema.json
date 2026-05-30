@@ -28,8 +28,7 @@
         "mechanism",
         "constraint",
         "taste",
-        "operational",
-        "synthesis"
+        "operational"
       ]
     },
     "status": {
@@ -80,15 +79,6 @@
         "taste_constraints_applied": {
           "type": "array",
           "items": { "type": "string" }
-        },
-        "far_framing_domain": {
-          "type": "string",
-          "description": "ADR 0009 (B1): if this node is a far-framing successor, the distant domain D_i (from the frozen domain_taxonomy) the parent problem was mapped into. HARNESS-assigned by deterministic top-k policy — not chosen by the construction. A label, not a distance: distance feeds spawn selection only, never promotion/winner-selection (alpha1/#5)."
-        },
-        "synthesis_inputs": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "ADR 0009 (B2): if this node is a synthesis node, the ids of the far-framing sibling nodes whose partial mappings it recombines. HARNESS-recorded (which siblings actually completed), not an LLM choice."
         }
       },
       "additionalProperties": false
@@ -130,11 +120,6 @@
         "data_source_anchor": {
           "type": "string",
           "description": "PR7: Reference to the data source backing this claim. Must be either an adapter_id from settings.json.data_adapters (real data) or 'synthetic:<generator_label>' (synthetic). 'deployment' scope requires a registered adapter_id."
-        },
-        "forbidden_approaches": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "ADR 0009 (B1): hard constraints minted onto a successor of a negatively-resolved node — the parent's method/approach the worker must NOT reuse. Mechanizes 'forbid-the-familiar': the successor is structurally pushed out of the failed basin instead of re-trying the same approach."
         }
       },
       "additionalProperties": false

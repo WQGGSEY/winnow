@@ -288,55 +288,6 @@ TOOL_DEFINITIONS = [
         },
     },
     {
-        "name": "pin_domain_taxonomy",
-        "description": (
-            f"{PROFESSOR_CONTRACT}\n\n"
-            "ADR 0009 (B1): pin the operator-curated domain taxonomy (the OFFLINE "
-            "domain graph + conceptual distances) into the thread, hash-stamped + "
-            "IMMUTABLE. Defaults to configs/domain_taxonomy.json. Once pinned, "
-            "far-framing successors are minted on promotion / needs_child_branch by "
-            "DETERMINISTIC top-k policy over this frozen table — the construction "
-            "never chooses its own (easy) domain, and distance feeds spawn selection "
-            "ONLY, never promotion. Coverage == the operator's concept coverage (an "
-            "explicit, auditable, un-gameable bound)."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["thread_id"],
-            "properties": {
-                "thread_id": {"type": "string"},
-                "taxonomy": {
-                    "type": "object",
-                    "description": "Optional DomainTaxonomy (domain_taxonomy.schema.json). Omit to pin configs/domain_taxonomy.json. Operator / supervisor-bootstrap path only — the construction cannot author the table it is judged against.",
-                },
-            },
-        },
-    },
-    {
-        "name": "pin_atlas_version",
-        "description": (
-            f"{PROFESSOR_CONTRACT}\n\n"
-            "ADR 0010 (T1-06): pin a calibration-PASSED MEASURED atlas (the offline "
-            "build's output — co-deployment distances + the calibration verdict) into "
-            "the thread, hash-stamped + IMMUTABLE. Only deployable / bounded_result "
-            "atlases are pinnable; an honest_failure atlas ships nothing and the "
-            "operator table remains (no silent topical fallback). distance_source must "
-            "be co_deployment (measured), not topical. Once pinned, far-framing uses "
-            "measured distance where the atlas covers the projection."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["thread_id", "atlas"],
-            "properties": {
-                "thread_id": {"type": "string"},
-                "atlas": {
-                    "type": "object",
-                    "description": "DomainAtlas (domain_atlas.schema.json) from the offline build, including the calibration block. Operator path only — the construction cannot author the atlas it is judged against.",
-                },
-            },
-        },
-    },
-    {
         "name": "submit_construct_adversary_report",
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
@@ -1299,19 +1250,14 @@ _TYPE_WEIGHTS = {
     "constraint": 5,
     "operational": 6,
     "taste": 7,
-    # ADR 0009 (B2): synthesis runs last — it recombines completed far-framing
-    # siblings. No scheduling privilege; it earns nothing for being a synthesis.
-    "synthesis": 8,
 }
 
 # 4-stage claim-typed search (same as AgentManager.DEFAULT_STAGES_SPEC).
-# 'synthesis' (ADR 0009 B2) is admitted in the final stage so it is scheduled
-# after the far-framing siblings it recombines have run.
 _STAGES: list[dict[str, Any]] = [
     {"name": "scope_pinning", "admits": {"validity", "taste", "operational"}},
     {"name": "baseline_evidence", "admits": {"capability"}},
     {"name": "mechanism_or_necessity", "admits": {"mechanism", "necessity"}},
-    {"name": "boundary_ablation", "admits": {"boundary", "constraint", "synthesis"}},
+    {"name": "boundary_ablation", "admits": {"boundary", "constraint"}},
 ]
 
 
@@ -1861,242 +1807,6 @@ def handle_pin_frozen_question(args: dict[str, Any]) -> dict[str, Any]:
             "Reality-closeness (transfer_valid) stays unreachable without a real referent."
         ),
     }
-
-
-def handle_pin_domain_taxonomy(args: dict[str, Any]) -> dict[str, Any]:
-    """ADR 0009 (B1): pin the operator-curated domain taxonomy into the thread,
-    hash-stamped + IMMUTABLE (mirror of pin_frozen_question). The construction
-    loop can neither author nor edit it — far-framing D_i selection is pure
-    policy over this frozen table. Source defaults to configs/domain_taxonomy.json
-    (operator-curated offline); an explicit taxonomy may be supplied only on the
-    operator / supervisor-bootstrap path."""
-    from research_harness import domain_taxonomy as _DT
-    from research_harness.schemas.validator import validate_named_schema
-
-    tid = args["thread_id"]
-    taxonomy = args.get("taxonomy")
-    if taxonomy is None:
-        taxonomy = _read_json(_repo_root() / "configs" / "domain_taxonomy.json")
-        if not taxonomy:
-            return {
-                "status": "rejected",
-                "reason": (
-                    "no taxonomy supplied and configs/domain_taxonomy.json is "
-                    "missing — the operator must curate the domain taxonomy "
-                    "offline before far-framing successors can be minted."
-                ),
-            }
-    try:
-        validate_named_schema("domain_taxonomy", taxonomy)
-    except Exception as exc:  # noqa: BLE001
-        return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
-
-    digest = _DT.taxonomy_hash(
-        {k: v for k, v in taxonomy.items() if k != "source_provenance"}
-    )
-    pinned = {**taxonomy, "source_provenance": f"taxonomy_sha256:{digest}"}
-    out_path = _thread_dir(tid) / "production" / "domain_taxonomy.json"
-    if out_path.exists():
-        existing = _read_json(out_path) or {}
-        if existing.get("source_provenance") != pinned["source_provenance"]:
-            return {
-                "status": "rejected",
-                "reason": (
-                    "a domain_taxonomy is already pinned and is IMMUTABLE; the "
-                    "construction may not swap the table it is judged against."
-                ),
-            }
-        return {"status": "ok", "taxonomy_hash": digest, "note": "already pinned (idempotent)"}
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(
-        json.dumps(pinned, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    return {
-        "status": "ok",
-        "taxonomy_hash": digest,
-        "domain_taxonomy_path": str(out_path),
-        "domains": [d["id"] for d in pinned.get("domains", [])],
-        "next_step": (
-            "Domain taxonomy frozen. Far-framing successors will now be minted on "
-            "promotion / needs_child_branch by deterministic top-k policy over this "
-            "table. Distance feeds spawn selection ONLY — never promotion."
-        ),
-    }
-
-
-def handle_pin_atlas_version(args: dict[str, Any]) -> dict[str, Any]:
-    """ADR 0010 (T1-06): pin a calibration-PASSED measured atlas (the offline
-    build's output) into the thread, hash-stamped + IMMUTABLE (mirror of
-    pin_domain_taxonomy). Only deployable / bounded_result atlases are pinnable;
-    an honest_failure atlas ships nothing — the operator table remains (no silent
-    topical fallback). Once pinned, far-framing (Sprint 2) uses measured
-    co-deployment distance where the atlas covers the projection."""
-    from research_harness.atlas.pin import atlas_hash, atlas_pinnable
-    from research_harness.schemas.validator import validate_named_schema
-
-    tid = args["thread_id"]
-    atlas = args.get("atlas")
-    if not isinstance(atlas, dict):
-        return {"status": "rejected", "reason": "atlas (a DomainAtlas object from the offline build) is required."}
-    try:
-        validate_named_schema("domain_atlas", atlas)
-    except Exception as exc:  # noqa: BLE001
-        return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
-    ok, reason = atlas_pinnable(atlas)
-    if not ok:
-        return {"status": "rejected", "reason": reason}
-
-    digest = atlas_hash({k: v for k, v in atlas.items() if k != "source_provenance"})
-    pinned = {**atlas, "source_provenance": f"atlas_sha256:{digest}"}
-    out_path = _thread_dir(tid) / "production" / "domain_atlas.json"
-    if out_path.exists():
-        existing = _read_json(out_path) or {}
-        if existing.get("source_provenance") != pinned["source_provenance"]:
-            return {
-                "status": "rejected",
-                "reason": (
-                    "a domain_atlas is already pinned and is IMMUTABLE; the construction "
-                    "may not swap the atlas it is judged against."
-                ),
-            }
-        return {"status": "ok", "atlas_hash": digest, "note": "already pinned (idempotent)"}
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(
-        json.dumps(pinned, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    cal = atlas.get("calibration") or {}
-    return {
-        "status": "ok",
-        "atlas_hash": digest,
-        "domain_atlas_path": str(out_path),
-        "calibration_verdict": cal.get("verdict"),
-        "domains": [d["id"] for d in atlas.get("domains", [])],
-        "next_step": (
-            "Measured atlas pinned. Far-framing will use measured co-deployment distance "
-            "where this atlas covers the projection; the operator table elsewhere. "
-            "honest_failure atlases are not pinnable."
-        ),
-    }
-
-
-def _pinned_atlas(tid: str) -> dict[str, Any] | None:
-    return _read_json(_thread_dir(tid) / "production" / "domain_atlas.json")
-
-
-def _pinned_taxonomy(tid: str) -> dict[str, Any] | None:
-    return _read_json(_thread_dir(tid) / "production" / "domain_taxonomy.json")
-
-
-def _far_framing_config(settings: dict[str, Any]) -> dict[str, Any]:
-    """ADR 0009 (B1) + T2-12a band policy: enabled / top_k / band_lo / band_hi.
-    The far-but-bridgeable band retires top-k-farthest. ``distance_threshold`` is
-    accepted as a legacy alias for ``band_lo``."""
-    out = {"enabled": True, "top_k": 3, "band_lo": 0.6, "band_hi": 0.9}
-    cfg = _persona_cfg(settings).get("far_framing")
-    if isinstance(cfg, dict):
-        if cfg.get("enabled") is False:
-            out["enabled"] = False
-        if isinstance(cfg.get("top_k"), int) and cfg["top_k"] >= 0:
-            out["top_k"] = cfg["top_k"]
-        for key, dst in (("distance_threshold", "band_lo"), ("band_lo", "band_lo"), ("band_hi", "band_hi")):
-            val = cfg.get(key)
-            if isinstance(val, (int, float)) and not isinstance(val, bool) and 0.0 <= val <= 1.0:
-                out[dst] = float(val)
-    return out
-
-
-def _maybe_mint_far_framing(
-    tid: str, state: dict[str, Any], node: dict[str, Any], *, forbid: bool
-) -> list[str]:
-    """ADR 0009 (B1): mint far-framing successors, selecting D_i by deterministic
-    top-k policy over the pinned frozen taxonomy. No-op when far-framing is
-    disabled or no taxonomy is pinned. Self-contained + defensive: an additive
-    enhancement that must never break the core promotion flow. Distance is
-    consumed ONLY here (spawn selection) — never in promotion/winner-selection
-    (alpha1 / #5)."""
-    from research_harness import domain_taxonomy as _DT
-    from research_harness.config import load_settings as _ls
-    from research_harness.orchestrator.search_state import (
-        add_child_nodes,
-        search_policy_from_config,
-    )
-    from research_harness.orchestrator.treesearch.parallel_agent import (
-        _build_far_framing_successors,
-    )
-
-    # One round only: do not recurse far-framing from a far-framing node or a
-    # synthesis node — the mechanism is distant frames + one synthesis, not
-    # unbounded fan-out (ADR 0009).
-    if node.get("type") == "synthesis" or (node.get("lineage") or {}).get("far_framing_domain"):
-        return []
-
-    try:
-        cfg = _far_framing_config(_ls(_repo_root()))
-        taxonomy = _pinned_taxonomy(tid)
-        max_depth = int(
-            state.get("max_depth")
-            or search_policy_from_config(_repo_root()).get("max_depth")
-            or 5
-        )
-    except Exception:  # noqa: BLE001 — config/IO problem; far-framing is additive
-        return []
-    if not cfg["enabled"] or not taxonomy:
-        return []
-    selected = _DT.select_far_domains(
-        node.get("domain") or "", taxonomy,
-        top_k=cfg["top_k"], band_lo=cfg["band_lo"], band_hi=cfg["band_hi"],
-    )
-    if not selected:
-        return []
-    frontier_item = next(
-        (it for it in state.get("frontier", []) if it.get("node_id") == node["id"]), None
-    )
-    parent_depth = int(frontier_item["depth"]) if frontier_item else 0
-    far_children = _build_far_framing_successors(
-        node, selected,
-        parent_depth=parent_depth, max_depth=max_depth, forbid_parent_approach=forbid,
-    )
-    if far_children:
-        add_child_nodes(state, node["id"], far_children, reason="ADR 0009 far-framing successors")
-    return [c["id"] for c in far_children]
-
-
-def _maybe_mint_synthesis(tid: str, state: dict[str, Any], far_node: dict[str, Any]) -> str | None:
-    """ADR 0009 (B2): once ALL far-framing siblings of a parent have terminated,
-    mint ONE synthesis node recombining their partial mappings. Triggered when a
-    far-framing node reaches a terminal transition. Inputs are the harness's
-    record of which siblings completed (alpha2), not an LLM choice. No-op if
-    fewer than two far siblings, not all terminal, or a synthesis already exists.
-    Self-contained + defensive — never breaks the decision flow."""
-    from research_harness.orchestrator.search_state import add_child_nodes
-    from research_harness.orchestrator.treesearch.parallel_agent import _build_synthesis_node
-
-    parent_id = far_node.get("parent")
-    if not parent_id:
-        return None
-    nodes = state.get("nodes", [])
-    parent = next((n for n in nodes if n.get("id") == parent_id), None)
-    if not parent:
-        return None
-    far_sibs = [
-        n for n in nodes
-        if n.get("parent") == parent_id and (n.get("lineage") or {}).get("far_framing_domain")
-    ]
-    if len(far_sibs) < 2:
-        return None
-    terminal = {"promoted", "pruned", "blocked", "failed"}
-    if not all(s.get("status") in terminal for s in far_sibs):
-        return None  # wait until every far sibling finishes
-    synth_id = f"{parent_id}_synth"
-    if any(n.get("id") == synth_id for n in nodes):
-        return None  # already minted (idempotent)
-    synth = _build_synthesis_node(parent, far_sibs)
-    if synth is None:
-        return None
-    add_child_nodes(state, parent_id, [synth], reason="ADR 0009 synthesis node")
-    return synth["id"]
 
 
 def handle_submit_construct_adversary_report(args: dict[str, Any]) -> dict[str, Any]:
@@ -2939,38 +2649,16 @@ def handle_submit_professor_decision(
                     state, node_id, children,
                     reason="mcp professor follow-ups",
                 )
-        # ADR 0009 (B1): forced distant-transfer successors — deterministic
-        # top-k D_i over the pinned frozen taxonomy. Pushes search out of the
-        # home-manifold patchwork basin that the gates (A1) now reliably kill.
-        created_child_ids = created_child_ids + _maybe_mint_far_framing(
-            tid, state, node, forbid=False,
-        )
     elif transition == "needs_child_branch":
         transition_node(
             state, node_id, "needs_child_branch",
             event="mcp_branch", reason="mcp accepted child branch",
-        )
-        # forbid-the-familiar (ADR 0009): a negatively-resolved node's far-framing
-        # successors may not reuse the failed approach.
-        created_child_ids = created_child_ids + _maybe_mint_far_framing(
-            tid, state, node, forbid=True,
         )
     elif transition == "pruned":
         transition_node(
             state, node_id, "pruned",
             event="mcp_prune", reason="mcp accepted prune",
         )
-
-    # ADR 0009 (B2): a far-framing node just terminated — if ALL its far-framing
-    # siblings are now done, mint the synthesis node that recombines their
-    # partial mappings. Additive; never breaks the decision flow.
-    if (node.get("lineage") or {}).get("far_framing_domain"):
-        try:
-            synth_id = _maybe_mint_synthesis(tid, state, node)
-            if synth_id:
-                created_child_ids = created_child_ids + [synth_id]
-        except Exception:  # noqa: BLE001
-            pass
 
     # PR4: Failure memory auto-generation. When a node ends in a state the
     # rest of the harness considers a learnable failure (pruned, with an
@@ -5381,10 +5069,6 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_compute_falsifier_result(args)
             elif name == "pin_frozen_question":
                 result = handle_pin_frozen_question(args)
-            elif name == "pin_domain_taxonomy":
-                result = handle_pin_domain_taxonomy(args)
-            elif name == "pin_atlas_version":
-                result = handle_pin_atlas_version(args)
             elif name == "submit_construct_adversary_report":
                 result = handle_submit_construct_adversary_report(args)
             elif name == "design_initial_claim_contract":

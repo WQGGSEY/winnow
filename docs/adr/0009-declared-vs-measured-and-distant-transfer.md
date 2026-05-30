@@ -1,6 +1,6 @@
 # ADR 0009 — Declared-vs-measured honesty + distant-transfer novelty
 
-- **Status**: Accepted
+- **Status**: Accepted for the **declared-vs-measured / A-series** honesty (in force). The **distant-transfer / far-framing (B-series)** — operator taxonomy, far-framing successors, synthesis nodes — is **SUPERSEDED by ADR 0011 and removed**; see 0011 for the conclusive `honest_failure` that retired it.
 - **Date**: 2026-05-29
 - **Extends**: ADR 0006 (external-falsifier gate), ADR 0007 (premature
   termination / depth gate), ADR 0008 (two-axis closeness / verdict-strength).

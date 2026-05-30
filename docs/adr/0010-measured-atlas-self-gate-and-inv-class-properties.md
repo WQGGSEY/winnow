@@ -1,6 +1,6 @@
 # ADR 0010 — Measured atlas, its self-gate, and INV-class-property acceptance
 
-- **Status**: Accepted (TRACK 2 honesty-hardening + atlas pin shipped; offline atlas build + Sprint-2 integration pending)
+- **Status**: SUPERSEDED by ADR 0011 — **ABANDONED**. The offline atlas build + conclusive calibration read returned `honest_failure` (behavioral co-deployment did not out-separate the topical baseline by the pre-registered δ); the atlas and all its byproducts were removed. Retained here only as the historical design and the conclusive negative result.
 - **Date**: 2026-05-29
 - **Extends**: ADR 0009 (declared→measured; far-framing/synthesis on an operator-curated taxonomy). Replaces the taxonomy's *hand-written* distances and *stated* native domain with a *measured* atlas + *measured* projection, and moves acceptance from per-instance tests to INV class-property tests.
 - **Relates to**: `research_harness/atlas/` (`validate.py` self-gate, `pin.py`), `domain_atlas` / `domain_taxonomy` / `falsifier_result` / `frozen_question` schemas, `research_harness/falsifier.py` (+`falsifier_probe.py`), `research_harness/domain_taxonomy.py`, `research_harness/mcp_server.py`, `research_harness/thread_supervisor.py`, `settings.json` (`persona_enforcement.far_framing`), `pyproject.toml` (`atlas-builder` extra).
