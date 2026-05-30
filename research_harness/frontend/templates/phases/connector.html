@@ -75,8 +75,8 @@
           <tbody>
             {% for c in sess.claims %}
               <tr>
-                <td><code>{{ c.field.code }}</code> {{ c.field.name }}</td>
-                <td>{{ c.claim_contract.claim_under_test|truncate_chars(160) }}</td>
+                <td class="claim-field-cell"><code>{{ c.field.code }}</code> {{ c.field.name }}</td>
+                <td class="claim-on-p">{{ c.claim_contract.claim_under_test }}</td>
                 <td>{{ c.method_num_papers }}</td>
               </tr>
             {% endfor %}

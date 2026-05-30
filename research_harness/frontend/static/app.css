@@ -887,3 +887,13 @@ code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-
 .connector-field .cok { color: #1f8f4e; font-weight: 600; }
 .connector-field .cwarn { color: #b3541e; }
 @keyframes cfade { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+/* Far-framed claims table: show the FULL claim_under_test (no truncation),
+   wrapped + readable. The field column stays compact. */
+.papers-table td.claim-on-p {
+  line-height: 1.55;
+  min-width: 280px;
+  white-space: normal;
+  word-break: break-word;
+}
+.papers-table td.claim-field-cell { white-space: nowrap; }
