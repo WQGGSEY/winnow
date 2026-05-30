@@ -910,6 +910,25 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "select_strongest_survivor",
+        "description": (
+            f"{PROFESSOR_CONTRACT}\n\n"
+            "ADR 0012 forest terminal: of the connector forest's gate-survivor roots "
+            "(those with a promoted terminal node), select the SINGLE strongest-earned "
+            "one by verdict_strength (ADR 0008 ladder) then investigation_depth. Reads "
+            "each survivor root's per-root attestation; returns 'incomplete' if any "
+            "survivor still lacks its per-root terminal (run it first), 'honest_failure' "
+            "if there are no survivors, else 'ok' with the winner to render. There is "
+            "ONE output — other survivors are search by-products. (Single-root threads "
+            "use the legacy terminal, not this tool.)"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id"],
+            "properties": {"thread_id": {"type": "string"}},
+        },
+    },
+    {
         "name": "enqueue_operator_prompt",
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
@@ -3533,6 +3552,71 @@ def _investigation_depth(tid: str) -> dict[str, Any]:
     }
 
 
+def _subtree_node_ids(state: dict[str, Any], root_id: str) -> set[str]:
+    """All node ids in root_id's subtree (root + descendants via parent links)."""
+    nodes = state.get("nodes") or []
+    children: dict[Any, list[str]] = {}
+    for n in nodes:
+        children.setdefault(n.get("parent"), []).append(n.get("id"))
+    out: set[str] = set()
+    stack = [root_id]
+    while stack:
+        nid = stack.pop()
+        if nid in out:
+            continue
+        out.add(nid)
+        stack.extend(c for c in children.get(nid, []) if c)
+    return out
+
+
+def _investigation_depth_for_root(tid: str, root_id: str) -> dict[str, Any]:
+    """ADR 0012 forest tie-break: per-root subtree depth. Mirrors
+    _investigation_depth but restricted to root_id's subtree; archived prior
+    attempts are thread-level and do not apply per-root (excluded)."""
+    state = _read_json(_thread_dir(tid) / "production" / "tree" / "search_state.json") or {}
+    all_nodes = state.get("nodes") or []
+    subtree = _subtree_node_ids(state, root_id)
+    nodes = [n for n in all_nodes if n.get("id") in subtree]
+    rnode = next((n for n in all_nodes if n.get("id") == root_id), None)
+    sc = ((rnode or {}).get("claim_contract") or {}).get("deploy_grade_scope")
+    root_scope = sc if sc in _SCOPE_RANK else None
+    ran = [n for n in nodes if n.get("status") in _RAN_STATUSES]
+    narrowing = [n for n in ran if _node_is_narrowing(n, root_scope)]
+    narrowing_ids = {id(n) for n in narrowing}
+    distinct = [n for n in ran if id(n) not in narrowing_ids]
+    killed = [
+        n for n in distinct
+        if _node_final_verdict(tid, n.get("id", "")) == "contradicted"
+    ]
+    return {
+        "distinct_attempts": len(distinct),
+        "tree_distinct_attempts": len(distinct),
+        "narrowing_pivots": len(narrowing),
+        "killed_hypotheses": len(killed),
+        "archived_attempts": 0,
+    }
+
+
+def _forest_survivor_roots(tid: str) -> list[dict[str, Any]]:
+    """ADR 0012: forest roots (parent=None) with a promoted node in their
+    subtree. Returns [{root_id, promoted_node_id}] — the root itself if
+    promoted, else the first promoted descendant (search_state order)."""
+    state = _read_json(_thread_dir(tid) / "production" / "tree" / "search_state.json") or {}
+    nodes = state.get("nodes") or []
+    promoted_list = state.get("promoted_node_ids") or []
+    promoted_set = set(promoted_list)
+    roots = [n.get("id") for n in nodes if n.get("parent") in (None, "")]
+    survivors: list[dict[str, Any]] = []
+    for rid in roots:
+        sub = _subtree_node_ids(state, rid)
+        prom_in = [pid for pid in promoted_list if pid in sub]
+        if not prom_in:
+            continue
+        pnode = rid if rid in promoted_set else prom_in[0]
+        survivors.append({"root_id": rid, "promoted_node_id": pnode})
+    return survivors
+
+
 # --- ADR 0007 lever 0: adversarial-dominant aggregation ----------------- #
 
 _MIN_DEFEAT_REBUTTAL_CHARS = 40
@@ -4049,6 +4133,82 @@ def handle_seed_forest_from_connector(args: dict[str, Any]) -> dict[str, Any]:
             "Call get_next_admissible_node — the forest's N roots + their drafts are in "
             "the frontier. The existing per-node gate runs every tree; at the end, "
             "select_strongest_survivor picks the single earned output (per-survivor terminal)."
+        ),
+    }
+
+
+def handle_select_strongest_survivor(args: dict[str, Any]) -> dict[str, Any]:
+    """ADR 0012 forest terminal: pick the single strongest-earned survivor.
+
+    Reads each survivor root's per-root attestation (verdict_strength) + per-root
+    investigation_depth, ranks via connector.select.select_strongest, records
+    forest_selection.json, and returns the winner (the production then renders
+    the winner's paper). 0 survivors -> honest_failure. If a survivor lacks its
+    per-root attestation, returns incomplete (run that root's terminal first).
+    The single-root legacy path is untouched — this is only for the connector
+    forest (>1 coexisting root).
+    """
+    from research_harness.connector.select import select_strongest
+
+    tid = args["thread_id"]
+    survivors = _forest_survivor_roots(tid)
+    if not survivors:
+        return {
+            "status": "honest_failure",
+            "reason": "no forest survivor reached a promoted terminal",
+            "next_step": "render_honest_failure_paper — no claim earned standing.",
+        }
+
+    candidates: list[dict[str, Any]] = []
+    pending: list[str] = []
+    for s in survivors:
+        rid = s["root_id"]
+        att = _read_json(_rebuttal_dir(tid) / rid / "user_goal_attestation.json")
+        if not att:
+            pending.append(rid)
+            continue
+        depth = _investigation_depth_for_root(tid, rid)
+        candidates.append({
+            "node_id": rid,
+            "promoted_node_id": s["promoted_node_id"],
+            "verdict_strength": att.get("verdict_strength"),
+            "distinct_attempts": depth["distinct_attempts"],
+        })
+
+    if pending:
+        return {
+            "status": "incomplete",
+            "pending_roots": pending,
+            "reason": "these survivor roots have no per-root attestation yet",
+            "next_step": (
+                "Run the per-survivor terminal (prepare_rebuttal_packet -> ... -> "
+                "submit_professor_user_goal_attestation with promoted_node_id=<root>) "
+                "for each pending root, then call select_strongest_survivor again."
+            ),
+        }
+
+    result = select_strongest(candidates)
+    winner = result["winner"]
+    selection = {
+        "selected_root_id": winner["node_id"] if winner else None,
+        "selected_promoted_node_id": winner["promoted_node_id"] if winner else None,
+        "verdict_strength": winner["verdict_strength"] if winner else None,
+        "ranking": result["ranking"],
+        "num_survivors": len(survivors),
+    }
+    sel_path = _thread_dir(tid) / "production" / "tree" / "forest_selection.json"
+    sel_path.parent.mkdir(parents=True, exist_ok=True)
+    sel_path.write_text(json.dumps(selection, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {
+        "status": "ok",
+        "selected_root_id": selection["selected_root_id"],
+        "selected_promoted_node_id": selection["selected_promoted_node_id"],
+        "verdict_strength": selection["verdict_strength"],
+        "ranking": selection["ranking"],
+        "next_step": (
+            "render_final_paper for the winner (promoted_node_id="
+            f"{selection['selected_promoted_node_id']}). The other survivors are "
+            "search by-products — there is ONE output."
         ),
     }
 
@@ -5193,6 +5353,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_seed_alternative_root_formulation(args)
             elif name == "seed_forest_from_connector":
                 result = handle_seed_forest_from_connector(args)
+            elif name == "select_strongest_survivor":
+                result = handle_select_strongest_survivor(args)
             elif name == "enqueue_operator_prompt":
                 result = handle_enqueue_operator_prompt(args)
             elif name == "get_pending_operator_response":
