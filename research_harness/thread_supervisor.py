@@ -709,6 +709,38 @@ def _kill_process_tree(proc, sig: int) -> None:
             pass
 
 
+def _experiment_running(state_path: Path) -> "bool | None":
+    """Is a node experiment currently running? Reads the production search_state.
+    Returns True (a node has status 'running'), False (readable, none running),
+    or None (state unreadable — caller treats as 'can't tell' and defers)."""
+    try:
+        if not state_path.exists():
+            return False
+        data = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return any(n.get("status") == "running" for n in (data.get("nodes") or []))
+
+
+def _should_terminate_stall(
+    silent: float,
+    stall_timeout: float,
+    hard_cap: "float | None",
+    experiment_running: "bool | None",
+) -> bool:
+    """Stall-watchdog decision. A synchronous execute_node_experiment blocks
+    claude output for the experiment's whole duration, so a legit long experiment
+    looks identical to a hang. Kill only a TRUE hang (silent past stall_timeout
+    AND no node experiment running), or ANY silence past the hard cap."""
+    if silent <= stall_timeout:
+        return False
+    if hard_cap is not None and silent >= hard_cap:
+        return True
+    if experiment_running is False:   # readable state, no running node = true hang
+        return True
+    return False  # running (True) or unknown (None) -> defer up to the hard cap
+
+
 def spawn_claude_session(
     prompt: str,
     *,
@@ -717,6 +749,8 @@ def spawn_claude_session(
     log_path: Path | None = None,
     active_child_ref: dict | None = None,
     stall_timeout: float = DEFAULT_CLAUDE_STALL_TIMEOUT,
+    state_path: Path | None = None,
+    experiment_hard_cap: float | None = None,
 ) -> int:
     """Run `claude -p <prompt>` (non-interactive) as a managed
     subprocess with stream-json output. Each event (assistant text,
@@ -778,11 +812,36 @@ def spawn_claude_session(
 
     def _watchdog() -> None:
         check = max(1.0, min(15.0, stall_timeout / 4.0))
+        deferred_logged = False
         while not stop_watchdog.wait(timeout=check):
-            if time.time() - last_activity[0] <= stall_timeout:
+            silent = time.time() - last_activity[0]
+            if silent <= stall_timeout:
+                deferred_logged = False
                 continue
-            msg = (f"\n=== watchdog: no output for {stall_timeout:.0f}s — "
-                   f"terminating hung claude (pid={proc.pid}) ===\n")
+            running = _experiment_running(state_path) if state_path is not None else False
+            if not _should_terminate_stall(silent, stall_timeout, experiment_hard_cap, running):
+                # A node experiment is running (execute_node_experiment blocks
+                # claude output for its whole duration) — defer, not a hang.
+                if not deferred_logged:
+                    dmsg = (f"\n=== watchdog: claude silent {silent:.0f}s but a node "
+                            f"experiment is running — deferring kill (hard cap "
+                            f"{experiment_hard_cap:.0f}s) ===\n")
+                    for fh in (log_fh, LOG):
+                        try:
+                            if fh:
+                                fh.write(dmsg)
+                                fh.flush()
+                        except Exception:  # noqa: BLE001
+                            pass
+                    deferred_logged = True
+                continue
+            reason = (
+                "silence exceeded hard cap"
+                if (experiment_hard_cap is not None and silent >= experiment_hard_cap)
+                else f"no output for {stall_timeout:.0f}s and no running experiment"
+            )
+            msg = (f"\n=== watchdog: {reason} ({silent:.0f}s) — "
+                   f"terminating claude (pid={proc.pid}) ===\n")
             for fh in (log_fh, LOG):
                 try:
                     if fh:
@@ -995,6 +1054,21 @@ def watch_thread(
             f"baseline_provenance_count={len(bootstrapped.get('baseline_provenance_available') or [])}",
         )
 
+    # Stall-watchdog inputs: a synchronous execute_node_experiment blocks claude
+    # output for the experiment's whole duration, so the watchdog must not mistake
+    # a legit long experiment for a hang. It defers killing while a node is
+    # 'running', up to a hard cap = longest configured experiment + a margin.
+    state_path = tdir / "production" / "tree" / "search_state.json"
+    try:
+        from research_harness.config import load_settings as _ls
+        _rt = (_ls(repo).get("runtime", {}).get("runner_timeouts", {}) or {})
+        _max_rt = max((float(v) for v in _rt.values()), default=DEFAULT_CLAUDE_STALL_TIMEOUT)
+    except Exception:  # noqa: BLE001
+        _max_rt = DEFAULT_CLAUDE_STALL_TIMEOUT
+    experiment_hard_cap = _max_rt + DEFAULT_CLAUDE_STALL_TIMEOUT
+    _log(log_path, f"stall watchdog: stall_timeout={DEFAULT_CLAUDE_STALL_TIMEOUT:.0f}s "
+                   f"experiment_hard_cap={experiment_hard_cap:.0f}s (longest runner_timeout + margin)")
+
     cycle = 0
     rate_limit_backoff = rate_limit_backoff_initial
     rate_limit_armed = False  # toggled after a fast-fail cycle
@@ -1050,6 +1124,8 @@ def watch_thread(
                 boot_delay=boot_delay,
                 log_path=tdir / "claude_subprocess.log",
                 active_child_ref=active_child,
+                state_path=state_path,
+                experiment_hard_cap=experiment_hard_cap,
             )
             spawn_elapsed = time.time() - spawn_started
             _log(
