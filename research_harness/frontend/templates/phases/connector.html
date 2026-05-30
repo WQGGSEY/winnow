@@ -113,6 +113,18 @@
       {% endif %}
     {% endif %}
 
+    {% if thread.current_phase == "connector" %}
+      <button class="btn small"
+              type="button"
+              data-execute-ack
+              data-phase="connector"
+              data-thread-id="{{ thread.thread_id }}"
+              data-endpoint="/api/threads/{{ thread.thread_id }}/connector/retry"
+              data-cost-note="Re-run the domain connector — archives this attempt as connector.attemptN/ and starts fresh from the SAME grilling (no re-grilling). Several live claude calls.">
+        ↻ Re-run domain connector
+      </button>
+    {% endif %}
+
     <details class="raw-json">
       <summary>connector_session.json</summary>
       <pre>{{ sess|pretty_json if sess else "(no session)" }}</pre>

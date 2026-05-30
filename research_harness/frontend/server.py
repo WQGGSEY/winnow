@@ -478,6 +478,10 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
         retryable = (
             index["phase_status"] == "failed"
             or (index["phase_status"] in {"running", "awaiting_input"} and not live)
+            # ADR 0012: the connector is meant to be re-run freely while testing
+            # (re-runs the connector phase only, never grilling). Allow re-run
+            # from a completed state too; the prior attempt is archived.
+            or (phase == "connector" and index["phase_status"] == "complete")
         )
         if not retryable:
             raise HTTPException(
@@ -1234,7 +1238,7 @@ async def _launch_connector(s: AppState, index: dict[str, Any]) -> None:
     async def run_loop():
         try:
             async with s.lock.acquire(thread_id, "connector"):
-                await asyncio.to_thread(
+                outcome = await asyncio.to_thread(
                     run_domain_connector,
                     s.repo_root,
                     grilling_session,
@@ -1242,8 +1246,18 @@ async def _launch_connector(s: AppState, index: dict[str, Any]) -> None:
                     billing_ack=True,
                     execution_ack=True,
                 )
-            threads.update_thread(s.repo_root, thread_id, phase_status="complete")
-            await session.emit({"type": "phase_complete"})
+            status = (outcome.session or {}).get("status")
+            if status in {"aborted", "blocked_by_gate", "blocked_by_execution_ack"}:
+                # run_domain_connector RETURNS (does not raise) on these, so mark
+                # the phase failed here — otherwise an aborted run (e.g. a 401)
+                # would look "complete" and hide the Retry button.
+                threads.update_thread(s.repo_root, thread_id, phase_status="failed")
+                await session.emit(
+                    {"type": "phase_failed", "error": (outcome.session or {}).get("error")}
+                )
+            else:
+                threads.update_thread(s.repo_root, thread_id, phase_status="complete")
+                await session.emit({"type": "phase_complete"})
         except Exception as exc:  # noqa: BLE001
             LOG.exception("connector failed for %s", thread_id)
             threads.update_thread(s.repo_root, thread_id, phase_status="failed")

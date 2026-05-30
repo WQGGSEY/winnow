@@ -400,6 +400,40 @@ class ServerSmokeTests(unittest.TestCase):
         # Launcher was invoked
         self.assertEqual(called["thread_id"], t["thread_id"])
 
+    def test_connector_retry_allowed_when_complete(self) -> None:
+        # ADR 0012: the connector is re-runnable from a COMPLETE state (testing
+        # iteration) — archives the attempt, re-runs the connector only (the
+        # existing grilling is untouched). Other phases keep the strict guard.
+        t = threads.create_thread(self.repo, user_goal="connector retry")
+        thread_dir = threads.threads_root(self.repo) / t["thread_id"]
+        connector = thread_dir / "connector"
+        connector.mkdir()
+        (connector / "connector_session.json").write_text('{"status":"aborted","claims":[]}')
+        grilling = thread_dir / "grilling"
+        grilling.mkdir()
+        (grilling / "grilling_session.json").write_text("{}")
+        threads.update_thread(
+            self.repo, t["thread_id"],
+            current_phase="connector", phase_status="complete",
+        )
+        from research_harness.frontend import server as srv
+
+        called: dict = {}
+
+        async def fake_launch_connector(s, index):
+            called["thread_id"] = index["thread_id"]
+
+        original = srv._launch_connector
+        srv._launch_connector = fake_launch_connector
+        try:
+            resp = self.client.post(f"/api/threads/{t['thread_id']}/connector/retry")
+        finally:
+            srv._launch_connector = original
+        self.assertEqual(resp.status_code, 200)  # complete is retryable for connector
+        self.assertFalse(connector.exists())
+        self.assertTrue((thread_dir / "connector.attempt1").exists())
+        self.assertEqual(called["thread_id"], t["thread_id"])
+
     def test_retry_refuses_unknown_phase(self) -> None:
         t = threads.create_thread(self.repo, user_goal="x")
         threads.update_thread(
