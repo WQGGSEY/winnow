@@ -244,8 +244,8 @@ def run_domain_connector(
             )
             _add_usage(reading["usage"])
             emit({"type": "reading_done", "code": field_meta["code"],
-                  "field_method": reading.get("field_method"),
-                  "emergent_claim": reading.get("emergent_claim")})
+                  "field_mechanism": reading.get("field_mechanism"),
+                  "predicted_behavior": reading.get("predicted_behavior")})
             p1 = prune1_check(
                 abstraction_text, reading, model=model, max_budget=max_budget,
                 claude_path=detected_claude, runner=runner, timeout_seconds=timeout_seconds,
@@ -257,7 +257,7 @@ def run_domain_connector(
                   "passed": p1["passed"], "num_pairs": p1["num_pairs"]})
             if p1["passed"]:
                 material = research_far_method(
-                    fld, reading["field_method"], http_fetcher=http_fetcher
+                    fld, reading["field_mechanism"], http_fetcher=http_fetcher
                 )
                 emit({"type": "market_done", "code": field_meta["code"],
                       "num_papers": material["num_papers"]})

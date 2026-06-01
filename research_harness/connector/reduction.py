@@ -26,23 +26,36 @@ from typing import Any
 from research_harness.connector.claude_call import CommandRunner, call_claude_json
 
 _SYSTEM_PROMPT = (
-    "You are a construction worker translating a far-domain method onto a "
-    "specific problem P. You are given: P (in its own domain); a reading of P's "
-    "abstract structural skeleton through a FAR field, with the field's method "
-    "and a correspondence skeleton; and prior work on that far method. Build a "
-    "claim_contract FOR P by faithfully translating the far method onto P:\n"
-    "(1) correspondence_table: map each part of the far method to P's actual "
-    "observable / quantity / mechanism;\n"
-    "(2) claim_under_test: stated in P's OWN terms — what, on P, this far method "
-    "claims;\n"
+    "You are a construction worker translating a far-domain MECHANISM onto a "
+    "specific problem P. You are given: P (in its own domain); and a reading of "
+    "P's abstract structural skeleton through a FAR field that named a generative "
+    "MECHANISM (a causal process) and the concrete BEHAVIOR that mechanism "
+    "predicts. Build a claim_contract FOR P by faithfully translating the far "
+    "MECHANISM onto P:\n"
+    "(1) correspondence_table: map each part of the far mechanism to P's actual "
+    "observable / process / quantity in P's domain;\n"
+    "(2) claim_under_test: stated in P's OWN terms — name the CONCRETE causal "
+    "mechanism in P's domain (a specific structural cause: a process, or a "
+    "behavior of the system's parts) analogous to the far mechanism, the "
+    "observable BEHAVIOR it predicts, and a concrete way to ACT on / exploit that "
+    "behavior. The claim MUST name a CAUSE and an action that engages it. It MUST "
+    "NOT be a statistical test, an estimator, a validation procedure, or any "
+    "statement of the form 'the effect is genuine if/only-if [some test] passes' "
+    "— that is a validation criterion, not a mechanism claim, and is forbidden "
+    "here;\n"
     "(3) mandatory_baselines: exactly three, framed for P — a current_best_known, "
     "a naive, and a random_or_null baseline;\n"
     "(4) success_criteria: concrete, on P;\n"
-    "(5) disproof_conditions: reachable conditions that would refute it on P.\n"
-    "PRESERVE the far-ness — do NOT flatten the method into a generic P approach. "
-    "If the far method genuinely cannot be mapped onto P, set reducible=false and "
+    "(5) disproof_conditions: reachable conditions that would refute it on P, "
+    "INCLUDING a condition that the NAMED mechanism (not a coincidental "
+    "correlation) is the operative cause — e.g. the predicted behavior fails to "
+    "appear, or the effect survives when the mechanism's driver is "
+    "shuffled/removed.\n"
+    "PRESERVE the far-ness — do NOT flatten the mechanism into a generic P "
+    "approach, and do NOT degenerate into a validation-criterion claim. If the "
+    "far mechanism genuinely cannot be mapped onto P, set reducible=false and "
     "explain. Output exactly one JSON object and nothing else: "
-    '{"reducible": <bool>, "correspondence_table": [{"method_part": "...", '
+    '{"reducible": <bool>, "correspondence_table": [{"mechanism_part": "...", '
     '"p_observable": "..."}, ...], "claim_under_test": "...", '
     '"mandatory_baselines": ["...", "...", "..."], "success_criteria": ["..."], '
     '"disproof_conditions": ["..."], "far_ness_note": "<how the far-ness is '
@@ -65,8 +78,8 @@ def _build_user_prompt(
         f"assigned field: {reading.get('field', {}).get('name')} "
         f"({reading.get('field', {}).get('code')})",
         f"reading: {reading.get('reading', '')}",
-        f"field_method: {reading.get('field_method', '')}",
-        f"emergent_claim: {reading.get('emergent_claim', '')}",
+        f"field_mechanism: {reading.get('field_mechanism', '')}",
+        f"predicted_behavior: {reading.get('predicted_behavior', '')}",
         "",
         "## Field↔skeleton correspondence (from triage)",
     ]

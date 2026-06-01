@@ -18,14 +18,20 @@ _SYSTEM_PROMPT = (
     "You read a single vague structural skeleton through the lens of ONE "
     "assigned field. You are given (1) an abstract, deliberately-vague "
     "structural skeleton and (2) an assigned field. Read the skeleton AS IF it "
-    "were a structure or phenomenon studied in that field: what in the assigned "
-    "field has this shape? Name the field's natural method or tool for working "
-    "with such a structure, and state the research claim that method would make "
-    "about it. Do NOT water it down toward generic language — commit to the "
-    "field's specific machinery. Output exactly one JSON object and nothing "
-    'else: {"reading": "<how the skeleton reads in this field, 2-4 sentences>", '
-    '"field_method": "<the field\'s specific method or tool>", '
-    '"emergent_claim": "<the claim that method would make about the structure>"}. '
+    "were a SYSTEM or PHENOMENON studied in that field: what PROCESS or MECHANISM "
+    "studied in this field would GENERATE, DRIVE, or EXPLAIN a structure of this "
+    "shape — the causal 'why the system behaves that way'? Name that mechanism "
+    "concretely (a generative causal process the field actually studies), and "
+    "state the concrete, observable BEHAVIOR that mechanism predicts such a "
+    "system would exhibit. This is NOT a request for a method, tool, test, "
+    "estimator, metric, or analysis technique — do NOT answer with how to measure, "
+    "detect, or validate anything; answer ONLY with the underlying mechanism that "
+    "produces the structure and what it makes the system DO. Commit to the field's "
+    "specific causal machinery; do NOT water it down toward generic language. "
+    "Output exactly one JSON object and nothing else: "
+    '{"reading": "<how the skeleton reads as a phenomenon in this field, 2-4 sentences>", '
+    '"field_mechanism": "<the field\'s specific generative process/mechanism>", '
+    '"predicted_behavior": "<the concrete behavior that mechanism predicts the system exhibits>"}. '
     "No prose, no code fences."
 )
 
@@ -57,7 +63,7 @@ def generate_reading(
 ) -> dict[str, Any]:
     """Force-read the abstraction through ``field``. P-blind by signature.
 
-    Returns ``{field, reading, field_method, emergent_claim, usage}``.
+    Returns ``{field, reading, field_mechanism, predicted_behavior, usage}``.
     """
     parsed, usage = call_claude_json(
         system_prompt=_SYSTEM_PROMPT,
@@ -75,7 +81,7 @@ def generate_reading(
     return {
         "field": {"code": field.get("code"), "name": field.get("name"), "archive": field.get("archive")},
         "reading": reading,
-        "field_method": str(parsed.get("field_method") or "").strip(),
-        "emergent_claim": str(parsed.get("emergent_claim") or "").strip(),
+        "field_mechanism": str(parsed.get("field_mechanism") or "").strip(),
+        "predicted_behavior": str(parsed.get("predicted_behavior") or "").strip(),
         "usage": usage,
     }
