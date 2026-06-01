@@ -25,6 +25,7 @@ just consumes them.
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -903,6 +904,14 @@ def _coerce_experiment_plan(
     )
     entry = structured.get("entrypoint") or {}
     command = entry.get("command") or ["python"]
+    # Force the harness's own interpreter (sys.executable = the venv python the
+    # MCP server runs under) so experiments can import packages installed in the
+    # harness env via a .pth (e.g. an operator backtester). A bare "python" /
+    # "python3" would otherwise resolve to a system interpreter that lacks them.
+    if command and command[0].rsplit("/", 1)[-1] in {
+        "python", "python3", sys.executable.rsplit("/", 1)[-1]
+    }:
+        command = [sys.executable, *command[1:]]
     args = entry.get("args") or ["src/experiment.py"]
     resources = structured.get("resources") or {}
     timeout_sec = int(resources.get("timeout_sec") or 60)
