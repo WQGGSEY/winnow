@@ -741,6 +741,39 @@ def _should_terminate_stall(
     return False  # running (True) or unknown (None) -> defer up to the hard cap
 
 
+def _experiment_env_from_mcp_registration() -> dict[str, str]:
+    """Return the research_harness MCP server's declared ``env`` (e.g.
+    ``COIN_DATA_DIR``) from ``~/.claude.json``.
+
+    This is the ONE source of truth for the experiment environment: the MCP
+    server hands these vars to every experiment subprocess (registration ``-e``),
+    so the supervisor injects the SAME set into the spawned ``claude`` shell — the
+    Professor's diagnostic shell then matches the runner and cannot drift from it.
+    Best-effort: returns {} if the config is missing/unreadable (PATH parity in
+    spawn_claude_session still applies). General: whatever the operator declared.
+    """
+    try:
+        cfg = json.loads((Path.home() / ".claude.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    projects = cfg.get("projects")
+    if not isinstance(projects, dict):
+        return {}
+    repo_root = str(Path(__file__).resolve().parents[1])
+    # Prefer this repo's project entry; fall back to any project that registers
+    # research_harness (a single-machine harness has exactly one).
+    ordered = [projects.get(repo_root)] + [
+        v for k, v in projects.items() if k != repo_root
+    ]
+    for proj in ordered:
+        if not isinstance(proj, dict):
+            continue
+        srv = (proj.get("mcpServers") or {}).get("research_harness")
+        if isinstance(srv, dict) and isinstance(srv.get("env"), dict):
+            return {str(k): str(v) for k, v in srv["env"].items()}
+    return {}
+
+
 def spawn_claude_session(
     prompt: str,
     *,
@@ -784,6 +817,24 @@ def spawn_claude_session(
         "--verbose",  # stream-json requires --verbose in claude v2+
     ]
     log_fh = log_path.open("a", encoding="utf-8") if log_path else None
+
+    # Match the Professor's shell environment to the EXPERIMENT RUNNER's, so its
+    # own hand-checks (`python -c "import backtester"`, `echo $COIN_DATA_DIR`, …)
+    # report what the runner will actually see. Otherwise the Professor tests in a
+    # DIFFERENT environment (system python, no experiment env), mis-diagnoses the
+    # real-data path as unreachable, and escapes to synthetic data.
+    #   (1) Harness venv first on PATH: the runner executes experiments with
+    #       sys.executable (the venv python — see professor._coerce_experiment_plan),
+    #       so the Professor's `python`/`python3` must resolve to that interpreter.
+    #   (2) Merge the research_harness MCP server's declared env (COIN_DATA_DIR, …)
+    #       — the SAME values the runner inherits, read from one source so the two
+    #       environments cannot drift.
+    child_env = os.environ.copy()
+    venv_bin = Path(__file__).resolve().parents[1] / "venv" / "bin"
+    if venv_bin.is_dir():
+        child_env["PATH"] = f"{venv_bin}{os.pathsep}{child_env.get('PATH', '')}"
+    child_env.update(_experiment_env_from_mcp_registration())
+
     proc = _subprocess.Popen(
         cmd,
         stdin=_subprocess.DEVNULL,
@@ -794,6 +845,7 @@ def spawn_claude_session(
         close_fds=True,
         start_new_session=True,  # own process group so the watchdog can tear
                                  # down claude + its MCP-server children together
+        env=child_env,
     )
     if active_child_ref is not None:
         active_child_ref["pid"] = proc.pid
