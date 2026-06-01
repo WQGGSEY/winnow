@@ -383,11 +383,11 @@ TOOL_DEFINITIONS = [
             "the per-node dir. REUSE existing shared modules whenever they "
             "suffice — call get_research_state to see what's already there. "
             "The harness writes the files to disk; this tool does not run "
-            "the experiment (that's execute_node_experiment). If the "
-            "feasibility_envelope declares execution_constraints.required_modules, "
-            "EVERY experiment MUST import those modules (a deterministic gate "
-            "rejects source that does not) — call get_research_state to read them "
-            "and use them rather than hand-rolling a substitute."
+            "the experiment (that's execute_node_experiment). This thread may "
+            "mandate execution_constraints.required_modules (set in the "
+            "feasibility_envelope or as a thread setting); when it does, EVERY "
+            "experiment MUST import those modules or this tool rejects the source "
+            "— import and use them rather than hand-rolling a substitute."
         ),
         "inputSchema": {
             "type": "object",
@@ -2202,8 +2202,14 @@ def handle_design_experiment_template(args: dict[str, Any]) -> dict[str, Any]:
     # submitted experiment source MUST import each one. A cheap boundary string-scan
     # so the success-seeking Professor cannot hand-roll around an operator-registered
     # evaluator/tool (general: the modules are whatever the operator declared).
+    from research_harness.settings_scoped import resolve_for_thread as _rft
+    # Thread-scoped setting (frontend-editable, ADR 0005) ∪ envelope (MCP-set).
+    _required: list[str] = list(
+        _rft(_repo_root(), tid).get_dotted("execution_constraints.required_modules", []) or []
+    )
     _env = _read_json(_thread_dir(tid) / "production" / "feasibility_envelope.json") or {}
-    _required = (_env.get("execution_constraints") or {}).get("required_modules") or []
+    _required += list((_env.get("execution_constraints") or {}).get("required_modules") or [])
+    _required = list(dict.fromkeys(m for m in _required if isinstance(m, str) and m.strip()))
     if _required:
         import re as _re
         _blob = "\n".join(

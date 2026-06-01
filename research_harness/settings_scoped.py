@@ -148,6 +148,19 @@ FIELD_REGISTRY: tuple[FieldSpec, ...] = (
         custom_widget="data_adapters_editor",
         description="Real-data adapters installed on this machine.",
     ),
+    # ---- Thread-only (per-thread execution constraint) ----
+    FieldSpec(
+        path="execution_constraints.required_modules",
+        writable_at=("thread",),
+        type="list",
+        default=[],
+        description=(
+            "Python modules every experiment in THIS thread must import "
+            "(deterministic gate in design_experiment_template). Per-thread and "
+            "task-specific: ['backtester'] for a quant thread, ['torch'] for an "
+            "ML thread. Empty = the Professor authors the experiment freely."
+        ),
+    ),
     # ---- Project default + operator override ----
     FieldSpec(
         path="runtime.default_backend",
