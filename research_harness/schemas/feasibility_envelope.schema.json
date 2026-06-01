@@ -142,7 +142,19 @@
       "enum": ["goal_achieved", "unverified_screen"],
       "description": "Harness-STAMPED at submit_feasibility_envelope time from external_falsifier (NOT operator-writable). 'goal_achieved' only when a falsifier with kind!=none is registered; otherwise 'unverified_screen'. The attestation gate refuses achieved=true when this is 'unverified_screen'."
     },
-    "notes": { "type": "string" }
+    "notes": { "type": "string" },
+    "execution_constraints": {
+      "type": "object",
+      "description": "Operator-declared deterministic constraints the harness enforces at experiment-design time (design_experiment_template). General across domains — the operator names whatever tooling a thread must use; the harness only checks, it never authors the experiment.",
+      "properties": {
+        "required_modules": {
+          "type": "array",
+          "description": "Python modules every experiment in this thread MUST import. A cheap deterministic gate (string scan at submission), NOT an LLM critic: e.g. ['backtester'] forces the operator's registered evaluator over a hand-rolled substitute; ['torch'] for an ML thread. design_experiment_template rejects submitted source that does not import each one.",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

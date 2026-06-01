@@ -383,7 +383,11 @@ TOOL_DEFINITIONS = [
             "the per-node dir. REUSE existing shared modules whenever they "
             "suffice — call get_research_state to see what's already there. "
             "The harness writes the files to disk; this tool does not run "
-            "the experiment (that's execute_node_experiment)."
+            "the experiment (that's execute_node_experiment). If the "
+            "feasibility_envelope declares execution_constraints.required_modules, "
+            "EVERY experiment MUST import those modules (a deterministic gate "
+            "rejects source that does not) — call get_research_state to read them "
+            "and use them rather than hand-rolling a substitute."
         ),
         "inputSchema": {
             "type": "object",
@@ -2192,6 +2196,38 @@ def handle_design_experiment_template(args: dict[str, Any]) -> dict[str, Any]:
     source_files = plan_meta.get("source_files") or []
     if not isinstance(source_files, list):
         return {"status": "rejected", "reason": "plan_metadata.source_files must be a list"}
+
+    # (가) Operator-mandated module gate — deterministic, NOT an LLM critic. If the
+    # feasibility_envelope declares execution_constraints.required_modules, the
+    # submitted experiment source MUST import each one. A cheap boundary string-scan
+    # so the success-seeking Professor cannot hand-roll around an operator-registered
+    # evaluator/tool (general: the modules are whatever the operator declared).
+    _env = _read_json(_thread_dir(tid) / "production" / "feasibility_envelope.json") or {}
+    _required = (_env.get("execution_constraints") or {}).get("required_modules") or []
+    if _required:
+        import re as _re
+        _blob = "\n".join(
+            str(sf.get("content") or "") for sf in source_files if isinstance(sf, dict)
+        )
+        _missing = [
+            m for m in _required
+            if isinstance(m, str) and m.strip()
+            and not _re.search(
+                r"(?:^|\n)[ \t]*(?:import|from)[ \t]+" + _re.escape(m.strip()) + r"(?:\b|\.)",
+                _blob,
+            )
+        ]
+        if _missing:
+            return {
+                "status": "rejected",
+                "reason": (
+                    "feasibility_envelope.execution_constraints.required_modules "
+                    f"mandates {_required}, but the submitted experiment source does "
+                    f"not import {_missing}. The operator registered these as this "
+                    "thread's mandatory evaluation/tooling (importable in the harness "
+                    "env). Import and use them — do NOT hand-roll a substitute."
+                ),
+            }
 
     tree_dir = _thread_dir(tid) / "production" / "tree"
     template_root = _professor_template_root(tree_dir)
