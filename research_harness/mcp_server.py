@@ -384,10 +384,12 @@ TOOL_DEFINITIONS = [
             "suffice — call get_research_state to see what's already there. "
             "The harness writes the files to disk; this tool does not run "
             "the experiment (that's execute_node_experiment). This thread may "
-            "mandate execution_constraints.required_modules (set in the "
-            "feasibility_envelope or as a thread setting); when it does, EVERY "
-            "experiment MUST import those modules or this tool rejects the source "
-            "— import and use them rather than hand-rolling a substitute."
+            "mandate execution_constraints.required_modules and/or "
+            "required_data_sources (set in the feasibility_envelope or as a "
+            "thread setting); when it does, EVERY experiment MUST import those "
+            "modules AND reference those data sources, or this tool rejects the "
+            "source — use the registered tooling and REAL data rather than "
+            "hand-rolling a substitute or self-authoring synthetic data."
         ),
         "inputSchema": {
             "type": "object",
@@ -2232,6 +2234,43 @@ def handle_design_experiment_template(args: dict[str, Any]) -> dict[str, Any]:
                     f"not import {_missing}. The operator registered these as this "
                     "thread's mandatory evaluation/tooling (importable in the harness "
                     "env). Import and use them — do NOT hand-roll a substitute."
+                ),
+            }
+
+    # Operator-mandated DATA gate — the sibling of required_modules, same
+    # deterministic boundary scan. If the thread declares
+    # execution_constraints.required_data_sources, the submitted source MUST
+    # reference each declared marker (the registered real-data adapter id / path /
+    # loader symbol) so the success-seeking Professor cannot quietly evaluate on
+    # self-authored synthetic data instead of the registered REAL data. NOT an
+    # import pattern (data is referenced by id/path, not imported): a plain
+    # presence scan. General: the markers are whatever the operator declared.
+    _required_data: list[str] = list(
+        _rft(_repo_root(), tid).get_dotted(
+            "execution_constraints.required_data_sources", []
+        ) or []
+    )
+    _required_data += list(
+        (_env.get("execution_constraints") or {}).get("required_data_sources") or []
+    )
+    _required_data = list(
+        dict.fromkeys(d for d in _required_data if isinstance(d, str) and d.strip())
+    )
+    if _required_data:
+        _blob_d = "\n".join(
+            str(sf.get("content") or "") for sf in source_files if isinstance(sf, dict)
+        )
+        _missing_data = [d for d in _required_data if d.strip() not in _blob_d]
+        if _missing_data:
+            return {
+                "status": "rejected",
+                "reason": (
+                    "feasibility_envelope.execution_constraints.required_data_sources "
+                    f"mandates {_required_data}, but the submitted experiment source "
+                    f"does not reference {_missing_data}. The operator registered these "
+                    "as this thread's mandatory REAL data (load it via the harness env, "
+                    "e.g. COIN_DATA_DIR). Reference and evaluate on the registered real "
+                    "data — do NOT substitute self-authored synthetic data."
                 ),
             }
 

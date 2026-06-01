@@ -151,6 +151,11 @@
           "type": "array",
           "description": "Python modules every experiment in this thread MUST import. A cheap deterministic gate (string scan at submission), NOT an LLM critic: e.g. ['backtester'] forces the operator's registered evaluator over a hand-rolled substitute; ['torch'] for an ML thread. design_experiment_template rejects submitted source that does not import each one.",
           "items": { "type": "string", "minLength": 1 }
+        },
+        "required_data_sources": {
+          "type": "array",
+          "description": "Data-source marker strings every experiment in this thread MUST reference in its source. The sibling of required_modules — same deterministic scan, NOT an LLM critic — but a plain presence scan (data is referenced by id/path, not imported): e.g. ['okx_usdt_perp_1m'] forces the operator's registered REAL data over self-authored synthetic. design_experiment_template rejects submitted source that does not reference each declared marker.",
+          "items": { "type": "string", "minLength": 1 }
         }
       },
       "additionalProperties": false

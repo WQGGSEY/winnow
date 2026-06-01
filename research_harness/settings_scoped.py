@@ -161,6 +161,21 @@ FIELD_REGISTRY: tuple[FieldSpec, ...] = (
             "ML thread. Empty = the Professor authors the experiment freely."
         ),
     ),
+    FieldSpec(
+        path="execution_constraints.required_data_sources",
+        writable_at=("thread",),
+        type="list",
+        default=[],
+        description=(
+            "Data-source markers every experiment in THIS thread must REFERENCE "
+            "in its source (deterministic gate in design_experiment_template) — "
+            "the sibling of required_modules, forcing the registered REAL data "
+            "over self-authored synthetic. Per-thread and task-specific: "
+            "['okx_usdt_perp_1m'] for this quant thread, the dataset id for an "
+            "ML thread. Empty = the Professor chooses the data freely. JSON "
+            "list, e.g. [\"okx_usdt_perp_1m\"]."
+        ),
+    ),
     # ---- Project default + operator override ----
     FieldSpec(
         path="runtime.default_backend",

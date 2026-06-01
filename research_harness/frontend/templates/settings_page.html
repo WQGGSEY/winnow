@@ -155,11 +155,12 @@
                 style="display: flex; flex-direction: column; gap: 0.75rem;">
             <label>
               <span>Field</span>
-              <select name="path" required onchange="this.form.value.placeholder = this.options[this.selectedIndex].dataset.placeholder || ''">
+              <select name="path" required onchange="var o=this.options[this.selectedIndex]; this.form.value.placeholder=o.dataset.placeholder||''; var h=document.getElementById('thread-field-hint'); if(h)h.textContent=o.dataset.desc||'';">
                 <option value="" disabled selected>Pick a field to override…</option>
                 {% for spec in thread_overridable %}
                   <option value="{{ spec.path }}"
-                          data-placeholder="{{ spec.type }}"
+                          data-placeholder="{% if spec.type == 'list' %}[&quot;item1&quot;, &quot;item2&quot;]  — JSON array{% elif spec.type == 'object' %}{&quot;key&quot;: &quot;value&quot;}  — JSON{% elif spec.type == 'boolean' %}true / false{% else %}{{ spec.type }}{% endif %}"
+                          data-desc="{{ spec.description }}"
                           {% if spec.path in thread_overrides %}disabled{% endif %}>
                     {{ spec.path }} ({{ spec.type }})
                   </option>
@@ -167,9 +168,10 @@
               </select>
             </label>
             <label>
-              <span>Value (typed; booleans accept "true"/"false")</span>
+              <span>Value (typed; lists/objects are JSON, booleans accept "true"/"false")</span>
               <input type="text" name="value" required>
             </label>
+            <small id="thread-field-hint" class="hint" style="opacity: 0.8;"></small>
             <button type="submit" class="btn primary">Add override</button>
           </form>
         </div>
