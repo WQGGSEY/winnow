@@ -156,6 +156,10 @@
           "type": "array",
           "description": "Data-source marker strings every experiment in this thread MUST reference in its source. The sibling of required_modules — same deterministic scan, NOT an LLM critic — but a plain presence scan (data is referenced by id/path, not imported): e.g. ['okx_usdt_perp_1m'] forces the operator's registered REAL data over self-authored synthetic. design_experiment_template rejects submitted source that does not reference each declared marker.",
           "items": { "type": "string", "minLength": 1 }
+        },
+        "require_skill_isolation": {
+          "type": "boolean",
+          "description": "When true, render_honest_failure_paper refuses a 'no edge / impossibility' terminal until a bar_sanity check proves the deployment predicate is NOT clearable by a NO-SKILL exposure baseline (e.g. leveraged buy-and-hold). A bar a zero-skill exposure clears measures exposure, not skill — it cannot ground an impossibility claim. Deterministic gate (NOT an LLM critic): forces 'suspect your own instrument before declaring the world impossible'."
         }
       },
       "additionalProperties": false

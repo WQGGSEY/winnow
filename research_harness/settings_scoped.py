@@ -176,6 +176,21 @@ FIELD_REGISTRY: tuple[FieldSpec, ...] = (
             "list, e.g. [\"okx_usdt_perp_1m\"]."
         ),
     ),
+    FieldSpec(
+        path="execution_constraints.require_skill_isolation",
+        writable_at=("thread",),
+        type="boolean",
+        default=False,
+        description=(
+            "When true, this thread cannot conclude 'no edge / impossibility' "
+            "until it has ruled out that its OWN bar is the binding constraint: "
+            "render_honest_failure_paper requires a bar_sanity check showing a "
+            "NO-SKILL exposure baseline (e.g. leveraged buy-and-hold) does NOT "
+            "clear the deployment predicate. A bar a zero-skill exposure clears "
+            "measures exposure, not skill. The world is ground-truth — suspect "
+            "the instrument before declaring the world impossible. Off = no gate."
+        ),
+    ),
     # ---- Project default + operator override ----
     FieldSpec(
         path="runtime.default_backend",

@@ -421,6 +421,22 @@ def compute_falsifier_result(
             "adapter_provenance": evidence.get("adapter_provenance"),
         }
         verdict = VERDICT_PASSED if evaluate_predicate(observed, op, threshold) else VERDICT_FAILED
+        # Bar-sanity (skill-isolation) guard — the real_holdout analogue of the
+        # cross_generator_transfer known-baseline guard. If a NO-SKILL exposure
+        # baseline (e.g. a leveraged buy-and-hold sweep, passed as
+        # exposure_null_observed) ALSO clears the predicate, the bar measures
+        # EXPOSURE (beta), not skill (alpha) — the pass is hollow, so type it
+        # UNINFORMATIVE rather than let an exposure-gameable bar certify a result.
+        exposure_null = evidence.get("exposure_null_observed")
+        if exposure_null is not None:
+            null_clears = evaluate_predicate(float(exposure_null), op, threshold)
+            guards["exposure_null"] = {
+                "observed": float(exposure_null),
+                "clears_predicate": null_clears,
+                "ok": not null_clears,
+            }
+            if null_clears and verdict == VERDICT_PASSED:
+                verdict = VERDICT_UNINFORMATIVE
 
     passed = verdict == VERDICT_PASSED
     return {

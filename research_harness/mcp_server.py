@@ -1026,12 +1026,34 @@ TOOL_DEFINITIONS = [
             "max_reject_cycles is exhausted or when the operator (or Claude "
             "Code) decides the direction is structurally hopeless and further "
             "fan-out would not help. This is a HONEST outcome, not a failure "
-            "of the harness — better than publishing a misleading paper."
+            "of the harness — better than publishing a misleading paper. "
+            "If the thread sets execution_constraints.require_skill_isolation, "
+            "this is REFUSED until bar_sanity proves the deployment bar is not "
+            "clearable by a NO-SKILL exposure baseline (suspect your own ruler "
+            "before declaring the world impossible)."
         ),
         "inputSchema": {
             "type": "object",
             "required": ["thread_id"],
-            "properties": {"thread_id": {"type": "string"}},
+            "properties": {
+                "thread_id": {"type": "string"},
+                "bar_sanity": {
+                    "type": "object",
+                    "description": (
+                        "Required when require_skill_isolation is set. Proof the "
+                        "deployment bar is not gameable by zero-skill exposure. "
+                        "{no_skill_exposure_metric: best value a NO-SKILL exposure "
+                        "baseline (e.g. a leveraged buy-and-hold sweep) reaches on the "
+                        "SAME deployment metric; detail: how computed}. If that value "
+                        "clears the predicate, the bar measures exposure not skill and "
+                        "the give-up is refused."
+                    ),
+                    "properties": {
+                        "no_skill_exposure_metric": {"type": "number"},
+                        "detail": {"type": "string"},
+                    },
+                },
+            },
         },
     },
     {
@@ -5229,6 +5251,62 @@ def handle_render_honest_failure_paper(args: dict[str, Any]) -> dict[str, Any]:
     # operator-stamped attested_status routes this; a node cannot relabel itself.
     bounded = attestation.get("attested_status") == "construct_valid_screen"
     outcome = "bounded_result" if bounded else "honest_failure"
+
+    # Bar-sanity gate: a "no edge / impossibility" terminal is not honest until the
+    # thread has ruled out its OWN bar as the binding constraint. A deployment bar a
+    # NO-SKILL exposure baseline (e.g. leveraged buy-and-hold) can clear measures
+    # EXPOSURE, not skill -- so "no edge exists" is unfounded. The world is ground-
+    # truth: suspect the instrument before declaring the world impossible. Only a
+    # real honest-failure (not a bounded construct_valid_screen positive) is gated.
+    if not bounded:
+        from research_harness.settings_scoped import resolve_for_thread as _rft
+        _bs_env = _read_json(pdir / "feasibility_envelope.json") or {}
+        _skill_iso = bool(
+            _rft(repo, tid).get_dotted(
+                "execution_constraints.require_skill_isolation", False
+            )
+            or (_bs_env.get("execution_constraints") or {}).get("require_skill_isolation")
+        )
+        if _skill_iso:
+            _pred = (_bs_env.get("external_falsifier") or {}).get("predicate") or {}
+            _null_val = (args.get("bar_sanity") or {}).get("no_skill_exposure_metric")
+            if _null_val is None:
+                return {
+                    "status": "rejected",
+                    "reason": (
+                        "bar-sanity gate (require_skill_isolation) — give-up refused: "
+                        "before concluding 'no edge / impossibility', rule out that your "
+                        "OWN bar is the binding constraint. Run a NO-SKILL exposure "
+                        "baseline (e.g. a leveraged buy-and-hold sweep) through the SAME "
+                        "deployment metric and pass bar_sanity={'no_skill_exposure_metric'"
+                        ": <best value a zero-skill exposure strategy reaches>, 'detail': "
+                        "<sweep + how computed>}. The world is ground-truth -- suspect "
+                        "your instrument before declaring the world impossible."
+                    ),
+                }
+            try:
+                from research_harness.falsifier import evaluate_predicate as _ep
+                _gamed = bool(
+                    _pred.get("op") and "threshold" in _pred
+                    and _ep(float(_null_val), _pred["op"], float(_pred["threshold"]))
+                )
+            except (TypeError, ValueError):
+                _gamed = False
+            if _gamed:
+                return {
+                    "status": "rejected",
+                    "reason": (
+                        f"bar-sanity gate — give-up refused: a NO-SKILL exposure baseline "
+                        f"reaches {_null_val} on metric {_pred.get('metric')!r}, which "
+                        f"CLEARS your bar ({_pred.get('op')} {_pred.get('threshold')}). A "
+                        "bar zero-skill exposure (leverage) clears measures EXPOSURE, not "
+                        "skill -- so 'no edge exists' is UNFOUNDED; the bar is mis-"
+                        "specified. Revise it to isolate skill (cash-relative / risk-"
+                        "adjusted / exposure-matched), re-grade, and do NOT render an "
+                        "impossibility result against an exposure-gameable bar."
+                    ),
+                }
+
     out_path = pub_dir / (f"{outcome}.html")
     title = "Bounded Result" if bounded else "Honest Failure"
     accent = "#2f7d4f" if bounded else "#c25450"
