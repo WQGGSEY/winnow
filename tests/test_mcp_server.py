@@ -95,6 +95,35 @@ def _make_search_state(node_types: list[str]) -> dict:
     }
 
 
+def _setup_skill_iso_thread(
+    tmp_path: Path,
+    tid: str,
+    *,
+    flag: bool,
+    predicate: dict | None,
+    bar_sanity: dict | None = None,
+    node_types: list[str] | None = None,
+) -> None:
+    """Lay down a thread dir for the cycle-1 bar-sanity gate: a search_state
+    (so the selector would otherwise return a node) plus a feasibility envelope
+    that optionally sets require_skill_isolation + the deployment predicate, and
+    optionally a recorded bar_sanity.json."""
+    prod = tmp_path / tid / "production"
+    tree = prod / "tree"
+    tree.mkdir(parents=True)
+    (tree / "search_state.json").write_text(
+        json.dumps(_make_search_state(node_types or ["validity"]))
+    )
+    env: dict = {"external_falsifier": {}}
+    if predicate is not None:
+        env["external_falsifier"]["predicate"] = predicate
+    if flag:
+        env["execution_constraints"] = {"require_skill_isolation": True}
+    (prod / "feasibility_envelope.json").write_text(json.dumps(env))
+    if bar_sanity is not None:
+        (prod / "bar_sanity.json").write_text(json.dumps(bar_sanity))
+
+
 class MCPServerTests(unittest.TestCase):
     def test_tools_list_exposes_all_expected_tools(self) -> None:
         r = srv._handle_request({"id": 1, "method": "tools/list"}, {})
@@ -132,6 +161,7 @@ class MCPServerTests(unittest.TestCase):
             "propose_alternative_root_directions",
             "select_alternative_root",
             "render_honest_failure_paper",
+            "submit_bar_sanity_result",
         }
         # PR7: feasibility envelope tool.
         # ADR 0006: external-falsifier gate adds compute_falsifier_result.
@@ -229,6 +259,88 @@ class MCPServerTests(unittest.TestCase):
             finally:
                 srv._thread_dir = orig
             self.assertEqual(r["status"], "no_state")
+
+    # --- cycle-1 skill-isolation (bar-sanity) gate -----------------------
+    _PRED = {"metric": "excess_return", "op": ">=", "threshold": 0.10}
+
+    def test_bar_sanity_gate_inactive_when_flag_off(self) -> None:
+        # require_skill_isolation off → gate is a no-op, selector picks normally.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            _setup_skill_iso_thread(tmp_path, "t_bs_off", flag=False, predicate=self._PRED)
+            orig = _patch_thread_dir(tmp_path)
+            try:
+                r = srv.handle_get_next_admissible_node({"thread_id": "t_bs_off"})
+            finally:
+                srv._thread_dir = orig
+            self.assertEqual(r["status"], "ok")
+            self.assertEqual(r["node_type"], "validity")
+
+    def test_bar_sanity_gate_required_when_no_submission(self) -> None:
+        # flag on, no bar_sanity yet → block the search, demand the baseline.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            _setup_skill_iso_thread(tmp_path, "t_bs_req", flag=True, predicate=self._PRED)
+            orig = _patch_thread_dir(tmp_path)
+            try:
+                r = srv.handle_get_next_admissible_node({"thread_id": "t_bs_req"})
+            finally:
+                srv._thread_dir = orig
+            self.assertEqual(r["status"], "bar_sanity_required")
+            self.assertEqual(r["next_tool_to_call"], "submit_bar_sanity_result")
+
+    def test_bar_sanity_gate_blocks_when_exposure_clears_bar(self) -> None:
+        # no-skill exposure +0.12 clears bar (>= +0.10) → bar is gameable → block.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            _setup_skill_iso_thread(
+                tmp_path, "t_bs_broken", flag=True, predicate=self._PRED,
+                bar_sanity={"no_skill_exposure_metric": 0.12, "detail": "2x lev hold"},
+            )
+            orig = _patch_thread_dir(tmp_path)
+            try:
+                r = srv.handle_get_next_admissible_node({"thread_id": "t_bs_broken"})
+            finally:
+                srv._thread_dir = orig
+            self.assertEqual(r["status"], "bar_broken")
+
+    def test_bar_sanity_gate_passes_when_exposure_below_bar(self) -> None:
+        # no-skill exposure +0.03 does NOT clear bar → bar isolates skill → proceed.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            _setup_skill_iso_thread(
+                tmp_path, "t_bs_ok", flag=True, predicate=self._PRED,
+                bar_sanity={"no_skill_exposure_metric": 0.03, "detail": "2x lev hold"},
+            )
+            orig = _patch_thread_dir(tmp_path)
+            try:
+                r = srv.handle_get_next_admissible_node({"thread_id": "t_bs_ok"})
+            finally:
+                srv._thread_dir = orig
+            self.assertEqual(r["status"], "ok")
+            self.assertEqual(r["node_type"], "validity")
+
+    def test_submit_bar_sanity_result_persists_number(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            _setup_skill_iso_thread(tmp_path, "t_bs_submit", flag=True, predicate=self._PRED)
+            orig = _patch_thread_dir(tmp_path)
+            try:
+                r = srv.handle_submit_bar_sanity_result(
+                    {
+                        "thread_id": "t_bs_submit",
+                        "no_skill_exposure_metric": 0.12,
+                        "detail": "2x leverage buy-and-hold sweep",
+                    }
+                )
+                bs = json.loads(
+                    (tmp_path / "t_bs_submit" / "production" / "bar_sanity.json").read_text()
+                )
+            finally:
+                srv._thread_dir = orig
+            self.assertEqual(r["status"], "accepted")
+            self.assertEqual(bs["no_skill_exposure_metric"], 0.12)
+            self.assertEqual(r["bar_sanity"]["state"], "broken")
 
     def test_submit_professor_decision_rejects_wrong_node(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

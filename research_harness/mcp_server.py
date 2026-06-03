@@ -183,6 +183,42 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "submit_bar_sanity_result",
+        "description": (
+            "Cycle-1 skill-isolation gate (active only when "
+            "execution_constraints.require_skill_isolation is set; otherwise a "
+            "no-op). Report the best value a NO-SKILL exposure baseline (e.g. a "
+            "leveraged buy-and-hold sweep) reaches on the SAME deployment metric "
+            "the search is graded on. The harness checks it against the "
+            "deployment predicate deterministically (air-gap — it trusts the "
+            "scalar, owns the pass/fail): if a zero-skill exposure CLEARS the "
+            "bar, the bar measures exposure not skill, and get_next_admissible_"
+            "node blocks the search (bar_broken) until the bar is revised. Run "
+            "this FIRST — before the search spends a cycle. The cycle-1 twin of "
+            "the render_honest_failure_paper bar-sanity give-up gate."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "no_skill_exposure_metric"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "no_skill_exposure_metric": {
+                    "type": "number",
+                    "description": (
+                        "Best value a NO-SKILL exposure baseline (e.g. a "
+                        "leveraged buy-and-hold sweep) reaches on the deployment "
+                        "metric. If it clears the deployment predicate, the bar "
+                        "is exposure-gameable."
+                    ),
+                },
+                "detail": {
+                    "type": "string",
+                    "description": "How computed: the exposure sweep + data + method.",
+                },
+            },
+        },
+    },
+    {
         "name": "resume_production_state",
         "description": (
             "Recovery tool. Call this if the previous Claude Code session "
@@ -1389,6 +1425,61 @@ _RESUME_NEXT_TOOL = {
 }
 
 
+def _bar_sanity_gate_status(tid: str) -> dict[str, Any] | None:
+    """Cycle-1 skill-isolation gate status, or None when the gate is inactive.
+
+    When execution_constraints.require_skill_isolation is set (thread setting or
+    feasibility envelope), the search may not dispatch any node until a NO-SKILL
+    exposure baseline (e.g. a leveraged buy-and-hold sweep, reported via
+    submit_bar_sanity_result) has been shown NOT to clear the deployment
+    predicate. A bar a zero-skill exposure clears measures exposure, not skill —
+    so an impossibility found against it is an instrument failure, not a fact
+    about the world. This is the cycle-1 twin of the render_honest_failure_paper
+    bar-sanity gate: same deterministic check, moved to the front so an
+    exposure-gameable bar is caught before any search cycle is spent. Off-flag
+    threads (general ML) get None and behave exactly as before.
+
+    Returns one of:
+      None                     — gate inactive; proceed with normal selection.
+      {"state": "required"}    — flag on, no bar_sanity result reported yet.
+      {"state": "broken", ...} — reported exposure CLEARS the bar (gameable).
+      {"state": "ok", ...}     — reported exposure does not clear the bar.
+    """
+    from research_harness.settings_scoped import resolve_for_thread as _rft
+
+    repo = _repo_root()
+    pdir = _thread_dir(tid) / "production"
+    env = _read_json(pdir / "feasibility_envelope.json") or {}
+    skill_iso = bool(
+        _rft(repo, tid).get_dotted(
+            "execution_constraints.require_skill_isolation", False
+        )
+        or (env.get("execution_constraints") or {}).get("require_skill_isolation")
+    )
+    if not skill_iso:
+        return None
+    bs = _read_json(pdir / "bar_sanity.json") or {}
+    null_val = bs.get("no_skill_exposure_metric")
+    if null_val is None:
+        return {"state": "required"}
+    pred = (env.get("external_falsifier") or {}).get("predicate") or {}
+    gamed = False
+    if pred.get("op") and "threshold" in pred:
+        try:
+            from research_harness.falsifier import evaluate_predicate as _ep
+
+            gamed = bool(_ep(float(null_val), pred["op"], float(pred["threshold"])))
+        except (TypeError, ValueError):
+            gamed = False
+    if gamed:
+        return {
+            "state": "broken",
+            "no_skill_exposure_metric": null_val,
+            "predicate": pred,
+        }
+    return {"state": "ok", "no_skill_exposure_metric": null_val}
+
+
 def handle_get_next_admissible_node(args: dict[str, Any]) -> dict[str, Any]:
     """Selector with resume support.
 
@@ -1412,6 +1503,52 @@ def handle_get_next_admissible_node(args: dict[str, Any]) -> dict[str, Any]:
                 "root node + search_state."
             ),
         }
+
+    # --- Cycle-1 skill-isolation gate. ----------------------------------
+    # A require_skill_isolation thread may not dispatch ANY node until a
+    # no-skill exposure baseline has been shown NOT to clear the deployment
+    # bar. This catches an exposure-gameable bar at cycle 1, before any search
+    # cycle is spent (the twin of the render_honest_failure_paper give-up gate).
+    # Off-flag threads return None here and fall straight through.
+    bar_sanity = _bar_sanity_gate_status(tid)
+    if bar_sanity is not None and bar_sanity["state"] != "ok":
+        if bar_sanity["state"] == "required":
+            return {
+                "status": "bar_sanity_required",
+                "next_tool_to_call": "submit_bar_sanity_result",
+                "reason": (
+                    "require_skill_isolation is set: before the search spends a "
+                    "cycle, rule out that your OWN bar is the binding constraint. "
+                    "Run a NO-SKILL exposure baseline (e.g. a leveraged buy-and-"
+                    "hold sweep) through the SAME deployment metric and report it "
+                    "with submit_bar_sanity_result(no_skill_exposure_metric=<best "
+                    "value a zero-skill exposure reaches>, detail=<sweep + how "
+                    "computed>). A bar a zero-skill exposure clears measures "
+                    "exposure, not skill. The world is ground-truth — suspect "
+                    "the instrument before spending the search."
+                ),
+            }
+        # state == "broken": the reported no-skill exposure clears the bar.
+        pred = bar_sanity.get("predicate") or {}
+        return {
+            "status": "bar_broken",
+            "next_tool_to_call": "submit_bar_sanity_result",
+            "no_skill_exposure_metric": bar_sanity.get("no_skill_exposure_metric"),
+            "predicate": pred,
+            "reason": (
+                f"bar-sanity gate (require_skill_isolation): a NO-SKILL exposure "
+                f"baseline reaches {bar_sanity.get('no_skill_exposure_metric')} on "
+                f"metric {pred.get('metric')!r}, which CLEARS your bar "
+                f"({pred.get('op')} {pred.get('threshold')}). A bar zero-skill "
+                "exposure (leverage) clears measures EXPOSURE, not skill — the "
+                "search would be graded against a mis-specified bar. Revise it to "
+                "isolate skill (cash-relative / risk-adjusted / exposure-matched), "
+                "re-run the baseline, and do NOT spend the search against an "
+                "exposure-gameable bar. The search is blocked until the bar is "
+                "fixed."
+            ),
+        }
+
     nodes_by_id = {n["id"]: n for n in state["nodes"]}
 
     # --- Resume path: pick up where the previous session stopped. -----
@@ -1575,6 +1712,48 @@ def handle_get_next_admissible_node(args: dict[str, Any]) -> dict[str, Any]:
             f"queued behind it."
         ),
     }
+
+
+def handle_submit_bar_sanity_result(args: dict[str, Any]) -> dict[str, Any]:
+    """Record the no-skill exposure baseline for the cycle-1 skill-isolation
+    gate. The Professor runs a NO-SKILL exposure sweep (e.g. a leveraged buy-
+    and-hold sweep) through the SAME deployment metric the search is graded on
+    and reports the best value it reaches; the harness checks that reported
+    number against the deployment predicate deterministically (air-gap — it
+    trusts the scalar and owns only the pass/fail, exactly as
+    compute_falsifier_result does). If the no-skill exposure clears the bar, the
+    bar measures exposure not skill and get_next_admissible_node blocks the
+    search until the bar is revised. Recording is unconditional; the gate (which
+    only fires when require_skill_isolation is set) decides whether to act on
+    it."""
+    tid = args["thread_id"]
+    metric = args.get("no_skill_exposure_metric")
+    if metric is None:
+        return {
+            "status": "rejected",
+            "reason": (
+                "submit_bar_sanity_result requires no_skill_exposure_metric — the "
+                "best value a NO-SKILL exposure baseline (e.g. a leveraged buy-and-"
+                "hold sweep) reaches on the SAME deployment metric the search is "
+                "graded on."
+            ),
+        }
+    try:
+        metric_f = float(metric)
+    except (TypeError, ValueError):
+        return {"status": "rejected", "reason": "no_skill_exposure_metric must be a number."}
+    pdir = _thread_dir(tid) / "production"
+    pdir.mkdir(parents=True, exist_ok=True)
+    (pdir / "bar_sanity.json").write_text(
+        json.dumps(
+            {"no_skill_exposure_metric": metric_f, "detail": args.get("detail", "")},
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return {"status": "accepted", "bar_sanity": _bar_sanity_gate_status(tid)}
 
 
 def handle_resume_production_state(args: dict[str, Any]) -> dict[str, Any]:
@@ -5576,6 +5755,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_get_research_state(args, settings)
             elif name == "get_next_admissible_node":
                 result = handle_get_next_admissible_node(args)
+            elif name == "submit_bar_sanity_result":
+                result = handle_submit_bar_sanity_result(args)
             elif name == "resume_production_state":
                 result = handle_resume_production_state(args)
             elif name == "submit_feasibility_envelope":
