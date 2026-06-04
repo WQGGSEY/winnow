@@ -575,8 +575,13 @@ def _call_claude_round(
             f"claude CLI timed out after {round_timeout_seconds}s during grilling round"
         ) from exc
     if completed.returncode not in (0, None):
+        # claude prints API errors (auth/401, "Not logged in", budget) to STDOUT
+        # as JSON, not stderr — surface both so the reason isn't a cryptic code.
+        detail = (
+            (completed.stderr or "").strip() + " " + (completed.stdout or "").strip()
+        ).strip()
         raise GrillingError(
-            f"claude CLI exited with code {completed.returncode}: {(completed.stderr or '').strip()[:200]}"
+            f"claude CLI exited with code {completed.returncode}: {detail[:400]}"
         )
     raw_stdout = completed.stdout or ""
     try:
@@ -587,7 +592,8 @@ def _call_claude_round(
         raise GrillingError(f"claude CLI returned unexpected payload: {raw_stdout[:200]!r}")
     if cli_result.get("is_error"):
         raise GrillingError(
-            f"claude CLI reported error subtype {cli_result.get('subtype')!r}"
+            f"claude CLI error (api_status={cli_result.get('api_error_status')}): "
+            f"{str(cli_result.get('result') or cli_result.get('subtype'))[:300]}"
         )
     inner_result = cli_result.get("result")
     if not isinstance(inner_result, str) or not inner_result.strip():

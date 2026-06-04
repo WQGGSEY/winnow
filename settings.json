@@ -7,7 +7,13 @@
       "module": "research_harness.adapters.wq_brain_snapshot",
       "provenance": "operator-curated snapshot of WorldQuant Brain S&P 500 universe 2024-01 to 2025-12, stored at runs/datasets/wq_brain_snapshot/"
     },
-    "registered": []
+    "registered": [
+      {
+        "id": "okx_usdt_perp_1m",
+        "kind": "real_panel",
+        "provenance": "OKX USDT-margined perpetual swaps — top ~50 by 24h liquidity, survivorship-aware universe snapshots. 1-minute OHLCV + funding, ~5y (2021-06 onward), collected via okx_collector, stored at /mnt/d/coin_trading/data on home-wsl. real_holdout observed values are measured externally by the coin_trading backtester (next-open fill, size-based pessimistic fill model, reconstructed funding); the harness stays air-gapped from execution."
+      }
+    ]
   },
   "experiment_plan_templates": {
     "directories": [
@@ -29,7 +35,7 @@
     "_comment": "PR8: only AC accept + Professor user_goal_attestation.achieved=true terminates a thread. max_cycles is informational; honest_failure is a state to retreat from, not a termination. supervisor uses these as soft milestones, not hard exits.",
     "rate_limit_backoff_initial_seconds": 60,
     "rate_limit_backoff_max_seconds": 1800,
-    "soft_milestone_cycle_count": 20
+    "soft_milestone_cycle_count": 1000
   },
   "publication_gate": {
     "ac_agent": {
@@ -162,21 +168,21 @@
             "_comment": "ADR 0007 lever 0 (free): a grounded critic kill (contradicted / blocking) freezes a positive reduction / AC accept until defeated on merits in blocking_objections. Recovers the decorrelation the persona pack already paid for. Keep enabled.",
             "enabled": true
           },
-          "enabled": true,
-          "falsification_gate": {
-            "_comment": "ADR 0006: achieved=true is unreachable without a harness-owned external falsifier result. When disabled (a loosening), the attestation reverts to the pre-ADR-0006 behaviour where the run could self-attest goal achievement. Keep enabled.",
-            "enabled": true
-          },
           "construct_adversary": {
             "_comment": "ADR 0008 Axis 1: thresholds for the funded construct-adversary. construct_valid is earned only when the adversary spends >= min_budget and tests >= min_distinct_worlds distinct pass_but_wrong worlds against the frozen question without finding a break. A certification that did not search is auto-invalid.",
             "min_budget": 8,
             "min_distinct_worlds": 3
           },
+          "enabled": true,
+          "falsification_gate": {
+            "_comment": "ADR 0006: achieved=true is unreachable without a harness-owned external falsifier result. When disabled (a loosening), the attestation reverts to the pre-ADR-0006 behaviour where the run could self-attest goal achievement. Keep enabled.",
+            "enabled": true
+          },
           "falsifier_guards": {
             "_comment": "ADR 0006 rev.2: cross_generator_transfer guard thresholds. A passing rho is reportable as transfer evidence ONLY when the harness MEASURES that generator B is structurally distinct from A (min_behavioral_distance, computed by running both generators on a fixed probe — not a worker label), the rankings discriminate the pipelines (min_rank_variance / max_tie_fraction), and the predicate beats the permutation-null noise band (null_floor_k). The guard is intrinsic to an honest verdict (not disableable); only these thresholds are tunable. Closes the thread_c8919361 hollow-pass.",
+            "max_tie_fraction": 0.5,
             "min_behavioral_distance": 0.15,
             "min_rank_variance": 0.05,
-            "max_tie_fraction": 0.5,
             "null_floor_k": 1.0
           },
           "min_baseline_role_specificity_chars": 40,

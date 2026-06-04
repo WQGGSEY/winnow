@@ -34,6 +34,10 @@ mapped to **claim-type-axis stages** (proposed below in §6).
 
 ## 2. The pipeline (frontend-visible phases)
 
+> **Superseded (ADR 0011/0012).** The live pipeline is now
+> `grilling → connector → production`; see [`PIPELINE.md`](PIPELINE.md).
+> Diagram kept for historical context:
+
 ```
 intake → grilling → market → refine → tree_search → rebuttal → production → publish
                                         └── (live_dispatch optional, off-tree) ──┘
