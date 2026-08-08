@@ -18,9 +18,16 @@ REQUIRED_DECISIONS = {
     "selected_as_random_or_null",
 }
 
+PACKAGED_DOSSIER_DIR = Path(__file__).with_name("baseline_dossiers")
+
 
 def dossier_path(repo_root: Path, dossier_id: str) -> Path:
-    return repo_root / "memory" / "baseline_dossiers" / f"{dossier_id}.yaml"
+    operator_path = (
+        repo_root / "memory" / "baseline_dossiers" / f"{dossier_id}.yaml"
+    )
+    if operator_path.exists():
+        return operator_path
+    return PACKAGED_DOSSIER_DIR / f"{dossier_id}.yaml"
 
 
 def load_baseline_dossier(repo_root: Path, dossier_id: str) -> dict[str, Any]:
@@ -30,11 +37,16 @@ def load_baseline_dossier(repo_root: Path, dossier_id: str) -> dict[str, Any]:
     dossier = load_yaml(path)
     if not isinstance(dossier, dict):
         raise BaselineDossierError("baseline dossier must be a map")
-    validate_baseline_dossier(repo_root, dossier)
+    validate_baseline_dossier(repo_root, dossier, base_dir=path.parent)
     return dossier
 
 
-def validate_baseline_dossier(repo_root: Path, dossier: dict[str, Any]) -> None:
+def validate_baseline_dossier(
+    repo_root: Path,
+    dossier: dict[str, Any],
+    *,
+    base_dir: Path | None = None,
+) -> None:
     validate_named_schema("baseline_dossier", dossier)
 
     try:
@@ -42,7 +54,7 @@ def validate_baseline_dossier(repo_root: Path, dossier: dict[str, Any]) -> None:
     except ValueError as exc:
         raise BaselineDossierError("created_at must be ISO date YYYY-MM-DD") from exc
 
-    base_dir = repo_root / "memory" / "baseline_dossiers"
+    base_dir = base_dir or dossier_path(repo_root, str(dossier["id"])).parent
     candidate_ids = {candidate["id"] for candidate in dossier["candidates_index"]}
     selected_id = dossier["selected"]["candidate_id"]
     if selected_id not in candidate_ids:
@@ -112,4 +124,3 @@ def build_baseline_resolution_report(
     lines.extend(f"- {tag}" for tag in report["risk_tags"])
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return report
-

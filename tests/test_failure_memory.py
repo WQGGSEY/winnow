@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,10 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 class FailureMemoryTests(unittest.TestCase):
     def _temp_repo(self, tmp: str) -> Path:
-        repo = Path(tmp)
-        (repo / "memory").mkdir()
-        shutil.copytree(REPO_ROOT / "memory" / "failures", repo / "memory" / "failures")
-        return repo
+        return Path(tmp)
 
     def _blocked_report(self) -> dict[str, object]:
         return {
@@ -54,8 +50,8 @@ class FailureMemoryTests(unittest.TestCase):
     def test_records_failure_file_index_entry_and_one_line_lesson(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._temp_repo(tmp)
-            before = load_yaml(repo / "memory" / "failures" / "index.yaml")
-            initial_count = len(before["categories"]["invalid_experiment"]["files"])
+            index_path = repo / "memory" / "failures" / "index.yaml"
+            self.assertFalse(index_path.exists())
 
             result = record_failure_candidate(
                 repo,
@@ -70,8 +66,26 @@ class FailureMemoryTests(unittest.TestCase):
             self.assertLessEqual(len(result.lesson), 240)
             index = load_yaml(result.index_path)
             files = index["categories"]["invalid_experiment"]["files"]
-            self.assertEqual(len(files), initial_count + 1)
+            self.assertEqual(len(files), 1)
             self.assertTrue(str(files[-1]).startswith("invalid_experiment/"))
+
+    def test_records_first_failure_without_operator_memory_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+
+            result = record_failure_candidate(
+                repo,
+                _demo_node(),
+                self._blocked_report(),
+            )
+
+            self.assertIsNotNone(result)
+            self.assertTrue(result.index_path.exists())
+            index = load_yaml(result.index_path)
+            self.assertEqual(
+                len(index["categories"]["invalid_experiment"]["files"]),
+                1,
+            )
 
     def test_unknown_category_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

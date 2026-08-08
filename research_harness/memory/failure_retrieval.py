@@ -12,6 +12,9 @@ class FailureRetrievalError(ValueError):
     """Raised when failure memory cannot be safely retrieved."""
 
 
+PACKAGED_FAILURES_DIR = Path(__file__).with_name("default_failures")
+
+
 @dataclass(frozen=True)
 class FailureSummary:
     file: str
@@ -39,8 +42,8 @@ def retrieve_failure_summaries(
 
     if top_k < 1:
         return []
-    base_dir = repo_root / "memory" / "failures"
-    index = load_yaml(base_dir / "index.yaml")
+    base_dirs = [repo_root / "memory" / "failures", PACKAGED_FAILURES_DIR]
+    index = load_failure_index(repo_root)
     indexed_files = _indexed_files(index)
     explicit_files = _dedupe(selected_fail_files)
     unknown_explicit = sorted(set(explicit_files) - set(indexed_files))
@@ -52,7 +55,7 @@ def retrieve_failure_summaries(
 
     query_terms = {str(tag).lower() for tag in query_tags if str(tag).strip()}
     explicit_summaries = [
-        _read_failure_summary(base_dir, relative_path, query_terms, explicit=True)
+        _read_failure_summary(base_dirs, relative_path, query_terms, explicit=True)
         for relative_path in explicit_files[:top_k]
     ]
     remaining = top_k - len(explicit_summaries)
@@ -64,11 +67,61 @@ def retrieve_failure_summaries(
     for relative_path in indexed_files:
         if relative_path in explicit_set:
             continue
-        summary = _read_failure_summary(base_dir, relative_path, query_terms, explicit=False)
+        summary = _read_failure_summary(base_dirs, relative_path, query_terms, explicit=False)
         if summary.score > 0:
             candidates.append(summary)
     candidates.sort(key=lambda item: (-item.score, item.category, item.file))
     return explicit_summaries + candidates[:remaining]
+
+
+def load_failure_index(repo_root: Path) -> dict[str, Any]:
+    """Merge immutable bootstrap failures with operator-local run history."""
+
+    packaged = _load_failure_index(PACKAGED_FAILURES_DIR / "index.yaml")
+    operator = _load_failure_index(repo_root / "memory" / "failures" / "index.yaml")
+    return _merge_failure_indexes(packaged, operator)
+
+
+def empty_failure_index() -> dict[str, Any]:
+    """Return writable category scaffolding without packaged record paths."""
+
+    packaged = _load_failure_index(PACKAGED_FAILURES_DIR / "index.yaml")
+    return {
+        "categories": {
+            category: {
+                "description": str((spec or {}).get("description") or ""),
+                "files": [],
+            }
+            for category, spec in (packaged.get("categories") or {}).items()
+        }
+    }
+
+
+def _load_failure_index(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"categories": {}}
+    index = load_yaml(path)
+    if not isinstance(index, dict):
+        raise FailureRetrievalError(f"failure index must be a map: {path}")
+    return index
+
+
+def _merge_failure_indexes(*indexes: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = {"categories": {}}
+    for index in indexes:
+        for category, raw_spec in (index.get("categories") or {}).items():
+            spec = raw_spec or {}
+            target = merged["categories"].setdefault(
+                category,
+                {"description": "", "files": []},
+            )
+            description = str(spec.get("description") or "")
+            if description:
+                target["description"] = description
+            target["files"] = _dedupe(
+                [*target["files"], *(spec.get("files") or [])]
+            )
+    return merged
 
 
 def format_failure_summaries(summaries: list[FailureSummary]) -> str:
@@ -106,13 +159,13 @@ def _indexed_files(index: dict[str, Any]) -> list[str]:
 
 
 def _read_failure_summary(
-    base_dir: Path,
+    base_dirs: list[Path],
     relative_path: str,
     query_terms: set[str],
     *,
     explicit: bool,
 ) -> FailureSummary:
-    path = _safe_failure_path(base_dir, relative_path)
+    path = _safe_failure_path(base_dirs, relative_path)
     frontmatter, body = split_frontmatter(path)
     tags = [str(tag) for tag in frontmatter.get("tags", [])]
     category = str(frontmatter.get("category") or relative_path.split("/", 1)[0])
@@ -133,18 +186,19 @@ def _read_failure_summary(
     )
 
 
-def _safe_failure_path(base_dir: Path, relative_path: str) -> Path:
+def _safe_failure_path(base_dirs: list[Path], relative_path: str) -> Path:
     path = Path(relative_path)
     if path.is_absolute() or ".." in path.parts:
         raise FailureRetrievalError(f"unsafe failure path: {relative_path}")
-    resolved = (base_dir / path).resolve()
-    try:
-        ensure_path_inside(resolved, base_dir.resolve(), "failure_file")
-    except WorkspaceGuardError as exc:
-        raise FailureRetrievalError(str(exc)) from exc
-    if not resolved.exists():
-        raise FailureRetrievalError(f"failure file missing: {relative_path}")
-    return resolved
+    for base_dir in base_dirs:
+        resolved = (base_dir / path).resolve()
+        try:
+            ensure_path_inside(resolved, base_dir.resolve(), "failure_file")
+        except WorkspaceGuardError as exc:
+            raise FailureRetrievalError(str(exc)) from exc
+        if resolved.exists():
+            return resolved
+    raise FailureRetrievalError(f"failure file missing: {relative_path}")
 
 
 def _section(body: str, heading: str) -> str:

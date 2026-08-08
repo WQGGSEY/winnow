@@ -1,0 +1,49 @@
+id: bd_agent_harness_20260523
+created_at: "2026-05-23"
+query: "best-known method for automated AI research harness with agentic tree search"
+problem_scope:
+  task: "subscription-compatible Sakana-style research harness"
+  agent_regime: "Claude Code subscription workers"
+selected:
+  method: "Sakana AI Scientist-v2 style progressive agentic tree search"
+  role: current_best_known_comparable
+  candidate_id: c1_sakana_ai_scientist_v2
+  one_paragraph_reason: "Selected as the reference search skeleton because it explicitly uses progressive agentic tree search guided by an experiment manager and includes ideation, experimentation, writeup, and review stages."
+  evidence_tags:
+    - progressive_agentic_tree_search
+    - experiment_manager
+    - open_source_reference
+  risk_tags:
+    - api_key_oriented_original
+    - latex_pdf_default_writeup
+    - inner_agent_safety_needs_harness
+candidates_index:
+  - id: c1_sakana_ai_scientist_v2
+    method: "AI Scientist-v2"
+    decision: selected
+    reason_tags: [open_source_reference, progressive_agentic_tree_search]
+    detail_file: candidates/c1_sakana_ai_scientist_v2.md
+  - id: c2_direct_api_port
+    method: "Direct llm.generate to Claude Code port"
+    decision: selected_as_naive
+    reason_tags: [naive_approach, nested_agent_risk]
+    detail_file: candidates/c2_direct_api_port.md
+  - id: c3_no_orchestrated_harness
+    method: "No orchestrated harness"
+    decision: selected_as_random_or_null
+    reason_tags: [null_hypothesis]
+    detail_file: candidates/c3_no_orchestrated_harness.md
+source_index:
+  - id: s1
+    url: "https://github.com/SakanaAI/AI-Scientist-v2"
+    accessed_at: "2026-05-23"
+    supports: [c1_sakana_ai_scientist_v2, open_source_reference]
+  - id: s2
+    url: "https://github.com/SakanaAI/AI-Scientist-v2/blob/main/bfts_config.yaml"
+    accessed_at: "2026-05-23"
+    supports: [c1_sakana_ai_scientist_v2, search_config_reference]
+refresh_policy:
+  required_before:
+    - final_claim_promotion
+    - external_writeup
+    - long_scaleup_run

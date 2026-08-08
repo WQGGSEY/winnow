@@ -1,0 +1,24 @@
+categories:
+  invalid_experiment:
+    description: "Execution, environment, permission, or timeout prevented evaluation."
+    files:
+      - "invalid_experiment/n_demo_001__invalid_experiment__01330e757f.md"
+      - "invalid_experiment/n_demo_001_b01__invalid_experiment__544d46585c.md"
+  implementation_failure:
+    description: "The idea was not evaluated because implementation failed."
+    files: []
+  negative_result:
+    description: "The experiment was valid but the claim was contradicted or weak."
+    files: []
+  taste_rejection:
+    description: "The result may work locally but conflicts with research taste or goal."
+    files: []
+  confounded_result:
+    description: "Leakage, missing baseline, evaluation flaw, or uncontrolled variable blocks interpretation."
+    files: []
+  duplicate_failure:
+    description: "The failure repeats a known pattern."
+    files: []
+  scope_violation:
+    description: "The worker or node left its authorized scope."
+    files: []

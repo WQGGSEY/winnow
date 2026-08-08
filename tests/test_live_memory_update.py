@@ -18,8 +18,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 def _temp_repo(tmp: str) -> Path:
     repo = Path(tmp)
     shutil.copy(REPO_ROOT / "lessons.yaml", repo / "lessons.yaml")
-    (repo / "memory").mkdir()
-    shutil.copytree(REPO_ROOT / "memory" / "failures", repo / "memory" / "failures")
     return repo
 
 
@@ -117,9 +115,8 @@ class LiveMemoryUpdateTests(unittest.TestCase):
             bundle_path.parent.mkdir()
             _bundle(bundle_path)
             original_lessons = (repo / "lessons.yaml").read_text(encoding="utf-8")
-            original_index = (repo / "memory" / "failures" / "index.yaml").read_text(
-                encoding="utf-8"
-            )
+            index_path = repo / "memory" / "failures" / "index.yaml"
+            self.assertFalse(index_path.exists())
 
             summary = apply_live_memory_update(repo, bundle_path, approve=False)
 
@@ -128,10 +125,7 @@ class LiveMemoryUpdateTests(unittest.TestCase):
             self.assertIsNone(summary["failure_memory"])
             self.assertEqual(summary["recorded_lessons"], [])
             self.assertEqual((repo / "lessons.yaml").read_text(encoding="utf-8"), original_lessons)
-            self.assertEqual(
-                (repo / "memory" / "failures" / "index.yaml").read_text(encoding="utf-8"),
-                original_index,
-            )
+            self.assertFalse(index_path.exists())
 
     def test_approved_memory_update_records_failure_and_lessons(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -140,8 +134,8 @@ class LiveMemoryUpdateTests(unittest.TestCase):
             bundle_path.parent.mkdir()
             _bundle(bundle_path)
             before_lessons = load_lessons(repo)
-            before_index = load_yaml(repo / "memory" / "failures" / "index.yaml")
-            before_failure_count = len(before_index["categories"]["invalid_experiment"]["files"])
+            index_path = repo / "memory" / "failures" / "index.yaml"
+            self.assertFalse(index_path.exists())
 
             summary = apply_live_memory_update(repo, bundle_path, approve=True)
 
@@ -159,10 +153,10 @@ class LiveMemoryUpdateTests(unittest.TestCase):
                 len(after_lessons["active_lessons"]),
                 len(before_lessons["active_lessons"]) + 2,
             )
-            after_index = load_yaml(repo / "memory" / "failures" / "index.yaml")
+            after_index = load_yaml(index_path)
             self.assertEqual(
                 len(after_index["categories"]["invalid_experiment"]["files"]),
-                before_failure_count + 1,
+                1,
             )
 
     def test_approved_memory_update_does_not_duplicate_lessons(self) -> None:

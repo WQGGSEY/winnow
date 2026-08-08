@@ -210,6 +210,8 @@ class MarketResearchTests(unittest.TestCase):
 
     def test_write_to_memory_creates_dossier_files_that_load_back(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
             http = _FakeHttp(
                 {
                     "http://export.arxiv.org/api/query": SAMPLE_ARXIV_XML.encode("utf-8"),
@@ -217,34 +219,19 @@ class MarketResearchTests(unittest.TestCase):
             )
             pdf = _FakeHttp({"http://arxiv.org/pdf/": b"%PDF-1.4 fake"})
             outcome = run_market_research(
-                REPO_ROOT,
+                repo,
                 _grilling_session(),
-                run_dir=Path(tmp),
+                run_dir=Path(tmp) / "run",
                 http_fetcher=http,
                 pdf_fetcher=pdf,
                 enable_google_scholar=False,
                 write_dossier_to_memory=True,
             )
 
-            try:
-                dossier_id = outcome.dossier["id"]
-                loaded = load_baseline_dossier(REPO_ROOT, dossier_id)
-                self.assertEqual(loaded["id"], dossier_id)
-                validate_baseline_dossier(REPO_ROOT, loaded)
-            finally:
-                dossier_path = (
-                    REPO_ROOT
-                    / "memory"
-                    / "baseline_dossiers"
-                    / f"{outcome.dossier['id']}.yaml"
-                )
-                if dossier_path.exists():
-                    dossier_path.unlink()
-                candidates_dir = REPO_ROOT / "memory" / "baseline_dossiers" / "candidates"
-                for candidate in outcome.dossier["candidates_index"]:
-                    p = candidates_dir / Path(candidate["detail_file"]).name
-                    if p.exists():
-                        p.unlink()
+            dossier_id = outcome.dossier["id"]
+            loaded = load_baseline_dossier(repo, dossier_id)
+            self.assertEqual(loaded["id"], dossier_id)
+            validate_baseline_dossier(repo, loaded)
 
     def test_google_scholar_captcha_is_warned_not_fatal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

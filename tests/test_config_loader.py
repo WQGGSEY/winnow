@@ -60,7 +60,18 @@ class ConfigLoaderTests(unittest.TestCase):
                 load_critic_profile(path)
 
     def test_yaml_loader_parses_list_of_maps(self) -> None:
-        parsed = load_yaml(REPO_ROOT / "memory" / "baseline_dossiers" / "index.yaml")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "index.yaml"
+            path.write_text(
+                "dossiers:\n"
+                "  - id: bd_agent_harness_20260523\n"
+                "    selected_roles:\n"
+                "      current_best_known: c1_sakana_ai_scientist_v2\n"
+                "      naive: c2_direct_api_port\n"
+                "      random_or_null: c3_no_orchestrated_harness\n",
+                encoding="utf-8",
+            )
+            parsed = load_yaml(path)
 
         self.assertEqual(parsed["dossiers"][0]["id"], "bd_agent_harness_20260523")
         self.assertEqual(

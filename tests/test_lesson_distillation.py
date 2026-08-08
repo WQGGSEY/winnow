@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import json
 import shutil
 import subprocess
@@ -27,7 +26,7 @@ def _stage_repo(tmp: Path) -> Path:
     staged.mkdir(parents=True, exist_ok=True)
     for name in ("settings.json", "lessons.yaml", "research_profile.md"):
         shutil.copy2(REPO_ROOT / name, staged / name)
-    for subdir in ("configs", "research_harness", "critics", "memory"):
+    for subdir in ("configs", "research_harness", "critics"):
         shutil.copytree(REPO_ROOT / subdir, staged / subdir, dirs_exist_ok=True)
     return staged
 

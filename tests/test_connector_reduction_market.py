@@ -104,8 +104,8 @@ def _reading():
     return {
         "field": _FIELD,
         "reading": "treat units as a population",
-        "field_method": "replicator dynamics",
-        "emergent_claim": "selection predicts aggregate",
+        "field_mechanism": "replicator dynamics",
+        "predicted_behavior": "selection predicts aggregate",
     }
 
 
@@ -145,6 +145,8 @@ def test_reduce_produces_claim_contract_when_well_formed():
     sent = fake.calls[0]["input"]
     assert "predict equity returns from order flow" in sent
     assert "Replicator Dynamics on Networks" in sent
+    assert "field_mechanism: replicator dynamics" in sent
+    assert "predicted_behavior: selection predicts aggregate" in sent
 
 
 def test_reduce_malformed_contract_kills_reading():

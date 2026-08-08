@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from research_harness.config import load_yaml
+from research_harness.memory.failure_retrieval import empty_failure_index
 from research_harness.runner.result_bridge import runner_failure_worker_report
 from research_harness.workers.workspace import WorkspaceGuardError, ensure_path_inside
 
@@ -43,7 +44,7 @@ def record_failure_candidate(
         raise FailureMemoryError("failure_record_candidate must be an object")
 
     index_path = repo_root / "memory" / "failures" / "index.yaml"
-    failure_index = load_yaml(index_path)
+    failure_index = load_yaml(index_path) if index_path.exists() else empty_failure_index()
     categories = failure_index.get("categories", {})
     category = str(candidate.get("category") or "")
     if category not in categories:

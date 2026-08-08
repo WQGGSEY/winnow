@@ -45,14 +45,17 @@ _FIELD = {"code": "q-bio.PE", "name": "Populations and Evolution", "archive": "q
 
 def test_generate_reading_returns_fields_and_echoes_field():
     fake = FakeClaude([
-        {"reading": "Treat the units as a population...", "field_method": "replicator dynamics",
-         "emergent_claim": "selection pressure predicts the aggregate"}
+        {
+            "reading": "Treat the units as a population...",
+            "field_mechanism": "replicator dynamics",
+            "predicted_behavior": "selection pressure shifts the aggregate",
+        }
     ])
     out = generate_reading(_ABSTRACTION, _FIELD, model="m", max_budget="1",
                            claude_path="claude", runner=fake)
     assert out["field"]["code"] == "q-bio.PE"
-    assert out["field_method"] == "replicator dynamics"
-    assert out["emergent_claim"]
+    assert out["field_mechanism"] == "replicator dynamics"
+    assert out["predicted_behavior"]
     # firewall demonstration: the only substantive content handed to the model
     # is the abstraction + the assigned field — never P (no P param exists).
     sent = fake.calls[0]["input"]
@@ -61,7 +64,9 @@ def test_generate_reading_returns_fields_and_echoes_field():
 
 
 def test_generate_reading_empty_reading_raises():
-    fake = FakeClaude([{"reading": "  ", "field_method": "x", "emergent_claim": "y"}])
+    fake = FakeClaude([
+        {"reading": "  ", "field_mechanism": "x", "predicted_behavior": "y"}
+    ])
     with pytest.raises(ValueError):
         generate_reading(_ABSTRACTION, _FIELD, model="m", max_budget="1",
                          claude_path="claude", runner=fake)
@@ -74,8 +79,8 @@ def _reading_obj():
     return {
         "field": _FIELD,
         "reading": "population reading",
-        "field_method": "replicator dynamics",
-        "emergent_claim": "selection predicts aggregate",
+        "field_mechanism": "replicator dynamics",
+        "predicted_behavior": "selection predicts aggregate",
     }
 
 

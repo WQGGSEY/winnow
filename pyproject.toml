@@ -12,6 +12,16 @@ frontend = [
   "jinja2>=3.1",
   "python-multipart>=0.0.7",
 ]
+test = [
+  "pytest>=9.0,<10",
+  "matplotlib>=3.11,<4",
+  "httpx2>=2.9,<3",
+  "PyYAML>=6.0,<7",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "jinja2>=3.1",
+  "python-multipart>=0.0.7",
+]
 
 [project.scripts]
 research-harness-demo = "research_harness.orchestrator.demo:main"
@@ -26,8 +36,13 @@ exclude = ["tests*"]
   "templates/phases/*.html",
   "static/*",
 ]
+"research_harness.memory" = [
+  "baseline_dossiers/*.yaml",
+  "baseline_dossiers/candidates/*.md",
+  "default_failures/*.yaml",
+  "default_failures/*/*.md",
+]
 "research_harness.schemas" = ["*.schema.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-

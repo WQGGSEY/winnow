@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from research_harness.config import load_lessons, load_yaml
+from research_harness.config import load_lessons
+from research_harness.memory.baseline_dossier import load_baseline_dossier
 from research_harness.memory.failure_retrieval import (
+    load_failure_index,
     retrieve_failure_summaries,
 )
 from research_harness.schemas.validator import validate_named_schema
@@ -349,10 +351,7 @@ class ClaudeCodeInvoker:
             dossier_id = ref.get("baseline_dossier_id")
             if not dossier_id:
                 continue
-            dossier_path = (
-                self.repo_root / "memory" / "baseline_dossiers" / f"{dossier_id}.yaml"
-            )
-            dossier = load_yaml(dossier_path)
+            dossier = load_baseline_dossier(self.repo_root, str(dossier_id))
             selected = dossier.get("selected", {})
             candidates = "; ".join(
                 f"{candidate.get('id')}={candidate.get('decision')}"
@@ -365,8 +364,7 @@ class ClaudeCodeInvoker:
         return "\n".join(lines) if lines else "- none"
 
     def _failure_context(self, node: dict[str, Any]) -> str:
-        failure_index_path = self.repo_root / "memory" / "failures" / "index.yaml"
-        failures = load_yaml(failure_index_path)
+        failures = load_failure_index(self.repo_root)
         retrieval = node.get("failure_retrieval", {})
         query_tag_list = [str(tag) for tag in retrieval.get("query_tags", [])]
         query_tags = ", ".join(query_tag_list)

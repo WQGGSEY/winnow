@@ -87,8 +87,11 @@ def _valid_grilling():
 
 
 _ABSTRACTION_OK = {"abstraction": _CLEAN_ABSTRACTION, "domain_terms_stripped": []}
-_READING_OK = {"reading": "treat units as a population", "field_method": "replicator dynamics",
-               "emergent_claim": "selection predicts the aggregate"}
+_READING_OK = {
+    "reading": "treat units as a population",
+    "field_mechanism": "replicator dynamics",
+    "predicted_behavior": "selection predicts the aggregate",
+}
 _PRUNE1_PASS = {"correspondence": [
     {"abstraction_element": "units", "reading_counterpart": "individuals"},
     {"abstraction_element": "aggregate", "reading_counterpart": "mean fitness"},
@@ -129,6 +132,9 @@ def test_happy_path_keeps_quota_claims_and_writes_valid_session(tmp_path):
     assert s["fields_tried"] == 2
     cc = out.claims[0]["claim_contract"]
     assert cc["claim_under_test"] and len(cc["mandatory_baselines"]) == 3
+    reduction_calls = [call for call in fake.calls if call["kind"] == "reduction"]
+    assert all("replicator dynamics" in call["user"] for call in reduction_calls)
+    assert all("selection predicts the aggregate" in call["user"] for call in reduction_calls)
     # abstraction(1) + 2 fields * (reading+prune1+reduction) = 7 LLM calls.
     assert s["usage_estimate"]["llm_calls"] == 7
     # written file is schema-valid and on disk.
