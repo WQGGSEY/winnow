@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["ok", "runtime"],
+  "properties": {
+    "ok": {"type": "boolean", "const": true},
+    "runtime": {"type": "string", "const": "codex"}
+  },
+  "additionalProperties": false
+}

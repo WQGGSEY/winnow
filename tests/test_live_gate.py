@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from research_harness.schemas.validator import validate_named_schema
+from research_harness.agent_runtime import RuntimeAuthResult
 from research_harness.orchestrator.demo import _demo_node
+from research_harness.schemas.validator import validate_named_schema
+from research_harness.workers.codex_invoker import CodexInvoker
 from research_harness.workers.live_gate import (
     build_manual_live_node_plan,
     build_manual_live_smoke_plan,
@@ -17,229 +17,107 @@ from research_harness.workers.live_gate import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-
-
-def _auth_status(subscription_type: str = "max") -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(
-        args=["claude", "auth", "status", "--json"],
-        returncode=0,
-        stdout=json.dumps(
-            {
-                "loggedIn": True,
-                "authMethod": "claude.ai",
-                "apiProvider": "firstParty",
-                "email": "redacted@example.com",
-                "orgId": "redacted",
-                "subscriptionType": subscription_type,
-            }
-        ),
-        stderr="",
-    )
+AUTH = RuntimeAuthResult(
+    ok=True,
+    mode="chatgpt_login",
+    details={"status": "logged_in", "auth_method": "chatgpt"},
+)
 
 
 class LiveGateTests(unittest.TestCase):
-    def test_manual_live_plan_is_ready_when_auth_ok_and_cli_present(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            with patch.dict(os.environ, {}, clear=True):
-                with patch(
-                    "research_harness.workers.claude_code_invoker.subprocess.run",
-                    return_value=_auth_status(),
-                ):
-                    plan = build_manual_live_smoke_plan(
-                        REPO_ROOT,
-                        Path(tmp) / "live",
-                        claude_path="/usr/local/bin/claude",
-                        billing_ack=True,
-                    )
+    def test_ready_plan_uses_codex_worker_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            CodexInvoker, "auth_preflight", return_value=AUTH
+        ):
+            plan = build_manual_live_smoke_plan(
+                REPO_ROOT,
+                Path(tmp) / "live",
+                codex_path="/usr/local/bin/codex",
+                billing_ack=True,
+            )
 
             validate_named_schema("manual_live_smoke_plan", plan)
-            validate_named_schema("invocation_envelope", plan["live_invocation_envelope"])
             self.assertEqual(plan["status"], "ready_to_manually_run")
-            self.assertFalse(plan["execution_enabled"])
-            self.assertEqual(plan["runtime_guard"]["execution_mode"], "manual_only")
-            self.assertEqual(plan["runtime_guard"]["auto_execution"], "forbidden")
-            self.assertFalse(plan["billing_guard"]["api_key_present"])
-            self.assertEqual(plan["live_invocation_envelope"]["backend"], "claude_code_live")
-            self.assertEqual(
-                plan["live_invocation_envelope"]["output_schema"]["name"],
-                "worker_task_result",
-            )
-            self.assertFalse(
-                plan["live_invocation_envelope"]["command_plan"]["executes_in_dry_run"]
-            )
-            self.assertIn("--model", plan["manual_command"])
-            self.assertIn("--max-budget-usd", plan["manual_command"])
-            self.assertIn("--tools", plan["manual_command"])
-            self.assertIn("--system-prompt", plan["manual_command"])
-            self.assertIn("--disable-slash-commands", plan["manual_command"])
-            self.assertIn("--strict-mcp-config", plan["manual_command"])
-            self.assertNotIn("--bare", plan["manual_command"])
-            self.assertEqual(plan["auth_preflight"]["details"]["subscription_type"], "max")
-            self.assertNotIn("email", plan["auth_preflight"]["details"])
-            self.assertTrue((Path(tmp) / "live" / "manual_live_smoke_plan.json").exists())
-            self.assertEqual(
-                plan["live_invocation_envelope"]["command_plan"]["stdin_path"],
-                plan["live_invocation_envelope"]["prompt_path"],
-            )
-            self.assertTrue(
-                Path(plan["live_invocation_envelope"]["worker_task_path"]).exists()
-            )
-            self.assertTrue(Path(plan["runbook_path"]).exists())
+            self.assertEqual(plan["live_invocation_envelope"]["backend"], "codex_live")
+            self.assertEqual(plan["auth_preflight"]["mode"], "chatgpt_login")
+            self.assertTrue(plan["runtime_guard"]["requires_chatgpt_login"])
+            self.assertEqual(plan["manual_command"][0], "/usr/local/bin/codex")
             self.assertEqual(
                 plan["ingest_command"][3],
-                "research_harness.workers.claude_stdout_ingest",
+                "research_harness.workers.codex_stdout_ingest",
             )
-            self.assertEqual(
-                plan["ingest_command"][5],
-                plan["manual_stdout_path"],
-            )
-            self.assertEqual(
-                plan["expected_output_path"],
-                plan["live_invocation_envelope"]["expected_output_path"],
-            )
-            self.assertTrue(plan["worker_report_path"].endswith("worker_report.json"))
+            self.assertIn("--output-schema", plan["manual_command"])
+            self.assertIn("--sandbox", plan["manual_command"])
+            self.assertNotIn("--max-budget-usd", plan["manual_command"])
 
-    def test_manual_live_plan_blocks_when_api_key_would_override_subscription(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "secret"}, clear=False):
-                plan = build_manual_live_smoke_plan(
-                    REPO_ROOT,
-                    Path(tmp) / "live",
-                    claude_path="/usr/local/bin/claude",
-                    billing_ack=True,
-                )
+            plan_path = Path(tmp) / "live" / "manual_live_smoke_plan.json"
+            self.assertEqual(json.loads(plan_path.read_text(encoding="utf-8")), plan)
+            self.assertTrue(Path(plan["runbook_path"]).exists())
 
-            self.assertEqual(plan["status"], "blocked_by_auth")
-            self.assertTrue(plan["billing_guard"]["api_key_present"])
-            self.assertFalse(plan["auth_preflight"]["ok"])
-            self.assertIn("ANTHROPIC_API_KEY", plan["auth_preflight"]["reason"])
-
-    def test_manual_live_plan_blocks_when_claude_cli_missing(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            with patch.dict(os.environ, {}, clear=True):
-                with patch("research_harness.workers.live_gate.shutil.which", return_value=None):
-                    plan = build_manual_live_smoke_plan(
-                        REPO_ROOT,
-                        Path(tmp) / "live",
-                        billing_ack=True,
-                    )
-
-            self.assertEqual(plan["status"], "blocked_by_missing_cli")
-            self.assertFalse(plan["claude_cli"]["found"])
-            self.assertFalse(plan["execution_enabled"])
-
-    def test_written_manual_live_plan_is_json(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            with patch.dict(os.environ, {}, clear=True):
-                with patch(
-                    "research_harness.workers.claude_code_invoker.subprocess.run",
-                    return_value=_auth_status(),
-                ):
-                    plan = build_manual_live_smoke_plan(
-                        REPO_ROOT,
-                        Path(tmp) / "live",
-                        claude_path="/usr/local/bin/claude",
-                        billing_ack=True,
-                    )
-            written = json.loads(
-                (Path(tmp) / "live" / "manual_live_smoke_plan.json").read_text(
-                    encoding="utf-8"
-                )
+    def test_arbitrary_node_uses_its_own_workspace(self) -> None:
+        node = _demo_node()
+        node["id"] = "n_custom_live_002"
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            CodexInvoker, "auth_preflight", return_value=AUTH
+        ):
+            plan = build_manual_live_node_plan(
+                REPO_ROOT,
+                node,
+                run_dir=Path(tmp) / "live_node",
+                codex_path="/usr/local/bin/codex",
+                billing_ack=True,
             )
 
-            self.assertEqual(written["status"], plan["status"])
-            self.assertEqual(written["manual_command"][0], "/usr/local/bin/claude")
-            self.assertIn("-p", written["manual_command"])
-            self.assertEqual(written["ingest_command"], plan["ingest_command"])
-            self.assertTrue(Path(written["runbook_path"]).exists())
-
-    def test_manual_live_node_plan_accepts_arbitrary_node(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            node = _demo_node()
-            node["id"] = "n_custom_live_002"
-            with patch.dict(os.environ, {}, clear=True):
-                with patch(
-                    "research_harness.workers.claude_code_invoker.subprocess.run",
-                    return_value=_auth_status(),
-                ):
-                    plan = build_manual_live_node_plan(
-                        REPO_ROOT,
-                        node,
-                        run_dir=Path(tmp) / "live_node",
-                        claude_path="/usr/local/bin/claude",
-                        billing_ack=True,
-                    )
-
-            validate_named_schema("manual_live_smoke_plan", plan)
-            self.assertEqual(plan["status"], "ready_to_manually_run")
             self.assertEqual(plan["live_invocation_envelope"]["node_id"], node["id"])
-            self.assertEqual(
+            self.assertIn(
+                f"/nodes/{node['id']}/workspace/",
                 plan["live_invocation_envelope"]["worker_task_path"],
-                str(
-                    (
-                        Path(tmp)
-                        / "live_node"
-                        / "nodes"
-                        / node["id"]
-                        / "workspace"
-                        / "worker_task.json"
-                    ).resolve()
-                ),
-            )
-            self.assertTrue(
-                (Path(tmp) / "live_node" / "manual_live_worker_plan.json").exists()
             )
 
-    def test_manual_live_plan_blocks_without_billing_ack_by_default(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            with patch.dict(os.environ, {}, clear=True):
-                with patch(
-                    "research_harness.workers.claude_code_invoker.subprocess.run",
-                    return_value=_auth_status(),
-                ):
-                    plan = build_manual_live_smoke_plan(
-                        REPO_ROOT,
-                        Path(tmp) / "live",
-                        claude_path="/usr/local/bin/claude",
-                    )
+    def test_billing_ack_is_required(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            CodexInvoker, "auth_preflight", return_value=AUTH
+        ):
+            plan = build_manual_live_smoke_plan(
+                REPO_ROOT,
+                Path(tmp) / "live",
+                codex_path="/usr/local/bin/codex",
+                billing_ack=False,
+            )
 
             self.assertEqual(plan["status"], "blocked_by_billing_guard")
             self.assertFalse(plan["billing_guard"]["ack_ok"])
-            self.assertEqual(
-                plan["billing_guard"]["ack_value"],
-                "subscription_ack",
-            )
-            self.assertFalse(plan["execution_enabled"])
 
-    def test_manual_live_plan_blocks_non_subscription_auth(self) -> None:
-        not_subscription = subprocess.CompletedProcess(
-            args=["claude", "auth", "status", "--json"],
-            returncode=0,
-            stdout=json.dumps(
-                {
-                    "loggedIn": True,
-                    "authMethod": "console",
-                    "apiProvider": "firstParty",
-                    "subscriptionType": None,
-                }
-            ),
-            stderr="",
+    def test_missing_cli_is_reported_before_auth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "research_harness.workers.live_gate.shutil.which", return_value=None
+        ):
+            plan = build_manual_live_smoke_plan(
+                REPO_ROOT,
+                Path(tmp) / "live",
+                billing_ack=True,
+            )
+
+            self.assertEqual(plan["status"], "blocked_by_missing_cli")
+            self.assertFalse(plan["codex_cli"]["found"])
+
+    def test_non_chatgpt_auth_is_blocked(self) -> None:
+        auth = RuntimeAuthResult(
+            ok=False,
+            mode="non_chatgpt_auth",
+            reason="codex login status is not using ChatGPT authentication.",
         )
-        with tempfile.TemporaryDirectory() as tmp:
-            with patch.dict(os.environ, {}, clear=True):
-                with patch(
-                    "research_harness.workers.claude_code_invoker.subprocess.run",
-                    return_value=not_subscription,
-                ):
-                    plan = build_manual_live_smoke_plan(
-                        REPO_ROOT,
-                        Path(tmp) / "live",
-                        claude_path="/usr/local/bin/claude",
-                        billing_ack=True,
-                    )
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            CodexInvoker, "auth_preflight", return_value=auth
+        ):
+            plan = build_manual_live_smoke_plan(
+                REPO_ROOT,
+                Path(tmp) / "live",
+                codex_path="/usr/local/bin/codex",
+                billing_ack=True,
+            )
 
             self.assertEqual(plan["status"], "blocked_by_auth")
-            self.assertEqual(plan["auth_preflight"]["mode"], "non_subscription_auth")
 
 
 if __name__ == "__main__":

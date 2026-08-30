@@ -450,7 +450,7 @@ def _base_envelope(tid, **overrides):
     env = {
         "thread_id": tid,
         "data_sources_available": [{"kind": "synthetic", "id": "g"}],
-        "llm_oracles_available": [{"kind": "subscription_claude_code"}],
+        "llm_oracles_available": [{"kind": "subscription_codex"}],
         "compute_budget": {
             "max_runner_seconds_per_node": 900,
             "max_concurrent_nodes": 2,
@@ -507,7 +507,7 @@ def test_bootstrap_envelope_defaults_to_unverified_screen(tmp_path):
     (repo / "settings.json").write_text(json.dumps({"data_adapters": {"registered": []}}))
     tid = "t_boot"
     (repo / "runs" / "threads" / tid / "production").mkdir(parents=True)
-    env = S.bootstrap_envelope_if_missing(repo, tid, target_scope="deployment")
+    env = S.bootstrap_envelope_if_missing(repo, tid, target_scope="directional")
     assert env is not None
     assert env["external_falsifier"]["kind"] == "none"
     assert env["external_falsifier"]["registered_by"] == "supervisor_bootstrap"
@@ -642,6 +642,23 @@ def test_gate_refuses_on_holdout_mismatch(tmp_path, monkeypatch):
     assert out["status"] == "rejected"  # holdout mismatch -> real referent not verified
 
 
+def test_gate_refuses_stale_falsifier_predicate() -> None:
+    frozen = _real_falsifier()
+    frozen["predicate"]["threshold"] = 0.9
+    result = {
+        "produced_by": F.PRODUCED_BY,
+        "passed": True,
+        "kind": frozen["kind"],
+        "holdout_source_id": frozen["holdout_source_id"],
+        "predicate": {"metric": "ir_mean", "op": ">=", "threshold": 0.1},
+    }
+
+    reason = M._falsifier_result_blocks_achievement(result, frozen)
+
+    assert reason is not None
+    assert "predicate" in reason
+
+
 def test_achieved_false_stamps_unverified_screen_when_no_referent(tmp_path, monkeypatch):
     tid = "t_gate6"
     _setup_thread(tmp_path, monkeypatch, tid, _base_envelope(tid))
@@ -736,24 +753,24 @@ def _write_attestation(repo, tid, attestation):
     (rdir / "user_goal_attestation.json").write_text(json.dumps(attestation))
 
 
-def test_is_terminal_unverified_screen_terminates(tmp_path):
+def test_is_terminal_unverified_screen_is_not_scientific_completion(tmp_path):
     tid = "t_term1"
     _write_summary(tmp_path, tid, {"outcome": "honest_failure"})
     _write_attestation(tmp_path, tid, {"achieved": False, "attested_status": "unverified_screen"})
     is_term, label = S.is_terminal(tmp_path, tid)
-    assert is_term is True
-    assert label == "accept_with_unverified_screen"
+    assert is_term is False
+    assert label is None
 
 
-def test_is_terminal_bounded_result_construct_valid_terminates(tmp_path):
-    # INV-terminal-taxonomy (T2-18): a bounded_result outcome from a
-    # construct_valid_screen is a distinct terminal, not the honest-failure retreat.
+def test_is_terminal_bounded_result_is_not_scientific_completion(tmp_path):
+    # ADR 0013: a construct-valid bounded result is progress evidence, not the
+    # strong result required to complete the research program.
     tid = "t_term_bounded"
     _write_summary(tmp_path, tid, {"outcome": "bounded_result"})
     _write_attestation(tmp_path, tid, {"achieved": False, "attested_status": "construct_valid_screen"})
     is_term, label = S.is_terminal(tmp_path, tid)
-    assert is_term is True
-    assert label == "accept_with_construct_valid"
+    assert is_term is False
+    assert label is None
 
 
 def test_is_terminal_not_achieved_honest_failure_retries(tmp_path):
@@ -764,7 +781,7 @@ def test_is_terminal_not_achieved_honest_failure_retries(tmp_path):
     assert is_term is False
 
 
-def test_is_terminal_goal_achieved_still_terminates(tmp_path):
+def test_is_terminal_goal_achieved_without_strong_receipt_does_not_terminate(tmp_path):
     tid = "t_term3"
     _write_summary(tmp_path, tid, {
         "outcome": "accept",
@@ -773,5 +790,5 @@ def test_is_terminal_goal_achieved_still_terminates(tmp_path):
     })
     _write_attestation(tmp_path, tid, {"achieved": True, "attested_status": "goal_achieved"})
     is_term, label = S.is_terminal(tmp_path, tid)
-    assert is_term is True
-    assert label == "accept_with_goal_achieved"
+    assert is_term is False
+    assert label is None

@@ -24,6 +24,7 @@
         "properties": {
           "kind": { "type": "string", "enum": ["real_adapter", "synthetic"] },
           "id": { "type": "string", "minLength": 1, "description": "adapter_id (real) or generator label (synthetic)" },
+          "snapshot_id": { "type": "string", "pattern": "^as_[a-f0-9]{64}$" },
           "scope_note": { "type": "string", "description": "Brief description of what this data covers — date range, universe, asset class, etc." }
         },
         "additionalProperties": false
@@ -32,7 +33,7 @@
     "llm_oracles_available": {
       "type": "array",
       "minItems": 1,
-      "description": "What LLM oracles are reachable: 'subscription_claude_code' (Claude Code interactive driving the thread itself, free), 'live_anthropic_api' (paid, requires billing_ack), 'deterministic_proxy' (no LLM, deterministic substitute), or 'none'. Live API entries require operator ack flags in settings.",
+      "description": "LLM oracles reachable by the thread. subscription_codex uses the Codex ChatGPT login session.",
       "items": {
         "type": "object",
         "required": ["kind"],
@@ -40,7 +41,7 @@
           "kind": {
             "type": "string",
             "enum": [
-              "subscription_claude_code",
+              "subscription_codex",
               "live_anthropic_api",
               "deterministic_proxy",
               "none"
@@ -62,6 +63,15 @@
         "max_total_node_hours": { "type": "number", "minimum": 0.5 }
       },
       "additionalProperties": false
+    },
+    "runtime_capabilities": {
+      "type": "array",
+      "description": "Operator-verified resources available to LocalRunner. Strategy requirements reference these canonical IDs.",
+      "items": {
+        "type": "string",
+        "pattern": "^(local_runner|cpu|accelerator:[a-z0-9_.-]+|module:[a-z0-9_.-]+|data:[a-z0-9_.-]+|oracle:[a-z0-9_.-]+)$"
+      },
+      "uniqueItems": true
     },
     "baseline_provenance_available": {
       "type": "array",
@@ -100,7 +110,9 @@
             "type": "string",
             "enum": ["deployment", "feasibility", "directional"]
           }
-        }
+        },
+        "data_source_anchor": { "type": "string", "minLength": 1 },
+        "data_source_snapshot_id": { "type": "string", "pattern": "^as_[a-f0-9]{64}$" }
       },
       "additionalProperties": false
     },

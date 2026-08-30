@@ -27,18 +27,25 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def _auth_status() -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(
-        args=["claude", "auth", "status", "--json"],
+        args=["codex", "login", "status"],
         returncode=0,
-        stdout=json.dumps(
-            {
-                "loggedIn": True,
-                "authMethod": "claude.ai",
-                "apiProvider": "firstParty",
-                "subscriptionType": "max",
-            }
-        ),
+        stdout="Logged in using ChatGPT\n",
         stderr="",
     )
+
+
+def _codex_stdout(message: str) -> str:
+    return "\n".join(
+        json.dumps(event)
+        for event in (
+            {"type": "thread.started", "thread_id": "reduction-test"},
+            {"type": "item.completed", "item": {"type": "agent_message", "text": message}},
+            {
+                "type": "turn.completed",
+                "usage": {"input_tokens": 3, "cached_input_tokens": 0, "output_tokens": 40},
+            },
+        )
+    ) + "\n"
 
 
 def _search_state(node: dict[str, object]) -> dict[str, object]:
@@ -126,39 +133,23 @@ class LiveReductionIngestTests(unittest.TestCase):
                 args: list[str],
                 **_kwargs: object,
             ) -> subprocess.CompletedProcess[str]:
-                cli_result = {
-                    "type": "result",
-                    "subtype": "success",
-                    "is_error": False,
-                    "num_turns": 1,
-                    "result": json.dumps(_worker_task_result(run_dir, node["id"])),
-                    "total_cost_usd": 0.004,
-                    "usage": {
-                        "input_tokens": 3,
-                        "cache_creation_input_tokens": 20,
-                        "cache_read_input_tokens": 0,
-                        "output_tokens": 40,
-                    },
-                    "modelUsage": {"claude-sonnet-test": {"costUSD": 0.004}},
-                    "permission_denials": [],
-                }
                 return subprocess.CompletedProcess(
                     args=args,
                     returncode=0,
-                    stdout=json.dumps(cli_result),
+                    stdout=_codex_stdout(json.dumps(_worker_task_result(run_dir, node["id"]))),
                     stderr="",
                 )
 
             with patch.dict(os.environ, {}, clear=True):
                 with patch(
-                    "research_harness.workers.claude_code_invoker.subprocess.run",
+                    "research_harness.workers.codex_invoker.subprocess.run",
                     return_value=_auth_status(),
                 ):
                     dispatch = run_live_dispatch_once(
                         REPO_ROOT,
                         state_path,
                         run_dir=run_dir,
-                        claude_path="/usr/local/bin/claude",
+                        codex_path="/usr/local/bin/codex",
                         billing_ack=True,
                         execution_ack=True,
                         command_runner=fake_runner,
@@ -190,14 +181,14 @@ class LiveReductionIngestTests(unittest.TestCase):
 
             with patch.dict(os.environ, {}, clear=True):
                 with patch(
-                    "research_harness.workers.claude_code_invoker.subprocess.run",
+                    "research_harness.workers.codex_invoker.subprocess.run",
                     return_value=_auth_status(),
                 ):
                     build_live_dispatch_plan(
                         REPO_ROOT,
                         state_path,
                         run_dir=root / "dispatch",
-                        claude_path="/usr/local/bin/claude",
+                        codex_path="/usr/local/bin/codex",
                         billing_ack=True,
                     )
 

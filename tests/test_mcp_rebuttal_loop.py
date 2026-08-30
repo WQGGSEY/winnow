@@ -461,7 +461,7 @@ def test_ac_confidence_downclamped_when_no_real_adapter(isolated_thread, tmp_pat
     envelope = {
         "thread_id": tid,
         "data_sources_available": [{"kind": "synthetic", "id": "synth_default"}],
-        "llm_oracles_available": [{"kind": "subscription_claude_code", "model": "claude-opus-4-7"}],
+        "llm_oracles_available": [{"kind": "subscription_codex", "model": "gpt-5.6-sol"}],
         "compute_budget": {"max_runner_seconds_per_node": 900, "max_concurrent_nodes": 2, "max_total_node_hours": 8.0},
         "baseline_provenance_available": [{"candidate_id": "x", "provenance": "y"}],
         "operator_intent": {"target_deploy_grade_scope": "feasibility", "acceptable_alternative_scopes": ["feasibility"]},

@@ -1,15 +1,14 @@
-"""MCP server — Claude Code interactive drives reasoning through these tools.
+"""Client-neutral MCP server for research-harness production tools.
 
 This module exposes the research_harness state as a Model-Context-Protocol
-server. The operator runs the frontend to set up grilling + market, then
-opens Claude Code interactive in a terminal, points it at this MCP server,
-and issues a single command (`/research start <thread_id>`). Claude Code
-itself becomes the Professor + GradStudent — reading state via these tools
-and committing decisions back.
+server. The production supervisor starts a Codex session with this server's
+command, arguments, and environment configured for that invocation. The model
+acts as Professor and GradStudent by reading state through these tools and
+committing decisions back.
 
 Persona is enforced at the boundary: every tool call goes through
 persona_validator before being persisted. Violations are returned as
-explicit retry instructions so Claude Code rewrites and retries.
+explicit retry instructions so the calling model rewrites and retries.
 
 Tools exposed
 -------------
@@ -26,19 +25,19 @@ Tools exposed
 The MCP server is intentionally THIN — it does not run experiments or
 LLMs, it only reads/writes the harness's existing schemas and applies the
 persona validator. The work loop (cycle through stages, dispatch to
-worker, etc.) is replaced by Claude Code's own multi-step reasoning.
+worker, etc.) is replaced by the model's own multi-step reasoning.
 
 Implementation note: this file uses a minimal stdio JSON-RPC subset of the
-MCP spec — that way no external `mcp` package is required. Claude Code's
-MCP client follows the same protocol shape that
-`claude.ai/mcp` documents.
+MCP spec, so no external `mcp` package is required.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -221,7 +220,7 @@ TOOL_DEFINITIONS = [
     {
         "name": "resume_production_state",
         "description": (
-            "Recovery tool. Call this if the previous Claude Code session "
+            "Recovery tool. Call this if the previous agent session "
             "died mid-run (e.g. process killed during execute_node_experiment). "
             "Demotes any node stuck in 'running' WITHOUT a persisted "
             "worker_report back to 'ready', so the selector re-queues it. "
@@ -425,7 +424,26 @@ TOOL_DEFINITIONS = [
             "thread setting); when it does, EVERY experiment MUST import those "
             "modules AND reference those data sources, or this tool rejects the "
             "source — use the registered tooling and REAL data rather than "
-            "hand-rolling a substitute or self-authoring synthetic data."
+            "hand-rolling a substitute or self-authoring synthetic data. "
+            "REGISTERED INPUT CONTRACT: read the JSON file named by "
+            "`RESEARCH_HARNESS_INPUT_MANIFEST`; resolve the dataset as "
+            "`manifest_path.parent / manifest['primary_dataset']['relative_path']`. "
+            "The canonical field is `primary_dataset.relative_path` at the "
+            "manifest root, not under an `inputs` wrapper, and it is relative "
+            "to the node workspace. Do not search ambient repository paths. "
+            "EVIDENCE OUTPUT CONTRACT: every declared metrics file must contain "
+            "a top-level `metrics` object with a numeric candidate value at each "
+            "exact metric_key and a top-level `baselines` object with a numeric "
+            "comparison value at each exact baseline_key. Add one requirement "
+            "for every mandatory metric/baseline comparison; use distinct keys "
+            "such as `word_accuracy` and `word_macro_f1` when one baseline is "
+            "compared on multiple metrics. A promotion-eligible run must also "
+            "emit top-level `claim_verdict_candidate='supported'`, "
+            "`disproof_conditions_hit=[]`, and `unexpected_observations=[]`; "
+            "omitting the verdict is deterministically `inconclusive` and cannot "
+            "be promoted. Nested model result tables may be "
+            "included under additional keys, but they do not satisfy this "
+            "machine-readable contract."
         ),
         "inputSchema": {
             "type": "object",
@@ -507,10 +525,16 @@ TOOL_DEFINITIONS = [
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
             "Promote / branch / prune a node after seeing the worker report "
-            "and critic reviews. When promoting, you must also propose 2-4 "
-            "follow_up_children that explore NEW axes — mechanism / "
-            "necessity / boundary / constraint — not just rewordings of the "
-            "parent. Restatements will be REJECTED."
+            "and critic reviews. A negative result is not a terminal: provide "
+            "at least two follow_up_children with distinct causal mechanisms "
+            "and executable interventions. Each child must name which exact "
+            "frozen success criterion it tests, two discriminating predicted "
+            "outcomes, required capabilities, and normalized estimated cost. "
+            "Capabilities use stable IDs only: `local_runner`, `cpu`, "
+            "`accelerator:<name>`, `module:<name>`, `data:<adapter_id>`, or "
+            "`oracle:<kind>`. Implementation techniques are not capabilities. "
+            "The harness content-addresses these fields, rejects duplicates, "
+            "preserves the frozen bar, and computes priority itself."
         ),
         "inputSchema": {
             "type": "object",
@@ -524,15 +548,60 @@ TOOL_DEFINITIONS = [
                 },
                 "final_verdict": {"type": "string"},
                 "response_to_grad_student": {"type": "string"},
+                "command_id": {
+                    "type": "string",
+                    "description": "Idempotency key for this decision command.",
+                },
+                "expected_revision": {
+                    "type": "integer",
+                    "description": "Optional adaptive-state revision for stale-writer rejection.",
+                },
                 "follow_up_children": {
                     "type": "array",
                     "items": {
                         "type": "object",
-                        "required": ["type", "successor_claim"],
+                        "required": [
+                            "type",
+                            "successor_claim",
+                            "strategy_family",
+                            "mechanism",
+                            "intervention",
+                            "information_target",
+                            "predicted_outcomes",
+                            "tests_bar_gaps",
+                            "required_capabilities",
+                            "estimated_cost",
+                        ],
                         "properties": {
                             "type": {"type": "string"},
                             "successor_claim": {"type": "string"},
                             "rationale": {"type": "string"},
+                            "strategy_family": {"type": "string"},
+                            "mechanism": {"type": "string"},
+                            "intervention": {"type": "string"},
+                            "information_target": {"type": "string"},
+                            "predicted_outcomes": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "minItems": 2,
+                            },
+                            "tests_bar_gaps": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "minItems": 1,
+                            },
+                            "required_capabilities": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string",
+                                    "pattern": "^(local_runner|cpu|accelerator:[a-z0-9_.-]+|module:[a-z0-9_.-]+|data:[a-z0-9_.-]+|oracle:[a-z0-9_.-]+)$",
+                                },
+                            },
+                            "estimated_cost": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1,
+                            },
                         },
                     },
                 },
@@ -1032,7 +1101,7 @@ TOOL_DEFINITIONS = [
         "name": "get_pending_operator_response",
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
-            "Polled by the Claude Code subprocess to consume operator "
+            "Polled by the Codex subprocess to consume operator "
             "responses to prompts previously enqueued via "
             "enqueue_operator_prompt. Returns the oldest responded prompt "
             "(or the one matching event_id if supplied) and marks it as "
@@ -1059,8 +1128,8 @@ TOOL_DEFINITIONS = [
             "of paper.html, documenting: the user's original intake, all "
             "attempts made, the final attestation showing achieved=false, and "
             "the concrete experiments that would change the answer. Used when "
-            "max_reject_cycles is exhausted or when the operator (or Claude "
-            "Code) decides the direction is structurally hopeless and further "
+            "max_reject_cycles is exhausted or when the operator or agent "
+            "decides the direction is structurally hopeless and further "
             "fan-out would not help. This is a HONEST outcome, not a failure "
             "of the harness — better than publishing a misleading paper. "
             "If the thread sets execution_constraints.require_skill_isolation, "
@@ -1144,6 +1213,211 @@ def _read_json(p: Path) -> dict[str, Any] | None:
         return json.loads(p.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return None
+
+
+def _write_search_state_atomic(path: Path, state: dict[str, Any]) -> None:
+    """Commit the single-writer search snapshot without exposing partial JSON."""
+
+    temporary = path.with_name(f".{path.name}.adaptive.tmp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with temporary.open("w", encoding="utf-8") as handle:
+        json.dump(state, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+
+
+@contextmanager
+def _exclusive_adaptive_writer(tid: str):
+    """Serialize cross-process mutations of one thread's adaptive state."""
+
+    import fcntl
+
+    lock_path = _thread_dir(tid) / "production" / "tree" / ".adaptive-writer.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _ensure_adaptive_state(
+    tid: str,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    """Attach the problem-level adaptive envelope on first active-path use."""
+
+    existing = state.get("adaptive")
+    if isinstance(existing, dict):
+        return existing
+
+    from research_harness.orchestrator.adaptive_search import (
+        build_research_goal,
+        initialize_adaptive_state,
+    )
+
+    thread = _read_json(_thread_dir(tid) / "thread.json") or {}
+    grilling = _read_json(
+        _thread_dir(tid) / "grilling" / "grilling_session.json"
+    ) or {}
+    envelope = _read_json(
+        _thread_dir(tid) / "production" / "feasibility_envelope.json"
+    ) or {}
+    if not (
+        thread.get("user_goal")
+        or grilling.get("user_goal")
+        or (grilling.get("extracted") or {}).get("claim_under_test")
+    ):
+        roots = [
+            node
+            for node in state.get("nodes") or []
+            if isinstance(node, dict) and node.get("parent") is None
+        ]
+        root_goal_ids = {
+            str((node.get("lineage") or {}).get("root_goal_id") or "")
+            for node in roots
+        }
+        if not roots or len(root_goal_ids) != 1:
+            raise ValueError(
+                "missing pre-generation goal and legacy roots do not share one root_goal_id"
+            )
+        legacy_contracts = {
+            json.dumps(
+                node.get("claim_contract") or {},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            for node in roots
+        }
+        if len(legacy_contracts) != 1:
+            raise ValueError(
+                "missing pre-generation goal and legacy root claim contracts disagree"
+            )
+        legacy_contract = roots[0].get("claim_contract") or {}
+        legacy_question = (
+            legacy_contract.get("claim_under_test")
+            or next(iter(root_goal_ids), "")
+            or f"Legacy research goal {roots[0].get('id', 'unknown')}"
+        )
+        thread = {"user_goal": legacy_question}
+        grilling = {
+            "user_goal": legacy_question,
+            "extracted": dict(legacy_contract),
+        }
+        goal = build_research_goal(
+            thread=thread,
+            grilling=grilling,
+            envelope=envelope,
+        )
+        goal["source"] = "legacy_single_root_migration"
+        goal["strong_completion_blocked"] = True
+    else:
+        goal = build_research_goal(
+            thread=thread,
+            grilling=grilling,
+            envelope=envelope,
+        )
+    adaptive = initialize_adaptive_state(goal)
+    state["adaptive"] = adaptive
+    return adaptive
+
+
+def _adaptive_command_id(args: dict[str, Any]) -> str:
+    explicit = str(args.get("command_id") or "").strip()
+    if explicit:
+        return explicit
+    import hashlib
+
+    payload = {
+        key: value
+        for key, value in args.items()
+        if key not in {"command_id", "expected_revision"}
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return f"implicit:{digest}"
+
+
+def _adaptive_capabilities(tid: str) -> set[str]:
+    from research_harness.orchestrator.adaptive_search import (
+        capabilities_from_envelope,
+    )
+
+    envelope = _read_json(
+        _thread_dir(tid) / "production" / "feasibility_envelope.json"
+    ) or {}
+    return capabilities_from_envelope(envelope)
+
+
+def _strong_candidate_for_terminal(
+    tid: str,
+    state: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return an evidence-backed adaptive promotion ready for rebuttal."""
+
+    adaptive = state.get("adaptive") or {}
+    known_strategy_ids = {
+        strategy.get("id")
+        for strategy in adaptive.get("strategies") or []
+        if isinstance(strategy, dict) and strategy.get("id")
+    }
+    if not known_strategy_ids:
+        return None
+    falsifier = _read_json(_rebuttal_dir(tid) / "falsifier_result.json") or {}
+    if falsifier.get("passed") is not True or falsifier.get("kind") != "real_holdout":
+        return None
+    nodes_by_id = {node["id"]: node for node in state.get("nodes") or []}
+    frontier_by_id = {
+        item["node_id"]: item for item in state.get("frontier") or []
+    }
+    candidates: list[tuple[int, float, str, dict[str, Any]]] = []
+    for node_id in state.get("promoted_node_ids") or []:
+        node = nodes_by_id.get(node_id) or {}
+        strategy_id = (node.get("strategy") or {}).get("id")
+        if strategy_id not in known_strategy_ids:
+            continue
+        worker = _read_json(
+            _thread_dir(tid)
+            / "production"
+            / "tree"
+            / "nodes"
+            / node_id
+            / "worker_report.json"
+        ) or {}
+        if (
+            worker.get("status") != "completed"
+            or worker.get("claim_verdict_candidate") != "supported"
+            or (worker.get("baseline_evidence_status") or {}).get("overall")
+            != "passed"
+            or worker.get("disproof_conditions_hit")
+        ):
+            continue
+        frontier = frontier_by_id.get(node_id) or {}
+        candidates.append(
+            (
+                int(frontier.get("depth", 0)),
+                float(
+                    (frontier.get("priority_components") or {}).get(
+                        "score", frontier.get("priority", 0.0)
+                    )
+                ),
+                node_id,
+                node,
+            )
+        )
+    if not candidates:
+        return None
+    _, _, node_id, node = max(candidates)
+    return {
+        "node_id": node_id,
+        "node_type": node.get("type"),
+        "strategy_id": (node.get("strategy") or {}).get("id"),
+        "falsifier_observed": falsifier.get("observed"),
+    }
 
 
 _TOOL_ENVELOPE_TAILS = re.compile(
@@ -1280,7 +1554,7 @@ def _format_failure_index(index: dict[str, Any]) -> str:
 
 
 def _strip_tool_envelope_leak(text: Any) -> str:
-    """Remove trailing Claude Code tool-call XML envelope leakage from a
+    """Remove trailing legacy Claude Code tool-call XML envelope leakage from a
     string before persisting it to dialog.json. No-op for non-strings or
     clean strings. Idempotent.
     """
@@ -1302,7 +1576,7 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
     model_preference = (
         thread.get("mcp_model")
         or mcp_cfg.get("default_model")
-        or "claude-sonnet-4-6"
+        or "gpt-5.6-sol"
     )
     # Surface the full market output, not just market_research_brief.json:
     #   - baseline_dossier_candidate.yaml  ← the precise baseline spec the
@@ -1364,7 +1638,7 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
 
 # Claim-type weights — lower = run earlier. Same policy that
 # ParallelAgent.prioritize_claims used; relocated to the MCP boundary so
-# Claude Code follows the same order it would have followed under the
+# The agent session follows the same order it would have followed under the
 # automated loop.
 _TYPE_WEIGHTS = {
     "validity": 0,
@@ -1481,16 +1755,29 @@ def _bar_sanity_gate_status(tid: str) -> dict[str, Any] | None:
 
 
 def handle_get_next_admissible_node(args: dict[str, Any]) -> dict[str, Any]:
+    tid = args["thread_id"]
+    state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
+    if not state_path.exists():
+        return _handle_get_next_admissible_node_locked(args)
+    with _exclusive_adaptive_writer(tid):
+        return _handle_get_next_admissible_node_locked(args)
+
+
+def _handle_get_next_admissible_node_locked(
+    args: dict[str, Any],
+) -> dict[str, Any]:
     """Selector with resume support.
 
     Priority order:
       1. Any in-progress node (running / completed_worker_report /
          critic_reviewed / orchestrator_reduced) — these are partially-
-         processed nodes that a previous Claude Code session left stranded.
+         processed nodes that a previous agent session left stranded.
          The response names the next MCP tool to call so the caller can
          pick up exactly where the prior session stopped.
       2. New queued admissible nodes per the 4-stage claim-typed policy.
     """
+    from research_harness.orchestrator.search_state import validate_search_state
+
     tid = args["thread_id"]
     state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
     state = _read_json(state_path)
@@ -1503,6 +1790,18 @@ def handle_get_next_admissible_node(args: dict[str, Any]) -> dict[str, Any]:
                 "root node + search_state."
             ),
         }
+    had_adaptive_state = isinstance(state.get("adaptive"), dict)
+    try:
+        adaptive = _ensure_adaptive_state(tid, state)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": "paused_needs_expansion",
+            "search_disposition": "paused_needs_expansion",
+            "reason": f"cannot freeze problem-level research goal: {exc}",
+            "next_tool_to_call": "resume_production_state",
+        }
+    if not had_adaptive_state:
+        _write_search_state_atomic(state_path, state)
 
     # --- Cycle-1 skill-isolation gate. ----------------------------------
     # A require_skill_isolation thread may not dispatch ANY node until a
@@ -1549,6 +1848,43 @@ def handle_get_next_admissible_node(args: dict[str, Any]) -> dict[str, Any]:
             ),
         }
 
+    existing_pause = adaptive.get("pause") or {}
+    if (
+        adaptive.get("disposition") == "paused_needs_expansion"
+        and existing_pause.get("reason") == "needs_strategy_expansion"
+    ):
+        return {
+            "status": "paused_needs_expansion",
+            "search_disposition": "paused_needs_expansion",
+            "active_stage": "adaptive_search",
+            "pause": existing_pause,
+            "next_tool_to_call": "submit_professor_decision",
+            "reason": (
+                "The last negative observation still needs at least two "
+                "mechanism-distinct strategies. Resubmit that decision with a "
+                "new command_id and the frozen adaptive revision."
+            ),
+        }
+
+    achieved_attestation = _read_json(
+        _rebuttal_dir(tid) / "user_goal_attestation.json"
+    ) or {}
+    if (
+        adaptive.get("disposition") == "goal_achieved"
+        and achieved_attestation.get("achieved") is True
+    ):
+        return {
+            "status": "goal_achieved_render_pending",
+            "promoted_node_id": achieved_attestation.get("promoted_node_id"),
+            "next_tool_to_call": "prepare_paper_writing_context",
+            "reason": (
+                "The verified strong-result receipt and achieved attestation "
+                "exist, but the supervisor terminal also requires rendered "
+                "publication artifacts and production_run_summary.json. Finish "
+                "the paper writer; do not resume search or rebuttal."
+            ),
+        }
+
     nodes_by_id = {n["id"]: n for n in state["nodes"]}
 
     # --- Resume path: pick up where the previous session stopped. -----
@@ -1583,23 +1919,133 @@ def handle_get_next_admissible_node(args: dict[str, Any]) -> dict[str, Any]:
             ),
         }
 
-    # --- Fresh path: pick by stage + type weight. ---------------------
+    strong_candidate = _strong_candidate_for_terminal(tid, state)
+    if strong_candidate is not None:
+        readiness = _read_json(
+            _thread_dir(tid) / "production" / "tree" / "mcp_readiness.json"
+        ) or {}
+        if readiness.get("submit") is not True:
+            return {
+                "status": "strong_candidate_ready",
+                **strong_candidate,
+                "next_tool_to_call": "decide_publication_readiness",
+                "reason": (
+                    "An adaptive strategy has supported runner evidence and a "
+                    "passing real holdout. Stop spending the frontier and move "
+                    "this candidate through rebuttal and the strong-result gates."
+                ),
+            }
+        return {
+            "status": "rebuttal_ready",
+            **strong_candidate,
+            "next_tool_to_call": "prepare_rebuttal_packet",
+            "reason": (
+                "Publication readiness is recorded for the verified strong "
+                "candidate; begin rebuttal rather than dispatching more search nodes."
+            ),
+        }
+
+    # --- Fresh path: adaptive priority after the first learned strategy. ---
     stage = _active_stage(state)
     admits: set[str] = stage["admits"]
-    candidates: list[tuple[float, int, str, dict[str, Any]]] = []
+    adaptive_active = bool(adaptive.get("strategies"))
+    candidates: list[
+        tuple[float, int, str, dict[str, Any], dict[str, Any]]
+    ] = []
+    capability_blocked: list[dict[str, Any]] = []
+    available_capabilities = _adaptive_capabilities(tid)
+    from research_harness.orchestrator.adaptive_search import (
+        normalize_required_capabilities,
+    )
     for item in state.get("frontier", []):
         if item.get("status") != "queued":
             continue
         node = nodes_by_id.get(item["node_id"])
         if not node:
             continue
-        if node.get("type") not in admits:
+        if not adaptive_active and node.get("type") not in admits:
             continue
-        weight = _TYPE_WEIGHTS.get(node.get("type", ""), 99)
+        if adaptive_active:
+            components = item.get("priority_components") or {}
+            strategy = node.get("strategy") or {}
+            required_capabilities = normalize_required_capabilities(
+                strategy.get("required_capabilities") or []
+            )
+            missing = sorted(required_capabilities - available_capabilities)
+            if strategy and missing:
+                capability_blocked.append(
+                    {
+                        "node_id": item["node_id"],
+                        "strategy_id": strategy.get("id"),
+                        "strategy_family": strategy.get("family"),
+                        "missing_capabilities": missing,
+                        "priority_components": components,
+                    }
+                )
+                continue
+            if strategy and float(components.get("capability_fit", 0.0)) <= 0.0:
+                components = dict(components)
+                components["capability_fit"] = 1.0
+                components["score"] = round(
+                    float(components.get("score", 0.0)) + 1.0,
+                    6,
+                )
+                item["priority_components"] = components
+                item["priority"] = components["score"]
+            priority = float(components.get("score", item.get("priority", 0.0)))
+            sort_key = -priority
+        else:
+            sort_key = float(_TYPE_WEIGHTS.get(node.get("type", ""), 99))
         candidates.append(
-            (weight, int(item.get("depth", 0)), item["node_id"], node)
+            (sort_key, int(item.get("depth", 0)), item["node_id"], node, item)
         )
     if not candidates:
+        if capability_blocked:
+            capability_blocked.sort(
+                key=lambda entry: (
+                    -float((entry.get("priority_components") or {}).get("score", 0.0)),
+                    str(entry.get("node_id") or ""),
+                )
+            )
+            best_blocked = capability_blocked[0]
+            missing_capabilities = sorted(
+                {
+                    capability
+                    for entry in capability_blocked
+                    for capability in entry["missing_capabilities"]
+                }
+            )
+            adaptive["pause"] = {
+                "reason": "missing_capability",
+                "caused_by_observation_ids": list(
+                    (best_blocked.get("priority_components") or {}).get(
+                        "evidence_basis", []
+                    )
+                ),
+                "missing_capabilities": missing_capabilities,
+                "best_next_experiment": {
+                    "node_id": best_blocked["node_id"],
+                    "strategy_id": best_blocked.get("strategy_id"),
+                    "strategy_family": best_blocked.get("strategy_family"),
+                },
+                "resume_condition": "provide the missing declared capability",
+            }
+            adaptive["disposition"] = "paused_needs_expansion"
+            state["status"] = "blocked"
+            validate_search_state(state)
+            _write_search_state_atomic(state_path, state)
+            return {
+                "status": "paused_needs_expansion",
+                "search_disposition": "paused_needs_expansion",
+                "active_stage": "adaptive_search",
+                "pause": adaptive["pause"],
+                "blocked_candidates": capability_blocked,
+                "reason": (
+                    "The remaining strategies require capabilities that are not "
+                    "declared in the feasibility envelope. The candidates are "
+                    "preserved and can be resumed when those capabilities exist."
+                ),
+            }
         # Rail 5: surface MUST_REVISE_ROOT when the deepest promoted node's
         # successor branches have collapsed (>=3 negative, 0 promoted children).
         # Without this, operators silently fall through to decide_publication_readiness
@@ -1674,21 +2120,48 @@ def handle_get_next_admissible_node(args: dict[str, Any]) -> dict[str, Any]:
                 response["auto_action_suggestion"] = auto_action
                 response = _maybe_auto_dispatch(tid, response)
             return response
+        adaptive["pause"] = {
+            "reason": "needs_strategy_expansion",
+            "caused_by_observation_ids": [
+                observation.get("id")
+                for observation in adaptive.get("observations") or []
+                if isinstance(observation, dict) and observation.get("id")
+            ][-3:],
+            "missing_capabilities": [],
+            "best_next_experiment": None,
+            "resume_condition": (
+                "materialize a mechanism-distinct strategy linked to the latest "
+                "negative observation"
+            ),
+        }
+        adaptive["disposition"] = "paused_needs_expansion"
+        state["status"] = "blocked"
+        validate_search_state(state)
+        _write_search_state_atomic(state_path, state)
         return {
-            "status": "no_admissible_node",
-            "active_stage": stage["name"],
+            "status": "paused_needs_expansion",
+            "search_disposition": "paused_needs_expansion",
+            "active_stage": "adaptive_search",
+            "pause": adaptive["pause"],
+            "next_tool_to_call": "propose_alternative_root_directions",
             "reason": (
-                f"Stage {stage['name']} has no queued nodes of admitted types "
-                f"{sorted(admits)}. Either the stage is done or all "
-                f"admissible nodes have been processed — call "
-                f"decide_publication_readiness."
+                "No useful queued experiment remains and no verified strong "
+                "result exists. The search is paused at an explicit expansion "
+                "point; publication readiness is not scientific completion."
             ),
         }
     candidates.sort(key=lambda c: (c[0], c[1], c[2]))
-    _, depth, nid, node = candidates[0]
-    return {
+    _, depth, nid, node, frontier_item = candidates[0]
+    if adaptive.get("pause") is not None:
+        adaptive["pause"] = None
+        adaptive["disposition"] = "continue"
+        adaptive["revision"] = int(adaptive["revision"]) + 1
+        state["status"] = "running"
+        validate_search_state(state)
+        _write_search_state_atomic(state_path, state)
+    response = {
         "status": "ok",
-        "active_stage": stage["name"],
+        "active_stage": "adaptive_search" if adaptive_active else stage["name"],
         "node_id": nid,
         "node_type": node.get("type"),
         "depth": depth,
@@ -1705,13 +2178,25 @@ def handle_get_next_admissible_node(args: dict[str, Any]) -> dict[str, Any]:
         "disproof_conditions": node.get("claim_contract", {}).get(
             "disproof_conditions", []
         ),
-        "_selection_policy": (
-            f"Picked {nid} via deterministic policy: stage={stage['name']}, "
-            f"type weight (validity<capability<necessity<…), depth asc, id "
-            f"asc. {len(candidates) - 1} other admissible candidate(s) "
-            f"queued behind it."
-        ),
+        "research_goal": adaptive["goal"],
     }
+    if adaptive_active:
+        response["priority_components"] = frontier_item.get(
+            "priority_components"
+        ) or {}
+        response["strategy"] = node.get("strategy") or {}
+        response["_selection_policy"] = (
+            f"Picked {nid} by harness-owned evidence-derived priority, then "
+            f"depth and content identity. {len(candidates) - 1} other queued "
+            "candidate(s) remain."
+        )
+    else:
+        response["_selection_policy"] = (
+            f"Picked {nid} via legacy bootstrap policy: stage={stage['name']}, "
+            "type weight, depth, and id. Evidence-derived priority takes over "
+            "after the first negative observation creates causal strategies."
+        )
+    return response
 
 
 def handle_submit_bar_sanity_result(args: dict[str, Any]) -> dict[str, Any]:
@@ -1758,7 +2243,7 @@ def handle_submit_bar_sanity_result(args: dict[str, Any]) -> dict[str, Any]:
 
 def handle_resume_production_state(args: dict[str, Any]) -> dict[str, Any]:
     """Operator-invoked recovery: if a node has been stuck in `running` for
-    a long time (Claude Code session died before execute_node_experiment
+    a long time (the agent session died before execute_node_experiment
     could complete), demote it to `ready` so the selector re-queues it.
     Other mid-states (completed_worker_report / critic_reviewed /
     orchestrator_reduced) are kept as-is — they're not stuck, they're
@@ -1852,6 +2337,36 @@ def handle_submit_feasibility_envelope(args: dict[str, Any], settings: dict[str,
     env["max_attestable_status"] = _derive_max_attestable_status(env)
 
     env_path = _thread_dir(tid) / "production" / "feasibility_envelope.json"
+    state = _read_json(
+        _thread_dir(tid) / "production" / "tree" / "search_state.json"
+    ) or {}
+    adaptive = state.get("adaptive")
+    if isinstance(adaptive, dict):
+        frozen_bar = (adaptive.get("goal") or {}).get("bar") or {}
+        proposed_intent = env.get("operator_intent") or {}
+        frozen_fields = {
+            "target_scope": frozen_bar.get("target_scope"),
+            "data_source_anchor": frozen_bar.get("data_source_anchor"),
+            "data_source_snapshot_id": frozen_bar.get("data_source_snapshot_id"),
+            "external_falsifier": frozen_bar.get("external_falsifier") or {},
+        }
+        proposed_fields = {
+            "target_scope": proposed_intent.get("target_deploy_grade_scope"),
+            "data_source_anchor": proposed_intent.get("data_source_anchor"),
+            "data_source_snapshot_id": proposed_intent.get("data_source_snapshot_id"),
+            "external_falsifier": env.get("external_falsifier") or {},
+        }
+        if frozen_fields != proposed_fields:
+            return {
+                "status": "rejected",
+                "reason": (
+                    "the adaptive research goal is already frozen; target scope, "
+                    "data selection, snapshot, and external falsifier cannot be "
+                    "overwritten in place. Start a new goal revision instead."
+                ),
+                "frozen": frozen_fields,
+                "proposed": proposed_fields,
+            }
     env_path.parent.mkdir(parents=True, exist_ok=True)
     env_path.write_text(
         json.dumps(env, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
@@ -2249,7 +2764,7 @@ def handle_design_initial_claim_contract(
         encoding="utf-8",
     )
     # Bootstrap search_state so subsequent MCP tools have something to read.
-    # Without this Claude Code calls get_next_admissible_node and gets
+    # Without this the agent calls get_next_admissible_node and gets
     # `no_state`, leaving the production panel stuck on "not yet run".
     from research_harness.orchestrator.root_node_from_grilling import (
         attach_market_research_dossier,
@@ -2513,6 +3028,11 @@ def handle_design_experiment_template(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def handle_execute_node_experiment(args: dict[str, Any]) -> dict[str, Any]:
+    with _exclusive_adaptive_writer(args["thread_id"]):
+        return _handle_execute_node_experiment_locked(args)
+
+
+def _handle_execute_node_experiment_locked(args: dict[str, Any]) -> dict[str, Any]:
     """Build experiment_plan from the Professor's template, materialize the
     workspace, run LocalRunner, persist worker_report, and transition the
     node from 'ready'→'running'→'completed_worker_report'."""
@@ -2550,17 +3070,97 @@ def handle_execute_node_experiment(args: dict[str, Any]) -> dict[str, Any]:
     node_run_dir = run_dir / "nodes" / node_id
     node_run_dir.mkdir(parents=True, exist_ok=True)
 
-    if node["status"] == "ready":
-        transition_node(
-            state, node_id, "running",
-            event="mcp_dispatch",
-            reason="MCP server execute_node_experiment",
-        )
+    contract = node["claim_contract"]
+    adapter_id = contract.get("data_source_anchor")
+    snapshot_id = contract.get("data_source_snapshot_id")
+    runtime_inputs = None
+    if adapter_id or snapshot_id:
+        if not adapter_id or not snapshot_id:
+            return {
+                "status": "rejected",
+                "reason": "claim has an incomplete registered adapter selection",
+            }
+        from research_harness.data_adapters import AdapterError, require_thread_snapshot
+        from research_harness.runtime_inputs import RuntimeInputError, bind_runtime_input
+        try:
+            snapshot = require_thread_snapshot(
+                _thread_dir(tid),
+                adapter_id=str(adapter_id),
+                snapshot_id=str(snapshot_id),
+            )
+            runtime_inputs = bind_runtime_input(
+                snapshot=snapshot,
+                workspace=node_run_dir / "workspace",
+                repo_root=repo,
+            )
+        except (AdapterError, RuntimeInputError, OSError) as exc:
+            return {"status": "rejected", "reason": f"runtime input binding failed: {exc}"}
+    if contract.get("deploy_grade_scope") == "deployment" and runtime_inputs is None:
+        return {
+            "status": "rejected",
+            "reason": "deployment experiment requires a bound registered adapter",
+        }
 
     plan, template_used = build_experiment_plan_for_node(
         repo, node, run_dir, settings=settings_local
     )
+    if runtime_inputs is not None:
+        plan["inputs"] = runtime_inputs
     validate_experiment_plan(node, plan, run_dir)
+    adaptive = state.get("adaptive")
+    experiment_record: dict[str, Any] | None = None
+    if isinstance(adaptive, dict):
+        from research_harness.orchestrator.adaptive_search import (
+            experiment_fingerprint,
+        )
+
+        experiment_id = experiment_fingerprint(plan)
+        duplicate = next(
+            (
+                record
+                for record in adaptive.get("experiments") or []
+                if isinstance(record, dict)
+                and record.get("id") == experiment_id
+                and record.get("node_id") != node_id
+            ),
+            None,
+        )
+        if duplicate is not None:
+            rejection = {
+                "kind": "duplicate_experiment",
+                "experiment_id": experiment_id,
+                "node_id": node_id,
+                "duplicate_of": duplicate.get("node_id"),
+            }
+            adaptive["duplicate_rejections"].append(rejection)
+            adaptive["revision"] = int(adaptive["revision"]) + 1
+            _write_search_state_atomic(state_path, state)
+            return {
+                "status": "rejected",
+                "reason": "duplicate_experiment",
+                "experiment_id": experiment_id,
+                "duplicate_of": duplicate.get("node_id"),
+                "adaptive_revision": adaptive["revision"],
+            }
+        experiment_record = next(
+            (
+                record
+                for record in adaptive.get("experiments") or []
+                if isinstance(record, dict)
+                and record.get("id") == experiment_id
+                and record.get("node_id") == node_id
+            ),
+            None,
+        )
+        if experiment_record is None:
+            experiment_record = {
+                "id": experiment_id,
+                "node_id": node_id,
+                "strategy_id": (node.get("strategy") or {}).get("id"),
+                "status": "reserved",
+            }
+            adaptive["experiments"].append(experiment_record)
+            adaptive["revision"] = int(adaptive["revision"]) + 1
     (node_run_dir / "experiment_plan.json").write_text(
         json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -2569,6 +3169,13 @@ def handle_execute_node_experiment(args: dict[str, Any]) -> dict[str, Any]:
     (node_run_dir / "job_manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+    if node["status"] == "ready":
+        transition_node(
+            state, node_id, "running",
+            event="mcp_dispatch",
+            reason="MCP server execute_node_experiment after runtime input binding",
+        )
+        _write_search_state_atomic(state_path, state)
     runner = LocalRunner(run_dir, settings=settings_local)
     runner_result = runner.execute(manifest)
     validate_named_schema("runner_result", runner_result)
@@ -2592,14 +3199,61 @@ def handle_execute_node_experiment(args: dict[str, Any]) -> dict[str, Any]:
         json.dumps(worker_report, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    baseline_status = worker_report.get("baseline_evidence_status") or {}
+    if baseline_status.get("overall") == "not_evaluable":
+        reasons = [
+            str(item.get("reason"))
+            for item in baseline_status.get("results") or []
+            if item.get("status") == "not_evaluable" and item.get("reason")
+        ]
+        transition_node(
+            state,
+            node_id,
+            "ready",
+            event="evidence_contract_rejected",
+            reason="; ".join(reasons) or "baseline evidence is not evaluable",
+        )
+        if experiment_record is not None:
+            experiment_record["status"] = "evidence_rejected"
+        _write_search_state_atomic(state_path, state)
+        return {
+            "status": "rejected",
+            "reason": (
+                "experiment evidence did not satisfy the declared baseline contract: "
+                + ("; ".join(reasons) or "baseline evidence is not evaluable")
+                + ". Redesign the experiment output and execute this re-queued node "
+                "again. Each metrics file must expose top-level numeric `metrics` "
+                "and `baselines` values under the exact declared keys."
+            ),
+            "worker_status": worker_report["status"],
+            "claim_verdict_candidate": worker_report.get("claim_verdict_candidate"),
+            "baseline_evidence_overall": "not_evaluable",
+            "required_evidence_keys": {
+                "metrics": sorted(
+                    {
+                        item["metric_key"]
+                        for item in manifest["baseline_evidence_requirements"]
+                        if item["required"]
+                    }
+                ),
+                "baselines": sorted(
+                    {
+                        item["baseline_key"]
+                        for item in manifest["baseline_evidence_requirements"]
+                        if item["required"]
+                    }
+                ),
+            },
+            "template_used": template_used,
+        }
     transition_node(
         state, node_id, "completed_worker_report",
         event="worker_report",
         reason=f"worker status: {worker_report['status']}",
     )
-    state_path.write_text(
-        json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    if experiment_record is not None:
+        experiment_record["status"] = "executed"
+    _write_search_state_atomic(state_path, state)
     return {
         "status": "ok",
         "worker_status": worker_report["status"],
@@ -2795,7 +3449,14 @@ def handle_revise_root_after_reject(
 def handle_submit_professor_decision(
     args: dict[str, Any], settings: dict[str, Any]
 ) -> dict[str, Any]:
-    """ApplyProfessor's promote/branch/prune to the actual search_state."""
+    with _exclusive_adaptive_writer(args["thread_id"]):
+        return _handle_submit_professor_decision_locked(args, settings)
+
+
+def _handle_submit_professor_decision_locked(
+    args: dict[str, Any], settings: dict[str, Any]
+) -> dict[str, Any]:
+    """Apply one idempotent Professor resolution to the active search state."""
     from research_harness.orchestrator.search_state import (
         add_child_nodes,
         transition_node,
@@ -2807,43 +3468,174 @@ def handle_submit_professor_decision(
     node_id = args["node_id"]
     transition = args["next_transition"]
     follow_ups = args.get("follow_up_children") or []
-    # Enforce the deterministic selector: the operator's policy is "process
-    # the leftmost-stage, lowest-type-weight admissible node next". If
-    # Claude Code submits a decision for some OTHER node, reject and point
-    # at the correct one. (Sidesteps the model picking out-of-order nodes.)
-    state = _read_json(
-        _thread_dir(tid) / "production" / "tree" / "search_state.json"
-    )
-    if state:
-        expected = handle_get_next_admissible_node({"thread_id": tid})
-        if expected.get("status") == "ok" and expected.get("node_id") != node_id:
-            return {
-                "status": "rejected",
-                "reason": (
-                    f"You submitted a decision for node {node_id!r}, but the "
-                    f"deterministic selector points at {expected['node_id']!r} "
-                    f"next (stage={expected.get('active_stage')}, type="
-                    f"{expected.get('node_type')}). Call "
-                    f"get_next_admissible_node, process THAT node, then "
-                    f"retry the submission with its id."
-                ),
-            }
     state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
     state = _read_json(state_path)
     if not state:
         return {"status": "rejected", "reason": "search_state.json missing"}
+    try:
+        adaptive = _ensure_adaptive_state(tid, state)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": "rejected",
+            "reason": f"cannot freeze problem-level research goal: {exc}",
+        }
+    command_id = _adaptive_command_id(args)
+    prior_receipt = adaptive["command_receipts"].get(command_id)
+    if isinstance(prior_receipt, dict):
+        return prior_receipt
+    expected_revision = args.get("expected_revision")
+    if (
+        expected_revision is not None
+        and int(expected_revision) != int(adaptive["revision"])
+    ):
+        return {
+            "status": "rejected",
+            "reason": "stale_adaptive_revision",
+            "expected_revision": adaptive["revision"],
+            "received_revision": int(expected_revision),
+        }
+
+    # The selector owns ordering. A decision for another fresh node is stale,
+    # even when the submitted node happens to be otherwise runnable.
+    expected = _handle_get_next_admissible_node_locked({"thread_id": tid})
+    if expected.get("status") == "ok" and expected.get("node_id") != node_id:
+        return {
+            "status": "rejected",
+            "reason": (
+                f"You submitted a decision for node {node_id!r}, but the "
+                f"adaptive selector points at {expected['node_id']!r} next. "
+                "Process that node and retry with its id."
+            ),
+        }
     validate_search_state(state)
     node = next((n for n in state["nodes"] if n["id"] == node_id), None)
     if not node:
         return {"status": "rejected", "reason": f"node {node_id} not in search_state"}
     parent_claim = node["claim_contract"]["claim_under_test"]
     if transition == "promoted":
+        worker_report = _read_json(
+            state_path.parent / "nodes" / node_id / "worker_report.json"
+        ) or {}
+        if (
+            worker_report.get("status") != "completed"
+            or worker_report.get("claim_verdict_candidate") != "supported"
+            or (worker_report.get("baseline_evidence_status") or {}).get("overall")
+            != "passed"
+            or worker_report.get("disproof_conditions_hit")
+        ):
+            return {
+                "status": "rejected",
+                "reason": (
+                    "promotion_requires_supported_execution_evidence: worker "
+                    "report must be completed, supported, pass every mandatory "
+                    "baseline requirement, and hit no disproof condition"
+                ),
+            }
         check = validate_follow_up_strength(
             parent_claim=parent_claim, follow_ups=follow_ups,
             config=_persona_cfg(settings),
         )
         if not check.ok:
             return {"status": "rejected", "reason": check.reject_message()}
+
+    prepared_strategies: list[dict[str, Any]] = []
+    observation: dict[str, Any] | None = None
+    prepared_follow_ups = list(follow_ups)
+    if transition in {"needs_child_branch", "pruned"}:
+        from research_harness.orchestrator.adaptive_search import (
+            AdaptiveSearchError,
+            make_negative_observation,
+            prepare_strategy_expansion,
+        )
+
+        worker_report = _read_json(
+            state_path.parent / "nodes" / node_id / "worker_report.json"
+        ) or {}
+        observation = make_negative_observation(
+            node_id=node_id,
+            worker_report=worker_report,
+            final_verdict=str(args.get("final_verdict") or ""),
+        )
+        frontier_item = next(
+            (item for item in state["frontier"] if item["node_id"] == node_id),
+            None,
+        )
+        parent_depth = int(frontier_item["depth"]) if frontier_item else 0
+        if len(follow_ups) < 2:
+            if not any(
+                existing.get("id") == observation["id"]
+                for existing in adaptive["observations"]
+                if isinstance(existing, dict)
+            ):
+                adaptive["observations"].append(observation)
+            adaptive["pause"] = {
+                "reason": "needs_strategy_expansion",
+                "caused_by_observation_ids": [observation["id"]],
+                "missing_capabilities": [],
+                "best_next_experiment": None,
+                "resume_condition": (
+                    "submit at least two mechanism-distinct causal strategies "
+                    "under the frozen bar"
+                ),
+            }
+            adaptive["disposition"] = "paused_needs_expansion"
+            adaptive["revision"] = int(adaptive["revision"]) + 1
+            state["status"] = "blocked"
+            response = {
+                "status": "paused_needs_expansion",
+                "applied_transition": None,
+                "created_child_ids": [],
+                "search_state_status": "blocked",
+                "search_disposition": "paused_needs_expansion",
+                "adaptive_revision": adaptive["revision"],
+                "pause": adaptive["pause"],
+            }
+            adaptive["command_receipts"][command_id] = response
+            validate_search_state(state)
+            _write_search_state_atomic(state_path, state)
+            return response
+        try:
+            prepared_strategies = prepare_strategy_expansion(
+                goal=adaptive["goal"],
+                observation=observation,
+                candidates=follow_ups,
+                known_strategy_ids={
+                    str(strategy.get("id"))
+                    for strategy in adaptive["strategies"]
+                    if isinstance(strategy, dict) and strategy.get("id")
+                },
+                available_capabilities=_adaptive_capabilities(tid),
+                depth=parent_depth + 1,
+                max_depth=int(state["max_depth"]),
+                known_strategies=adaptive["strategies"],
+            )
+        except AdaptiveSearchError as exc:
+            return {"status": "rejected", "reason": str(exc)}
+        prepared_follow_ups = []
+        frozen_bar = adaptive["goal"]["bar"]
+        frozen_contract = {
+            "mandatory_baselines": list(
+                frozen_bar.get("mandatory_baselines")
+                or node["claim_contract"]["mandatory_baselines"]
+            ),
+            "success_criteria": list(frozen_bar["success_criteria"]),
+            "disproof_conditions": list(frozen_bar["disproof_conditions"]),
+        }
+        if frozen_bar.get("target_scope"):
+            frozen_contract["deploy_grade_scope"] = frozen_bar["target_scope"]
+        if frozen_bar.get("data_source_anchor"):
+            frozen_contract["data_source_anchor"] = frozen_bar[
+                "data_source_anchor"
+            ]
+        if frozen_bar.get("data_source_snapshot_id"):
+            frozen_contract["data_source_snapshot_id"] = frozen_bar[
+                "data_source_snapshot_id"
+            ]
+        for follow_up, strategy in zip(follow_ups, prepared_strategies, strict=True):
+            prepared = dict(follow_up)
+            prepared["_adaptive_strategy"] = strategy
+            prepared["_frozen_bar_contract"] = frozen_contract
+            prepared_follow_ups.append(prepared)
 
     # Record the reduction JSON for audit / frontend.
     decision_path = (
@@ -2860,11 +3652,16 @@ def handle_submit_professor_decision(
     # two-way conversation, not a one-sided grad-student monolog.
     dialog_path = decision_path.parent / "dialog.json"
     existing = _read_json(dialog_path) or {"node_id": node_id, "entries": []}
+    command_already_logged = any(
+        isinstance(entry, dict)
+        and (entry.get("metadata") or {}).get("command_id") == command_id
+        for entry in existing.get("entries") or []
+    )
     response_text = _strip_tool_envelope_leak(
         (args.get("response_to_grad_student") or "").strip()
     )
     final_verdict = args.get("final_verdict") or ""
-    if response_text:
+    if response_text and not command_already_logged:
         existing["entries"].append({
             "speaker": "professor",
             "intent": "verdict",
@@ -2874,10 +3671,11 @@ def handle_submit_professor_decision(
                 "next_transition": transition,
                 "follow_up_count": len(follow_ups),
                 "source": "mcp_server",
+                "command_id": command_id,
             },
         })
-    elif final_verdict or transition:
-        # Even when Claude Code didn't supply a natural-language reply, log
+    elif (final_verdict or transition) and not command_already_logged:
+        # Even when the agent did not supply a natural-language reply, log
         # the bare decision so the dialog log isn't visibly silent.
         existing["entries"].append({
             "speaker": "professor",
@@ -2890,9 +3688,12 @@ def handle_submit_professor_decision(
                 "next_transition": transition,
                 "source": "mcp_server",
                 "synthetic_text": True,
+                "command_id": command_id,
             },
         })
-    for f in follow_ups:
+    for f in prepared_follow_ups:
+        if command_already_logged:
+            break
         successor = _strip_tool_envelope_leak(
             (f.get("successor_claim") or "").strip()
         )
@@ -2913,6 +3714,7 @@ def handle_submit_professor_decision(
                 "type": ftype,
                 "successor_claim": successor,
                 "source": "mcp_server",
+                "command_id": command_id,
             },
         })
     dialog_path.write_text(
@@ -2992,16 +3794,58 @@ def handle_submit_professor_decision(
                     state, node_id, children,
                     reason="mcp professor follow-ups",
                 )
-    elif transition == "needs_child_branch":
-        transition_node(
-            state, node_id, "needs_child_branch",
-            event="mcp_branch", reason="mcp accepted child branch",
+    elif transition in {"needs_child_branch", "pruned"}:
+        from research_harness.orchestrator.treesearch.parallel_agent import (
+            _build_follow_up_children,
         )
-    elif transition == "pruned":
-        transition_node(
-            state, node_id, "pruned",
-            event="mcp_prune", reason="mcp accepted prune",
+
+        frontier_item = next(
+            (item for item in state["frontier"] if item["node_id"] == node_id),
+            None,
         )
+        parent_depth = int(frontier_item["depth"]) if frontier_item else 0
+        children = _build_follow_up_children(
+            node,
+            prepared_follow_ups,
+            parent_depth=parent_depth,
+            max_depth=int(state["max_depth"]),
+            dropped_followups=dropped_followups,
+        )
+        if len(children) != len(prepared_strategies):
+            return {
+                "status": "rejected",
+                "reason": "strategy expansion could not materialize every validated child",
+                "dropped_followups": dropped_followups,
+            }
+        created_child_ids = [child["id"] for child in children]
+        transition_node(
+            state,
+            node_id,
+            transition,
+            event="mcp_negative_observation",
+            reason="negative evidence produced distinct causal successors",
+            created_child_ids=created_child_ids,
+        )
+        add_child_nodes(
+            state,
+            node_id,
+            children,
+            reason="adaptive expansion from negative observation",
+        )
+        strategy_by_child = dict(zip(created_child_ids, prepared_strategies, strict=True))
+        for item in state["frontier"]:
+            strategy = strategy_by_child.get(item["node_id"])
+            if strategy is None:
+                continue
+            item["priority"] = float(strategy["priority"]["score"])
+            item["priority_components"] = dict(strategy["priority"])
+        adaptive["strategies"].extend(prepared_strategies)
+        if observation is not None and not any(
+            existing.get("id") == observation["id"]
+            for existing in adaptive["observations"]
+            if isinstance(existing, dict)
+        ):
+            adaptive["observations"].append(observation)
 
     # PR4: Failure memory auto-generation. When a node ends in a state the
     # rest of the harness considers a learnable failure (pruned, with an
@@ -3027,24 +3871,38 @@ def handle_submit_professor_decision(
             # blocker for the primary search state mutation.
             pass
 
-    state["status"] = (
-        "completed"
-        if not any(it["status"] == "queued" for it in state["frontier"])
-        else "running"
+    has_queued_work = any(it["status"] == "queued" for it in state["frontier"])
+    state["status"] = "running" if has_queued_work else "blocked"
+    from research_harness.orchestrator.adaptive_search import derive_search_disposition
+
+    if not has_queued_work and adaptive.get("pause") is None:
+        adaptive["pause"] = {
+            "reason": "needs_strategy_expansion",
+            "caused_by_observation_ids": (
+                [observation["id"]] if observation is not None else []
+            ),
+            "missing_capabilities": [],
+            "best_next_experiment": None,
+            "resume_condition": "materialize a distinct diagnostic strategy",
+        }
+    adaptive["disposition"] = derive_search_disposition(
+        has_queued_work=has_queued_work,
+        pause=adaptive.get("pause"),
+        verified_strong_receipt=adaptive.get("strong_result_receipt"),
     )
-    state_path.write_text(
-        json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    adaptive["revision"] = int(adaptive["revision"]) + 1
     response: dict[str, Any] = {
         "status": "accepted",
         "applied_transition": transition,
         "created_child_ids": created_child_ids,
         "search_state_status": state["status"],
+        "search_disposition": adaptive["disposition"],
+        "adaptive_revision": adaptive["revision"],
     }
     if dropped_followups:
         # Surface why some Professor follow-ups did NOT become tree nodes —
         # depth_limit_reached, empty_successor_claim, etc. This makes
-        # the previously-silent drop visible to Claude Code and to the
+        # the previously-silent drop visible to the agent and to the
         # operator inspecting the response.
         response["dropped_followups"] = dropped_followups
         response["dropped_followups_summary"] = (
@@ -3052,11 +3910,28 @@ def handle_submit_professor_decision(
             "If reason starts with 'depth_limit_reached', adjust configs/harness.yaml `search.max_depth` "
             "and resume; the cap is configurable, not a code constant."
         )
+    adaptive["command_receipts"][command_id] = response
+    validate_search_state(state)
+    _write_search_state_atomic(state_path, state)
     return response
 
 
 def handle_decide_publication_readiness(args: dict[str, Any]) -> dict[str, Any]:
     tid = args["thread_id"]
+    state = _read_json(
+        _thread_dir(tid) / "production" / "tree" / "search_state.json"
+    ) or {}
+    adaptive = state.get("adaptive") or {}
+    if adaptive.get("disposition") == "paused_needs_expansion":
+        return {
+            "status": "rejected",
+            "reason": (
+                "publication readiness cannot convert a resumable search pause "
+                "into scientific completion"
+            ),
+            "search_disposition": "paused_needs_expansion",
+            "pause": adaptive.get("pause"),
+        }
     readiness_path = (
         _thread_dir(tid) / "production" / "tree" / "mcp_readiness.json"
     )
@@ -3143,12 +4018,40 @@ def _resolve_promoted_node(tid: str, override_id: str | None = None) -> dict[str
     promoted = state.get("promoted_node_ids") or []
     if not promoted:
         raise ValueError("no promoted nodes yet — rebuttal requires a promoted root")
-    target = override_id or next(
-        (pid for pid in promoted
-         if next((n for n in state["nodes"] if n["id"] == pid), {}).get("parent") is None),
-        promoted[0],
-    )
-    node = next((n for n in state["nodes"] if n["id"] == target), None)
+    nodes_by_id = {node["id"]: node for node in state["nodes"]}
+    frontier_by_id = {
+        item["node_id"]: item for item in state.get("frontier", [])
+    }
+    adaptive_promoted = [
+        pid
+        for pid in promoted
+        if (nodes_by_id.get(pid, {}).get("strategy") or {}).get("id")
+    ]
+    if override_id:
+        target = override_id
+    elif adaptive_promoted:
+        target = max(
+            adaptive_promoted,
+            key=lambda pid: (
+                int(frontier_by_id.get(pid, {}).get("depth", 0)),
+                float(
+                    (frontier_by_id.get(pid, {}).get("priority_components") or {}).get(
+                        "score", frontier_by_id.get(pid, {}).get("priority", 0.0)
+                    )
+                ),
+                pid,
+            ),
+        )
+    else:
+        target = next(
+            (
+                pid
+                for pid in promoted
+                if nodes_by_id.get(pid, {}).get("parent") is None
+            ),
+            promoted[0],
+        )
+    node = nodes_by_id.get(target)
     if not node:
         raise ValueError(f"promoted node {target} missing from search_state")
     return {"state": state, "node": node, "promoted_id": target}
@@ -3581,6 +4484,11 @@ def _falsifier_result_blocks_achievement(
         return (
             f"falsifier_result.kind ({fr.get('kind')!r}) does not match the "
             f"envelope's external_falsifier.kind ({falsifier.get('kind')!r})."
+        )
+    if (fr.get("predicate") or {}) != (falsifier.get("predicate") or {}):
+        return (
+            "falsifier_result.predicate does not match the frozen external "
+            "falsifier predicate. Recompute the result against the exact frozen bar."
         )
     return None
 
@@ -4478,7 +5386,46 @@ def handle_seed_forest_from_connector(args: dict[str, Any]) -> dict[str, Any]:
         }
 
     policy = search_policy_from_config(_repo_root())
-    state = build_forest_search_state(grilling, claims, search_id=f"s_{tid}", policy=policy)
+    envelope = _read_json(
+        _thread_dir(tid) / "production" / "feasibility_envelope.json"
+    ) or {}
+    operator_intent = envelope.get("operator_intent") or {}
+    deploy_grade_scope = operator_intent.get("target_deploy_grade_scope")
+    adapter_id = operator_intent.get("data_source_anchor")
+    snapshot_id = operator_intent.get("data_source_snapshot_id")
+    data_selection = None
+    if adapter_id or snapshot_id:
+        if not adapter_id or not snapshot_id:
+            return {
+                "status": "rejected",
+                "reason": "feasibility envelope has an incomplete adapter selection",
+            }
+        from research_harness.data_adapters import AdapterError, require_thread_snapshot
+        try:
+            require_thread_snapshot(
+                _thread_dir(tid),
+                adapter_id=str(adapter_id),
+                snapshot_id=str(snapshot_id),
+            )
+        except AdapterError as exc:
+            return {"status": "rejected", "reason": str(exc)}
+        data_selection = {
+            "adapter_id": str(adapter_id),
+            "snapshot_id": str(snapshot_id),
+        }
+    if deploy_grade_scope == "deployment" and data_selection is None:
+        return {
+            "status": "rejected",
+            "reason": "deployment requires the supervisor's persisted adapter selection",
+        }
+    state = build_forest_search_state(
+        grilling,
+        claims,
+        search_id=f"s_{tid}",
+        policy=policy,
+        deploy_grade_scope=deploy_grade_scope,
+        data_selection=data_selection,
+    )
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     root_ids = [n["id"] for n in state["nodes"] if n.get("parent") is None]
@@ -5112,6 +6059,25 @@ def handle_submit_professor_user_goal_attestation(args: dict[str, Any]) -> dict[
     from research_harness import verdict_strength as _V
     settings = _ls(_repo_root())
     envelope = _read_json(_thread_dir(tid) / "production" / "feasibility_envelope.json")
+    state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
+    state = _read_json(state_path) or {}
+    adaptive = state.get("adaptive")
+    if isinstance(adaptive, dict):
+        frozen_falsifier = (
+            ((adaptive.get("goal") or {}).get("bar") or {}).get(
+                "external_falsifier"
+            )
+            or {}
+        )
+        current_falsifier = (envelope or {}).get("external_falsifier") or {}
+        if current_falsifier != frozen_falsifier:
+            return {
+                "status": "rejected",
+                "reason": (
+                    "the current feasibility envelope does not match the frozen "
+                    "research goal's external falsifier"
+                ),
+            }
     ledger = _thread_referent_ledger(tid, settings)
     strength = ledger["max_reachable_verdict"]
 
@@ -5176,12 +6142,208 @@ def handle_submit_professor_user_goal_attestation(args: dict[str, Any]) -> dict[
         # absent resource — surfaced for audit, not silently honored.
         attestation["attemptability_audit"] = attemptability_audit
 
+    strong_receipt: dict[str, Any] | None = None
+    if attestation.get("achieved") and isinstance(adaptive, dict):
+        if (adaptive.get("goal") or {}).get("strong_completion_blocked"):
+            return {
+                "status": "rejected",
+                "reason": (
+                    "strong completion is blocked because the goal was migrated "
+                    "from a legacy root rather than frozen from pre-generation artifacts"
+                ),
+            }
+        falsifier_result = _read_json(
+            _rebuttal_dir(tid) / "falsifier_result.json"
+        ) or {}
+        construct_result = _read_json(
+            _rebuttal_dir(tid) / "construct_adversary_report.json"
+        ) or {}
+        reduction = _read_json(
+            _rebuttal_dir(tid) / "orchestrator_reduction.json"
+        ) or {}
+        undefeated_kills = _undefeated_kills(
+            _collect_rebuttal_kills(tid),
+            reduction.get("blocking_objections"),
+        )
+        promoted = _resolve_promoted_node(tid)
+        promoted_node = promoted.get("node") or {}
+        promoted_strategy = promoted_node.get("strategy") or {}
+        promoted_strategy_id = promoted_strategy.get("id")
+        known_strategy_ids = {
+            strategy.get("id")
+            for strategy in adaptive.get("strategies") or []
+            if isinstance(strategy, dict) and strategy.get("id")
+        }
+        registered_strategy = next(
+            (
+                strategy
+                for strategy in adaptive.get("strategies") or []
+                if isinstance(strategy, dict)
+                and strategy.get("id") == promoted_strategy_id
+            ),
+            None,
+        )
+        node_dir = (
+            _thread_dir(tid)
+            / "production"
+            / "tree"
+            / "nodes"
+            / str(promoted.get("promoted_id"))
+        )
+        experiment_plan = _read_json(node_dir / "experiment_plan.json") or {}
+        worker_report = _read_json(node_dir / "worker_report.json") or {}
+        from research_harness.orchestrator.adaptive_search import (
+            experiment_fingerprint,
+            strategy_fingerprint,
+        )
+        from research_harness.orchestrator.strong_result import (
+            StrongExecutionEvidenceError,
+            verify_strong_execution_evidence,
+        )
+
+        try:
+            derived_strategy_id = strategy_fingerprint(
+                mechanism=str(promoted_strategy.get("mechanism") or ""),
+                intervention=str(promoted_strategy.get("intervention") or ""),
+            )
+        except Exception:  # noqa: BLE001
+            derived_strategy_id = None
+        try:
+            derived_experiment_id = experiment_fingerprint(experiment_plan)
+        except Exception:  # noqa: BLE001
+            derived_experiment_id = None
+        executed_experiment = next(
+            (
+                experiment
+                for experiment in adaptive.get("experiments") or []
+                if isinstance(experiment, dict)
+                and experiment.get("id") == derived_experiment_id
+                and experiment.get("node_id") == promoted.get("promoted_id")
+                and experiment.get("strategy_id") == promoted_strategy_id
+                and experiment.get("status") == "executed"
+            ),
+            None,
+        )
+        missing_gates: list[str] = []
+        execution_evidence: dict[str, Any] | None = None
+        try:
+            execution_evidence = verify_strong_execution_evidence(
+                node=promoted_node,
+                experiment_plan=experiment_plan,
+                worker_report=worker_report,
+                node_dir=node_dir,
+                tree_dir=state_path.parent,
+                settings=settings,
+            )
+        except StrongExecutionEvidenceError as exc:
+            missing_gates.append(f"verified runner evidence: {exc}")
+        if ac.get("decision") not in {"accept", "revise"}:
+            missing_gates.append("AC accept or revise")
+        if falsifier_result.get("passed") is not True:
+            missing_gates.append("passing external falsifier")
+        if construct_result.get("harness_verdict") != "survived":
+            missing_gates.append("survived construct adversary")
+        if construct_result.get("construction_ref") != promoted.get("promoted_id"):
+            missing_gates.append("construct adversary bound to the promoted strategy")
+        if strength != _V.REALITY_VERDICT:
+            missing_gates.append("transfer_valid referent strength")
+        if undefeated_kills:
+            missing_gates.append(
+                "defeat every blocking critic: "
+                + ", ".join(
+                    str(kill.get("critic_id")) for kill in undefeated_kills
+                )
+            )
+        if not promoted_strategy_id or promoted_strategy_id not in known_strategy_ids:
+            missing_gates.append("promoted adaptive strategy")
+        if (
+            derived_strategy_id != promoted_strategy_id
+            or promoted_strategy.get("goal_id") != adaptive["goal"]["id"]
+            or registered_strategy != promoted_strategy
+        ):
+            missing_gates.append("content-valid strategy identity")
+        if promoted_node.get("status") != "promoted":
+            missing_gates.append("promoted node status")
+        if executed_experiment is None:
+            missing_gates.append("executed experiment for the promoted strategy")
+        if (
+            experiment_plan.get("node_id") != promoted.get("promoted_id")
+            or worker_report.get("node_id") != promoted.get("promoted_id")
+        ):
+            missing_gates.append("experiment and worker evidence bound to promoted node")
+        if (
+            worker_report.get("status") != "completed"
+            or worker_report.get("claim_verdict_candidate") != "supported"
+            or (worker_report.get("baseline_evidence_status") or {}).get("overall")
+            != "passed"
+            or worker_report.get("disproof_conditions_hit")
+        ):
+            missing_gates.append("supported worker evidence with every baseline passed")
+        if attestation.get("promoted_node_id") != promoted.get("promoted_id"):
+            missing_gates.append("attestation bound to the promoted strategy")
+        if missing_gates:
+            return {
+                "status": "rejected",
+                "reason": (
+                    "verified strong-result receipt cannot be constructed; missing: "
+                    + ", ".join(missing_gates)
+                ),
+            }
+        assert execution_evidence is not None
+        import hashlib
+
+        strong_receipt = {
+            "verified": True,
+            "goal_id": adaptive["goal"]["id"],
+            "bar_digest": adaptive["goal"]["bar_digest"],
+            "strategy_id": promoted_strategy_id,
+            "promoted_node_id": promoted.get("promoted_id"),
+            "experiment_id": derived_experiment_id,
+            "verdict_strength": strength,
+            "falsifier_result_sha256": hashlib.sha256(
+                json.dumps(falsifier_result, sort_keys=True).encode("utf-8")
+            ).hexdigest(),
+            "construct_adversary_sha256": hashlib.sha256(
+                json.dumps(construct_result, sort_keys=True).encode("utf-8")
+            ).hexdigest(),
+            "ac_decision_sha256": hashlib.sha256(
+                json.dumps(ac, sort_keys=True).encode("utf-8")
+            ).hexdigest(),
+            "critic_resolution_sha256": hashlib.sha256(
+                json.dumps(reduction, sort_keys=True).encode("utf-8")
+            ).hexdigest(),
+            "attestation_sha256": hashlib.sha256(
+                json.dumps(attestation, sort_keys=True).encode("utf-8")
+            ).hexdigest(),
+            "experiment_plan_sha256": hashlib.sha256(
+                json.dumps(experiment_plan, sort_keys=True).encode("utf-8")
+            ).hexdigest(),
+            "worker_report_sha256": hashlib.sha256(
+                json.dumps(worker_report, sort_keys=True).encode("utf-8")
+            ).hexdigest(),
+            "job_manifest_sha256": execution_evidence["job_manifest_sha256"],
+            "runner_result_sha256": execution_evidence["runner_result_sha256"],
+            "metrics_evidence_sha256": execution_evidence[
+                "metrics_evidence_sha256"
+            ],
+        }
+
     out_path = _rebuttal_dir(tid) / "user_goal_attestation.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
         json.dumps(attestation, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    if strong_receipt is not None:
+        adaptive["strong_result_receipt"] = strong_receipt
+        adaptive["disposition"] = "goal_achieved"
+        adaptive["pause"] = None
+        adaptive["revision"] = int(adaptive["revision"]) + 1
+        state["status"] = "completed"
+        from research_harness.orchestrator.search_state import validate_search_state
+
+        validate_search_state(state)
+        _write_search_state_atomic(state_path, state)
 
     status = attestation["attested_status"]
     if status == "goal_achieved":
@@ -5221,6 +6383,7 @@ def handle_submit_professor_user_goal_attestation(args: dict[str, Any]) -> dict[
         "attested_status": status,
         "verdict_strength": strength,
         "referent_ledger": ledger,
+        "strong_result_receipt": strong_receipt,
         "next_step": next_step,
     }
 
@@ -5330,7 +6493,12 @@ def handle_render_honest_failure_paper(args: dict[str, Any]) -> dict[str, Any]:
 
     # Gather all evidence the system has accumulated.
     intake = _read_json(pdir / "intake_to_claim_dialog.json") or {}
-    user_problem = intake.get("original_contract", {}).get("claim_under_test", "")
+    thread_index = _read_json(_thread_dir(tid) / "thread.json") or {}
+    user_problem = (
+        intake.get("original_contract", {}).get("claim_under_test")
+        or thread_index.get("user_goal")
+        or ""
+    )
     attestation = _read_json(_rebuttal_dir(tid) / "user_goal_attestation.json") or {}
     fanout = _read_json(pdir / "fanout_cycles.json") or {}
     proposal = _read_json(pdir / "alternative_root_proposal.json") or {}
@@ -5577,7 +6745,53 @@ def handle_render_honest_failure_paper(args: dict[str, Any]) -> dict[str, Any]:
         json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    return {"status": "ok", "outcome": outcome, "artifact_path": str(out_path)}
+    state_path = pdir / "tree" / "search_state.json"
+    state = _read_json(state_path) or {}
+    adaptive = state.get("adaptive")
+    if isinstance(adaptive, dict):
+        required = attestation.get("required_additional_research") or []
+        missing_capabilities = sorted(
+            {
+                str(resource.get("ref"))
+                for item in required
+                if isinstance(item, dict)
+                for resource in item.get("required_resources") or []
+                if isinstance(resource, dict) and resource.get("ref")
+            }
+        )
+        adaptive["pause"] = {
+            "reason": (
+                "missing_capability"
+                if missing_capabilities
+                else "needs_strategy_expansion"
+            ),
+            "caused_by_observation_ids": [
+                observation.get("id")
+                for observation in adaptive.get("observations") or []
+                if isinstance(observation, dict) and observation.get("id")
+            ][-3:],
+            "missing_capabilities": missing_capabilities,
+            "best_next_experiment": required[0] if required else None,
+            "resume_condition": (
+                "provide the missing capability or materialize a new causal strategy"
+            ),
+            "progress_artifact": str(out_path),
+        }
+        adaptive["disposition"] = "paused_needs_expansion"
+        adaptive["revision"] = int(adaptive["revision"]) + 1
+        state["status"] = "blocked"
+        from research_harness.orchestrator.search_state import validate_search_state
+
+        validate_search_state(state)
+        _write_search_state_atomic(state_path, state)
+    return {
+        "status": "ok",
+        "outcome": outcome,
+        "artifact_path": str(out_path),
+        "search_disposition": (
+            adaptive.get("disposition") if isinstance(adaptive, dict) else None
+        ),
+    }
 
 
 def handle_render_final_paper(args: dict[str, Any]) -> dict[str, Any]:

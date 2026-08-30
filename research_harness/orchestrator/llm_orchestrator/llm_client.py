@@ -354,16 +354,16 @@ def build_llm_client(
     """
     cfg = (settings or {}).get("runtime", {}).get("llm_orchestrator", {}) or {}
     backend = str(cfg.get("backend", "mock")).lower()
-    if backend == "mcp":
-        # MCP mode: the harness does NOT call any LLM directly — Claude Code
-        # interactive drives all reasoning via the MCP server (see
+    if backend in {"mcp", "codex_mcp"}:
+        # MCP mode: the harness does not call an LLM directly. The production
+        # Codex session drives reasoning via the MCP server (see
         # `research_harness.mcp_server`). Any code path that still asks for
         # a LLMClient inside the harness (e.g. during a CLI-driven test or
         # legacy production_runner call without MCP wired up) gets a mock
         # client so the codepath remains exercisable.
         return MockLLMClient()
     if backend == "claude_cli":
-        agent_models = cfg.get("agent_models", {}) or {}
+        agent_models = cfg.get("legacy_claude_agent_models", {}) or {}
         model = str(
             agent_models.get(role)
             or agent_models.get("default")
@@ -380,7 +380,7 @@ def build_llm_client(
             max_budget_usd=str(cfg.get("max_budget_usd", "0.50")),
         )
     if backend == "anthropic":
-        agent_models = cfg.get("agent_models", {}) or {}
+        agent_models = cfg.get("legacy_claude_agent_models", {}) or {}
         model = str(
             agent_models.get(role)
             or agent_models.get("default")

@@ -240,6 +240,32 @@ def test_honest_failure_gate_disabled_renders_shallow(tmp_path, monkeypatch):
     assert out["status"] == "ok"  # toggle off reverts to ADR-0006 behaviour
 
 
+def test_honest_failure_uses_thread_user_goal_when_legacy_intake_is_absent(
+    tmp_path, monkeypatch
+):
+    _patch(monkeypatch, tmp_path)
+    monkeypatch.setattr(M, "_premature_termination_gate_enabled", lambda s: False)
+    tid = "t_user_goal"
+    thread_dir = tmp_path / "runs" / "threads" / tid
+    thread_dir.mkdir(parents=True)
+    (thread_dir / "thread.json").write_text(
+        json.dumps({"user_goal": "Classify arXiv archives from category names."}),
+        encoding="utf-8",
+    )
+    _write_state(tmp_path, tid, [_node("root", None, "promoted", scope="deployment")])
+    _write_attestation(tmp_path, tid, _attestation_neg(mechanism=None))
+
+    out = M.handle_render_honest_failure_paper({"thread_id": tid})
+
+    assert out["status"] == "ok"
+    summary = json.loads(
+        (
+            thread_dir / "production" / "production_run_summary.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert summary["user_intake"] == "Classify arXiv archives from category names."
+
+
 # --- lever 0: adversarial-dominant aggregation -------------------------- #
 
 

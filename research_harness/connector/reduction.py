@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from research_harness.connector.claude_call import CommandRunner, call_claude_json
+from research_harness.connector.codex_call import CommandRunner, call_agent_json
 
 _SYSTEM_PROMPT = (
     "You are a construction worker translating a far-domain MECHANISM onto a "
@@ -116,8 +116,7 @@ def reduce_to_claim(
     prune1_result: dict[str, Any],
     *,
     model: str,
-    max_budget: str,
-    claude_path: str,
+    codex_path: str,
     runner: CommandRunner,
     method_research: dict[str, Any] | None = None,
     timeout_seconds: int = 180,
@@ -130,12 +129,11 @@ def reduce_to_claim(
     reduction produces ``claim_contract=None`` and the reading dies here.
     """
     extracted = grilling_session["extracted"]
-    parsed, usage = call_claude_json(
+    parsed, usage = call_agent_json(
         system_prompt=_SYSTEM_PROMPT,
         user_prompt=_build_user_prompt(extracted, reading, prune1_result, method_research),
         model=model,
-        max_budget=max_budget,
-        claude_path=claude_path,
+        codex_path=codex_path,
         runner=runner,
         timeout_seconds=timeout_seconds,
         label=f"reduction[{reading.get('field', {}).get('code')}]",
@@ -168,5 +166,5 @@ def reduce_to_claim(
         # Recorded for inspection; the verdict above is the behavioral one.
         "llm_reducible_flag": bool(parsed.get("reducible")),
         "well_formed": well_formed,
-        "usage": usage,
+        "usage": usage.as_dict(),
     }

@@ -50,6 +50,111 @@
     "transitions": {
       "type": "array",
       "items": { "type": "object" }
+    },
+    "adaptive": {
+      "type": "object",
+      "required": [
+        "version",
+        "revision",
+        "goal",
+        "strategies",
+        "observations",
+        "experiments",
+        "duplicate_rejections",
+        "command_receipts",
+        "disposition",
+        "pause"
+      ],
+      "properties": {
+        "version": { "type": "integer", "enum": [1] },
+        "revision": { "type": "integer", "minimum": 0 },
+        "goal": {
+          "type": "object",
+          "required": ["id", "question", "bar", "bar_digest"],
+          "properties": {
+            "id": { "type": "string", "pattern": "^goal_[a-f0-9]{64}$" },
+            "question": { "type": "string", "minLength": 1 },
+            "bar": { "type": "object" },
+            "bar_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+            "source": {
+              "type": "string",
+              "enum": ["pre_generation", "legacy_single_root_migration"]
+            },
+            "strong_completion_blocked": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        "strategies": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "observations": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "experiments": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "duplicate_rejections": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "command_receipts": { "type": "object" },
+        "disposition": {
+          "type": "string",
+          "enum": ["continue", "paused_needs_expansion", "goal_achieved"]
+        },
+        "pause": { "type": ["object", "null"] },
+        "strong_result_receipt": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": [
+                "verified",
+                "goal_id",
+                "bar_digest",
+                "strategy_id",
+                "promoted_node_id",
+                "experiment_id",
+                "verdict_strength",
+                "falsifier_result_sha256",
+                "construct_adversary_sha256",
+                "ac_decision_sha256",
+                "critic_resolution_sha256",
+                "attestation_sha256",
+                "experiment_plan_sha256",
+                "worker_report_sha256",
+                "job_manifest_sha256",
+                "runner_result_sha256",
+                "metrics_evidence_sha256"
+              ],
+              "properties": {
+                "verified": { "const": true },
+                "goal_id": { "type": "string", "pattern": "^goal_[a-f0-9]{64}$" },
+                "bar_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+                "strategy_id": { "type": "string", "pattern": "^strategy_[a-f0-9]{64}$" },
+                "promoted_node_id": { "type": "string", "minLength": 1 },
+                "experiment_id": { "type": "string", "pattern": "^experiment_[a-f0-9]{64}$" },
+                "verdict_strength": { "const": "transfer_valid" },
+                "falsifier_result_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "construct_adversary_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "ac_decision_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "critic_resolution_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "attestation_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "experiment_plan_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "worker_report_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "job_manifest_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "runner_result_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "metrics_evidence_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

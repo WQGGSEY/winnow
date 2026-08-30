@@ -19,9 +19,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from research_harness.connector.claude_call import (
+from research_harness.connector.codex_call import (
     CommandRunner,
-    call_claude_json,
+    call_agent_json,
 )
 
 # Domain-neutral / structural words that appear in problem statements but are
@@ -142,8 +142,7 @@ def generate_abstraction(
     grilling_session: dict[str, Any],
     *,
     model: str,
-    max_budget: str,
-    claude_path: str,
+    codex_path: str,
     runner: CommandRunner,
     max_regen: int = 2,
     timeout_seconds: int = 180,
@@ -163,23 +162,27 @@ def generate_abstraction(
     leaked: list[str] = []
     abstraction_text = ""
     attempts = 0
-    total_usage = {"cost_usd": 0.0, "input_tokens": 0, "output_tokens": 0}
+    total_usage = {
+        "input_tokens": 0,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_output_tokens": 0,
+    }
 
     for attempt in range(max_regen + 1):
-        parsed, usage = call_claude_json(
+        parsed, usage = call_agent_json(
             system_prompt=_SYSTEM_PROMPT,
             user_prompt=_build_user_prompt(extracted, leaked),
             model=model,
-            max_budget=max_budget,
-            claude_path=claude_path,
+            codex_path=codex_path,
             runner=runner,
             timeout_seconds=timeout_seconds,
             label="abstraction",
         )
         attempts += 1
-        total_usage["cost_usd"] += usage["cost_usd"]
-        total_usage["input_tokens"] += usage["input_tokens"]
-        total_usage["output_tokens"] += usage["output_tokens"]
+        for key, value in usage.as_dict().items():
+            total_usage[key] += value
         abstraction_text = str(parsed.get("abstraction") or "").strip()
         if not abstraction_text:
             raise ValueError("abstraction step returned empty 'abstraction' text")

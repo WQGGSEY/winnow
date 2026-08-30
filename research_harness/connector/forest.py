@@ -42,7 +42,12 @@ def _slug(code: str) -> str:
 
 
 def _build_forest_root(
-    grilling_session: dict[str, Any], claim: dict[str, Any], index: int
+    grilling_session: dict[str, Any],
+    claim: dict[str, Any],
+    index: int,
+    *,
+    deploy_grade_scope: str | None,
+    data_selection: dict[str, str] | None,
 ) -> dict[str, Any]:
     field = claim.get("field") or {}
     suffix = f"c{index:02d}_{_slug(field.get('code') or 'field')}"
@@ -56,6 +61,13 @@ def _build_forest_root(
         "success_criteria": list(cc["success_criteria"]),
         "disproof_conditions": list(cc["disproof_conditions"]),
     }
+    if deploy_grade_scope is not None:
+        root["claim_contract"]["deploy_grade_scope"] = deploy_grade_scope
+    if data_selection is not None:
+        root["claim_contract"].update({
+            "data_source_anchor": data_selection["adapter_id"],
+            "data_source_snapshot_id": data_selection["snapshot_id"],
+        })
     root["lineage"]["introduced_assumptions"].append(
         f"connector far-framing via field {field.get('code')} ({field.get('name')})"
     )
@@ -72,6 +84,8 @@ def build_forest_search_state(
     policy: dict[str, Any],
     num_drafts: int | None = None,
     max_depth: int | None = None,
+    deploy_grade_scope: str | None = None,
+    data_selection: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Build a multi-root production search_state from connector claims.
 
@@ -85,7 +99,16 @@ def build_forest_search_state(
     nd = int(num_drafts if num_drafts is not None else policy["num_drafts"])
     md = int(max_depth if max_depth is not None else policy["max_depth"])
 
-    roots = [_build_forest_root(grilling_session, c, i) for i, c in enumerate(claims)]
+    roots = [
+        _build_forest_root(
+            grilling_session,
+            claim,
+            index,
+            deploy_grade_scope=deploy_grade_scope,
+            data_selection=data_selection,
+        )
+        for index, claim in enumerate(claims)
+    ]
     ids = [r["id"] for r in roots]
     if len(set(ids)) != len(ids):
         raise ValueError(f"forest roots have duplicate ids: {ids}")

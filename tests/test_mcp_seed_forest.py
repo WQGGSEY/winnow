@@ -127,3 +127,74 @@ def test_incomplete_connector_rejected(tmp_path, monkeypatch):
     out = mcp.handle_seed_forest_from_connector({"thread_id": "thread_h5"})
     assert out["status"] == "rejected"
     assert "did not complete" in out["reason"]
+
+
+def test_deployment_seed_uses_persisted_supervisor_selection(tmp_path, monkeypatch):
+    _patch(monkeypatch, tmp_path)
+    claims = [_claim("q-bio.PE", "Populations and Evolution", "A claim.")]
+    tdir = _setup(tmp_path, "thread_bound", connector=_connector_session(claims))
+    production = tdir / "production"
+    production.mkdir(parents=True, exist_ok=True)
+    snapshot_id = "as_" + "b" * 64
+    (production / "adapter_snapshots.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                    "snapshots": [
+                    {
+                        "adapter_id": "local_data",
+                        "snapshot_id": snapshot_id,
+                        "materializer_type": "benchmark",
+                        "role": "evaluation",
+                        "source": "/tmp/local_data.json",
+                        "provenance": "fixture",
+                        "source_scope": "project",
+                        "content_sha256": "c" * 64,
+                        "size_bytes": 1,
+                        "entry_count": 1,
+                    }
+                    ],
+                "problems": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (production / "feasibility_envelope.json").write_text(
+        json.dumps(
+            {
+                "operator_intent": {
+                    "target_deploy_grade_scope": "deployment",
+                    "data_source_anchor": "local_data",
+                    "data_source_snapshot_id": snapshot_id,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    out = mcp.handle_seed_forest_from_connector({"thread_id": "thread_bound"})
+
+    assert out["status"] == "ok"
+    state = json.loads((production / "tree" / "search_state.json").read_text())
+    for node in state["nodes"]:
+        assert node["claim_contract"]["data_source_anchor"] == "local_data"
+        assert node["claim_contract"]["data_source_snapshot_id"] == snapshot_id
+
+
+def test_deployment_seed_rejects_missing_selection(tmp_path, monkeypatch):
+    _patch(monkeypatch, tmp_path)
+    claims = [_claim("q-bio.PE", "Populations and Evolution", "A claim.")]
+    tdir = _setup(tmp_path, "thread_unbound", connector=_connector_session(claims))
+    production = tdir / "production"
+    production.mkdir(parents=True, exist_ok=True)
+    (production / "feasibility_envelope.json").write_text(
+        json.dumps(
+            {"operator_intent": {"target_deploy_grade_scope": "deployment"}}
+        ),
+        encoding="utf-8",
+    )
+
+    out = mcp.handle_seed_forest_from_connector({"thread_id": "thread_unbound"})
+
+    assert out["status"] == "rejected"
+    assert "requires" in out["reason"]

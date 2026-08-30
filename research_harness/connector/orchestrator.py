@@ -31,9 +31,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from research_harness.config import resolve_agent_budget, resolve_agent_model
+from research_harness.config import resolve_agent_model
 from research_harness.connector.abstraction import generate_abstraction
-from research_harness.connector.claude_call import CommandRunner, ConnectorLLMError
+from research_harness.connector.codex_call import CommandRunner, ConnectorLLMError
 from research_harness.connector.far_method_market import research_far_method
 from research_harness.connector.field_sampler import field_permutation
 from research_harness.connector.prune1 import prune1_check
@@ -43,9 +43,9 @@ from research_harness.agents.market_research import HttpFetcher
 from research_harness.schemas.validator import validate_named_schema
 from research_harness.settings_scoped import resolve_for_thread, thread_id_from_run_dir
 
-BILLING_ACK_ENV = "RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE"
+BILLING_ACK_ENV = "RESEARCH_HARNESS_ALLOW_CODEX_LIVE"
 BILLING_ACK_VALUE = "subscription_ack"
-EXECUTION_ACK_ENV = "RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE"
+EXECUTION_ACK_ENV = "RESEARCH_HARNESS_EXECUTE_CODEX_LIVE"
 EXECUTION_ACK_VALUE = "live_smoke_ack"
 
 DEFAULT_QUOTA = 6
@@ -93,7 +93,7 @@ def run_domain_connector(
     run_dir: Path | None = None,
     billing_ack: bool | None = None,
     execution_ack: bool | None = None,
-    claude_path: str | None = None,
+    codex_path: str | None = None,
     command_runner: CommandRunner | None = None,
     http_fetcher: HttpFetcher | None = None,
     quota: int | None = None,
@@ -123,7 +123,6 @@ def run_domain_connector(
 
     settings = resolve_for_thread(repo_root, thread_id_from_run_dir(run_dir))
     model = resolve_agent_model(settings, "domain_connector_agent")
-    max_budget = resolve_agent_budget(settings, "domain_connector_agent")
     quota = quota if quota is not None else _resolve_knob(settings, "quota", DEFAULT_QUOTA)
     max_fields_tried = (
         max_fields_tried
@@ -150,9 +149,11 @@ def run_domain_connector(
         "claims": [],
         "usage_estimate": {
             "llm_calls": 0,
-            "total_cost_usd": 0.0,
-            "total_input_tokens": 0,
-            "total_output_tokens": 0,
+            "input_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
         },
         "session_path": str(session_path),
         "error": None,
@@ -170,10 +171,10 @@ def run_domain_connector(
                         "error": f"set {BILLING_ACK_ENV}={BILLING_ACK_VALUE} to enable the connector"})
     if not _execution_ack_ok(execution_ack):
         return _finish({**base_session, "status": "blocked_by_execution_ack",
-                        "error": f"set {EXECUTION_ACK_ENV}={EXECUTION_ACK_VALUE} to invoke Claude"})
+                        "error": f"set {EXECUTION_ACK_ENV}={EXECUTION_ACK_VALUE} to invoke Codex"})
 
     runner = command_runner or subprocess.run
-    detected_claude = claude_path or shutil.which("claude") or "claude"
+    detected_codex = codex_path or shutil.which("codex") or "codex"
     usage = dict(base_session["usage_estimate"])
     # Optional live-progress sink (the frontend bridges this to the SSE stream
     # so the operator watches the connector work step by step). No-op by default.
@@ -181,16 +182,21 @@ def run_domain_connector(
 
     def _add_usage(u: dict[str, Any]) -> None:
         usage["llm_calls"] += 1
-        usage["total_cost_usd"] += float(u.get("cost_usd") or 0.0)
-        usage["total_input_tokens"] += int(u.get("input_tokens") or 0)
-        usage["total_output_tokens"] += int(u.get("output_tokens") or 0)
+        for key in (
+            "input_tokens",
+            "cached_input_tokens",
+            "cache_write_input_tokens",
+            "output_tokens",
+            "reasoning_output_tokens",
+        ):
+            usage[key] += int(u.get(key) or 0)
 
     # --- abstraction (load-bearing; failure aborts) ---
     emit({"type": "abstraction_start"})
     try:
         abstraction = generate_abstraction(
-            grilling_session, model=model, max_budget=max_budget,
-            claude_path=detected_claude, runner=runner, max_regen=max_regen,
+            grilling_session, model=model,
+            codex_path=detected_codex, runner=runner, max_regen=max_regen,
             timeout_seconds=timeout_seconds,
         )
     except (ConnectorLLMError, ValueError) as exc:
@@ -198,9 +204,14 @@ def run_domain_connector(
                         "error": f"abstraction step failed: {exc}"})
     for _ in range(abstraction["regen_attempts"]):
         usage["llm_calls"] += 1
-    usage["total_cost_usd"] += float(abstraction["usage"]["cost_usd"])
-    usage["total_input_tokens"] += int(abstraction["usage"]["input_tokens"])
-    usage["total_output_tokens"] += int(abstraction["usage"]["output_tokens"])
+    for key in (
+        "input_tokens",
+        "cached_input_tokens",
+        "cache_write_input_tokens",
+        "output_tokens",
+        "reasoning_output_tokens",
+    ):
+        usage[key] += int(abstraction["usage"].get(key) or 0)
     abstraction_text = abstraction["abstraction"]
     abstraction_record = {
         "abstraction": abstraction_text,
@@ -239,16 +250,16 @@ def run_domain_connector(
         emit({"type": "field_start", "index": fields_tried, **field_meta})
         try:
             reading = generate_reading(
-                abstraction_text, fld, model=model, max_budget=max_budget,
-                claude_path=detected_claude, runner=runner, timeout_seconds=timeout_seconds,
+                abstraction_text, fld, model=model,
+                codex_path=detected_codex, runner=runner, timeout_seconds=timeout_seconds,
             )
             _add_usage(reading["usage"])
             emit({"type": "reading_done", "code": field_meta["code"],
                   "field_mechanism": reading.get("field_mechanism"),
                   "predicted_behavior": reading.get("predicted_behavior")})
             p1 = prune1_check(
-                abstraction_text, reading, model=model, max_budget=max_budget,
-                claude_path=detected_claude, runner=runner, timeout_seconds=timeout_seconds,
+                abstraction_text, reading, model=model,
+                codex_path=detected_codex, runner=runner, timeout_seconds=timeout_seconds,
             )
             _add_usage(p1["usage"])
             attempt["prune1_passed"] = p1["passed"]
@@ -263,7 +274,7 @@ def run_domain_connector(
                       "num_papers": material["num_papers"]})
                 red = reduce_to_claim(
                     grilling_session, reading, p1, method_research=material,
-                    model=model, max_budget=max_budget, claude_path=detected_claude,
+                    model=model, codex_path=detected_codex,
                     runner=runner, timeout_seconds=timeout_seconds,
                 )
                 _add_usage(red["usage"])

@@ -1,0 +1,354 @@
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+from collections.abc import Callable, Iterable, Iterator
+from pathlib import Path
+from typing import Any
+
+from research_harness.agent_runtime import (
+    AgentEvent,
+    AgentPrompt,
+    AgentUsage,
+    CompletionRequest,
+    CompletionResult,
+    ResearchHarnessMcp,
+    RuntimeAuthResult,
+)
+
+CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
+PopenFactory = Callable[..., subprocess.Popen[str]]
+
+
+class CodexCliError(RuntimeError):
+    pass
+
+
+class CodexCliAdapter:
+    def __init__(
+        self,
+        *,
+        codex_path: str = "codex",
+        runner: CommandRunner = subprocess.run,
+        popen: PopenFactory = subprocess.Popen,
+    ) -> None:
+        self._codex_path = codex_path
+        self._runner = runner
+        self._popen = popen
+
+    def auth_status(self, *, timeout_seconds: int = 10) -> RuntimeAuthResult:
+        try:
+            completed = self._runner(
+                [self._codex_path, "login", "status"],
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+                env=_codex_environment(),
+            )
+        except FileNotFoundError:
+            return RuntimeAuthResult(
+                ok=False,
+                mode="codex_cli_missing",
+                reason="codex CLI was not found for the login status probe.",
+            )
+        except subprocess.TimeoutExpired:
+            return RuntimeAuthResult(
+                ok=False,
+                mode="auth_status_timeout",
+                reason="codex login status timed out.",
+            )
+
+        status = " ".join(
+            part.strip()
+            for part in (completed.stdout or "", completed.stderr or "")
+            if part.strip()
+        )
+        if completed.returncode != 0:
+            return RuntimeAuthResult(
+                ok=False,
+                mode="not_logged_in",
+                reason="codex login status reports no active login.",
+                details={"status": "not_logged_in"},
+            )
+        if "chatgpt" not in status.lower():
+            return RuntimeAuthResult(
+                ok=False,
+                mode="non_chatgpt_auth",
+                reason="codex login status is not using ChatGPT authentication.",
+                details={"status": "logged_in", "auth_method": "other"},
+            )
+        return RuntimeAuthResult(
+            ok=True,
+            mode="chatgpt_login",
+            details={"status": "logged_in", "auth_method": "chatgpt"},
+        )
+
+    def complete(self, request: CompletionRequest) -> CompletionResult:
+        command = self._build_exec_command(request=request)
+        try:
+            completed = self._runner(
+                command,
+                input=self._compose_prompt(request.prompt),
+                capture_output=True,
+                text=True,
+                timeout=request.timeout_seconds,
+                check=False,
+                env=_codex_environment(),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise CodexCliError(
+                f"{request.label}: codex CLI timed out after {request.timeout_seconds}s"
+            ) from exc
+        if completed.returncode not in (0, None):
+            detail = " ".join(
+                part.strip()
+                for part in (completed.stderr or "", completed.stdout or "")
+                if part.strip()
+            )
+            raise CodexCliError(
+                f"{request.label}: codex CLI exited with code "
+                f"{completed.returncode}: {detail[:400]}"
+            )
+        return self.parse_completion(completed.stdout or "", label=request.label)
+
+    def parse_completion(self, raw: str, *, label: str) -> CompletionResult:
+        """Parse one Codex ``exec --json`` stream into its terminal result."""
+
+        return self._parse_completion(raw, label=label)
+
+    def start_session(
+        self,
+        *,
+        prompt: AgentPrompt,
+        model: str,
+        cwd: Path,
+        mcp: ResearchHarnessMcp,
+        env: dict[str, str] | None = None,
+    ) -> "CodexProcessSession":
+        command = self._build_exec_command(
+            request=None,
+            model=model,
+            cwd=cwd,
+            mcp=mcp,
+        )
+        process = self._popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            close_fds=True,
+            start_new_session=True,
+            env=env or _codex_environment(),
+        )
+        if process.stdin is None:
+            process.terminate()
+            raise CodexCliError("codex session did not expose stdin")
+        process.stdin.write(self._compose_prompt(prompt))
+        process.stdin.close()
+        return CodexProcessSession(process, self)
+
+    def build_worker_command(
+        self,
+        *,
+        model: str,
+        cwd: Path,
+        output_schema: Path,
+    ) -> list[str]:
+        return self._build_exec_command(
+            request=CompletionRequest(
+                prompt=AgentPrompt(instructions="", input=""),
+                model=model,
+                output_schema=output_schema,
+                cwd=cwd,
+            )
+        )
+
+    def _build_exec_command(
+        self,
+        *,
+        request: CompletionRequest | None,
+        model: str | None = None,
+        cwd: Path | None = None,
+        mcp: ResearchHarnessMcp | None = None,
+    ) -> list[str]:
+        if request is not None:
+            model = request.model
+            cwd = request.cwd
+        if not model:
+            raise ValueError("Codex requests require a model")
+        approval = ["--approve-for-me"] if mcp is not None else ["--ask-for-approval", "never"]
+        command = [
+            self._codex_path,
+            *approval,
+            "exec",
+            "--ephemeral",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--json",
+            "--model",
+            model,
+        ]
+        if mcp is None:
+            command.extend(["--sandbox", "read-only"])
+        if cwd is not None:
+            command.extend(["--cd", str(cwd)])
+        if request is not None and request.output_schema is not None:
+            command.extend(["--output-schema", str(request.output_schema)])
+        if mcp is not None:
+            command.extend(
+                [
+                    "-c",
+                    "mcp_servers.research_harness.command=" + _toml_string(mcp.command),
+                    "-c",
+                    "mcp_servers.research_harness.args=" + json.dumps(list(mcp.args)),
+                ]
+            )
+            for key, value in sorted(mcp.environment.items()):
+                command.extend(
+                    [
+                        "-c",
+                        f"mcp_servers.research_harness.env.{key}={_toml_string(value)}",
+                    ]
+                )
+        command.append("-")
+        return command
+
+    def _compose_prompt(self, prompt: AgentPrompt) -> str:
+        instructions = prompt.instructions.strip()
+        user_input = prompt.input.strip()
+        if not instructions:
+            return user_input
+        return (
+            "System instructions:\n"
+            f"{instructions}\n\n"
+            "User input:\n"
+            f"{user_input}"
+        )
+
+    def _parse_completion(self, raw: str, *, label: str) -> CompletionResult:
+        events = tuple(self._parse_jsonl(raw.splitlines()))
+        final_text: str | None = None
+        usage: AgentUsage | None = None
+        thread_id: str | None = None
+        for event in events:
+            if event.kind == "message":
+                final_text = event.summary
+            if event.usage is not None:
+                usage = event.usage
+            raw_event = event.raw
+            if raw_event.get("type") == "thread.started":
+                candidate = raw_event.get("thread_id")
+                if isinstance(candidate, str):
+                    thread_id = candidate
+        if final_text is None:
+            raise CodexCliError(
+                f"{label}: codex CLI JSONL did not contain a final agent message"
+            )
+        if usage is None:
+            raise CodexCliError(f"{label}: codex CLI JSONL did not contain turn usage")
+        return CompletionResult(
+            text=final_text,
+            usage=usage,
+            thread_id=thread_id,
+            events=events,
+        )
+
+    def _parse_jsonl(self, lines: Iterable[str]) -> Iterator[AgentEvent]:
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                yield AgentEvent(kind="diagnostic", summary=line[:400])
+                continue
+            if not isinstance(event, dict):
+                yield AgentEvent(kind="diagnostic", summary=str(event)[:400])
+                continue
+            event_type = event.get("type")
+            if event_type == "thread.started":
+                yield AgentEvent(
+                    kind="status",
+                    summary=f"thread started {event.get('thread_id', '')}".strip(),
+                    raw=event,
+                )
+            elif event_type == "turn.started":
+                yield AgentEvent(kind="status", summary="turn started", raw=event)
+            elif event_type == "item.completed":
+                item = event.get("item")
+                if not isinstance(item, dict):
+                    yield AgentEvent(kind="diagnostic", summary="completed item missing payload", raw=event)
+                    continue
+                item_type = item.get("type")
+                if item_type == "agent_message" and isinstance(item.get("text"), str):
+                    yield AgentEvent(kind="message", summary=item["text"], raw=event)
+                elif item_type in {"mcp_tool_call", "command_execution", "tool_call"}:
+                    name = item.get("server") or item.get("name") or item.get("tool") or item_type
+                    yield AgentEvent(kind="tool", summary=str(name), raw=event)
+                else:
+                    yield AgentEvent(kind="status", summary=f"completed {item_type}", raw=event)
+            elif event_type == "turn.completed":
+                raw_usage = event.get("usage")
+                usage = _parse_usage(raw_usage if isinstance(raw_usage, dict) else {})
+                yield AgentEvent(kind="usage", summary="turn completed", usage=usage, raw=event)
+            elif event_type in {"error", "turn.failed"}:
+                message = event.get("message") or event.get("error") or event_type
+                yield AgentEvent(kind="diagnostic", summary=str(message)[:400], raw=event)
+            else:
+                yield AgentEvent(kind="status", summary=str(event_type or "event"), raw=event)
+
+
+class CodexProcessSession:
+    def __init__(self, process: subprocess.Popen[str], adapter: CodexCliAdapter) -> None:
+        self._process = process
+        self._adapter = adapter
+
+    @property
+    def pid(self) -> int:
+        return self._process.pid
+
+    def events(self) -> Iterator[AgentEvent]:
+        if self._process.stdout is None:
+            return
+        yield from self._adapter._parse_jsonl(self._process.stdout)
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self._process.wait(timeout=timeout)
+
+    def terminate(self, *, force: bool = False) -> None:
+        import signal
+
+        sig = signal.SIGKILL if force else signal.SIGTERM
+        try:
+            os.killpg(os.getpgid(self.pid), sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                self._process.send_signal(sig)
+            except ProcessLookupError:
+                pass
+
+
+def _parse_usage(raw: dict[str, Any]) -> AgentUsage:
+    return AgentUsage(
+        input_tokens=int(raw.get("input_tokens") or 0),
+        cached_input_tokens=int(raw.get("cached_input_tokens") or 0),
+        cache_write_input_tokens=int(raw.get("cache_write_input_tokens") or 0),
+        output_tokens=int(raw.get("output_tokens") or 0),
+        reasoning_output_tokens=int(raw.get("reasoning_output_tokens") or 0),
+    )
+
+
+def _codex_environment() -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("ANTHROPIC_API_KEY", None)
+    env.pop("ANTHROPIC_BASE_URL", None)
+    return env
+
+
+def _toml_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)

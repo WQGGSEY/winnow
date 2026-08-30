@@ -40,6 +40,8 @@ SCHEMA_FILES = {
     "user_experiment_plan_metadata": "user_experiment_plan_metadata.schema.json",
     "refined_research_plan": "refined_research_plan.schema.json",
     "dataset_manifest": "dataset_manifest.schema.json",
+    "adapter_snapshots": "adapter_snapshots.schema.json",
+    "runtime_inputs": "runtime_inputs.schema.json",
     "camera_ready_revision": "camera_ready_revision.schema.json",
     "paper_outline": "paper_outline.schema.json",
     "paper_section": "paper_section.schema.json",

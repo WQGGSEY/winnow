@@ -12,14 +12,11 @@ from research_harness.connector.reading import generate_reading
 
 
 def _envelope(inner_obj):
-    return json.dumps(
-        {
-            "type": "result",
-            "is_error": False,
-            "result": json.dumps(inner_obj),
-            "total_cost_usd": 0.01,
-            "usage": {"input_tokens": 5, "output_tokens": 7},
-        }
+    return "\n".join(
+        [
+            json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(inner_obj)}}),
+            json.dumps({"type": "turn.completed", "usage": {"input_tokens": 5, "output_tokens": 7}}),
+        ]
     )
 
 
@@ -51,8 +48,8 @@ def test_generate_reading_returns_fields_and_echoes_field():
             "predicted_behavior": "selection pressure shifts the aggregate",
         }
     ])
-    out = generate_reading(_ABSTRACTION, _FIELD, model="m", max_budget="1",
-                           claude_path="claude", runner=fake)
+    out = generate_reading(_ABSTRACTION, _FIELD, model="m",
+                           codex_path="codex", runner=fake)
     assert out["field"]["code"] == "q-bio.PE"
     assert out["field_mechanism"] == "replicator dynamics"
     assert out["predicted_behavior"]
@@ -68,8 +65,8 @@ def test_generate_reading_empty_reading_raises():
         {"reading": "  ", "field_mechanism": "x", "predicted_behavior": "y"}
     ])
     with pytest.raises(ValueError):
-        generate_reading(_ABSTRACTION, _FIELD, model="m", max_budget="1",
-                         claude_path="claude", runner=fake)
+        generate_reading(_ABSTRACTION, _FIELD, model="m",
+                         codex_path="codex", runner=fake)
 
 
 # -------------------------------------------------------------------- prune-1
@@ -92,8 +89,8 @@ def test_prune1_passes_with_enough_pairs():
             {"abstraction_element": "aggregate", "reading_counterpart": "mean fitness"},
         ], "constructible": True, "note": "clean"}
     ])
-    out = prune1_check(_ABSTRACTION, _reading_obj(), model="m", max_budget="1",
-                       claude_path="claude", runner=fake)
+    out = prune1_check(_ABSTRACTION, _reading_obj(), model="m",
+                       codex_path="codex", runner=fake)
     assert out["passed"] is True
     assert out["num_pairs"] == 3
 
@@ -104,8 +101,8 @@ def test_prune1_cuts_when_too_few_pairs():
             {"abstraction_element": "units", "reading_counterpart": "individuals"}
         ], "constructible": True, "note": "thin"}
     ])
-    out = prune1_check(_ABSTRACTION, _reading_obj(), model="m", max_budget="1",
-                       claude_path="claude", runner=fake)
+    out = prune1_check(_ABSTRACTION, _reading_obj(), model="m",
+                       codex_path="codex", runner=fake)
     assert out["passed"] is False
     assert out["num_pairs"] == 1
 
@@ -120,8 +117,8 @@ def test_prune1_verdict_follows_construction_not_the_flag():
             {"abstraction_element": "c", "reading_counterpart": "3"},
         ], "constructible": False, "note": "model hedged"}
     ])
-    out = prune1_check(_ABSTRACTION, _reading_obj(), model="m", max_budget="1",
-                       claude_path="claude", runner=fake)
+    out = prune1_check(_ABSTRACTION, _reading_obj(), model="m",
+                       codex_path="codex", runner=fake)
     assert out["passed"] is True
     assert out["llm_constructible_flag"] is False  # flag recorded, not used
 
@@ -130,8 +127,8 @@ def test_prune1_empty_correspondence_with_true_flag_still_cut():
     # the inverse: model SELF-REPORTS constructible=True but built nothing →
     # CUT. No declared value can substitute for the demonstration.
     fake = FakeClaude([{"correspondence": [], "constructible": True, "note": "claims ok"}])
-    out = prune1_check(_ABSTRACTION, _reading_obj(), model="m", max_budget="1",
-                       claude_path="claude", runner=fake)
+    out = prune1_check(_ABSTRACTION, _reading_obj(), model="m",
+                       codex_path="codex", runner=fake)
     assert out["passed"] is False
     assert out["num_pairs"] == 0
 
@@ -145,7 +142,7 @@ def test_prune1_ignores_malformed_pairs():
             "garbage",
         ], "constructible": True, "note": "mixed"}
     ])
-    out = prune1_check(_ABSTRACTION, _reading_obj(), model="m", max_budget="1",
-                       claude_path="claude", runner=fake)
+    out = prune1_check(_ABSTRACTION, _reading_obj(), model="m",
+                       codex_path="codex", runner=fake)
     assert out["num_pairs"] == 1
     assert out["passed"] is False

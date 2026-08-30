@@ -9,7 +9,7 @@ from pathlib import Path
 from research_harness.config import load_settings
 from research_harness.orchestrator.demo import _demo_node
 from research_harness.schemas.validator import validate_named_schema
-from research_harness.workers.claude_code_invoker import ClaudeCodeInvoker
+from research_harness.workers.codex_invoker import CodexInvoker
 from research_harness.workers.output_repair import parse_or_repair_json
 from research_harness.workers.workspace import WorkspaceGuardError
 
@@ -23,7 +23,7 @@ class InvocationEnvelopeTests(unittest.TestCase):
         node = _demo_node()
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "nodes" / node["id"] / "workspace"
-            invoker = ClaudeCodeInvoker(workspace, settings, repo_root=REPO_ROOT)
+            invoker = CodexInvoker(workspace, settings, repo_root=REPO_ROOT)
             envelope = invoker.write_dry_run_artifacts(node)
 
             validate_named_schema("invocation_envelope", envelope)
@@ -54,14 +54,12 @@ class InvocationEnvelopeTests(unittest.TestCase):
             self.assertEqual(envelope["output_schema"]["name"], "worker_task_result")
             self.assertEqual(envelope["allowed_read_roots"], [str(workspace.resolve())])
             self.assertFalse(envelope["command_plan"]["executes_in_dry_run"])
-            self.assertIn("--tools", envelope["command_plan"]["args"])
-            self.assertIn("--max-budget-usd", envelope["command_plan"]["args"])
-            self.assertIn("--no-session-persistence", envelope["command_plan"]["args"])
-            self.assertIn("--disable-slash-commands", envelope["command_plan"]["args"])
-            self.assertIn("--strict-mcp-config", envelope["command_plan"]["args"])
-            self.assertIn("--system-prompt", envelope["command_plan"]["args"])
-            self.assertNotIn("--bare", envelope["command_plan"]["args"])
-            self.assertIn("ANTHROPIC_API_KEY", envelope["environment_policy"]["unset"])
+            self.assertIn("exec", envelope["command_plan"]["args"])
+            self.assertIn("--ephemeral", envelope["command_plan"]["args"])
+            self.assertIn("--ignore-user-config", envelope["command_plan"]["args"])
+            self.assertIn("--ignore-rules", envelope["command_plan"]["args"])
+            self.assertIn("--output-schema", envelope["command_plan"]["args"])
+            self.assertEqual(envelope["environment_policy"]["unset"], [])
             # Prompt grew when Professor-generated reusable lib started shipping
             # alongside the per-node experiment.py. Still want a hard upper bound
             # to catch genuine prompt bloat, just at the new baseline.
@@ -91,7 +89,7 @@ class InvocationEnvelopeTests(unittest.TestCase):
 
     def test_repo_root_cannot_be_worker_workspace(self) -> None:
         settings = load_settings(REPO_ROOT)
-        invoker = ClaudeCodeInvoker(REPO_ROOT, settings, repo_root=REPO_ROOT)
+        invoker = CodexInvoker(REPO_ROOT, settings, repo_root=REPO_ROOT)
 
         with self.assertRaisesRegex(WorkspaceGuardError, "repo root"):
             invoker.build_dry_run_invocation(_demo_node())
@@ -101,19 +99,19 @@ class InvocationEnvelopeTests(unittest.TestCase):
         node = _demo_node()
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "workspace"
-            invoker = ClaudeCodeInvoker(workspace, settings, repo_root=REPO_ROOT)
+            invoker = CodexInvoker(workspace, settings, repo_root=REPO_ROOT)
             envelope = invoker.build_dry_run_invocation(node)
             envelope["expected_output_path"] = str(Path(tmp) / "outside.json")
 
             with self.assertRaisesRegex(WorkspaceGuardError, "expected_output_path"):
                 invoker.validate_invocation_envelope(envelope)
 
-    def test_runner_job_is_not_a_claude_worker_role(self) -> None:
+    def test_runner_job_is_not_a_codex_worker_role(self) -> None:
         settings = load_settings(REPO_ROOT)
         node = copy.deepcopy(_demo_node())
         node["runtime_profile"]["worker_type"] = "runner_job"
         with tempfile.TemporaryDirectory() as tmp:
-            invoker = ClaudeCodeInvoker(Path(tmp) / "workspace", settings, repo_root=REPO_ROOT)
+            invoker = CodexInvoker(Path(tmp) / "workspace", settings, repo_root=REPO_ROOT)
 
             with self.assertRaisesRegex(WorkspaceGuardError, "runner_job"):
                 invoker.build_dry_run_invocation(node)
@@ -123,7 +121,7 @@ class InvocationEnvelopeTests(unittest.TestCase):
         node = _demo_node()
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "workspace"
-            invoker = ClaudeCodeInvoker(workspace, settings, repo_root=REPO_ROOT)
+            invoker = CodexInvoker(workspace, settings, repo_root=REPO_ROOT)
             envelope = invoker.build_dry_run_invocation(node)
             envelope["output_schema"]["path"] = str(
                 REPO_ROOT / "research_harness" / "schemas" / "node.schema.json"

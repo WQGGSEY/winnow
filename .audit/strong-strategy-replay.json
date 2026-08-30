@@ -1,0 +1,194 @@
+{
+  "decision": {
+    "adaptive_revision": 1,
+    "applied_transition": "needs_child_branch",
+    "created_child_ids": [
+      "n_arxiv_archive_classification_c00_astro_ph_he_succ01_mechanism",
+      "n_arxiv_archive_classification_c00_astro_ph_he_succ02_mechanism"
+    ],
+    "search_disposition": "continue",
+    "search_state_status": "running",
+    "status": "accepted"
+  },
+  "replay_scorecard": {
+    "adaptive_child_count": 2,
+    "adaptive_experiment_count": 0,
+    "adaptive_observation_count": 1,
+    "adaptive_strategy_count": 2,
+    "adaptive_strategy_id_count": 2,
+    "duplicate_evidence_rate": 0.0,
+    "duplicate_rejection_count": 0,
+    "evidence_prioritized_frontier_count": 2,
+    "negative_decision_count": 1,
+    "negative_decisions_with_follow_ups": 1,
+    "node_count": 3,
+    "node_status_counts": {
+      "needs_child_branch": 1,
+      "ready": 2
+    },
+    "outcome_counts": {
+      "contradicted": 1
+    },
+    "pause_reason": null,
+    "root_count": 1,
+    "search_disposition": "continue",
+    "strategy_family_count": 2,
+    "strong_result_verified": false,
+    "thread_id": "replay_thread_7f170f15",
+    "type": "search_trace_scorecard",
+    "unique_evidence_count": 1,
+    "unique_experiment_source_count": 0,
+    "worker_report_count": 1
+  },
+  "selected": {
+    "_selection_policy": "Picked n_arxiv_archive_classification_c00_astro_ph_he_succ01_mechanism by harness-owned evidence-derived priority, then depth and content identity. 1 other queued candidate(s) remain.",
+    "active_stage": "adaptive_search",
+    "claim_under_test": "Test representation interaction recovery under the unchanged frozen goal bar.",
+    "depth": 2,
+    "disproof_conditions": [
+      "\ucd94\uac00 \uc0ac\ud56d\uc740 \uc5c6\uc2b5\ub2c8\ub2e4. \ud504\ub85c\ud1a0\ucf5c\uc740 seed 20260830, category name\uc744 \uc785\ub825, top-level archive\ub97c label\ub85c \uace0\uc815\ud558\uc138\uc694. archive\ubcc4 \ud45c\ubcf8\uc774 2\uac1c \uc774\uc0c1\uc774\uba74 deterministic hash \uae30\uc900 20% holdout, singleton\uc740 train-only \ubc0f holdout macro-F1\uc5d0\uc11c \uc81c\uc678\ud558\uace0 coverage\ub97c \ubcf4\uace0\ud558\uc138\uc694. Python \ud45c\uc900 \ub77c\uc774\ube0c\ub7ec\ub9ac Multinomial NB\uc758 character 3-5gram \ud6c4\ubcf4\ub97c word-unigram NB, majority, fixed-seed label-shuffle\uc640 \ube44\uad50\ud558\uace0 accuracy\uc640 macro-F1\uc744 \ubaa8\ub450 \ubcf4\uace0\ud558\uc138\uc694. \ub450 \uc9c0\ud45c\uc5d0\uc11c \ubaa8\ub4e0 baseline\uc744 \uc774\uae30\uc9c0 \ubabb\ud558\uba74 claim \uc2e4\ud328\uc785\ub2c8\ub2e4. \uac01 metric\u00d7baseline \ube44\uad50\ub9c8\ub2e4 \uace0\uc720 scalar key\ub97c \ub454 baseline_evidence_requirement\ub97c \ub9cc\ub4e4\uace0, metrics.json\uc758 top-level metrics/baselines\uc5d0 \uc815\ud655\ud788 \uac19\uc740 numeric key\ub97c \ub0b4\ubcf4\ub0b4\uc138\uc694."
+    ],
+    "mandatory_baselines": [
+      "Use the registered arxiv_category_taxonomy dataset to test whether a standard-library character n-gram classifier predicts each category top-level archive from its category name better than a word-unigram classifier, the majority-class baseline, and a label-shuffle baseline on a fixed stratified holdout. Keep the experiment CPU-only, deterministic, emit exact top-level scalar metrics and baselines matching every baseline_evidence_requirement, and explicitly read RESEARCH_HARNESS_INPUT_MANIFEST.",
+      "\ucd94\uac00 \uc0ac\ud56d\uc740 \uc5c6\uc2b5\ub2c8\ub2e4. \ud504\ub85c\ud1a0\ucf5c\uc740 seed 20260830, category name\uc744 \uc785\ub825, top-level archive\ub97c label\ub85c \uace0\uc815\ud558\uc138\uc694. archive\ubcc4 \ud45c\ubcf8\uc774 2\uac1c \uc774\uc0c1\uc774\uba74 deterministic hash \uae30\uc900 20% holdout, singleton\uc740 train-only \ubc0f holdout macro-F1\uc5d0\uc11c \uc81c\uc678\ud558\uace0 coverage\ub97c \ubcf4\uace0\ud558\uc138\uc694. Python \ud45c\uc900 \ub77c\uc774\ube0c\ub7ec\ub9ac Multinomial NB\uc758 character 3-5gram \ud6c4\ubcf4\ub97c word-unigram NB, majority, fixed-seed label-shuffle\uc640 \ube44\uad50\ud558\uace0 accuracy\uc640 macro-F1\uc744 \ubaa8\ub450 \ubcf4\uace0\ud558\uc138\uc694. \ub450 \uc9c0\ud45c\uc5d0\uc11c \ubaa8\ub4e0 baseline\uc744 \uc774\uae30\uc9c0 \ubabb\ud558\uba74 claim \uc2e4\ud328\uc785\ub2c8\ub2e4. \uac01 metric\u00d7baseline \ube44\uad50\ub9c8\ub2e4 \uace0\uc720 scalar key\ub97c \ub454 baseline_evidence_requirement\ub97c \ub9cc\ub4e4\uace0, metrics.json\uc758 top-level metrics/baselines\uc5d0 \uc815\ud655\ud788 \uac19\uc740 numeric key\ub97c \ub0b4\ubcf4\ub0b4\uc138\uc694.",
+      "Emit matching numeric scalar keys in top-level metrics and baselines for every metric-by-baseline evidence requirement"
+    ],
+    "node_id": "n_arxiv_archive_classification_c00_astro_ph_he_succ01_mechanism",
+    "node_type": "mechanism",
+    "parent": "n_arxiv_archive_classification_c00_astro_ph_he",
+    "priority_components": {
+      "bar_gap_closure": 0.111111,
+      "capability_fit": 1.0,
+      "evidence_basis": [
+        "observation_d9bfb5d6114c7a6fc201dbef6ec458202762ba0886238d4195e054e5698524d7"
+      ],
+      "information_gain": 1.0,
+      "mechanism_novelty": 1.0,
+      "normalized_cost": 0.26,
+      "score": 5.924444
+    },
+    "research_goal": {
+      "bar": {
+        "claim_under_test": "It is possible to solve predicting each arXiv category's top-level archive from its category name using a deterministic, CPU-only, Python-standard-library character 3\u20135-gram Multinomial Naive Bayes classifier that outperforms word-unigram Naive Bayes, majority-class, and fixed-seed label-shuffle baselines in both accuracy and macro-F1 on a fixed stratified holdout of the registered arxiv_category_taxonomy dataset.",
+        "data_source_anchor": "arxiv_category_taxonomy",
+        "data_source_snapshot_id": "as_1dc2aca503eee0d6c30ae338cc54d6bf854f2384f71baaac5823c6d2fe76d24b",
+        "disproof_conditions": [
+          "\ucd94\uac00 \uc0ac\ud56d\uc740 \uc5c6\uc2b5\ub2c8\ub2e4. \ud504\ub85c\ud1a0\ucf5c\uc740 seed 20260830, category name\uc744 \uc785\ub825, top-level archive\ub97c label\ub85c \uace0\uc815\ud558\uc138\uc694. archive\ubcc4 \ud45c\ubcf8\uc774 2\uac1c \uc774\uc0c1\uc774\uba74 deterministic hash \uae30\uc900 20% holdout, singleton\uc740 train-only \ubc0f holdout macro-F1\uc5d0\uc11c \uc81c\uc678\ud558\uace0 coverage\ub97c \ubcf4\uace0\ud558\uc138\uc694. Python \ud45c\uc900 \ub77c\uc774\ube0c\ub7ec\ub9ac Multinomial NB\uc758 character 3-5gram \ud6c4\ubcf4\ub97c word-unigram NB, majority, fixed-seed label-shuffle\uc640 \ube44\uad50\ud558\uace0 accuracy\uc640 macro-F1\uc744 \ubaa8\ub450 \ubcf4\uace0\ud558\uc138\uc694. \ub450 \uc9c0\ud45c\uc5d0\uc11c \ubaa8\ub4e0 baseline\uc744 \uc774\uae30\uc9c0 \ubabb\ud558\uba74 claim \uc2e4\ud328\uc785\ub2c8\ub2e4. \uac01 metric\u00d7baseline \ube44\uad50\ub9c8\ub2e4 \uace0\uc720 scalar key\ub97c \ub454 baseline_evidence_requirement\ub97c \ub9cc\ub4e4\uace0, metrics.json\uc758 top-level metrics/baselines\uc5d0 \uc815\ud655\ud788 \uac19\uc740 numeric key\ub97c \ub0b4\ubcf4\ub0b4\uc138\uc694."
+        ],
+        "external_falsifier": {
+          "kind": "none",
+          "registered_by": "supervisor_bootstrap"
+        },
+        "mandatory_baselines": [
+          "Use the registered arxiv_category_taxonomy dataset to test whether a standard-library character n-gram classifier predicts each category top-level archive from its category name better than a word-unigram classifier, the majority-class baseline, and a label-shuffle baseline on a fixed stratified holdout. Keep the experiment CPU-only, deterministic, emit exact top-level scalar metrics and baselines matching every baseline_evidence_requirement, and explicitly read RESEARCH_HARNESS_INPUT_MANIFEST.",
+          "\ucd94\uac00 \uc0ac\ud56d\uc740 \uc5c6\uc2b5\ub2c8\ub2e4. \ud504\ub85c\ud1a0\ucf5c\uc740 seed 20260830, category name\uc744 \uc785\ub825, top-level archive\ub97c label\ub85c \uace0\uc815\ud558\uc138\uc694. archive\ubcc4 \ud45c\ubcf8\uc774 2\uac1c \uc774\uc0c1\uc774\uba74 deterministic hash \uae30\uc900 20% holdout, singleton\uc740 train-only \ubc0f holdout macro-F1\uc5d0\uc11c \uc81c\uc678\ud558\uace0 coverage\ub97c \ubcf4\uace0\ud558\uc138\uc694. Python \ud45c\uc900 \ub77c\uc774\ube0c\ub7ec\ub9ac Multinomial NB\uc758 character 3-5gram \ud6c4\ubcf4\ub97c word-unigram NB, majority, fixed-seed label-shuffle\uc640 \ube44\uad50\ud558\uace0 accuracy\uc640 macro-F1\uc744 \ubaa8\ub450 \ubcf4\uace0\ud558\uc138\uc694. \ub450 \uc9c0\ud45c\uc5d0\uc11c \ubaa8\ub4e0 baseline\uc744 \uc774\uae30\uc9c0 \ubabb\ud558\uba74 claim \uc2e4\ud328\uc785\ub2c8\ub2e4. \uac01 metric\u00d7baseline \ube44\uad50\ub9c8\ub2e4 \uace0\uc720 scalar key\ub97c \ub454 baseline_evidence_requirement\ub97c \ub9cc\ub4e4\uace0, metrics.json\uc758 top-level metrics/baselines\uc5d0 \uc815\ud655\ud788 \uac19\uc740 numeric key\ub97c \ub0b4\ubcf4\ub0b4\uc138\uc694.",
+          "Emit matching numeric scalar keys in top-level metrics and baselines for every metric-by-baseline evidence requirement"
+        ],
+        "operator_requirements": [
+          "Use the registered arxiv_category_taxonomy dataset to test whether a standard-library character n-gram classifier predicts each category top-level archive from its category name better than a word-unigram classifier, the majority-class baseline, and a label-shuffle baseline on a fixed stratified holdout. Keep the experiment CPU-only, deterministic, emit exact top-level scalar metrics and baselines matching every baseline_evidence_requirement, and explicitly read RESEARCH_HARNESS_INPUT_MANIFEST.",
+          "\ucd94\uac00 \uc0ac\ud56d\uc740 \uc5c6\uc2b5\ub2c8\ub2e4. \ud504\ub85c\ud1a0\ucf5c\uc740 seed 20260830, category name\uc744 \uc785\ub825, top-level archive\ub97c label\ub85c \uace0\uc815\ud558\uc138\uc694. archive\ubcc4 \ud45c\ubcf8\uc774 2\uac1c \uc774\uc0c1\uc774\uba74 deterministic hash \uae30\uc900 20% holdout, singleton\uc740 train-only \ubc0f holdout macro-F1\uc5d0\uc11c \uc81c\uc678\ud558\uace0 coverage\ub97c \ubcf4\uace0\ud558\uc138\uc694. Python \ud45c\uc900 \ub77c\uc774\ube0c\ub7ec\ub9ac Multinomial NB\uc758 character 3-5gram \ud6c4\ubcf4\ub97c word-unigram NB, majority, fixed-seed label-shuffle\uc640 \ube44\uad50\ud558\uace0 accuracy\uc640 macro-F1\uc744 \ubaa8\ub450 \ubcf4\uace0\ud558\uc138\uc694. \ub450 \uc9c0\ud45c\uc5d0\uc11c \ubaa8\ub4e0 baseline\uc744 \uc774\uae30\uc9c0 \ubabb\ud558\uba74 claim \uc2e4\ud328\uc785\ub2c8\ub2e4. \uac01 metric\u00d7baseline \ube44\uad50\ub9c8\ub2e4 \uace0\uc720 scalar key\ub97c \ub454 baseline_evidence_requirement\ub97c \ub9cc\ub4e4\uace0, metrics.json\uc758 top-level metrics/baselines\uc5d0 \uc815\ud655\ud788 \uac19\uc740 numeric key\ub97c \ub0b4\ubcf4\ub0b4\uc138\uc694.",
+          "Use seed 20260830",
+          "Use category name as input and top-level archive as label",
+          "Use deterministic hash-based 20% holdout for archives with at least two samples",
+          "Keep singleton categories train-only, exclude them from holdout macro-F1, and report coverage",
+          "Use Python standard-library Multinomial Naive Bayes",
+          "Explicitly read RESEARCH_HARNESS_INPUT_MANIFEST",
+          "Emit matching numeric scalar keys in top-level metrics and baselines for every metric-by-baseline evidence requirement"
+        ],
+        "success_criteria": [
+          "Use the registered arxiv_category_taxonomy dataset to test whether a standard-library character n-gram classifier predicts each category top-level archive from its category name better than a word-unigram classifier, the majority-class baseline, and a label-shuffle baseline on a fixed stratified holdout. Keep the experiment CPU-only, deterministic, emit exact top-level scalar metrics and baselines matching every baseline_evidence_requirement, and explicitly read RESEARCH_HARNESS_INPUT_MANIFEST.",
+          "\ucd94\uac00 \uc0ac\ud56d\uc740 \uc5c6\uc2b5\ub2c8\ub2e4. \ud504\ub85c\ud1a0\ucf5c\uc740 seed 20260830, category name\uc744 \uc785\ub825, top-level archive\ub97c label\ub85c \uace0\uc815\ud558\uc138\uc694. archive\ubcc4 \ud45c\ubcf8\uc774 2\uac1c \uc774\uc0c1\uc774\uba74 deterministic hash \uae30\uc900 20% holdout, singleton\uc740 train-only \ubc0f holdout macro-F1\uc5d0\uc11c \uc81c\uc678\ud558\uace0 coverage\ub97c \ubcf4\uace0\ud558\uc138\uc694. Python \ud45c\uc900 \ub77c\uc774\ube0c\ub7ec\ub9ac Multinomial NB\uc758 character 3-5gram \ud6c4\ubcf4\ub97c word-unigram NB, majority, fixed-seed label-shuffle\uc640 \ube44\uad50\ud558\uace0 accuracy\uc640 macro-F1\uc744 \ubaa8\ub450 \ubcf4\uace0\ud558\uc138\uc694. \ub450 \uc9c0\ud45c\uc5d0\uc11c \ubaa8\ub4e0 baseline\uc744 \uc774\uae30\uc9c0 \ubabb\ud558\uba74 claim \uc2e4\ud328\uc785\ub2c8\ub2e4. \uac01 metric\u00d7baseline \ube44\uad50\ub9c8\ub2e4 \uace0\uc720 scalar key\ub97c \ub454 baseline_evidence_requirement\ub97c \ub9cc\ub4e4\uace0, metrics.json\uc758 top-level metrics/baselines\uc5d0 \uc815\ud655\ud788 \uac19\uc740 numeric key\ub97c \ub0b4\ubcf4\ub0b4\uc138\uc694.",
+          "Use seed 20260830",
+          "Use category name as input and top-level archive as label",
+          "Use deterministic hash-based 20% holdout for archives with at least two samples",
+          "Keep singleton categories train-only, exclude them from holdout macro-F1, and report coverage",
+          "Use Python standard-library Multinomial Naive Bayes",
+          "Explicitly read RESEARCH_HARNESS_INPUT_MANIFEST",
+          "Emit matching numeric scalar keys in top-level metrics and baselines for every metric-by-baseline evidence requirement"
+        ],
+        "target_scope": "deployment"
+      },
+      "bar_digest": "sha256:59b41d7bc5dae9c47adf3192c3ecbe0df4f818683b021ac9bbe212812b8ab398",
+      "id": "goal_4e818680b0cc25c5d96cf91c3f359cc0d8f1c415bb3313a42735fef955135201",
+      "question": "Use the registered arxiv_category_taxonomy dataset to test whether a standard-library character n-gram classifier predicts each category top-level archive from its category name better than a word-unigram classifier, the majority-class baseline, and a label-shuffle baseline on a fixed stratified holdout. Keep the experiment CPU-only, deterministic, emit exact top-level scalar metrics and baselines matching every baseline_evidence_requirement, and explicitly read RESEARCH_HARNESS_INPUT_MANIFEST.",
+      "source": "pre_generation",
+      "strong_completion_blocked": false
+    },
+    "status": "ok",
+    "strategy": {
+      "derived_from_observation_id": "observation_d9bfb5d6114c7a6fc201dbef6ec458202762ba0886238d4195e054e5698524d7",
+      "estimated_cost": 0.2,
+      "family": "representation interaction recovery",
+      "goal_id": "goal_4e818680b0cc25c5d96cf91c3f359cc0d8f1c415bb3313a42735fef955135201",
+      "id": "strategy_eac4b2f0fa201193bf28a3d28a119bd99333ffe107cb207bf0fa214b6b757744",
+      "information_target": "Whether independent features erase discriminative interactions is load-bearing.",
+      "intervention": "add interaction-preserving features and compare on the same split",
+      "mechanism": "independent features erase discriminative interactions",
+      "predicted_outcomes": [
+        "The intervention closes the observed frozen-bar gap.",
+        "The intervention leaves the observed frozen-bar gap unchanged."
+      ],
+      "priority": {
+        "bar_gap_closure": 0.111111,
+        "capability_fit": 1.0,
+        "evidence_basis": [
+          "observation_d9bfb5d6114c7a6fc201dbef6ec458202762ba0886238d4195e054e5698524d7"
+        ],
+        "information_gain": 1.0,
+        "mechanism_novelty": 1.0,
+        "normalized_cost": 0.26,
+        "score": 5.924444
+      },
+      "required_capabilities": [
+        "data:arxiv_category_taxonomy"
+      ],
+      "status": "candidate",
+      "tests_bar_gaps": [
+        "Use the registered arxiv_category_taxonomy dataset to test whether a standard-library character n-gram classifier predicts each category top-level archive from its category name better than a word-unigram classifier, the majority-class baseline, and a label-shuffle baseline on a fixed stratified holdout. Keep the experiment CPU-only, deterministic, emit exact top-level scalar metrics and baselines matching every baseline_evidence_requirement, and explicitly read RESEARCH_HARNESS_INPUT_MANIFEST."
+      ]
+    },
+    "success_criteria": [
+      "Use the registered arxiv_category_taxonomy dataset to test whether a standard-library character n-gram classifier predicts each category top-level archive from its category name better than a word-unigram classifier, the majority-class baseline, and a label-shuffle baseline on a fixed stratified holdout. Keep the experiment CPU-only, deterministic, emit exact top-level scalar metrics and baselines matching every baseline_evidence_requirement, and explicitly read RESEARCH_HARNESS_INPUT_MANIFEST.",
+      "\ucd94\uac00 \uc0ac\ud56d\uc740 \uc5c6\uc2b5\ub2c8\ub2e4. \ud504\ub85c\ud1a0\ucf5c\uc740 seed 20260830, category name\uc744 \uc785\ub825, top-level archive\ub97c label\ub85c \uace0\uc815\ud558\uc138\uc694. archive\ubcc4 \ud45c\ubcf8\uc774 2\uac1c \uc774\uc0c1\uc774\uba74 deterministic hash \uae30\uc900 20% holdout, singleton\uc740 train-only \ubc0f holdout macro-F1\uc5d0\uc11c \uc81c\uc678\ud558\uace0 coverage\ub97c \ubcf4\uace0\ud558\uc138\uc694. Python \ud45c\uc900 \ub77c\uc774\ube0c\ub7ec\ub9ac Multinomial NB\uc758 character 3-5gram \ud6c4\ubcf4\ub97c word-unigram NB, majority, fixed-seed label-shuffle\uc640 \ube44\uad50\ud558\uace0 accuracy\uc640 macro-F1\uc744 \ubaa8\ub450 \ubcf4\uace0\ud558\uc138\uc694. \ub450 \uc9c0\ud45c\uc5d0\uc11c \ubaa8\ub4e0 baseline\uc744 \uc774\uae30\uc9c0 \ubabb\ud558\uba74 claim \uc2e4\ud328\uc785\ub2c8\ub2e4. \uac01 metric\u00d7baseline \ube44\uad50\ub9c8\ub2e4 \uace0\uc720 scalar key\ub97c \ub454 baseline_evidence_requirement\ub97c \ub9cc\ub4e4\uace0, metrics.json\uc758 top-level metrics/baselines\uc5d0 \uc815\ud655\ud788 \uac19\uc740 numeric key\ub97c \ub0b4\ubcf4\ub0b4\uc138\uc694.",
+      "Use seed 20260830",
+      "Use category name as input and top-level archive as label",
+      "Use deterministic hash-based 20% holdout for archives with at least two samples",
+      "Keep singleton categories train-only, exclude them from holdout macro-F1, and report coverage",
+      "Use Python standard-library Multinomial Naive Bayes",
+      "Explicitly read RESEARCH_HARNESS_INPUT_MANIFEST",
+      "Emit matching numeric scalar keys in top-level metrics and baselines for every metric-by-baseline evidence requirement"
+    ]
+  },
+  "source_scorecard": {
+    "adaptive_child_count": 0,
+    "adaptive_experiment_count": 0,
+    "adaptive_observation_count": 0,
+    "adaptive_strategy_count": 0,
+    "adaptive_strategy_id_count": 0,
+    "duplicate_evidence_rate": 0.791667,
+    "duplicate_rejection_count": 0,
+    "evidence_prioritized_frontier_count": 0,
+    "negative_decision_count": 24,
+    "negative_decisions_with_follow_ups": 0,
+    "node_count": 24,
+    "node_status_counts": {
+      "pruned": 24
+    },
+    "outcome_counts": {
+      "contradicted": 22,
+      "not_evaluable": 2
+    },
+    "pause_reason": null,
+    "root_count": 6,
+    "search_disposition": null,
+    "strategy_family_count": 0,
+    "strong_result_verified": false,
+    "thread_id": "thread_7f170f15",
+    "type": "search_trace_scorecard",
+    "unique_evidence_count": 5,
+    "unique_experiment_source_count": 5,
+    "worker_report_count": 24
+  },
+  "source_thread": "thread_7f170f15",
+  "type": "adaptive_search_replay"
+}

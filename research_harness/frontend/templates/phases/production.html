@@ -20,7 +20,7 @@
 <p class="graph-link-row">
   <a class="graph-link" href="/threads/{{ thread.thread_id }}/graph"
      target="_blank" rel="noopener">
-    🌐 Open live claim graph (new tab, auto-updates as Claude Code expands the tree)
+    🌐 Open live claim graph (new tab, auto-updates as Codex expands the tree)
   </a>
 </p>
 
@@ -60,6 +60,19 @@
             <option value="deployment">deployment</option>
           </select>
         </label>
+        <label class="muted" style="font-size:12px;margin-right:6px;">
+          data adapter:
+          <select id="supervisor-adapter-{{ thread.thread_id }}">
+            {% if (p.ready_adapters or [])|length != 1 %}
+              <option value="">select an adapter</option>
+            {% endif %}
+            {% for adapter in p.ready_adapters or [] %}
+              <option value="{{ adapter.adapter_id }}" {% if (p.ready_adapters or [])|length == 1 %}selected{% endif %}>
+                {{ adapter.adapter_id }}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
         {% if p.has_production_activity %}
           <button class="btn primary supervisor-start-btn"
                   data-thread-id="{{ thread.thread_id }}">
@@ -76,7 +89,7 @@
   </div>
   <p class="muted" style="font-size:12px;">
     Hands-free: supervisor auto-bootstraps the feasibility envelope, spawns
-    Claude Code subprocesses under your subscription, and only terminates
+    Codex subprocesses under your login, and only terminates
     when AC accepts and the Professor attests user goal achieved.
     honest_failure and rate limits are retreat-and-retry signals, not stops.
   </p>
@@ -101,7 +114,7 @@
      (loop / budget / non-allowlisted tool / dispatch error), the rail
      enqueues an operator prompt. Render any pending prompts as inline
      answer cards. The form POSTs back to /operator_input which writes
-     the response into operator_prompts.jsonl; the Claude Code subprocess
+     the response into operator_prompts.jsonl; the Codex subprocess
      polls get_pending_operator_response to consume it. #}
   {% if p.pending_operator_prompts %}
     <section class="operator-prompts-card">
@@ -125,7 +138,7 @@
           {% if prompt.status == "responded" %}
             <p class="operator-prompt-response muted">
               ↳ already responded: <em>{{ prompt.response }}</em>
-              (waiting for Claude Code to consume)
+              (waiting for Codex to consume)
             </p>
           {% else %}
             <form class="operator-prompt-form"
@@ -142,7 +155,7 @@
                 </div>
               {% endif %}
               <textarea name="response" rows="3" required
-                        placeholder="Your decision (free text — Claude Code receives this verbatim)"></textarea>
+                        placeholder="Your decision (free text; Codex receives this verbatim)"></textarea>
               <button type="submit" class="btn">Send to harness</button>
             </form>
           {% endif %}
@@ -170,11 +183,11 @@
       <pre data-supervisor-log="supervisor"
            data-thread-id="{{ thread.thread_id }}"></pre>
     </details>
-    <details open class="supervisor-claude-log live"
-             id="sup-claude-log-{{ thread.thread_id }}" hx-preserve="true"
+    <details open class="supervisor-codex-log live"
+             id="sup-codex-log-{{ thread.thread_id }}" hx-preserve="true"
              data-supervisor-log-section
              data-thread-id="{{ thread.thread_id }}">
-      <summary><strong>claude_subprocess.log</strong>
+      <summary><strong>codex_subprocess.log</strong>
         <span class="muted log-kind-status" data-supervisor-log-status="subprocess">
           live · connecting…
         </span>
@@ -192,8 +205,8 @@
       </details>
     {% endif %}
     {% if sup.subprocess_log_tail %}
-      <details class="supervisor-claude-log">
-        <summary><strong>claude_subprocess.log</strong>
+      <details class="supervisor-codex-log">
+        <summary><strong>codex_subprocess.log</strong>
           (last {{ sup.subprocess_log_tail|length }} lines)</summary>
         <pre>{% for ln in sup.subprocess_log_tail %}{{ ln }}
 {% endfor %}</pre>
@@ -371,11 +384,11 @@
         <section class="now-processing-card idle">
           <h3>
             <span class="muted">●</span>
-            Idle — waiting for Claude Code
+            Idle — waiting for Codex
           </h3>
           <p class="muted" style="font-size:12.5px;">
             No node is currently being processed. The selector will hand the
-            next admissible claim to Claude Code on its next get_next_admissible_node call.
+            next admissible claim to Codex on its next get_next_admissible_node call.
           </p>
           {% if p.last_activity_mtime %}
             <p class="muted" style="font-size:11.5px;">
@@ -408,7 +421,7 @@
 
       {% if p.mcp_progress %}
         <section class="mcp-progress-card">
-          <h3>MCP — recent Claude Code decisions</h3>
+          <h3>MCP — recent Codex decisions</h3>
           <table>
             <thead><tr><th>node</th><th>transition</th><th>verdict</th><th>follow-ups</th></tr></thead>
             <tbody>
@@ -500,4 +513,3 @@
   </section>
 {% endif %}
 </div>
-

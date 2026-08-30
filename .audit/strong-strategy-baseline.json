@@ -1,0 +1,21 @@
+{
+  "adaptive_child_count": 0,
+  "duplicate_evidence_rate": 0.791667,
+  "negative_decision_count": 24,
+  "negative_decisions_with_follow_ups": 0,
+  "node_count": 24,
+  "node_status_counts": {
+    "pruned": 24
+  },
+  "outcome_counts": {
+    "contradicted": 22,
+    "not_evaluable": 2
+  },
+  "root_count": 6,
+  "strategy_family_count": 0,
+  "thread_id": "thread_7f170f15",
+  "type": "search_trace_scorecard",
+  "unique_evidence_count": 5,
+  "unique_experiment_source_count": 5,
+  "worker_report_count": 24
+}

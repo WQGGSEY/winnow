@@ -24,20 +24,27 @@ from research_harness.schemas.validator import validate_named_schema
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _auth_status(subscription_type: str = "max") -> subprocess.CompletedProcess[str]:
+def _auth_status() -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(
-        args=["claude", "status", "--format", "json"],
+        args=["codex", "login", "status"],
         returncode=0,
-        stdout=json.dumps(
-            {
-                "loggedIn": True,
-                "authMethod": "claude.ai",
-                "apiProvider": "firstParty",
-                "subscriptionType": subscription_type,
-            }
-        ),
+        stdout="Logged in using ChatGPT\n",
         stderr="",
     )
+
+
+def _codex_stdout(message: str) -> str:
+    return "\n".join(
+        json.dumps(event)
+        for event in (
+            {"type": "thread.started", "thread_id": "dispatch-test"},
+            {"type": "item.completed", "item": {"type": "agent_message", "text": message}},
+            {
+                "type": "turn.completed",
+                "usage": {"input_tokens": 2, "cached_input_tokens": 0, "output_tokens": 30},
+            },
+        )
+    ) + "\n"
 
 
 def _node(node_id: str) -> dict[str, object]:
@@ -152,7 +159,7 @@ class LiveDispatchTests(unittest.TestCase):
 
             with patch.dict(os.environ, {}, clear=True):
                 with patch(
-                    "research_harness.workers.claude_code_invoker.subprocess.run",
+                    "research_harness.workers.codex_invoker.subprocess.run",
                     return_value=_auth_status(),
                 ):
                     dispatch = build_live_dispatch_plan(
@@ -160,7 +167,7 @@ class LiveDispatchTests(unittest.TestCase):
                         state_path,
                         run_dir=root / "dispatch",
                         node_id="n_low_priority",
-                        claude_path="/usr/local/bin/claude",
+                        codex_path="/usr/local/bin/codex",
                         billing_ack=True,
                     )
 
@@ -173,18 +180,18 @@ class LiveDispatchTests(unittest.TestCase):
             self.assertTrue((root / "dispatch" / "live_node_dispatch.json").exists())
             self.assertEqual(state_path.read_text(encoding="utf-8"), original_state_text)
 
-    def test_run_dispatch_once_blocks_without_execution_ack_before_claude_call(self) -> None:
+    def test_run_dispatch_once_blocks_without_execution_ack_before_codex_call(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             state_path = root / "search_state.json"
             _write_state(state_path, _search_state())
 
             def fail_runner(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
-                raise AssertionError("Claude runner must not be called without execution ack")
+                raise AssertionError("Codex runner must not be called without execution ack")
 
             with patch.dict(os.environ, {}, clear=True):
                 with patch(
-                    "research_harness.workers.claude_code_invoker.subprocess.run",
+                    "research_harness.workers.codex_invoker.subprocess.run",
                     return_value=_auth_status(),
                 ):
                     dispatch = run_live_dispatch_once(
@@ -192,7 +199,7 @@ class LiveDispatchTests(unittest.TestCase):
                         state_path,
                         run_dir=root / "dispatch",
                         node_id="n_high_priority",
-                        claude_path="/usr/local/bin/claude",
+                        codex_path="/usr/local/bin/codex",
                         billing_ack=True,
                         execution_ack=False,
                         command_runner=fail_runner,
@@ -204,7 +211,7 @@ class LiveDispatchTests(unittest.TestCase):
             self.assertEqual(dispatch["live_summary_status"], "blocked_by_execution_ack")
             self.assertTrue(Path(dispatch["live_summary_path"]).exists())
 
-    def test_run_dispatch_once_executes_fake_claude_in_selected_node_workspace(self) -> None:
+    def test_run_dispatch_once_executes_fake_codex_in_selected_node_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             run_dir = root / "dispatch"
@@ -217,43 +224,26 @@ class LiveDispatchTests(unittest.TestCase):
                 args: list[str],
                 **kwargs: object,
             ) -> subprocess.CompletedProcess[str]:
-                self.assertIn("--system-prompt", args)
-                self.assertNotIn("ANTHROPIC_API_KEY", kwargs["env"])
-                cli_result = {
-                    "type": "result",
-                    "subtype": "success",
-                    "is_error": False,
-                    "num_turns": 1,
-                    "result": json.dumps(
-                        _worker_task_result(run_dir, "n_high_priority")
-                    ),
-                    "total_cost_usd": 0.004,
-                    "usage": {
-                        "input_tokens": 2,
-                        "cache_creation_input_tokens": 20,
-                        "cache_read_input_tokens": 0,
-                        "output_tokens": 30,
-                    },
-                    "modelUsage": {"claude-sonnet-test": {"costUSD": 0.004}},
-                    "permission_denials": [],
-                }
+                self.assertIn("--output-schema", args)
                 return subprocess.CompletedProcess(
                     args=args,
                     returncode=0,
-                    stdout=json.dumps(cli_result),
+                    stdout=_codex_stdout(
+                        json.dumps(_worker_task_result(run_dir, "n_high_priority"))
+                    ),
                     stderr="",
                 )
 
             with patch.dict(os.environ, {}, clear=True):
                 with patch(
-                    "research_harness.workers.claude_code_invoker.subprocess.run",
+                    "research_harness.workers.codex_invoker.subprocess.run",
                     return_value=_auth_status(),
                 ):
                     dispatch = run_live_dispatch_once(
                         REPO_ROOT,
                         state_path,
                         run_dir=run_dir,
-                        claude_path="/usr/local/bin/claude",
+                        codex_path="/usr/local/bin/codex",
                         billing_ack=True,
                         execution_ack=True,
                         command_runner=fake_runner,

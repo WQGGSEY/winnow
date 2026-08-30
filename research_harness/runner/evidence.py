@@ -32,6 +32,27 @@ def build_worker_report_from_runner_evidence(
     runner_result: dict[str, Any],
     run_dir: Path,
 ) -> EvidenceReport:
+    report = _build_worker_report_from_runner_evidence(
+        node, manifest, runner_result, run_dir
+    )
+    input_evidence = runner_result.get("input_evidence")
+    if input_evidence is not None:
+        report.worker_report["input_evidence"] = dict(input_evidence)
+        manifest_artifact = _display_path(
+            Path(runner_result["workspace"]) / input_evidence["manifest_path"],
+            run_dir,
+        )
+        if manifest_artifact not in report.worker_report["artifacts"]:
+            report.worker_report["artifacts"].append(manifest_artifact)
+    return report
+
+
+def _build_worker_report_from_runner_evidence(
+    node: dict[str, Any],
+    manifest: dict[str, Any],
+    runner_result: dict[str, Any],
+    run_dir: Path,
+) -> EvidenceReport:
     runner_failure = runner_failure_worker_report(runner_result)
     source_files = _source_files(runner_result, run_dir)
     if runner_failure is not None:

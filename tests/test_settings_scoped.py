@@ -36,11 +36,11 @@ class ResolvedSettingsTests(unittest.TestCase):
     def test_operator_overrides_project(self) -> None:
         resolved = ResolvedSettings(
             project={"runtime": {"default_backend": "mock"}},
-            operator={"runtime": {"default_backend": "claude_code_live"}},
+            operator={"runtime": {"default_backend": "codex_live"}},
             thread={},
         )
         self.assertEqual(
-            resolved.get_dotted("runtime.default_backend"), "claude_code_live"
+            resolved.get_dotted("runtime.default_backend"), "codex_live"
         )
         self.assertEqual(resolved.source_of("runtime.default_backend"), "operator")
 
@@ -123,7 +123,7 @@ class ResolvedSettingsTests(unittest.TestCase):
             root = Path(tmp)
             _write_json(
                 root / "settings.json",
-                {"runtime": {"llm_orchestrator": {"mcp": {"default_model": "claude-opus-4-7"}}}},
+                {"runtime": {"llm_orchestrator": {"mcp": {"default_model": "gpt-5.6-sol"}}}},
             )
             _write_json(
                 root / "settings.local.json",
@@ -132,13 +132,13 @@ class ResolvedSettingsTests(unittest.TestCase):
             tid = "thread_abc"
             _write_json(
                 root / "runs" / "threads" / tid / "thread_settings.json",
-                {"runtime.llm_orchestrator.mcp.default_model": "claude-sonnet-4-6"},
+                {"runtime.llm_orchestrator.mcp.default_model": "gpt-5.6-terra"},
             )
 
             resolved = resolve_for_thread(root, tid, phase="grilling")
             self.assertEqual(
                 resolved.get_dotted("runtime.llm_orchestrator.mcp.default_model"),
-                "claude-sonnet-4-6",
+                "gpt-5.6-terra",
             )
             self.assertEqual(
                 resolved.source_of("runtime.llm_orchestrator.mcp.default_model"),
@@ -214,17 +214,17 @@ class ValidateWriteTests(unittest.TestCase):
 
     def test_enum_with_enum_source(self) -> None:
         # mcp.default_model's allowed values are pulled from mcp.allowed_models at runtime.
-        allowed = ["claude-opus-4-7", "claude-sonnet-4-6"]
+        allowed = ["gpt-5.6-sol", "gpt-5.6-terra"]
         validate_write(
             "runtime.llm_orchestrator.mcp.default_model",
-            "claude-opus-4-7",
+            "gpt-5.6-sol",
             "thread",
             enum_resolver=lambda p: allowed,
         )
         with self.assertRaises(ValueError):
             validate_write(
                 "runtime.llm_orchestrator.mcp.default_model",
-                "claude-bogus-9-9",
+                "gpt-bogus",
                 "thread",
                 enum_resolver=lambda p: allowed,
             )
@@ -243,9 +243,9 @@ class ValidateWriteTests(unittest.TestCase):
             validate_write("runtime.agent_max_rounds.grilling_agent", 0, "thread")  # below min
 
     def test_regex(self) -> None:
-        validate_write("runtime.agent_budgets.grilling_agent", "0.50", "thread")
+        validate_write("runtime.legacy_claude_agent_budgets.market_research_agent", "0.50", "project")
         with self.assertRaises(ValueError):
-            validate_write("runtime.agent_budgets.grilling_agent", "fifty cents", "thread")
+            validate_write("runtime.legacy_claude_agent_budgets.market_research_agent", "fifty cents", "project")
 
     def test_nullable_when_default_is_none(self) -> None:
         # subscription_ack_at has default=None
@@ -284,7 +284,7 @@ class WriteSnapshotTests(unittest.TestCase):
                             "_comment": "should be skipped by glob",
                         },
                         "llm_orchestrator": {
-                            "mcp": {"default_model": "claude-opus-4-7"},
+                            "mcp": {"default_model": "gpt-5.6-sol"},
                         },
                     },
                     "publication_gate": {

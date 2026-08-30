@@ -101,18 +101,10 @@ FIELD_REGISTRY: tuple[FieldSpec, ...] = (
         path="runtime.auth_policy.provider",
         writable_at=("project",),
         type="enum",
-        enum=("claude_code",),
-        default="claude_code",
+        enum=("codex",),
+        default="codex",
         ui_editable_in=(),
         description="Auth provider. Structural; edit settings.json directly.",
-    ),
-    FieldSpec(
-        path="runtime.auth_policy.require_no_anthropic_api_key",
-        writable_at=("project",),
-        type="boolean",
-        default=True,
-        ui_editable_in=(),
-        description="Disallow ANTHROPIC_API_KEY at boot. Security policy.",
     ),
     FieldSpec(
         path="runtime.llm_orchestrator.mcp.allowed_models",
@@ -128,7 +120,7 @@ FIELD_REGISTRY: tuple[FieldSpec, ...] = (
         writable_at=("operator",),
         type="timestamp",
         default=None,
-        description="Operator's one-time consent timestamp for live Claude calls.",
+        description="Operator's one-time consent timestamp for live Codex calls.",
     ),
     FieldSpec(
         path="frontend.full_auto_mode",
@@ -196,7 +188,7 @@ FIELD_REGISTRY: tuple[FieldSpec, ...] = (
         path="runtime.default_backend",
         writable_at=("project", "operator"),
         type="enum",
-        enum=("mock", "claude_code_dry_run", "claude_code_live"),
+        enum=("mock", "codex_dry_run", "codex_live"),
         default="mock",
         description="Worker backend the harness uses by default.",
     ),
@@ -204,8 +196,8 @@ FIELD_REGISTRY: tuple[FieldSpec, ...] = (
         path="runtime.llm_orchestrator.backend",
         writable_at=("project", "operator"),
         type="enum",
-        enum=("mcp", "mock", "claude_cli", "anthropic"),
-        default="mcp",
+        enum=("codex_mcp", "mock", "claude_cli", "anthropic"),
+        default="codex_mcp",
         description="LLM orchestrator backend.",
     ),
     # ---- Project default + thread override ----
@@ -214,7 +206,7 @@ FIELD_REGISTRY: tuple[FieldSpec, ...] = (
         writable_at=("project", "thread"),
         type="enum",
         enum_source="runtime.llm_orchestrator.mcp.allowed_models",
-        default="claude-opus-4-7",
+        default="gpt-5.6-sol",
         description="MCP default model. Per-thread override in frontend.",
     ),
     FieldSpec(
@@ -229,14 +221,22 @@ FIELD_REGISTRY: tuple[FieldSpec, ...] = (
         path="runtime.agent_models.*",
         writable_at=("project", "thread"),
         type="string",
-        description="Per-agent model name (used by claude_cli/anthropic backends).",
+        description="Per-agent Codex model name.",
     ),
     FieldSpec(
-        path="runtime.agent_budgets.*",
-        writable_at=("project", "thread"),
+        path="runtime.legacy_claude_agent_models.*",
+        writable_at=("project",),
+        type="string",
+        ui_editable_in=(),
+        description="Model name for dormant Claude-only code.",
+    ),
+    FieldSpec(
+        path="runtime.legacy_claude_agent_budgets.*",
+        writable_at=("project",),
         type="string",
         regex=r"^\d+(\.\d+)?$",
-        description="Per-agent USD budget cap (e.g. '0.50').",
+        ui_editable_in=(),
+        description="USD cap for dormant Claude-only code.",
     ),
     FieldSpec(
         path="runtime.runner_timeouts.*",
@@ -618,12 +618,13 @@ def validate_resolved(resolved: ResolvedSettings) -> list[str]:
     """
     violations: list[str] = []
 
-    # 1. mcp.default_model must lie inside mcp.allowed_models — but only
-    #    when the active orchestrator backend is "mcp". Other backends
-    #    pick their model through ``runtime.agent_models``, not the MCP
+    # 1. mcp.default_model must lie inside mcp.allowed_models, but only
+    #    when the active orchestrator backend is "codex_mcp" or its legacy
+    #    persisted name "mcp". Other backends
+    #    pick their model through their own legacy configuration, not the MCP
     #    dropdown, so the constraint does not apply.
     backend = resolved.get_dotted("runtime.llm_orchestrator.backend")
-    if backend == "mcp":
+    if backend in {"mcp", "codex_mcp"}:
         default_model = resolved.get_dotted(
             "runtime.llm_orchestrator.mcp.default_model"
         )

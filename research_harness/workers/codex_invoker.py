@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from research_harness.agent_runtime import RuntimeAuthResult
+from research_harness.adapters.codex_cli import CodexCliAdapter
 from research_harness.config import load_lessons
 from research_harness.memory.baseline_dossier import load_baseline_dossier
 from research_harness.memory.failure_retrieval import (
@@ -22,16 +22,8 @@ from research_harness.workers.worker_task import (
 from research_harness.workers.workspace import WorkspaceGuardError, ensure_path_inside
 
 
-@dataclass(frozen=True)
-class AuthPreflightResult:
-    ok: bool
-    mode: str
-    reason: str | None = None
-    details: dict[str, Any] | None = None
-
-
-class ClaudeCodeInvoker:
-    """Dry-run interface for future Claude Code subscription worker calls."""
+class CodexInvoker:
+    """Dry-run interface for bounded Codex worker calls."""
 
     def __init__(
         self,
@@ -45,97 +37,15 @@ class ClaudeCodeInvoker:
 
     def auth_preflight(
         self,
-        claude_path: str | None = None,
+        codex_path: str | None = None,
         probe_cli_status: bool = False,
-    ) -> AuthPreflightResult:
-        auth_policy = self.settings.get("runtime", {}).get("auth_policy", {})
-        if auth_policy.get("require_no_anthropic_api_key") and os.environ.get("ANTHROPIC_API_KEY"):
-            return AuthPreflightResult(
-                ok=False,
-                mode="api_key_would_take_precedence",
-                reason="ANTHROPIC_API_KEY is set; subscription OAuth mode requires it to be unset.",
-            )
+    ) -> RuntimeAuthResult:
         if probe_cli_status:
-            return self._probe_claude_auth_status(claude_path or "claude")
-        return AuthPreflightResult(ok=True, mode=auth_policy.get("mode", "unknown"))
-
-    def _probe_claude_auth_status(self, claude_path: str) -> AuthPreflightResult:
-        auth_policy = self.settings.get("runtime", {}).get("auth_policy", {})
-        allowed_subscriptions = {
-            str(item).lower()
-            for item in auth_policy.get(
-                "allowed_subscription_types",
-                ["pro", "max", "team", "enterprise"],
-            )
-        }
-        env = os.environ.copy()
-        env.pop("ANTHROPIC_API_KEY", None)
-        env.pop("ANTHROPIC_BASE_URL", None)  # subscription-only: strip base_url override too
-        try:
-            completed = subprocess.run(
-                [claude_path, "auth", "status", "--json"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                env=env,
-            )
-        except FileNotFoundError:
-            return AuthPreflightResult(
-                ok=False,
-                mode="claude_cli_missing",
-                reason="claude CLI was not found for auth status probe.",
-            )
-        except subprocess.TimeoutExpired:
-            return AuthPreflightResult(
-                ok=False,
-                mode="auth_status_timeout",
-                reason="claude auth status timed out.",
-            )
-
-        raw_status = completed.stdout.strip() or completed.stderr.strip()
-        try:
-            status = json.loads(raw_status)
-        except json.JSONDecodeError:
-            return AuthPreflightResult(
-                ok=False,
-                mode="auth_status_unparseable",
-                reason="claude auth status did not return JSON.",
-            )
-
-        details = {
-            "logged_in": bool(status.get("loggedIn")),
-            "auth_method": status.get("authMethod"),
-            "api_provider": status.get("apiProvider"),
-            "subscription_type": status.get("subscriptionType"),
-        }
-        if completed.returncode != 0 or not status.get("loggedIn"):
-            return AuthPreflightResult(
-                ok=False,
-                mode="not_logged_in",
-                reason="claude auth status reports no active login.",
-                details=details,
-            )
-        if status.get("authMethod") != "claude.ai":
-            return AuthPreflightResult(
-                ok=False,
-                mode="non_subscription_auth",
-                reason="claude auth status is not using claude.ai subscription auth.",
-                details=details,
-            )
-        subscription_type = str(status.get("subscriptionType") or "").lower()
-        if subscription_type not in allowed_subscriptions:
-            return AuthPreflightResult(
-                ok=False,
-                mode="unsupported_subscription_type",
-                reason="claude auth status did not report an allowed subscription type.",
-                details=details,
-            )
-        return AuthPreflightResult(
-            ok=True,
-            mode=auth_policy.get("mode", "subscription_oauth"),
-            details=details,
-        )
+            return CodexCliAdapter(
+                codex_path=codex_path or "codex",
+                runner=subprocess.run,
+            ).auth_status()
+        return RuntimeAuthResult(ok=True, mode="chatgpt_login")
 
     def build_dry_run_invocation(
         self,
@@ -145,7 +55,7 @@ class ClaudeCodeInvoker:
         runtime = node["runtime_profile"]
         role = runtime["worker_type"]
         if role == "runner_job":
-            raise WorkspaceGuardError("runner_job is not a Claude Code worker role")
+            raise WorkspaceGuardError("runner_job is not a Codex worker role")
 
         self.workspace.mkdir(parents=True, exist_ok=True)
         prompt_path = self.workspace / "prompt.md"
@@ -162,8 +72,13 @@ class ClaudeCodeInvoker:
         live_backend = (
             self.settings.get("runtime", {})
             .get("worker_backends", {})
-            .get("claude_code_live", {})
+            .get("codex_live", {})
         )
+        cmd_args = CodexCliAdapter().build_worker_command(
+            model=str(live_backend.get("model", "gpt-5.6-sol")),
+            cwd=self.workspace,
+            output_schema=output_schema_path,
+        )[1:]
 
         ensure_path_inside(prompt_path, self.workspace, "prompt_path")
         ensure_path_inside(worker_task_path, self.workspace, "worker_task_path")
@@ -171,7 +86,7 @@ class ClaudeCodeInvoker:
         ensure_path_inside(output_schema_path, self.repo_root, "output_schema.path")
 
         envelope = {
-            "backend": "claude_code_dry_run",
+            "backend": "codex_dry_run",
             "invocation_id": f"invoke_{node['id']}",
             "node_id": node["id"],
             "role": role,
@@ -195,32 +110,13 @@ class ClaudeCodeInvoker:
             "expected_output_path": str(expected_output_path),
             "worker_task_path": str(worker_task_path),
             "environment_policy": {
-                "unset": ["ANTHROPIC_API_KEY"],
+                "unset": [],
                 "secret_logging": "forbidden",
             },
             "prompt_path": str(prompt_path),
             "command_plan": {
-                "executable": "claude",
-                "args": [
-                    "-p",
-                    "--model",
-                    str(live_backend.get("model", "claude-sonnet-4-6")),
-                    "--permission-mode",
-                    "dontAsk",
-                    "--tools",
-                    str(live_backend.get("tools", "")),
-                    "--disable-slash-commands",
-                    "--strict-mcp-config",
-                    "--system-prompt",
-                    self._minimal_worker_system_prompt(),
-                    "--output-format",
-                    "json",
-                    "--input-format",
-                    "text",
-                    "--no-session-persistence",
-                    "--max-budget-usd",
-                    str(live_backend.get("max_budget_usd", "0.25")),
-                ],
+                "executable": "codex",
+                "args": cmd_args,
                 "stdin_path": str(prompt_path),
                 "executes_in_dry_run": False,
             },
@@ -270,6 +166,7 @@ class ClaudeCodeInvoker:
         output_json = json.dumps(output_template, separators=(",", ":"))
         return (
             "# Bounded Worker Task\n\n"
+            f"System instructions: {self._minimal_worker_system_prompt()}\n\n"
             f"Role: {node['runtime_profile']['worker_type']} | Node: {node['id']}\n\n"
             "Do not expand scope, choose baselines, mutate shared memory, use tools, "
             "or request permission. Return one raw worker_task_result JSON object; "
@@ -437,7 +334,7 @@ class ClaudeCodeInvoker:
         validate_named_schema("invocation_envelope", envelope)
         workspace = Path(envelope["workspace"]).resolve()
         if workspace == self.repo_root:
-            raise WorkspaceGuardError("Claude Code worker workspace cannot be repo root")
+            raise WorkspaceGuardError("Codex worker workspace cannot be repo root")
         for write_root in envelope["allowed_write_roots"]:
             ensure_path_inside(Path(write_root), workspace, "allowed_write_roots")
         ensure_path_inside(Path(envelope["prompt_path"]), workspace, "prompt_path")
@@ -454,7 +351,7 @@ class ClaudeCodeInvoker:
         output_schema = Path(envelope["output_schema"]["path"])
         if output_schema.name != "worker_task_result.schema.json":
             raise WorkspaceGuardError(
-                "Claude Code worker must emit worker_task_result schema"
+                "Codex worker must emit worker_task_result schema"
             )
         ensure_path_inside(output_schema, self.repo_root, "output_schema.path")
 

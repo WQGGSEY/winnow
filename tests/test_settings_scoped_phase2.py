@@ -60,14 +60,14 @@ class ResolverCompatTests(unittest.TestCase):
     def test_role_specific_values_match(self) -> None:
         proj = {
             "runtime": {
-                "agent_models": {"grilling_agent": "claude-opus-4-7"},
-                "agent_budgets": {"grilling_agent": "0.50"},
+                "agent_models": {"grilling_agent": "gpt-5.6-sol"},
+                "legacy_claude_agent_budgets": {"grilling_agent": "0.50"},
                 "agent_max_rounds": {"grilling_agent": 8},
             }
         }
         m_dict, m_res, b_dict, b_res, r_dict, r_res = self._both(proj, "grilling_agent")
-        self.assertEqual(m_dict, "claude-opus-4-7")
-        self.assertEqual(m_res, "claude-opus-4-7")
+        self.assertEqual(m_dict, "gpt-5.6-sol")
+        self.assertEqual(m_res, "gpt-5.6-sol")
         self.assertEqual(b_dict, "0.50")
         self.assertEqual(b_res, "0.50")
         self.assertEqual(r_dict, 8)
@@ -76,8 +76,8 @@ class ResolverCompatTests(unittest.TestCase):
     def test_default_fallback_matches(self) -> None:
         proj = {
             "runtime": {
-                "agent_models": {"default": "claude-sonnet-4-6"},
-                "agent_budgets": {"default": "0.25"},
+                "agent_models": {"default": "gpt-5.6-sol"},
+                "legacy_claude_agent_budgets": {"default": "0.25"},
                 "agent_max_rounds": {"default": "unlimited"},
             }
         }
@@ -93,8 +93,8 @@ class ResolverCompatTests(unittest.TestCase):
         # hard-coded fallback. Same on both inputs.
         m_dict = resolve_agent_model({}, "anything")
         m_res = resolve_agent_model(ResolvedSettings(project={}, operator={}, thread={}), "anything")
-        self.assertEqual(m_dict, "claude-sonnet-4-6")
-        self.assertEqual(m_res, "claude-sonnet-4-6")
+        self.assertEqual(m_dict, "gpt-5.6-sol")
+        self.assertEqual(m_res, "gpt-5.6-sol")
 
 
 # ---------------------------------------------------------------------------
@@ -112,10 +112,10 @@ class ThreadAwareResolverTests(unittest.TestCase):
             {
                 "runtime": {
                     "agent_models": {
-                        "default": "claude-sonnet-4-6",
-                        "grilling_agent": "claude-opus-4-7",
+                        "default": "gpt-5.6-sol",
+                        "grilling_agent": "gpt-5.6-sol",
                     },
-                    "agent_budgets": {
+                    "legacy_claude_agent_budgets": {
                         "default": "0.25",
                         "grilling_agent": "0.50",
                     },
@@ -130,7 +130,7 @@ class ThreadAwareResolverTests(unittest.TestCase):
         m = resolve_agent_model_for_thread(self.repo, None, "grilling_agent")
         b = resolve_agent_budget_for_thread(self.repo, None, "grilling_agent")
         r = resolve_agent_max_rounds_for_thread(self.repo, None, "grilling_agent", fallback=99)
-        self.assertEqual(m, "claude-opus-4-7")
+        self.assertEqual(m, "gpt-5.6-sol")
         self.assertEqual(b, "0.50")
         self.assertEqual(r, 8)
 
@@ -138,23 +138,23 @@ class ThreadAwareResolverTests(unittest.TestCase):
         tid = "thread_xyz"
         _write(
             self.repo / "runs" / "threads" / tid / "thread_settings.json",
-            {"runtime.agent_models.grilling_agent": "claude-haiku-4-5"},
+            {"runtime.agent_models.grilling_agent": "gpt-5.6-luna"},
         )
         self.assertEqual(
             resolve_agent_model_for_thread(self.repo, tid, "grilling_agent"),
-            "claude-haiku-4-5",
+            "gpt-5.6-luna",
         )
         # Other thread without override still gets project value.
         self.assertEqual(
             resolve_agent_model_for_thread(self.repo, "thread_other", "grilling_agent"),
-            "claude-opus-4-7",
+            "gpt-5.6-sol",
         )
 
     def test_thread_override_observed_by_budget_resolver(self) -> None:
         tid = "thread_b"
         _write(
             self.repo / "runs" / "threads" / tid / "thread_settings.json",
-            {"runtime.agent_budgets.grilling_agent": "1.00"},
+            {"runtime.legacy_claude_agent_budgets.grilling_agent": "1.00"},
         )
         self.assertEqual(
             resolve_agent_budget_for_thread(self.repo, tid, "grilling_agent"),
@@ -194,10 +194,10 @@ class ValidateResolvedTests(unittest.TestCase):
             project={
                 "runtime": {
                     "llm_orchestrator": {
-                        "backend": "mcp",
+                        "backend": "codex_mcp",
                         "mcp": {
-                            "default_model": "claude-opus-4-7",
-                            "allowed_models": ["claude-opus-4-7", "claude-sonnet-4-6"],
+                            "default_model": "gpt-5.6-sol",
+                            "allowed_models": ["gpt-5.6-sol", "gpt-5.6-terra"],
                         },
                     }
                 }
@@ -212,24 +212,46 @@ class ValidateResolvedTests(unittest.TestCase):
             project={
                 "runtime": {
                     "llm_orchestrator": {
-                        "backend": "mcp",
+                        "backend": "codex_mcp",
                         "mcp": {
-                            "default_model": "claude-opus-4-7",
-                            "allowed_models": ["claude-opus-4-7", "claude-sonnet-4-6"],
+                            "default_model": "gpt-5.6-sol",
+                            "allowed_models": ["gpt-5.6-sol", "gpt-5.6-terra"],
                         },
                     }
                 }
             },
             operator={},
             # thread picks a model not in allowed_models
-            thread={"runtime.llm_orchestrator.mcp.default_model": "claude-bogus-9-9"},
+            thread={"runtime.llm_orchestrator.mcp.default_model": "gpt-bogus"},
         )
         violations = validate_resolved(resolved)
         self.assertEqual(len(violations), 1)
         msg = violations[0]
-        self.assertIn("claude-bogus-9-9", msg)
+        self.assertIn("gpt-bogus", msg)
         self.assertIn("from thread", msg)
         self.assertIn("allowed_models", msg)
+
+    def test_legacy_mcp_backend_still_enforces_allowed_models(self) -> None:
+        resolved = ResolvedSettings(
+            project={
+                "runtime": {
+                    "llm_orchestrator": {
+                        "backend": "mcp",
+                        "mcp": {
+                            "default_model": "gpt-bogus",
+                            "allowed_models": ["gpt-5.6-sol"],
+                        },
+                    }
+                }
+            },
+            operator={},
+            thread={},
+        )
+
+        violations = validate_resolved(resolved)
+
+        self.assertEqual(len(violations), 1)
+        self.assertIn("gpt-bogus", violations[0])
 
     def test_non_mcp_backend_skips_the_check(self) -> None:
         # When backend is claude_cli or anthropic, mcp.default_model is
@@ -259,7 +281,7 @@ class ValidateResolvedTests(unittest.TestCase):
                 "runtime": {
                     "llm_orchestrator": {
                         "backend": "mcp",
-                        "mcp": {"default_model": "claude-opus-4-7", "allowed_models": []},
+                        "mcp": {"default_model": "gpt-5.6-sol", "allowed_models": []},
                     }
                 }
             },

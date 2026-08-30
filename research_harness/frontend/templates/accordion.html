@@ -28,11 +28,11 @@
     {% else %}
       <span class="domain-tag domain-null">domain: —</span>
     {% endif %}
-    {% if llm_backend == "mcp" and mcp_allowed_models %}
+    {% if llm_backend in ["mcp", "codex_mcp"] and mcp_allowed_models %}
       {% set selected_model = active_thread.mcp_model or mcp_default_model %}
       <label class="mcp-model-picker"
              data-thread-id="{{ active_thread.thread_id }}"
-             title="Which model Claude Code should use for this thread's MCP reasoning. Per-thread override.">
+             title="Which Codex model should handle this thread's MCP reasoning. Per-thread override.">
         <span>model:</span>
         <select data-mcp-model-select>
           {% for m in mcp_allowed_models %}

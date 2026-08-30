@@ -1,13 +1,28 @@
 {
   "data_adapters": {
-    "_comment": "PR7: registry of real-data adapters this harness can read. Each entry is consumed by claim_contract.data_source_anchor when scope='deployment'. Empty/missing means no real data — deployment-scope claims will be rejected by validate_data_source_anchor. Add adapter modules under research_harness/adapters/ and register them here with id + provenance.",
+    "_comment": "Registered local adapters. The supervisor probes canonical entries before advertising them as ready.",
     "_example": {
       "id": "wq_brain_snapshot_2024_2025",
-      "kind": "real_panel",
-      "module": "research_harness.adapters.wq_brain_snapshot",
+      "materializer_type": "benchmark",
+      "role": "evaluation",
+      "source": "file:///absolute/path/to/snapshot",
       "provenance": "operator-curated snapshot of WorldQuant Brain S&P 500 universe 2024-01 to 2025-12, stored at runs/datasets/wq_brain_snapshot/"
     },
     "registered": [
+      {
+        "id": "arxiv_category_taxonomy",
+        "materializer_type": "benchmark",
+        "role": "evaluation",
+        "source": "file:///home/hsj68/research_harness/research_harness/connector/data/arxiv_categories.json",
+        "provenance": "Frozen arXiv category taxonomy shipped with research_harness"
+      },
+      {
+        "id": "fashion_mnist_dev_gpu",
+        "materializer_type": "benchmark",
+        "role": "evaluation",
+        "source": "file:///home/hsj68/.local/share/research_harness_datasets/fashion_mnist_dev_seed20260831.pt",
+        "provenance": "Fashion-MNIST official train split from Zalando Research via torchvision 0.20.1; fixed class-balanced 12,000-train/2,000-validation tensor snapshot, seed 20260831"
+      },
       {
         "id": "okx_usdt_perp_1m",
         "kind": "real_panel",
@@ -82,11 +97,26 @@
     }
   },
   "runtime": {
-    "agent_budgets": {
-      "*": "0.5",
+    "runner_executable_overrides": {
+      "python": "/home/hsj68/miniconda3/envs/ml/bin/python",
+      "python3": "/home/hsj68/miniconda3/envs/ml/bin/python3"
+    },
+    "runner_environment_overrides": {
+      "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "NUMEXPR_NUM_THREADS": "1"
+    },
+    "runner_capabilities": [
+      "local_runner",
+      "cpu",
+      "accelerator:cuda",
+      "module:torch",
+      "data:fashion_mnist_dev_gpu"
+    ],
+    "legacy_claude_agent_budgets": {
       "default": "0.5",
-      "domain_connector_agent": "0.5",
-      "grilling_agent": "0.5",
       "lesson_distillation_agent": "0.25",
       "market_research_agent": "0.5",
       "research_refiner_agent": "1.0"
@@ -100,70 +130,48 @@
     },
     "agent_models": {
       "*": "",
+      "default": "gpt-5.6-sol",
+      "domain_connector_agent": "gpt-5.6-sol",
+      "grilling_agent": "gpt-5.6-sol"
+    },
+    "legacy_claude_agent_models": {
       "default": "claude-sonnet-4-6",
-      "domain_connector_agent": "claude-opus-4-8[1m]",
-      "grilling_agent": "claude-opus-4-8[1m]",
       "lesson_distillation_agent": "claude-sonnet-4-6",
       "market_research_agent": "claude-opus-4-8[1m]",
       "research_refiner_agent": "claude-opus-4-8[1m]"
     },
     "auth_policy": {
-      "allowed_subscription_types": [
-        "pro",
-        "max",
-        "team",
-        "enterprise"
-      ],
-      "fail_if_api_key_present": true,
-      "mode": "subscription_oauth",
-      "provider": "claude_code",
+      "mode": "chatgpt_login",
+      "provider": "codex",
       "require_cli_auth_status": true,
-      "require_no_anthropic_api_key": true,
-      "token_source": "login_session_or_setup_token"
+      "token_source": "codex_login"
     },
-    "default_backend": "claude_code_live",
+    "default_backend": "codex_live",
     "llm_orchestrator": {
-      "_ack_envs_comment": "Required only for claude_cli / anthropic backends. The mcp backend does NOT need these; the operator authenticates via the existing Claude Code interactive session.",
-      "_backend_options_comment": "mcp | mock | claude_cli | anthropic. RECOMMENDED: mcp — harness exposes tools, Claude Code interactive drives reasoning (free in subscription pool, unaffected by 2026-06-15 policy change). Persona is enforced deterministically at the MCP boundary.",
-      "agent_models": {
-        "_comment": "Used by claude_cli / anthropic backends only. In mcp mode Claude Code picks its own model from the operator's plan.",
+      "_ack_envs_comment": "The production supervisor uses the Codex login session. Dormant legacy backends keep their own acknowledgements.",
+      "_backend_options_comment": "codex_mcp | mock. The supervisor starts Codex with the repository MCP server configured for each invocation.",
+      "legacy_claude_agent_models": {
+        "_comment": "Used only by the dormant claude_cli and anthropic backends.",
         "ac": "claude-opus-4-8[1m]",
         "critic": "claude-opus-4-8[1m]",
         "default": "claude-opus-4-8[1m]",
         "grad_student": "claude-opus-4-8[1m]",
         "professor": "claude-opus-4-8[1m]"
       },
-      "backend": "mcp",
-      "billing_ack_env": "anthropic_orchestrator_billing_ack",
-      "billing_ack_value": "I_authorize_anthropic_API_charges",
+      "backend": "codex_mcp",
       "enabled": true,
-      "execution_ack_env": "anthropic_live_orchestrator_ack",
-      "execution_ack_value": "I_understand_costs",
       "mcp": {
-        "_model_comment": "All currently-active Claude model IDs as of 2026-05 (sourced from anthropics/skills/claude-api/shared/models.md). Per-thread selection happens in the frontend; thread.json.mcp_model overrides default_model and the handoff modal builds `claude --model <chosen>` accordingly. Free-form input is intentionally disabled — operator must edit this list to add a new model id when one ships.",
+        "_model_comment": "Codex model IDs installed for this harness. thread.json.mcp_model overrides default_model.",
         "allowed_models": [
-          "claude-opus-4-8[1m]",
-          "claude-opus-4-8",
-          "claude-opus-4-7",
-          "claude-opus-4-6",
-          "claude-opus-4-5",
-          "claude-opus-4-5-20251101",
-          "claude-opus-4-1",
-          "claude-opus-4-1-20250805",
-          "claude-opus-4-0",
-          "claude-opus-4-20250514",
-          "claude-sonnet-4-6",
-          "claude-sonnet-4-5",
-          "claude-sonnet-4-5-20250929",
-          "claude-sonnet-4-0",
-          "claude-sonnet-4-20250514",
-          "claude-haiku-4-5",
-          "claude-haiku-4-5-20251001",
-          "claude-3-haiku-20240307"
+          "gpt-5.6-sol",
+          "gpt-5.6-terra",
+          "gpt-5.6-luna",
+          "gpt-5.5",
+          "gpt-5.4"
         ],
-        "default_model": "claude-opus-4-8[1m]",
+        "default_model": "gpt-5.6-sol",
         "persona_enforcement": {
-          "_comment": "Each rule rejects tool calls that violate the honest+strong / falsification persona. require_market_grounding additionally checks that the Professor's baselines reference the market step's downloaded dossier / analysis / papers. Claude Code receives an explicit reason and retries.",
+          "_comment": "Each rule rejects MCP tool calls that violate the honest+strong and falsification persona. Codex receives an explicit reason and retries.",
           "adversarial_dominance": {
             "_comment": "ADR 0007 lever 0 (free): a grounded critic kill (contradicted / blocking) freezes a positive reduction / AC accept until defeated on merits in blocking_objections. Recovers the decorrelation the persona pack already paid for. Keep enabled.",
             "enabled": true
@@ -198,11 +206,16 @@
           "require_grad_student_challenge": true,
           "require_market_grounding": true
         },
-        "server_command": [
-          "python",
+        "server_command": "python",
+        "server_args": [
           "-m",
-          "research_harness.mcp_server"
-        ]
+          "research_harness.mcp_server",
+          "--repo-root",
+          "{repo_root}"
+        ],
+        "server_env": {
+          "COIN_DATA_DIR": "/mnt/d/coin_trading/data"
+        }
       }
     },
     "runner_timeouts": {
@@ -213,18 +226,17 @@
       "training": 21600
     },
     "worker_backends": {
-      "claude_code_dry_run": {
+      "codex_dry_run": {
         "executes_agent": false
       },
-      "claude_code_live": {
-        "billing_ack_env": "RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE",
+      "codex_live": {
+        "billing_ack_env": "RESEARCH_HARNESS_ALLOW_CODEX_LIVE",
         "billing_ack_value": "subscription_ack",
         "manual_smoke_only": true,
-        "max_budget_usd": "0.5",
-        "model": "sonnet",
+        "model": "gpt-5.6-sol",
         "requires_auth_preflight": true,
         "requires_billing_ack": true,
-        "tools": ""
+        "sandbox": "read-only"
       },
       "mock": {
         "required_for_ci": true

@@ -787,16 +787,16 @@ code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-
 .supervisor-status-running { color: #2845a8; font-weight: 600; font-size: 12.5px; }
 .supervisor-status-idle    { color: #888; font-weight: 500; font-size: 12.5px; }
 .supervisor-actions { display: flex; align-items: center; gap: 6px; }
-.supervisor-needs ul, .supervisor-log pre, .supervisor-claude-log pre {
+.supervisor-needs ul, .supervisor-log pre, .supervisor-codex-log pre {
   margin-top: 6px;
 }
-.supervisor-log pre, .supervisor-claude-log pre {
+.supervisor-log pre, .supervisor-codex-log pre {
   background: #1c1c1c; color: #cfe1ff; font-size: 11.5px;
   padding: 10px; border-radius: 4px; overflow: auto; max-height: 320px;
   font-family: 'Menlo', 'Monaco', monospace;
   white-space: pre-wrap; word-break: break-word;
 }
-.supervisor-log.live pre, .supervisor-claude-log.live pre {
+.supervisor-log.live pre, .supervisor-codex-log.live pre {
   /* Slightly taller for live tail; the operator usually wants to watch it. */
   max-height: 360px; min-height: 120px;
 }

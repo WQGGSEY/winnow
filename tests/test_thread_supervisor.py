@@ -1,6 +1,6 @@
 """Tests for thread_supervisor — hands-free e2e daemon.
 
-We don't actually spawn `claude` subprocesses in tests; we exercise:
+We don't start real Codex subprocesses in tests. We exercise:
   - is_terminal() against various production_run_summary.json shapes
   - mcp_idle_seconds() against various mtime patterns
   - build_resume_prompt() output shape
@@ -26,6 +26,416 @@ def _make_thread(repo: Path, tid: str) -> Path:
     tdir = repo / "runs" / "threads" / tid
     (tdir / "production").mkdir(parents=True, exist_ok=True)
     return tdir
+
+
+def _write_verified_terminal_state(tdir: Path) -> None:
+    from research_harness.orchestrator.adaptive_search import build_research_goal
+
+    thread = {
+        "thread_id": f"thread_{tdir.name}",
+        "title": "Strong strategy test",
+        "created_at": "2026-08-31T00:00:00+00:00",
+        "updated_at": "2026-08-31T00:00:00+00:00",
+        "current_phase": "production",
+        "phase_status": "running",
+        "outcome": None,
+        "user_goal": "Find a strategy that beats baseline B.",
+    }
+    grilling = {
+        "user_goal": thread["user_goal"],
+        "extracted": {
+            "claim_under_test": thread["user_goal"],
+            "mandatory_baselines": ["baseline B"],
+            "success_criteria": ["beat baseline B"],
+            "disproof_conditions": ["does not beat baseline B"],
+        },
+    }
+    envelope = {
+        "operator_intent": {"target_deploy_grade_scope": "directional"},
+        "external_falsifier": {
+            "kind": "real_holdout",
+            "holdout_source_id": "holdout",
+            "predicate": {"metric": "score", "op": ">=", "threshold": 1.0},
+        },
+    }
+    (tdir / "thread.json").write_text(json.dumps(thread), encoding="utf-8")
+    grilling_dir = tdir / "grilling"
+    grilling_dir.mkdir(exist_ok=True)
+    (grilling_dir / "grilling_session.json").write_text(
+        json.dumps(grilling), encoding="utf-8"
+    )
+    (tdir / "production" / "feasibility_envelope.json").write_text(
+        json.dumps(envelope), encoding="utf-8"
+    )
+    goal = build_research_goal(
+        thread=thread,
+        grilling=grilling,
+        envelope=envelope,
+    )
+    from research_harness.orchestrator.adaptive_search import (
+        experiment_fingerprint,
+        strategy_fingerprint,
+    )
+
+    node_id = "n_strong"
+    tree = tdir / "production" / "tree"
+    node_dir = tree / "nodes" / node_id
+    workspace = node_dir / "workspace"
+    strategy = {
+        "id": strategy_fingerprint(
+            mechanism="baseline misses causal interactions",
+            intervention="add interaction-preserving features",
+        ),
+        "goal_id": goal["id"],
+        "family": "interaction recovery",
+        "mechanism": "baseline misses causal interactions",
+        "intervention": "add interaction-preserving features",
+        "information_target": "whether interactions close the frozen bar gap",
+        "predicted_outcomes": ["score improves", "score does not improve"],
+        "tests_bar_gaps": ["beat baseline B"],
+        "required_capabilities": ["local_runner"],
+        "estimated_cost": 0.2,
+        "derived_from_observation_id": "observation_" + "4" * 64,
+        "status": "cleared_bar",
+        "priority": {"score": 1.0},
+    }
+    strategy_id = strategy["id"]
+    node = {
+        "id": node_id,
+        "type": "mechanism",
+        "status": "promoted",
+        "domain": "test",
+        "stage": "promotion",
+        "parent": "n_parent",
+        "lineage": {
+            "root_goal_id": "rg_test",
+            "covers_goal_facets": [],
+            "inherited_assumptions": [],
+            "introduced_assumptions": [],
+            "taste_constraints_applied": [],
+        },
+        "claim_contract": {
+            "claim_under_test": thread["user_goal"],
+            "mandatory_baselines": ["baseline B"],
+            "success_criteria": ["beat baseline B"],
+            "disproof_conditions": ["does not beat baseline B"],
+            "deploy_grade_scope": "directional",
+        },
+        "baseline_refs": [
+            {
+                "baseline_dossier_id": "bd_test",
+                "candidate_ids": ["baseline_b"],
+                "roles": ["current_best_known"],
+            }
+        ],
+        "runtime_profile": {
+            "worker_type": "experiment_worker",
+            "timeout_policy": "test",
+            "turn_budget": 2,
+        },
+        "failure_retrieval": {"query_tags": [], "selected_fail_files": []},
+        "outputs": {"artifacts": [], "verdict": "supported"},
+        "strategy": strategy,
+    }
+    experiment_plan = {
+        "plan_id": "plan_strong",
+        "node_id": node_id,
+        "claim_under_test": thread["user_goal"],
+        "objective": "Test the interaction-preserving strategy.",
+        "task_class": "eval",
+        "workspace": str(workspace.resolve()),
+        "source_files": [
+            {
+                "path": "src/run.py",
+                "purpose": "test",
+                "content": (
+                    "import json\n"
+                    "from pathlib import Path\n"
+                    "Path('artifacts').mkdir(exist_ok=True)\n"
+                    "Path('artifacts/metrics.json').write_text(json.dumps({"
+                    "'metrics': {'score': 1.1}, "
+                    "'baselines': {'baseline_score': 1.0}, "
+                    "'claim_verdict_candidate': 'supported', "
+                    "'disproof_conditions_hit': [], "
+                    "'unexpected_observations': []}))\n"
+                ),
+            }
+        ],
+        "entrypoint": {"command": ["python3"], "args": ["src/run.py"]},
+        "resources": {"timeout_sec": 10},
+        "inputs": {},
+        "expected_outputs": {
+            "metrics_files": ["artifacts/metrics.json"],
+            "logs": ["stdout.log", "stderr.log"],
+            "artifact_dirs": ["artifacts"],
+        },
+        "baseline_evidence_requirements": [
+            {
+                "role": "current_best_known",
+                "metric_key": "score",
+                "baseline_key": "baseline_score",
+                "operator": "greater_than",
+                "margin": 0,
+                "required": True,
+            }
+        ],
+        "mandatory_baselines": ["baseline B"],
+        "success_criteria": ["beat baseline B"],
+        "disproof_conditions": ["does not beat baseline B"],
+        "guardrails": {
+            "allowed_write_roots": ["workspace"],
+            "forbidden_actions": ["network"],
+            "scope_policy": "test",
+        },
+        "failure_index_hints": {},
+        "reproducibility": {
+            "seed": 7,
+            "code_snapshot": "code-v1",
+            "data_snapshot": "data-v1",
+        },
+    }
+    experiment_id = experiment_fingerprint(experiment_plan)
+    frozen_question = {
+        "thread_id": tdir.name,
+        "question_id": "q_test",
+        "formal_statement": "Whether the strategy beats baseline B in the operator decision context.",
+        "true_iff": "The held-out score is strictly above baseline B.",
+        "source_artifact": "operator_pinned",
+        "source_provenance": "operator:test",
+        "frozen_at_phase": "production_entry",
+    }
+    (tdir / "production" / "frozen_question.json").write_text(
+        json.dumps(frozen_question), encoding="utf-8"
+    )
+    construct = {
+        "thread_id": tdir.name,
+        "question_id": frozen_question["question_id"],
+        "construction_ref": node_id,
+        "budget_total": 8,
+        "pass_but_wrong_region": ["worlds where the score passes but utility fails"],
+        "worlds_tested": [
+            {
+                "world_id": f"w{index}",
+                "world_description": f"Distinct adversarial world number {index}",
+                "measurement_passes": False,
+                "frozen_answer": "no",
+            }
+            for index in range(3)
+        ],
+        "breaking_instance": None,
+        "produced_by": "construct_adversary",
+        "harness_verdict": "survived",
+        "harness_reasons": [],
+    }
+    falsifier = {
+        "thread_id": tdir.name,
+        "kind": "real_holdout",
+        "holdout_source_id": "holdout",
+        "predicate": {"metric": "score", "op": ">=", "threshold": 1.0},
+        "observed": 1.1,
+        "passed": True,
+        "verdict": "passed",
+        "transfer_evidence_admissible": True,
+        "produced_by": "harness_falsifier_module",
+    }
+    ac_decision = {
+        "decision": "accept",
+        "confidence": "high",
+        "score_summary": {
+            "novelty": 8,
+            "validity": 9,
+            "necessity": 8,
+            "clarity": 8,
+            "reproducibility": 9,
+            "taste_alignment": 8,
+        },
+        "blocking_reasons": [],
+        "required_next_search_nodes": [],
+        "camera_ready_conditions": [],
+        "camera_ready_directives": [
+            {
+                "directive": "State the held-out decision threshold explicitly.",
+                "origin_critic_ids": ["critic_1"],
+                "must_appear_in_section": "method",
+                "rationale": "The operator needs the threshold to reproduce the decision.",
+            }
+        ],
+        "advisor_message_to_professor": (
+            "The evidence is strong; preserve the exact held-out threshold and "
+            "strategy mechanism in the camera-ready paper."
+        ),
+        "rebuttal_synthesis": {
+            "strongest_supporting_evidence": ["held-out score 1.1"],
+            "load_bearing_objections": [],
+            "minority_dissent": [],
+            "methodology_assessment": {
+                "aggregate_verdict": "provides",
+                "methodology_for_user": "Apply interaction features and the held-out threshold.",
+                "remaining_gap": "",
+            },
+        },
+    }
+    attestation = {
+        "thread_id": tdir.name,
+        "promoted_node_id": node_id,
+        "user_intake_recap": (
+            "The operator needs a deployable decision strategy that beats baseline B."
+        ),
+        "achieved": True,
+        "what_user_can_do_with_this_paper": (
+            "The operator can add interaction-preserving features, run the fixed "
+            "held-out protocol, and deploy only when score is at least 1.0."
+        ),
+        "evidence_anchors_back_to_intake": ["held-out score", "baseline comparison"],
+        "required_additional_research": [],
+        "attested_status": "goal_achieved",
+        "verdict_strength": "transfer_valid",
+        "referent_ledger": {
+            "has_real_referent": True,
+            "has_construct_referent": True,
+            "max_reachable_verdict": "transfer_valid",
+        },
+        "scope_attainment": {
+            "seed_target_scope": "directional",
+            "attested_scope": "directional",
+            "narrowed": False,
+        },
+    }
+    artifacts = {
+        "falsifier_result.json": falsifier,
+        "construct_adversary_report.json": construct,
+        "ac_decision.json": ac_decision,
+        "orchestrator_reduction.json": {"blocking_objections": []},
+        "user_goal_attestation.json": attestation,
+    }
+    rebuttal = tdir / "production" / "rebuttal"
+    rebuttal.mkdir(parents=True, exist_ok=True)
+    for name, value in artifacts.items():
+        (rebuttal / name).write_text(json.dumps(value), encoding="utf-8")
+    workspace.mkdir(parents=True, exist_ok=True)
+    (node_dir / "experiment_plan.json").write_text(
+        json.dumps(experiment_plan), encoding="utf-8"
+    )
+    source_path = workspace / "src" / "run.py"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_text(
+        experiment_plan["source_files"][0]["content"],
+        encoding="utf-8",
+    )
+    metrics_path = workspace / "artifacts" / "metrics.json"
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    metrics_payload = {
+        "metrics": {"score": 1.1},
+        "baselines": {"baseline_score": 1.0},
+        "claim_verdict_candidate": "supported",
+        "disproof_conditions_hit": [],
+        "unexpected_observations": [],
+    }
+    metrics_path.write_text(json.dumps(metrics_payload), encoding="utf-8")
+    stdout_path = workspace / "stdout.log"
+    stderr_path = workspace / "stderr.log"
+    stdout_path.write_text("experiment completed\n", encoding="utf-8")
+    stderr_path.write_text("", encoding="utf-8")
+    from research_harness.orchestrator.experiment_plan import (
+        derive_job_manifest_from_experiment_plan,
+    )
+    from research_harness.runner.evidence import (
+        build_worker_report_from_runner_evidence,
+    )
+
+    job_manifest = derive_job_manifest_from_experiment_plan(node, experiment_plan)
+    (node_dir / "job_manifest.json").write_text(
+        json.dumps(job_manifest), encoding="utf-8"
+    )
+    runner_result = {
+        "job_id": job_manifest["job_id"],
+        "experiment_plan_id": experiment_plan["plan_id"],
+        "node_id": node_id,
+        "status": "completed",
+        "exit_code": 0,
+        "elapsed_sec": 0.1,
+        "timeout_sec": 10,
+        "workspace": str(workspace.resolve()),
+        "source_files": [str(source_path.resolve())],
+        "command": ["python3", "src/run.py"],
+        "stdout_path": str(stdout_path.resolve()),
+        "stderr_path": str(stderr_path.resolve()),
+        "failure_record_candidate": None,
+    }
+    (workspace / "runner_result.json").write_text(
+        json.dumps(runner_result), encoding="utf-8"
+    )
+    worker_report = build_worker_report_from_runner_evidence(
+        node,
+        job_manifest,
+        runner_result,
+        tree,
+    ).worker_report
+    (node_dir / "worker_report.json").write_text(
+        json.dumps(worker_report), encoding="utf-8"
+    )
+    from research_harness.orchestrator.strong_result import (
+        verify_strong_execution_evidence,
+    )
+
+    execution_evidence = verify_strong_execution_evidence(
+        node=node,
+        experiment_plan=experiment_plan,
+        worker_report=worker_report,
+        node_dir=node_dir,
+        tree_dir=tree,
+    )
+    receipt = {
+        "verified": True,
+        "goal_id": goal["id"],
+        "bar_digest": goal["bar_digest"],
+        "strategy_id": strategy_id,
+        "promoted_node_id": node_id,
+        "experiment_id": experiment_id,
+        "verdict_strength": "transfer_valid",
+        "falsifier_result_sha256": ts._canonical_json_sha256(
+            artifacts["falsifier_result.json"]
+        ),
+        "construct_adversary_sha256": ts._canonical_json_sha256(
+            artifacts["construct_adversary_report.json"]
+        ),
+        "ac_decision_sha256": ts._canonical_json_sha256(
+            artifacts["ac_decision.json"]
+        ),
+        "critic_resolution_sha256": ts._canonical_json_sha256(
+            artifacts["orchestrator_reduction.json"]
+        ),
+        "attestation_sha256": ts._canonical_json_sha256(
+            artifacts["user_goal_attestation.json"]
+        ),
+        "experiment_plan_sha256": ts._canonical_json_sha256(experiment_plan),
+        "worker_report_sha256": ts._canonical_json_sha256(worker_report),
+        "job_manifest_sha256": execution_evidence["job_manifest_sha256"],
+        "runner_result_sha256": execution_evidence["runner_result_sha256"],
+        "metrics_evidence_sha256": execution_evidence[
+            "metrics_evidence_sha256"
+        ],
+    }
+    tree.mkdir(exist_ok=True)
+    state = {
+        "nodes": [node],
+        "promoted_node_ids": [node_id],
+        "adaptive": {
+            "disposition": "goal_achieved",
+            "goal": goal,
+            "strategies": [strategy],
+            "experiments": [
+                {
+                    "id": experiment_id,
+                    "node_id": node_id,
+                    "strategy_id": strategy_id,
+                    "status": "executed",
+                }
+            ],
+            "strong_result_receipt": receipt,
+        },
+    }
+    (tree / "search_state.json").write_text(json.dumps(state), encoding="utf-8")
 
 
 class TerminalDetectionTests(unittest.TestCase):
@@ -67,8 +477,7 @@ class TerminalDetectionTests(unittest.TestCase):
             t, outcome = ts.is_terminal(repo, "t1")
             self.assertFalse(t)
 
-    def test_dual_gate_pass_is_terminal(self):
-        # PR8: only this combination terminates the supervisor.
+    def test_dual_gate_without_canonical_receipt_is_not_terminal(self):
         with TemporaryDirectory() as tmp:
             repo = Path(tmp)
             tdir = _make_thread(repo, "t1")
@@ -87,8 +496,137 @@ class TerminalDetectionTests(unittest.TestCase):
                 encoding="utf-8",
             )
             t, outcome = ts.is_terminal(repo, "t1")
-            self.assertTrue(t)
-            self.assertEqual(outcome, "accept_with_goal_achieved")
+            self.assertFalse(t)
+            self.assertIsNone(outcome)
+
+    def test_adaptive_goal_achievement_requires_matching_strong_receipt(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            tdir = _make_thread(repo, "t1")
+            (tdir / "production" / "rebuttal").mkdir(parents=True)
+            (tdir / "production" / "rebuttal" / "user_goal_attestation.json").write_text(
+                json.dumps({"achieved": True}), encoding="utf-8"
+            )
+            (tdir / "production" / "production_run_summary.json").write_text(
+                json.dumps(
+                    {
+                        "rebuttal_summary": {"ac_decision": {"decision": "accept"}},
+                        "publication_dispatch": {
+                            "rendered_artifacts": [{"output": "paper_html"}]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            tree = tdir / "production" / "tree"
+            tree.mkdir()
+            adaptive = {
+                "disposition": "continue",
+                "goal": {"id": "goal_id", "bar_digest": "sha256:bar"},
+                "strong_result_receipt": None,
+            }
+            (tree / "search_state.json").write_text(
+                json.dumps({"adaptive": adaptive}), encoding="utf-8"
+            )
+
+            self.assertEqual(ts.is_terminal(repo, "t1"), (False, None))
+
+            _write_verified_terminal_state(tdir)
+            self.assertEqual(
+                ts.is_terminal(repo, "t1"),
+                (True, "accept_with_goal_achieved"),
+            )
+
+    def test_terminal_rederives_worker_and_falsifier_semantics(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            tdir = _make_thread(repo, "t1")
+            (tdir / "production" / "production_run_summary.json").write_text(
+                json.dumps(
+                    {
+                        "rebuttal_summary": {"ac_decision": {"decision": "accept"}},
+                        "publication_dispatch": {
+                            "rendered_artifacts": [{"output": "paper_html"}]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            _write_verified_terminal_state(tdir)
+            self.assertEqual(
+                ts.is_terminal(repo, "t1"),
+                (True, "accept_with_goal_achieved"),
+            )
+
+            state_path = tdir / "production" / "tree" / "search_state.json"
+            state = json.loads(state_path.read_text())
+            node_id = state["adaptive"]["strong_result_receipt"]["promoted_node_id"]
+            worker_path = (
+                tdir
+                / "production"
+                / "tree"
+                / "nodes"
+                / node_id
+                / "worker_report.json"
+            )
+            worker = json.loads(worker_path.read_text())
+            worker["claim_verdict_candidate"] = "contradicted"
+            worker["baseline_evidence_status"]["overall"] = "failed"
+            worker_path.write_text(json.dumps(worker), encoding="utf-8")
+            state["adaptive"]["strong_result_receipt"]["worker_report_sha256"] = (
+                ts._canonical_json_sha256(worker)
+            )
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            self.assertEqual(ts.is_terminal(repo, "t1"), (False, None))
+
+            _write_verified_terminal_state(tdir)
+            state = json.loads(state_path.read_text())
+            node_id = state["adaptive"]["strong_result_receipt"][
+                "promoted_node_id"
+            ]
+            node_dir = tdir / "production" / "tree" / "nodes" / node_id
+            metrics_path = node_dir / "workspace" / "artifacts" / "metrics.json"
+            metrics = json.loads(metrics_path.read_text())
+            metrics["metrics"]["score"] = 0.5
+            metrics_path.write_text(json.dumps(metrics), encoding="utf-8")
+            worker_path = node_dir / "worker_report.json"
+            worker = json.loads(worker_path.read_text())
+            worker["metrics"]["score"] = 0.5
+            worker["claim_verdict_candidate"] = "supported"
+            worker["baseline_evidence_status"]["overall"] = "passed"
+            worker_path.write_text(json.dumps(worker), encoding="utf-8")
+            receipt = state["adaptive"]["strong_result_receipt"]
+            receipt["worker_report_sha256"] = ts._canonical_json_sha256(worker)
+            receipt["metrics_evidence_sha256"] = ts._canonical_json_sha256(
+                [
+                    {
+                        "path": (
+                            f"nodes/{node_id}/workspace/artifacts/metrics.json"
+                        ),
+                        "payload": metrics,
+                    }
+                ]
+            )
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            self.assertEqual(ts.is_terminal(repo, "t1"), (False, None))
+
+            _write_verified_terminal_state(tdir)
+            (node_dir / "workspace" / "runner_result.json").unlink()
+            self.assertEqual(ts.is_terminal(repo, "t1"), (False, None))
+
+            _write_verified_terminal_state(tdir)
+            state = json.loads(state_path.read_text())
+            falsifier_path = (
+                tdir / "production" / "rebuttal" / "falsifier_result.json"
+            )
+            falsifier = json.loads(falsifier_path.read_text())
+            falsifier["observed"] = 0.1
+            falsifier_path.write_text(json.dumps(falsifier), encoding="utf-8")
+            state["adaptive"]["strong_result_receipt"][
+                "falsifier_result_sha256"
+            ] = ts._canonical_json_sha256(falsifier)
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            self.assertEqual(ts.is_terminal(repo, "t1"), (False, None))
 
     def test_accept_without_artifacts_is_not_terminal(self):
         with TemporaryDirectory() as tmp:
@@ -134,6 +672,75 @@ class TerminalDetectionTests(unittest.TestCase):
             t, outcome = ts.is_terminal(repo, "t1")
             self.assertFalse(t)
 
+    def test_paused_watch_updates_canonical_thread_index_without_completion(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            tid = "thread_terminal"
+            tdir = _make_thread(repo, tid)
+            (repo / "settings.json").write_text(
+                json.dumps({"data_adapters": {"registered": []}}),
+                encoding="utf-8",
+            )
+            (tdir / "thread.json").write_text(
+                json.dumps(
+                    {
+                        "thread_id": tid,
+                        "title": "terminal test",
+                        "created_at": "2026-08-30T00:00:00Z",
+                        "updated_at": "2026-08-30T00:00:00Z",
+                        "current_phase": "connector",
+                        "phase_status": "complete",
+                        "outcome": None,
+                        "user_goal": "test terminal index synchronization",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (tdir / "production" / "rebuttal").mkdir(parents=True)
+            (tdir / "production" / "rebuttal" / "user_goal_attestation.json").write_text(
+                json.dumps({"achieved": False, "attested_status": "unverified_screen"}),
+                encoding="utf-8",
+            )
+            (tdir / "production" / "production_run_summary.json").write_text(
+                json.dumps(
+                    {
+                        "outcome": "honest_failure",
+                        "publication_dispatch": {
+                            "rendered_artifacts": [
+                                {"output": "honest_failure_html", "artifact_path": "/x"}
+                            ]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            tree = tdir / "production" / "tree"
+            tree.mkdir(parents=True)
+            (tree / "search_state.json").write_text(
+                json.dumps(
+                    {
+                        "adaptive": {
+                            "disposition": "paused_needs_expansion",
+                            "pause": {
+                                "reason": "missing_capability",
+                                "missing_capabilities": ["real_holdout"],
+                                "resume_condition": "register the real holdout",
+                            },
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = ts.watch_thread(repo, tid)
+
+            self.assertEqual(result["status"], "paused_needs_expansion")
+            self.assertEqual(result["pause"]["reason"], "missing_capability")
+            index = json.loads((tdir / "thread.json").read_text(encoding="utf-8"))
+            self.assertEqual(index["current_phase"], "production")
+            self.assertEqual(index["phase_status"], "awaiting_input")
+            self.assertIsNone(index["outcome"])
+
 
 class IdleDetectionTests(unittest.TestCase):
     def test_empty_production_dir_idle_is_inf(self):
@@ -177,7 +784,8 @@ class ResumePromptTests(unittest.TestCase):
             prompt = ts.build_resume_prompt(repo, "t1", cycle=3)
             self.assertIn("t1", prompt)
             self.assertIn("cycle #3", prompt)
-            self.assertIn("dual-gate", prompt.lower())
+            self.assertIn("goal achieved", prompt.lower())
+            self.assertIn("paused_needs_expansion", prompt)
             self.assertIn("honest_failure", prompt)
             self.assertIn("anti-laziness", prompt.lower())
 
@@ -256,7 +864,8 @@ class WatchLoopTests(unittest.TestCase):
                 }),
                 encoding="utf-8",
             )
-            with mock.patch.object(ts, "spawn_claude_session") as spawn:
+            _write_verified_terminal_state(tdir)
+            with mock.patch.object(ts, "spawn_codex_session") as spawn:
                 result = ts.watch_thread(
                     repo, "t1", max_idle_seconds=0.0, poll_seconds=0.01, max_cycles=3
                 )
@@ -273,7 +882,7 @@ class WatchLoopTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             repo = Path(tmp)
             _make_thread(repo, "t1")
-            with mock.patch.object(ts, "spawn_claude_session", return_value=0) as spawn, \
+            with mock.patch.object(ts, "spawn_codex_session", return_value=0) as spawn, \
                  mock.patch.object(ts, "mcp_idle_seconds", return_value=5.0):
                 result = ts.watch_thread(
                     repo, "t1", max_idle_seconds=9999.0, poll_seconds=0.01,
@@ -287,12 +896,12 @@ class WatchLoopTests(unittest.TestCase):
         # observed ToolSearch freeze) must be killed by the stall watchdog so
         # the supervisor recovers, instead of blocking forever on readline.
         with TemporaryDirectory() as tmp:
-            fake = Path(tmp) / "fake_claude.sh"
+            fake = Path(tmp) / "fake_codex.sh"
             fake.write_text("#!/bin/sh\nsleep 30\n")  # ignores args, emits nothing
             fake.chmod(0o755)
             with mock.patch.object(ts, "_which", return_value=str(fake)):
                 t0 = time.time()
-                rc = ts.spawn_claude_session("prompt", stall_timeout=0.5)
+                rc = ts.spawn_codex_session("prompt", stall_timeout=0.5)
                 elapsed = time.time() - t0
             self.assertLess(elapsed, 8.0, "watchdog should kill the hung cycle, not wait 30s")
             self.assertNotEqual(rc, 0, "killed cycle returns a non-zero exit code")
@@ -306,7 +915,7 @@ class WatchLoopTests(unittest.TestCase):
             (tdir / "production" / "production_run_summary.json").write_text(
                 json.dumps({"outcome": "honest_failure"}), encoding="utf-8"
             )
-            with mock.patch.object(ts, "spawn_claude_session", return_value=0) as spawn:
+            with mock.patch.object(ts, "spawn_codex_session", return_value=0) as spawn:
                 result = ts.watch_thread(
                     repo, "t1", max_idle_seconds=0.0, poll_seconds=0.01,
                     max_cycles=2, rate_limit_backoff_initial=0.001,
@@ -336,9 +945,10 @@ class WatchLoopTests(unittest.TestCase):
                     }),
                     encoding="utf-8",
                 )
+                _write_verified_terminal_state(tdir)
                 return 0
 
-            with mock.patch.object(ts, "spawn_claude_session", side_effect=fake_spawn) as spawn:
+            with mock.patch.object(ts, "spawn_codex_session", side_effect=fake_spawn) as spawn:
                 result = ts.watch_thread(
                     repo, "t1", max_idle_seconds=0.0, poll_seconds=0.01,
                     max_cycles=3, rate_limit_backoff_initial=0.001,
@@ -351,7 +961,7 @@ class WatchLoopTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             repo = Path(tmp)
             tdir = _make_thread(repo, "t1")
-            with mock.patch.object(ts, "spawn_claude_session", return_value=0) as spawn:
+            with mock.patch.object(ts, "spawn_codex_session", return_value=0) as spawn:
                 result = ts.watch_thread(
                     repo, "t1", max_idle_seconds=0.0, poll_seconds=0.01,
                     max_cycles=2, rate_limit_backoff_initial=0.001,
@@ -383,9 +993,10 @@ class WatchLoopTests(unittest.TestCase):
                         }),
                         encoding="utf-8",
                     )
+                    _write_verified_terminal_state(tdir)
                 return 0
 
-            with mock.patch.object(ts, "spawn_claude_session", side_effect=fake_spawn):
+            with mock.patch.object(ts, "spawn_codex_session", side_effect=fake_spawn):
                 result = ts.watch_thread(
                     repo, "t1", max_idle_seconds=0.0, poll_seconds=0.001,
                     rate_limit_backoff_initial=0.001,
@@ -423,8 +1034,16 @@ class EnvelopeAutoBootstrapTests(unittest.TestCase):
 
     def test_bootstrap_writes_schema_valid_envelope(self):
         with TemporaryDirectory() as tmp:
+            source = Path(tmp) / "dataset.json"
+            source.write_text("{}", encoding="utf-8")
             repo = self._setup_repo(tmp, registered_adapters=[
-                {"id": "wq_snap", "provenance": "operator-curated"}
+                {
+                    "id": "wq_snap",
+                    "materializer_type": "benchmark",
+                    "role": "evaluation",
+                    "source": str(source),
+                    "provenance": "operator-curated",
+                }
             ])
             env = ts.bootstrap_envelope_if_missing(repo, "t1", target_scope="directional")
             self.assertIsNotNone(env)
@@ -432,6 +1051,10 @@ class EnvelopeAutoBootstrapTests(unittest.TestCase):
             # real adapter from settings shows up
             real_ids = [s["id"] for s in env["data_sources_available"] if s["kind"] == "real_adapter"]
             self.assertIn("wq_snap", real_ids)
+            self.assertEqual(env["operator_intent"]["data_source_anchor"], "wq_snap")
+            self.assertTrue(
+                env["operator_intent"]["data_source_snapshot_id"].startswith("as_")
+            )
             # synthetic always present as fallback
             synth_ids = [s["id"] for s in env["data_sources_available"] if s["kind"] == "synthetic"]
             self.assertTrue(synth_ids)
@@ -449,6 +1072,34 @@ class EnvelopeAutoBootstrapTests(unittest.TestCase):
             second = ts.bootstrap_envelope_if_missing(repo, "t1")
             self.assertIsNone(second)  # respects existing envelope
 
+    def test_existing_envelope_mismatched_selection_fails_closed(self):
+        with TemporaryDirectory() as tmp:
+            source = Path(tmp) / "dataset.json"
+            source.write_text("{}", encoding="utf-8")
+            repo = self._setup_repo(tmp, registered_adapters=[
+                {
+                    "id": "wq_snap",
+                    "materializer_type": "benchmark",
+                    "role": "evaluation",
+                    "source": str(source),
+                    "provenance": "operator-curated",
+                }
+            ])
+            ts.bootstrap_envelope_if_missing(
+                repo,
+                "t1",
+                target_scope="directional",
+                data_source_anchor="wq_snap",
+            )
+
+            with self.assertRaisesRegex(ValueError, "existing feasibility envelope"):
+                ts.bootstrap_envelope_if_missing(
+                    repo,
+                    "t1",
+                    target_scope="deployment",
+                    data_source_anchor="wq_snap",
+                )
+
     def test_bootstrap_without_market_dossier_uses_placeholder(self):
         with TemporaryDirectory() as tmp:
             repo = self._setup_repo(tmp, with_market=False)
@@ -460,16 +1111,20 @@ class EnvelopeAutoBootstrapTests(unittest.TestCase):
                 "no_market_baselines_found",
             )
 
-    def test_bootstrap_target_scope_deployment_with_no_real_adapter_still_writes(self):
-        # The envelope is still schema-valid; the validator will reject
-        # deployment claims separately at design_initial_claim_contract.
+    def test_bootstrap_target_scope_deployment_with_no_real_adapter_fails_closed(self):
         with TemporaryDirectory() as tmp:
             repo = self._setup_repo(tmp)
-            env = ts.bootstrap_envelope_if_missing(repo, "t1", target_scope="deployment")
-            self.assertIsNotNone(env)
-            self.assertEqual(
-                env["operator_intent"]["target_deploy_grade_scope"],
-                "deployment",
+            with self.assertRaisesRegex(ValueError, "deployment requires"):
+                ts.bootstrap_envelope_if_missing(repo, "t1", target_scope="deployment")
+            self.assertFalse(
+                (
+                    repo
+                    / "runs"
+                    / "threads"
+                    / "t1"
+                    / "production"
+                    / "feasibility_envelope.json"
+                ).exists()
             )
 
 
@@ -525,52 +1180,6 @@ class NeededResourcesTests(unittest.TestCase):
             self.assertIn("boundary", written)
 
 
-class StreamJsonFormatterTests(unittest.TestCase):
-    def test_ansi_codes_stripped(self):
-        banner = " \x1b[38;2;215;119;87m▐\x1b[48;2;0;0;0m▛███▜\x1b[49m▌"
-        self.assertEqual(ts._strip_ansi(banner), " ▐▛███▜▌")
-
-    def test_assistant_tool_use_formatted(self):
-        line = json.dumps({
-            "type": "assistant",
-            "message": {"content": [
-                {"type": "tool_use", "name": "get_research_state",
-                 "input": {"thread_id": "t1"}}
-            ]}
-        })
-        out = ts._format_stream_json_event(line)
-        self.assertIn("tool_use>", out)
-        self.assertIn("get_research_state", out)
-
-    def test_assistant_text_truncated(self):
-        line = json.dumps({
-            "type": "assistant",
-            "message": {"content": [
-                {"type": "text", "text": "hello world"}
-            ]}
-        })
-        out = ts._format_stream_json_event(line)
-        self.assertIn("text>", out)
-        self.assertIn("hello world", out)
-
-    def test_result_event_formatted(self):
-        line = json.dumps({
-            "type": "result", "subtype": "success",
-            "total_cost_usd": 0.05, "num_turns": 12,
-        })
-        out = ts._format_stream_json_event(line)
-        self.assertIn("[result]", out)
-        self.assertIn("turns=12", out)
-
-    def test_unknown_event_returns_none(self):
-        out = ts._format_stream_json_event(json.dumps({"type": "ping"}))
-        self.assertIsNone(out)
-
-    def test_non_json_returns_none(self):
-        self.assertIsNone(ts._format_stream_json_event("not json"))
-        self.assertIsNone(ts._format_stream_json_event(""))
-
-
 class WhichTests(unittest.TestCase):
     def test_which_finds_python(self):
         # Python is always on PATH in CI; sanity-check _which.
@@ -582,7 +1191,7 @@ class WhichTests(unittest.TestCase):
 
 class ResolveSupervisorModelTests(unittest.TestCase):
     """The production supervisor must honour the operator's configured model
-    (the bug: it always spawned the hard-coded DEFAULT_CLAUDE_MODEL=4.7)."""
+    (the bug: it always spawned a hard-coded model)."""
 
     def _repo(self, tmp, *, default_model=None, mcp_model=None):
         tid = "thread_x"
@@ -601,18 +1210,18 @@ class ResolveSupervisorModelTests(unittest.TestCase):
     def test_uses_project_default_model(self):
         with TemporaryDirectory() as d:
             tmp = Path(d)
-            tid = self._repo(tmp, default_model="claude-opus-4-8[1m]")
+            tid = self._repo(tmp, default_model="gpt-5.6-sol")
             self.assertEqual(
-                ts.resolve_supervisor_model(tmp, tid), "claude-opus-4-8[1m]"
+                ts.resolve_supervisor_model(tmp, tid), "gpt-5.6-sol"
             )
 
     def test_thread_mcp_model_overrides_default(self):
         with TemporaryDirectory() as d:
             tmp = Path(d)
-            tid = self._repo(tmp, default_model="claude-opus-4-8[1m]",
-                             mcp_model="claude-opus-4-7")
+            tid = self._repo(tmp, default_model="gpt-5.6-sol",
+                             mcp_model="gpt-5.6-terra")
             self.assertEqual(
-                ts.resolve_supervisor_model(tmp, tid), "claude-opus-4-7"
+                ts.resolve_supervisor_model(tmp, tid), "gpt-5.6-terra"
             )
 
     def test_falls_back_when_unset(self):
@@ -620,14 +1229,14 @@ class ResolveSupervisorModelTests(unittest.TestCase):
             tmp = Path(d)
             tid = self._repo(tmp)  # no default_model, no mcp_model
             self.assertEqual(
-                ts.resolve_supervisor_model(tmp, tid), ts.DEFAULT_CLAUDE_MODEL
+                ts.resolve_supervisor_model(tmp, tid), ts.DEFAULT_CODEX_MODEL
             )
 
     def test_cli_watch_resolves_model_when_not_passed(self):
         """`watch` with no --model resolves from settings, not the hard default."""
         with TemporaryDirectory() as d:
             tmp = Path(d)
-            tid = self._repo(tmp, default_model="claude-opus-4-8[1m]")
+            tid = self._repo(tmp, default_model="gpt-5.6-sol")
             captured = {}
 
             def fake_watch_thread(repo, thread_id, **kw):
@@ -636,7 +1245,7 @@ class ResolveSupervisorModelTests(unittest.TestCase):
 
             with mock.patch.object(ts, "watch_thread", fake_watch_thread):
                 ts.main(["watch", tid, "--repo-root", str(tmp)])
-            self.assertEqual(captured["model"], "claude-opus-4-8[1m]")
+            self.assertEqual(captured["model"], "gpt-5.6-sol")
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ from research_harness.config import (
     load_lessons,
     load_settings,
     resolve_agent_budget,
-    resolve_agent_model,
+    resolve_legacy_claude_agent_model,
 )
 from research_harness.schemas.validator import validate_named_schema
 
@@ -85,12 +85,7 @@ def run_lesson_distillation(
     summary_dir.mkdir(parents=True, exist_ok=True)
     summary_path = summary_dir / f"distillation_{uuid.uuid4().hex[:8]}.json"
 
-    live_backend = (
-        settings.get("runtime", {})
-        .get("worker_backends", {})
-        .get("claude_code_live", {})
-    )
-    model = resolve_agent_model(settings, "lesson_distillation_agent")
+    model = resolve_legacy_claude_agent_model(settings, "lesson_distillation_agent")
     max_budget = resolve_agent_budget(settings, "lesson_distillation_agent")
 
     base = {

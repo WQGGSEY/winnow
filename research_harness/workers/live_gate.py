@@ -11,23 +11,23 @@ from research_harness.config import load_settings
 from research_harness.local_preflight import run_preflight
 from research_harness.orchestrator.demo import _demo_node
 from research_harness.schemas.validator import validate_named_schema
-from research_harness.workers.claude_code_invoker import ClaudeCodeInvoker
+from research_harness.workers.codex_invoker import CodexInvoker
 from research_harness.workers.workspace import prepare_node_workspace
 
 
 def build_manual_live_smoke_plan(
     repo_root: Path,
     run_dir: Path | None = None,
-    claude_path: str | None = None,
+    codex_path: str | None = None,
     billing_ack: bool | None = None,
 ) -> dict[str, Any]:
-    """Build, but do not execute, the first live Claude Code smoke plan."""
+    """Build, but do not execute, the first live Codex smoke plan."""
 
     return build_manual_live_node_plan(
         repo_root,
         _demo_node(),
         run_dir=run_dir or repo_root / "runs" / "manual_live_smoke",
-        claude_path=claude_path,
+        codex_path=codex_path,
         billing_ack=billing_ack,
         plan_filename="manual_live_smoke_plan.json",
         runbook_filename="manual_live_smoke_runbook.md",
@@ -39,12 +39,12 @@ def build_manual_live_node_plan(
     node: dict[str, Any],
     *,
     run_dir: Path | None = None,
-    claude_path: str | None = None,
+    codex_path: str | None = None,
     billing_ack: bool | None = None,
     plan_filename: str = "manual_live_worker_plan.json",
     runbook_filename: str = "manual_live_worker_runbook.md",
 ) -> dict[str, Any]:
-    """Build, but do not execute, a gated live Claude Code plan for one node."""
+    """Build, but do not execute, a gated live Codex plan for one node."""
 
     validate_named_schema("node", node)
     settings = load_settings(repo_root)
@@ -54,7 +54,7 @@ def build_manual_live_node_plan(
 
     preflight_summary = run_preflight(repo_root)
     workspace_paths = prepare_node_workspace(run_dir, node["id"])
-    invoker = ClaudeCodeInvoker(
+    invoker = CodexInvoker(
         workspace_paths["workspace"],
         settings,
         repo_root=repo_root,
@@ -63,7 +63,7 @@ def build_manual_live_node_plan(
         node,
         envelope_path=workspace_paths["workspace"] / "live_invocation_envelope.json",
     )
-    live_envelope["backend"] = "claude_code_live"
+    live_envelope["backend"] = "codex_live"
     live_envelope["invocation_id"] = f"invoke_live_{node['id']}"
     invoker.validate_invocation_envelope(live_envelope)
     (workspace_paths["workspace"] / "live_invocation_envelope.json").write_text(
@@ -71,15 +71,15 @@ def build_manual_live_node_plan(
         encoding="utf-8",
     )
 
-    detected_claude = claude_path or shutil.which("claude")
+    detected_codex = codex_path or shutil.which("codex")
     auth = invoker.auth_preflight(
-        claude_path=detected_claude or "claude",
-        probe_cli_status=detected_claude is not None,
+        codex_path=detected_codex or "codex",
+        probe_cli_status=detected_codex is not None,
     )
     live_backend = (
         settings.get("runtime", {})
         .get("worker_backends", {})
-        .get("claude_code_live", {})
+        .get("codex_live", {})
     )
     ack_env = live_backend.get("billing_ack_env")
     ack_value = live_backend.get("billing_ack_value")
@@ -89,37 +89,35 @@ def build_manual_live_node_plan(
             (not requires_ack)
             or (ack_env and os.environ.get(str(ack_env)) == str(ack_value))
         )
-    api_key_present = bool(os.environ.get("ANTHROPIC_API_KEY"))
-
     if preflight_summary["status"] != "passed":
         status = "blocked_by_local_preflight"
         reason = "local preflight did not pass"
     elif requires_ack and not billing_ack:
         status = "blocked_by_billing_guard"
         reason = (
-            "live Claude Code may consume subscription quota or API/extra usage; "
+            "live Codex may consume subscription quota or API/extra usage; "
             f"set {ack_env}={ack_value} only after accepting that risk"
         )
+    elif not detected_codex:
+        status = "blocked_by_missing_cli"
+        reason = "codex CLI was not found on PATH"
     elif not auth.ok:
         status = "blocked_by_auth"
         reason = auth.reason or "auth preflight failed"
-    elif not detected_claude:
-        status = "blocked_by_missing_cli"
-        reason = "claude CLI was not found on PATH"
     else:
         status = "ready_to_manually_run"
         reason = "all local gates passed; live execution still requires manual operator action"
 
     manual_command = [
-        detected_claude or "claude",
+        detected_codex or "codex",
         *live_envelope["command_plan"]["args"],
     ]
-    manual_stdout_path = workspace_paths["workspace"] / "claude_stdout.json"
+    manual_stdout_path = workspace_paths["workspace"] / "codex_stdout.jsonl"
     ingest_command = [
         sys.executable,
         "-B",
         "-m",
-        "research_harness.workers.claude_stdout_ingest",
+        "research_harness.workers.codex_stdout_ingest",
         "--stdout",
         str(manual_stdout_path),
         "--envelope",
@@ -142,22 +140,20 @@ def build_manual_live_node_plan(
             "reason": auth.reason,
             "details": auth.details,
         },
-        "claude_cli": {
-            "found": detected_claude is not None,
-            "path": detected_claude,
+        "codex_cli": {
+            "found": detected_codex is not None,
+            "path": detected_codex,
         },
         "billing_guard": {
             "requires_ack": requires_ack,
             "ack_env": ack_env,
             "ack_value": ack_value,
             "ack_ok": bool(billing_ack),
-            "api_key_present": api_key_present,
         },
         "runtime_guard": {
             "execution_mode": "manual_only",
             "auto_execution": "forbidden",
-            "requires_subscription_oauth": True,
-            "requires_anthropic_api_key_unset": True,
+            "requires_chatgpt_login": True,
             "output_contract": "worker_task_result_then_harness_worker_report",
         },
         "live_invocation_envelope_path": str(
@@ -173,9 +169,9 @@ def build_manual_live_node_plan(
         "runbook_path": str(runbook_path),
         "post_run_checks": [
             "Feed prompt_path to manual_command stdin; do not use interactive mode.",
-            "Capture raw Claude CLI JSON stdout exactly at manual_stdout_path.",
+            "Capture raw Codex CLI JSONL stdout exactly at manual_stdout_path.",
             "Run ingest_command with --plan; live backend ingest is blocked without the matching gated live plan.",
-            "Require Claude to emit worker_task_result only; let the harness derive worker_report.json after schema validation.",
+            "Require Codex to emit worker_task_result only; let the harness derive worker_report.json after schema validation.",
             "Reject permission, timeout, or invalid output as non-promotable worker states.",
             "Run deterministic critic governance before orchestrator reduction.",
         ],
@@ -196,13 +192,12 @@ def _render_runbook(plan: dict[str, Any]) -> str:
     stdout_path = plan["manual_stdout_path"]
     return (
         "# Manual Live Node Runbook\n\n"
-        "This runbook is generated by the harness. It does not execute Claude Code.\n\n"
+        "This runbook is generated by the harness. It does not execute Codex.\n\n"
         "## Gate Status\n\n"
         f"- Status: {plan['status']}\n"
         f"- Reason: {plan['reason']}\n"
         f"- Execution enabled by harness: {plan['execution_enabled']}\n"
         f"- Billing ack ok: {plan['billing_guard']['ack_ok']}\n"
-        f"- API key present: {plan['billing_guard']['api_key_present']}\n"
         f"- Auth mode: {plan['auth_preflight']['mode']}\n\n"
         "## Manual Command\n\n"
         "Run only after the gate status is `ready_to_manually_run` and you accept "

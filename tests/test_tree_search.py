@@ -334,7 +334,7 @@ class TreeSearchTests(unittest.TestCase):
                 run_mock_tree_search(
                     REPO_ROOT,
                     Path(tmp) / "tree",
-                    backend_name="claude_code_live",
+                    backend_name="codex_live",
                 )
 
 

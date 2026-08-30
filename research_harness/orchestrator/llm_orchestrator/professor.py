@@ -254,6 +254,14 @@ class Professor:
         """
         contract = node["claim_contract"]
         shared = shared_lib_modules or []
+        runtime_input_note = ""
+        if contract.get("data_source_snapshot_id"):
+            runtime_input_note = (
+                "\n\nThe harness will provide the selected local dataset through "
+                "RESEARCH_HARNESS_INPUT_MANIFEST. Your experiment must read that JSON "
+                "file, then resolve primary_dataset.relative_path from the workspace. "
+                "Do not use an ambient repository data path."
+            )
         prompt = (
             "Design experiment code for the following claim. The thread shares a "
             "reusable `_lib/` package across all nodes — reuse it whenever you "
@@ -268,6 +276,18 @@ class Professor:
             + "\n".join(f"  - {d}" for d in contract['disproof_conditions'])
             + f"\n\nShared lib already available: "
             + (f"\n  - " + "\n  - ".join(shared) if shared else "(empty — root node, you should populate it now)")
+            + runtime_input_note
+            + (
+                "\n\nEvidence output contract: every declared metrics JSON file "
+                "must expose a top-level `metrics` object with a numeric candidate "
+                "value at every exact metric_key and a top-level `baselines` object "
+                "with a numeric comparison value at every exact baseline_key. Add "
+                "one baseline_evidence_requirement per mandatory metric/baseline "
+                "comparison. If a baseline is compared on multiple metrics, use "
+                "distinct scalar baseline keys such as `word_accuracy` and "
+                "`word_macro_f1`. Nested result tables may be additional evidence, "
+                "but do not satisfy these required scalar keys."
+            )
             + (
                 f"\n\nImport from shared lib via `from {shared_lib_module_name} "
                 f"import data, baselines, eval`. Only emit _lib/ files for things "

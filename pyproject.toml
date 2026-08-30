@@ -1,7 +1,7 @@
 [project]
 name = "research-harness"
 version = "0.1.0"
-description = "Greenfield-compatible Sakana v2 style research harness scaffold for bounded Claude Code workers."
+description = "Sakana v2-style research harness with bounded Codex workers."
 requires-python = ">=3.11"
 dependencies = []
 

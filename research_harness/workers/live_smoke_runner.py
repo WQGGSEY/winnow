@@ -7,13 +7,14 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
+from research_harness.adapters.codex_cli import CodexCliAdapter, CodexCliError
 from research_harness.orchestrator.demo import _demo_node
 from research_harness.schemas.validator import validate_named_schema
-from research_harness.workers.claude_stdout_ingest import ingest_claude_cli_stdout
+from research_harness.workers.codex_stdout_ingest import ingest_codex_cli_stdout
 from research_harness.workers.live_gate import build_manual_live_node_plan
 
 
-EXECUTION_ACK_ENV = "RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE"
+EXECUTION_ACK_ENV = "RESEARCH_HARNESS_EXECUTE_CODEX_LIVE"
 EXECUTION_ACK_VALUE = "live_smoke_ack"
 DEFAULT_TIMEOUT_SECONDS = 300
 
@@ -24,7 +25,7 @@ def run_manual_live_smoke(
     repo_root: Path,
     *,
     run_dir: Path | None = None,
-    claude_path: str | None = None,
+    codex_path: str | None = None,
     billing_ack: bool | None = None,
     execution_ack: bool | None = None,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
@@ -41,7 +42,7 @@ def run_manual_live_smoke(
         repo_root,
         _demo_node(),
         run_dir=run_dir,
-        claude_path=claude_path,
+        codex_path=codex_path,
         billing_ack=billing_ack,
         execution_ack=execution_ack,
         timeout_seconds=timeout_seconds,
@@ -57,7 +58,7 @@ def run_live_node_once(
     node: dict[str, Any],
     *,
     run_dir: Path | None = None,
-    claude_path: str | None = None,
+    codex_path: str | None = None,
     billing_ack: bool | None = None,
     execution_ack: bool | None = None,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
@@ -74,7 +75,7 @@ def run_live_node_once(
         repo_root,
         node,
         run_dir=run_dir,
-        claude_path=claude_path,
+        codex_path=codex_path,
         billing_ack=billing_ack,
         plan_filename=plan_filename,
         runbook_filename=runbook_filename,
@@ -82,8 +83,8 @@ def run_live_node_once(
     plan_path = Path(plan["runbook_path"]).with_name(plan_filename)
     summary_path = Path(plan["runbook_path"]).with_name(summary_filename)
     stdout_path = Path(plan["manual_stdout_path"])
-    stderr_path = stdout_path.with_name("claude_stderr.txt")
-    raw_stdout_path = stdout_path.with_name("claude_stdout.raw.txt")
+    stderr_path = stdout_path.with_name("codex_stderr.txt")
+    raw_stdout_path = stdout_path.with_name("codex_stdout.raw.jsonl")
     prompt_path = Path(plan["live_invocation_envelope"]["prompt_path"])
     prompt_text = prompt_path.read_text(encoding="utf-8")
 
@@ -137,8 +138,6 @@ def run_live_node_once(
     runner = command_runner or subprocess.run
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
-    env.pop("ANTHROPIC_API_KEY", None)
-    env.pop("ANTHROPIC_BASE_URL", None)  # subscription-only: strip base_url override too
 
     timed_out = False
     returncode: int | None = None
@@ -173,11 +172,11 @@ def run_live_node_once(
             returncode=None,
             timeout_seconds=timeout_seconds,
             forced_subtype="error_process_timeout",
-            forced_error=f"Claude CLI process timed out after {timeout_seconds} seconds.",
+            forced_error=f"Codex CLI process timed out after {timeout_seconds} seconds.",
         )
 
     envelope_path = Path(plan["live_invocation_envelope_path"])
-    ingest = ingest_claude_cli_stdout(
+    ingest = ingest_codex_cli_stdout(
         stdout_path,
         plan["live_invocation_envelope"],
         live_plan=plan,
@@ -231,25 +230,12 @@ def _write_ingestable_stdout(
     raw_stdout_path.write_text(raw_stdout, encoding="utf-8")
     subtype = forced_subtype or "error_process_failed"
     error = forced_error or (
-        "Claude CLI did not return a usable result JSON object"
+        "Codex CLI did not return a usable JSONL result"
         if returncode == 0
-        else f"Claude CLI exited with return code {returncode}"
+        else f"Codex CLI exited with return code {returncode}"
     )
     stdout_path.write_text(
-        json.dumps(
-            {
-                "type": "result",
-                "subtype": subtype,
-                "is_error": True,
-                "num_turns": 0,
-                "result": "",
-                "total_cost_usd": None,
-                "permission_denials": [],
-                "errors": [error],
-                "timeout_seconds": timeout_seconds,
-            },
-            sort_keys=True,
-        )
+        json.dumps({"type": "turn.failed", "error": error, "subtype": subtype})
         + "\n",
         encoding="utf-8",
     )
@@ -258,32 +244,21 @@ def _write_ingestable_stdout(
 
 def _is_usable_cli_result(raw: str, returncode: int | None) -> bool:
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
+        CodexCliAdapter().parse_completion(raw, label="live worker")
+    except CodexCliError:
         return False
-    if not isinstance(data, dict) or data.get("type") != "result":
-        return False
-    if returncode not in {0, None} and not data.get("is_error"):
-        return False
-    return True
+    return returncode in {0, None}
 
 
 def _usage_estimate(stdout_path: Path) -> dict[str, Any]:
     try:
-        data = json.loads(stdout_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+        result = CodexCliAdapter().parse_completion(
+            stdout_path.read_text(encoding="utf-8"),
+            label="live worker usage",
+        )
+    except CodexCliError:
         return {}
-    usage = data.get("usage") if isinstance(data, dict) else {}
-    usage = usage if isinstance(usage, dict) else {}
-    return {
-        "reported_total_cost_usd": data.get("total_cost_usd"),
-        "num_turns": data.get("num_turns"),
-        "input_tokens": usage.get("input_tokens"),
-        "cache_creation_input_tokens": usage.get("cache_creation_input_tokens"),
-        "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
-        "output_tokens": usage.get("output_tokens"),
-        "model_usage": data.get("modelUsage") or {},
-    }
+    return result.usage.as_dict()
 
 
 def _summary_status(
@@ -327,10 +302,10 @@ def _to_text(value: str | bytes | None) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run the single gated Claude Code live smoke and ingest stdout."
+        description="Run the single gated Codex live smoke and ingest stdout."
     )
     parser.add_argument("--run-dir", type=Path)
-    parser.add_argument("--claude-path")
+    parser.add_argument("--codex-path")
     parser.add_argument("--billing-ack", action="store_true")
     parser.add_argument("--execute-ack", action="store_true")
     parser.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT_SECONDS)
@@ -340,7 +315,7 @@ def main() -> None:
     summary = run_manual_live_smoke(
         repo_root,
         run_dir=args.run_dir,
-        claude_path=args.claude_path,
+        codex_path=args.codex_path,
         billing_ack=True if args.billing_ack else None,
         execution_ack=True if args.execute_ack else None,
         timeout_seconds=args.timeout_seconds,

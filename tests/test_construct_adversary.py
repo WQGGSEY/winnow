@@ -254,7 +254,7 @@ def test_construct_valid_still_refuses_achieved_true(tmp_path, monkeypatch):
     assert "UNCONSTRUCTABLE" in out["reason"]
 
 
-def test_is_terminal_construct_valid_screen(tmp_path):
+def test_is_terminal_construct_valid_screen_is_not_strong_completion(tmp_path):
     tid = "t_cvterm"
     pdir = tmp_path / "runs" / "threads" / tid / "production"
     (pdir / "rebuttal").mkdir(parents=True, exist_ok=True)
@@ -262,5 +262,5 @@ def test_is_terminal_construct_valid_screen(tmp_path):
     (pdir / "rebuttal" / "user_goal_attestation.json").write_text(
         json.dumps({"achieved": False, "attested_status": "construct_valid_screen"}))
     is_term, label = S.is_terminal(tmp_path, tid)
-    assert is_term is True
-    assert label == "accept_with_construct_valid"
+    assert is_term is False
+    assert label is None

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/runtime_inputs.schema.json",
+  "title": "RuntimeInputs",
+  "type": "object",
+  "required": ["schema_version", "primary_dataset"],
+  "properties": {
+    "schema_version": { "type": "integer", "enum": [1] },
+    "primary_dataset": {
+      "type": "object",
+      "required": [
+        "adapter_id",
+        "snapshot_id",
+        "relative_path",
+        "content_sha256",
+        "size_bytes",
+        "fetcher_type",
+        "provenance"
+      ],
+      "properties": {
+        "adapter_id": { "type": "string", "minLength": 1 },
+        "snapshot_id": { "type": "string", "pattern": "^as_[a-f0-9]{64}$" },
+        "relative_path": { "type": "string", "minLength": 1 },
+        "content_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "fetcher_type": { "type": "string", "minLength": 1 },
+        "provenance": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -64,7 +64,7 @@
     if (enabled) {
       const ok = confirm(
         'Enable full_auto_mode?\n\n' +
-        'Per-phase execute_ack modals will be skipped — live Claude phases ' +
+        'Per-phase execute_ack modals will be skipped — live Codex phases ' +
         'launch the moment you click "Start" or "Advance".\n\n' +
         'subscription_ack is NOT bypassed.\n\n' +
         'A persistent ● AUTO badge in the top bar will indicate the mode is active.'
@@ -556,7 +556,7 @@
       .replace(/'/g, "&#39;");
   }
 
-  // Trim trailing Claude Code tool-call envelope leakage from dialog text
+  // Trim trailing agent tool-call envelope leakage from dialog text
   // at display time so pre-fix entries on disk still render cleanly.
   // Matches the server-side _strip_tool_envelope_leak() in mcp_server.py.
   const TOOL_ENVELOPE_TAIL = new RegExp(
@@ -691,6 +691,8 @@
         const tid = btn.dataset.threadId;
         const sel = document.getElementById('supervisor-scope-' + tid);
         const target_scope = sel ? sel.value : 'directional';
+        const adapterSel = document.getElementById('supervisor-adapter-' + tid);
+        const data_source_anchor = adapterSel ? adapterSel.value : '';
         btn.disabled = true;
         const originalText = btn.textContent;
         btn.textContent = '⏳ Starting supervisor…';
@@ -698,7 +700,10 @@
         try {
           const data = await postJson(
             '/api/threads/' + tid + '/supervisor/start',
-            {target_scope: target_scope}
+            {
+              target_scope: target_scope,
+              data_source_anchor: data_source_anchor
+            }
           );
           btn.textContent = '✓ Started (pid=' + data.pid + ')';
           showInlineFeedback(
@@ -724,7 +729,7 @@
         if (!confirm(
           'Stop supervisor?\n\n' +
           'Sends SIGTERM first (supervisor cascades it to the active ' +
-          'claude subprocess so the cycle ends in seconds). If it does ' +
+          'Codex subprocess so the cycle ends in seconds). If it does ' +
           'not exit within 3s, automatically escalates to SIGKILL. ' +
           'Lock file is cleaned up either way.'
         )) return;

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -120,6 +121,71 @@ class RunnerManifestTests(unittest.TestCase):
                 "runner-ok\n",
             )
             self.assertTrue((Path(manifest["workspace"]) / "runner_result.json").exists())
+
+    def test_runner_uses_operator_owned_executable_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            manifest = build_demo_job_manifest(_demo_node(), run_dir)
+            manifest["entrypoint"]["args"] = [
+                "-c",
+                "import os\nprint(os.environ['RUNNER_TEST_VALUE'])",
+            ]
+            settings = {
+                "runtime": {
+                    "runner_executable_overrides": {
+                        "python": sys.executable,
+                    },
+                    "runner_environment_overrides": {
+                        "RUNNER_TEST_VALUE": "override-ok",
+                    },
+                }
+            }
+
+            result = LocalRunner(run_dir, settings=settings).execute(manifest)
+
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(result["command"][0], str(Path(sys.executable).resolve()))
+            self.assertEqual(
+                result["environment_overrides"],
+                {"RUNNER_TEST_VALUE": "override-ok"},
+            )
+            self.assertEqual(
+                Path(result["stdout_path"]).read_text(encoding="utf-8"),
+                "override-ok\n",
+            )
+
+    def test_runner_rejects_relative_executable_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            manifest = build_demo_job_manifest(_demo_node(), run_dir)
+            settings = {
+                "runtime": {
+                    "runner_executable_overrides": {
+                        "python": "venv/bin/python",
+                    }
+                }
+            }
+
+            with self.assertRaisesRegex(
+                RunnerValidationError,
+                "absolute executable file",
+            ):
+                LocalRunner(run_dir, settings=settings).validate_or_raise(manifest)
+
+    def test_runner_rejects_invalid_environment_override_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            manifest = build_demo_job_manifest(_demo_node(), run_dir)
+            settings = {
+                "runtime": {
+                    "runner_environment_overrides": {
+                        "BAD-NAME": "value",
+                    }
+                }
+            }
+
+            with self.assertRaisesRegex(RunnerValidationError, "invalid name"):
+                LocalRunner(run_dir, settings=settings).validate_or_raise(manifest)
 
     def test_runner_records_failed_command_as_failure_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

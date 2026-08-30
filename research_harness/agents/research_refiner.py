@@ -30,7 +30,7 @@ from research_harness.config import (
     load_settings,
     resolve_agent_budget,
     resolve_agent_max_rounds,
-    resolve_agent_model,
+    resolve_legacy_claude_agent_model,
 )
 from research_harness.datasets import materialize
 from research_harness.settings_scoped import (
@@ -112,12 +112,7 @@ def run_research_refiner(
 
     load_settings(repo_root)  # retained for its policy / framework_invariants check
     settings = resolve_for_thread(repo_root, thread_id_from_run_dir(run_dir))
-    live_backend = (
-        settings.get("runtime", {})
-        .get("worker_backends", {})
-        .get("claude_code_live", {})
-    )
-    model = resolve_agent_model(settings, "research_refiner_agent")
+    model = resolve_legacy_claude_agent_model(settings, "research_refiner_agent")
     max_budget = resolve_agent_budget(settings, "research_refiner_agent")
     if max_rounds == DEFAULT_MAX_ROUNDS:
         max_rounds = resolve_agent_max_rounds(

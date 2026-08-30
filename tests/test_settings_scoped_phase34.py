@@ -52,10 +52,10 @@ class SettingsPageRenderTests(unittest.TestCase):
                 "runtime": {
                     "default_backend": "mock",
                     "llm_orchestrator": {
-                        "backend": "mcp",
+                        "backend": "codex_mcp",
                         "mcp": {
-                            "default_model": "claude-opus-4-7",
-                            "allowed_models": ["claude-opus-4-7", "claude-sonnet-4-6"],
+                            "default_model": "gpt-5.6-sol",
+                            "allowed_models": ["gpt-5.6-sol", "gpt-5.6-terra"],
                         },
                     },
                     "agent_max_rounds": {"grilling_agent": 8},
@@ -120,10 +120,10 @@ class SettingsWriteTests(unittest.TestCase):
                 "runtime": {
                     "default_backend": "mock",
                     "llm_orchestrator": {
-                        "backend": "mcp",
+                        "backend": "codex_mcp",
                         "mcp": {
-                            "default_model": "claude-opus-4-7",
-                            "allowed_models": ["claude-opus-4-7", "claude-sonnet-4-6"],
+                            "default_model": "gpt-5.6-sol",
+                            "allowed_models": ["gpt-5.6-sol", "gpt-5.6-terra"],
                         },
                     },
                 },
@@ -136,7 +136,7 @@ class SettingsWriteTests(unittest.TestCase):
         resp = self.client.post(
             "/api/settings/project",
             data={
-                "runtime.default_backend": "claude_code_dry_run",
+                "runtime.default_backend": "codex_dry_run",
                 "publication_gate.enabled": "true",
                 "__bool__publication_gate.enabled": "present",
             },
@@ -145,7 +145,7 @@ class SettingsWriteTests(unittest.TestCase):
         self.assertIn("Saved", resp.text)
         # On disk
         on_disk = json.loads((self.repo / "settings.json").read_text())
-        self.assertEqual(on_disk["runtime"]["default_backend"], "claude_code_dry_run")
+        self.assertEqual(on_disk["runtime"]["default_backend"], "codex_dry_run")
         self.assertEqual(on_disk["publication_gate"]["enabled"], True)
 
     def test_project_bulk_save_rejects_invalid_enum(self) -> None:
@@ -200,7 +200,7 @@ class SettingsWriteTests(unittest.TestCase):
         # auth_policy.provider is project-only; thread cannot write it.
         resp = self.client.post(
             "/api/settings/thread/thread_x",
-            data={"path": "runtime.auth_policy.provider", "value": "claude_code"},
+            data={"path": "runtime.auth_policy.provider", "value": "codex"},
         )
         self.assertEqual(resp.status_code, 200)
         self.assertIn("not thread-overridable", resp.text)
@@ -300,14 +300,14 @@ class AgentMigrationSmokeTests(unittest.TestCase):
                 repo / "settings.json",
                 {
                     "runtime": {
-                        "agent_models": {"grilling_agent": "claude-opus-4-7"},
-                        "agent_budgets": {"grilling_agent": "0.50"},
+                        "agent_models": {"grilling_agent": "gpt-5.6-sol"},
+                        "legacy_claude_agent_budgets": {"grilling_agent": "0.50"},
                         "agent_max_rounds": {"grilling_agent": 8},
                     }
                 },
             )
             resolved = resolve_for_thread(repo, None)
-            self.assertEqual(resolve_agent_model(resolved, "grilling_agent"), "claude-opus-4-7")
+            self.assertEqual(resolve_agent_model(resolved, "grilling_agent"), "gpt-5.6-sol")
             self.assertEqual(resolve_agent_budget(resolved, "grilling_agent"), "0.50")
             self.assertEqual(resolve_agent_max_rounds(resolved, "grilling_agent"), 8)
 

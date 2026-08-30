@@ -42,7 +42,22 @@
     },
     "stdout_path": { "type": "string" },
     "stderr_path": { "type": "string" },
-    "failure_record_candidate": { "type": ["object", "null"] }
+    "failure_record_candidate": { "type": ["object", "null"] },
+    "input_evidence": {
+      "type": ["object", "null"],
+      "properties": {
+        "adapter_id": { "type": "string", "minLength": 1 },
+        "snapshot_id": { "type": "string", "pattern": "^as_[a-f0-9]{64}$" },
+        "content_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "manifest_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "manifest_path": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "environment_overrides": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
   },
   "additionalProperties": false
 }

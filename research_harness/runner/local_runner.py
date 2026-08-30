@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
 import sys
 import time
@@ -8,11 +10,80 @@ from pathlib import Path
 from typing import Any
 
 from research_harness.schemas.validator import SchemaValidationError, validate_named_schema
+from research_harness.runtime_inputs import (
+    RuntimeInputError,
+    runtime_input_environment,
+    validate_runtime_input_reference,
+)
 from research_harness.workers.workspace import WorkspaceGuardError, ensure_path_inside
 
 
 class RunnerValidationError(ValueError):
     """Raised when a deterministic runner manifest is unsafe or invalid."""
+
+
+def resolve_runner_command(
+    manifest: dict[str, Any],
+    settings: dict[str, Any] | None = None,
+) -> list[str]:
+    """Resolve a declared executable through an operator-owned runtime map."""
+
+    declared = [
+        *manifest["entrypoint"]["command"],
+        *manifest["entrypoint"]["args"],
+    ]
+    overrides = (settings or {}).get("runtime", {}).get(
+        "runner_executable_overrides",
+        {},
+    )
+    if not isinstance(overrides, dict):
+        raise RunnerValidationError(
+            "runtime.runner_executable_overrides must be an object"
+        )
+    executable_name = Path(declared[0]).name
+    replacement = overrides.get(executable_name)
+    if replacement is None:
+        return declared
+    replacement_path = Path(str(replacement))
+    if (
+        not replacement_path.is_absolute()
+        or not replacement_path.is_file()
+        or not os.access(replacement_path, os.X_OK)
+    ):
+        raise RunnerValidationError(
+            f"runner executable override for {executable_name!r} is not an "
+            f"absolute executable file: {replacement!r}"
+        )
+    return [str(replacement_path.resolve()), *declared[1:]]
+
+
+def resolve_runner_environment(
+    settings: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    """Validate environment values supplied by the operator to every job."""
+
+    overrides = (settings or {}).get("runtime", {}).get(
+        "runner_environment_overrides",
+        {},
+    )
+    if not isinstance(overrides, dict):
+        raise RunnerValidationError(
+            "runtime.runner_environment_overrides must be an object"
+        )
+    resolved: dict[str, str] = {}
+    for raw_name, raw_value in overrides.items():
+        name = str(raw_name)
+        value = str(raw_value)
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            raise RunnerValidationError(
+                f"runner environment override has an invalid name: {name!r}"
+            )
+        if "\x00" in value:
+            raise RunnerValidationError(
+                f"runner environment override contains NUL: {name!r}"
+            )
+        resolved[name] = value
+    return resolved
 
 
 class LocalRunner:
@@ -53,20 +124,28 @@ class LocalRunner:
         errors: list[str] = []
         try:
             self.validate_or_raise(manifest)
-        except (RunnerValidationError, WorkspaceGuardError, SchemaValidationError) as exc:
+        except (
+            RunnerValidationError,
+            RuntimeInputError,
+            WorkspaceGuardError,
+            SchemaValidationError,
+        ) as exc:
             errors.append(str(exc))
         return errors
 
-    def validate_or_raise(self, manifest: dict[str, Any]) -> None:
+    def validate_or_raise(self, manifest: dict[str, Any]) -> dict[str, str] | None:
         validate_named_schema("job_manifest", manifest)
         workspace = Path(manifest["workspace"]).resolve()
         ensure_path_inside(workspace, self.run_dir, "job workspace")
 
-        executable = Path(manifest["entrypoint"]["command"][0]).name
-        if executable not in self.allowed_executables:
-            raise RunnerValidationError(f"entrypoint executable is not allowlisted: {executable}")
+        declared_executable = Path(manifest["entrypoint"]["command"][0]).name
+        if declared_executable not in self.allowed_executables:
+            raise RunnerValidationError(
+                f"entrypoint executable is not allowlisted: {declared_executable}"
+            )
+        command_parts = resolve_runner_command(manifest, self.settings)
+        resolve_runner_environment(self.settings)
 
-        command_parts = manifest["entrypoint"]["command"] + manifest["entrypoint"]["args"]
         for part in command_parts:
             if any(token in part for token in self.FORBIDDEN_TOKENS):
                 raise RunnerValidationError(f"shell control token is forbidden in command: {part}")
@@ -74,6 +153,9 @@ class LocalRunner:
         self._validate_claim_contract(manifest["claim_contract"])
         self._validate_source_files(manifest, workspace)
         self._validate_output_paths(manifest, workspace)
+        return validate_runtime_input_reference(
+            manifest.get("inputs", {}), workspace=workspace
+        )
 
     def _validate_claim_contract(self, contract: dict[str, Any]) -> None:
         required = ["claim_under_test", "mandatory_baselines", "success_criteria", "disproof_conditions"]
@@ -103,18 +185,22 @@ class LocalRunner:
                 raise RunnerValidationError(f"source file is missing: {raw_path}")
 
     def execute(self, manifest: dict[str, Any]) -> dict[str, Any]:
-        self.validate_or_raise(manifest)
+        input_evidence = self.validate_or_raise(manifest)
         workspace = Path(manifest["workspace"]).resolve()
         workspace.mkdir(parents=True, exist_ok=True)
         stdout_path = workspace / "stdout.log"
         stderr_path = workspace / "stderr.log"
         result_path = workspace / "runner_result.json"
         timeout_sec = self._effective_timeout(manifest)
-        command = manifest["entrypoint"]["command"] + manifest["entrypoint"]["args"]
+        command = resolve_runner_command(manifest, self.settings)
+        environment_overrides = resolve_runner_environment(self.settings)
         source_files = [
             str((workspace / Path(raw_path)).resolve())
             for raw_path in manifest.get("source_files", [])
         ]
+        child_env = os.environ.copy()
+        child_env.update(environment_overrides)
+        child_env.update(runtime_input_environment(input_evidence, workspace=workspace))
 
         started = time.monotonic()
         try:
@@ -125,6 +211,7 @@ class LocalRunner:
                 text=True,
                 timeout=timeout_sec,
                 check=False,
+                env=child_env,
             )
             elapsed_sec = round(time.monotonic() - started, 6)
             stdout_path.write_text(_output_text(completed.stdout), encoding="utf-8")
@@ -144,6 +231,8 @@ class LocalRunner:
                 failure_reason=None
                 if completed.returncode == 0
                 else f"runner command exited with code {completed.returncode}",
+                input_evidence=input_evidence,
+                environment_overrides=environment_overrides,
             )
         except subprocess.TimeoutExpired as exc:
             elapsed_sec = round(time.monotonic() - started, 6)
@@ -161,6 +250,8 @@ class LocalRunner:
                 stderr_path=stderr_path,
                 source_files=source_files,
                 failure_reason=f"runner command exceeded timeout_sec={timeout_sec}",
+                input_evidence=input_evidence,
+                environment_overrides=environment_overrides,
             )
         except OSError as exc:
             elapsed_sec = round(time.monotonic() - started, 6)
@@ -178,6 +269,8 @@ class LocalRunner:
                 stderr_path=stderr_path,
                 source_files=source_files,
                 failure_reason=f"runner command could not start: {exc}",
+                input_evidence=input_evidence,
+                environment_overrides=environment_overrides,
             )
 
         validate_named_schema("runner_result", result)
@@ -201,6 +294,8 @@ class LocalRunner:
         stderr_path: Path,
         source_files: list[str],
         failure_reason: str | None,
+        input_evidence: dict[str, str] | None,
+        environment_overrides: dict[str, str],
     ) -> dict[str, Any]:
         failure_record_candidate = None
         if failure_reason:
@@ -228,6 +323,8 @@ class LocalRunner:
             "stdout_path": str(stdout_path),
             "stderr_path": str(stderr_path),
             "failure_record_candidate": failure_record_candidate,
+            "input_evidence": input_evidence,
+            "environment_overrides": environment_overrides,
         }
 
     def _effective_timeout(self, manifest: dict[str, Any]) -> int:

@@ -14,9 +14,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from research_harness.agent_runtime import AgentPrompt, AgentUsage, CompletionRequest
+from research_harness.adapters.codex_cli import CodexCliAdapter, CodexCliError
 from research_harness.config import (
     load_settings,
-    resolve_agent_budget,
     resolve_agent_max_rounds,
     resolve_agent_model,
 )
@@ -31,9 +32,9 @@ from research_harness.settings_scoped import (
 )
 
 
-BILLING_ACK_ENV = "RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE"
+BILLING_ACK_ENV = "RESEARCH_HARNESS_ALLOW_CODEX_LIVE"
 BILLING_ACK_VALUE = "subscription_ack"
-EXECUTION_ACK_ENV = "RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE"
+EXECUTION_ACK_ENV = "RESEARCH_HARNESS_EXECUTE_CODEX_LIVE"
 EXECUTION_ACK_VALUE = "live_smoke_ack"
 DEFAULT_MAX_ROUNDS = 8
 DEFAULT_ROUND_TIMEOUT_SECONDS = 180
@@ -81,9 +82,7 @@ class GrillingError(ValueError):
 class _RoundCall:
     raw_action_text: str
     parsed: dict[str, Any]
-    cost_usd: float
-    input_tokens: int
-    output_tokens: int
+    usage: AgentUsage
 
 
 def run_grilling_session(
@@ -93,7 +92,7 @@ def run_grilling_session(
     run_dir: Path | None = None,
     max_rounds: int | None = DEFAULT_MAX_ROUNDS,
     session_id: str | None = None,
-    claude_path: str | None = None,
+    codex_path: str | None = None,
     billing_ack: bool | None = None,
     execution_ack: bool | None = None,
     round_timeout_seconds: int = DEFAULT_ROUND_TIMEOUT_SECONDS,
@@ -131,13 +130,7 @@ def run_grilling_session(
 
     load_settings(repo_root)  # retained for its policy / framework_invariants check
     settings = resolve_for_thread(repo_root, thread_id_from_run_dir(run_dir))
-    live_backend = (
-        settings.get("runtime", {})
-        .get("worker_backends", {})
-        .get("claude_code_live", {})
-    )
     model = resolve_agent_model(settings, "grilling_agent")
-    max_budget = resolve_agent_budget(settings, "grilling_agent")
     # If the caller passed the default sentinel, let settings (now
     # thread-aware) override it — including the "unlimited" option which
     # maps to None.
@@ -166,9 +159,11 @@ def run_grilling_session(
         "extracted": _placeholder_extracted(user_goal),
         "usage_estimate": {
             "rounds_used": 0,
-            "total_cost_usd": 0.0,
-            "total_input_tokens": 0,
-            "total_output_tokens": 0,
+            "input_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
         },
         "session_path": str(session_path),
         "error": None,
@@ -187,10 +182,10 @@ def run_grilling_session(
             session_path,
             base_session,
             status="blocked_by_execution_ack",
-            error=f"set {EXECUTION_ACK_ENV}={EXECUTION_ACK_VALUE} to actually invoke Claude for grilling",
+            error=f"set {EXECUTION_ACK_ENV}={EXECUTION_ACK_VALUE} to invoke Codex for grilling",
         )
 
-    detected_claude = claude_path or shutil.which("claude") or "claude"
+    detected_codex = codex_path or shutil.which("codex") or "codex"
     runner = command_runner or subprocess.run
     asker = input_provider or _stdin_input_provider
     emit = event_emitter or (lambda _ev: None)
@@ -200,9 +195,11 @@ def run_grilling_session(
         initial_usage
         or {
             "rounds_used": 0,
-            "total_cost_usd": 0.0,
-            "total_input_tokens": 0,
-            "total_output_tokens": 0,
+            "input_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
         }
     )
     extracted: dict[str, Any] | None = None
@@ -224,11 +221,10 @@ def run_grilling_session(
         index = len(rounds)
         while index < effective_max_rounds:
             scaffold_active = bool(scaffold_state and scaffold_state.get("active"))
-            call = _call_claude_round(
+            call = _call_agent_round(
                 runner=runner,
-                claude_path=detected_claude,
+                codex_path=detected_codex,
                 model=model,
-                max_budget=max_budget,
                 user_goal=user_goal,
                 rounds=rounds,
                 force_extract=False,
@@ -467,11 +463,10 @@ def run_grilling_session(
                 # Keep staging dir for inspection; do NOT move to final.
                 extracted = _placeholder_extracted(user_goal)
             else:
-                final = _call_claude_round(
+                final = _call_agent_round(
                     runner=runner,
-                    claude_path=detected_claude,
+                    codex_path=detected_codex,
                     model=model,
-                    max_budget=max_budget,
                     user_goal=user_goal,
                     rounds=rounds,
                     force_extract=True,
@@ -517,12 +512,11 @@ def run_grilling_session(
     return session
 
 
-def _call_claude_round(
+def _call_agent_round(
     *,
     runner: CommandRunner,
-    claude_path: str,
+    codex_path: str,
     model: str,
-    max_budget: str,
     user_goal: str,
     rounds: list[dict[str, Any]],
     force_extract: bool,
@@ -536,69 +530,18 @@ def _call_claude_round(
     user_prompt = _grilling_user_prompt(
         user_goal, rounds, force_extract=force_extract, scaffold_state=scaffold_state
     )
-    cmd = [
-        claude_path,
-        "-p",
-        "--model",
-        model,
-        "--permission-mode",
-        "dontAsk",
-        "--tools",
-        "",
-        "--disable-slash-commands",
-        "--strict-mcp-config",
-        "--system-prompt",
-        system_prompt,
-        "--output-format",
-        "json",
-        "--input-format",
-        "text",
-        "--no-session-persistence",
-        "--max-budget-usd",
-        max_budget,
-    ]
-    env = os.environ.copy()
-    env.pop("ANTHROPIC_API_KEY", None)
-    env.pop("ANTHROPIC_BASE_URL", None)  # subscription-only: strip base_url override too
     try:
-        completed = runner(
-            cmd,
-            input=user_prompt,
-            capture_output=True,
-            text=True,
-            timeout=round_timeout_seconds,
-            check=False,
-            env=env,
+        cli_result = CodexCliAdapter(codex_path=codex_path, runner=runner).complete(
+            CompletionRequest(
+                prompt=AgentPrompt(instructions=system_prompt, input=user_prompt),
+                model=model,
+                timeout_seconds=round_timeout_seconds,
+                label="grilling",
+            )
         )
-    except subprocess.TimeoutExpired as exc:
-        raise GrillingError(
-            f"claude CLI timed out after {round_timeout_seconds}s during grilling round"
-        ) from exc
-    if completed.returncode not in (0, None):
-        # claude prints API errors (auth/401, "Not logged in", budget) to STDOUT
-        # as JSON, not stderr — surface both so the reason isn't a cryptic code.
-        detail = (
-            (completed.stderr or "").strip() + " " + (completed.stdout or "").strip()
-        ).strip()
-        raise GrillingError(
-            f"claude CLI exited with code {completed.returncode}: {detail[:400]}"
-        )
-    raw_stdout = completed.stdout or ""
-    try:
-        cli_result = json.loads(raw_stdout)
-    except json.JSONDecodeError as exc:
-        raise GrillingError(f"claude CLI did not return JSON: {raw_stdout[:200]!r}") from exc
-    if not isinstance(cli_result, dict) or cli_result.get("type") != "result":
-        raise GrillingError(f"claude CLI returned unexpected payload: {raw_stdout[:200]!r}")
-    if cli_result.get("is_error"):
-        raise GrillingError(
-            f"claude CLI error (api_status={cli_result.get('api_error_status')}): "
-            f"{str(cli_result.get('result') or cli_result.get('subtype'))[:300]}"
-        )
-    inner_result = cli_result.get("result")
-    if not isinstance(inner_result, str) or not inner_result.strip():
-        raise GrillingError("claude CLI returned empty assistant text")
-    action_text = _strip_fence(inner_result.strip())
+    except CodexCliError as exc:
+        raise GrillingError(str(exc)) from exc
+    action_text = _strip_fence(cli_result.text.strip())
     try:
         parsed = json.loads(action_text)
     except json.JSONDecodeError as exc:
@@ -607,13 +550,10 @@ def _call_claude_round(
         ) from exc
     if not isinstance(parsed, dict):
         raise GrillingError("grilling agent output must be a JSON object")
-    usage = cli_result.get("usage") if isinstance(cli_result.get("usage"), dict) else {}
     return _RoundCall(
         raw_action_text=action_text,
         parsed=parsed,
-        cost_usd=float(cli_result.get("total_cost_usd") or 0.0),
-        input_tokens=int(usage.get("input_tokens") or 0),
-        output_tokens=int(usage.get("output_tokens") or 0),
+        usage=cli_result.usage,
     )
 
 
@@ -1018,9 +958,8 @@ def _new_session_id() -> str:
 
 
 def _accumulate_usage(usage: dict[str, Any], call: _RoundCall) -> None:
-    usage["total_cost_usd"] = float(usage.get("total_cost_usd") or 0.0) + call.cost_usd
-    usage["total_input_tokens"] = int(usage.get("total_input_tokens") or 0) + call.input_tokens
-    usage["total_output_tokens"] = int(usage.get("total_output_tokens") or 0) + call.output_tokens
+    for key, value in call.usage.as_dict().items():
+        usage[key] = int(usage.get(key) or 0) + value
 
 
 def _flush_in_progress(

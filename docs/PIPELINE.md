@@ -54,8 +54,8 @@ field-forcing. The loop is best-effort and may emit garbage — **reliability is
 the production gate's job, not this loop's.** Generation and judging are
 separated by design (ADR 0012 thesis: *generation + gate*).
 
-It is a **live** step (subscription `claude` calls), gated by
-`RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE` / `RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE`.
+It is a **live** step (Codex CLI calls), gated by
+`RESEARCH_HARNESS_ALLOW_CODEX_LIVE` / `RESEARCH_HARNESS_EXECUTE_CODEX_LIVE`.
 
 ## 3. production  (forest)
 
@@ -92,6 +92,14 @@ snapshot_root_terminal
 Publication gate: `prepare_rebuttal_packet → submit_rebuttal_critic_review →
 submit_orchestrator_reduction → submit_ac_decision` → `render_final_paper`
 or `render_honest_failure_paper`.
+
+The production supervisor starts a fresh Codex JSONL session for each cycle.
+It passes the repository MCP command, arguments, and environment through
+per-invocation `-c mcp_servers.research_harness...` options, so production does
+not depend on global MCP registration. Codex uses `--approve-for-me` on this
+path because the observed `never` policy rejects MCP calls. Supervisor retry,
+lock, terminal, watchdog, and process-group cleanup policy remains local to
+`thread_supervisor.py`.
 
 ---
 

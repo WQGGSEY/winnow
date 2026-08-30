@@ -17,7 +17,7 @@ from typing import Any, Callable
 from research_harness.config import (
     load_settings,
     resolve_agent_budget,
-    resolve_agent_model,
+    resolve_legacy_claude_agent_model,
 )
 from research_harness.memory.baseline_dossier import validate_baseline_dossier
 from research_harness.schemas.validator import validate_named_schema
@@ -462,11 +462,6 @@ def _generate_baseline_analysis_md(
     settings = resolve_for_thread(
         repo_root, thread_id_from_run_dir(output_path.parent)
     )
-    live_backend = (
-        settings.get("runtime", {})
-        .get("worker_backends", {})
-        .get("claude_code_live", {})
-    )
     if not _billing_ack_ok(billing_ack):
         warnings.append(
             "sonnet baseline analysis blocked by billing_ack; using deterministic metadata."
@@ -488,7 +483,7 @@ def _generate_baseline_analysis_md(
 
     detected_claude = claude_path or shutil.which("claude") or "claude"
     cmd_runner = runner or subprocess.run
-    model = resolve_agent_model(settings, "market_research_agent")
+    model = resolve_legacy_claude_agent_model(settings, "market_research_agent")
     max_budget = resolve_agent_budget(settings, "market_research_agent")
 
     try:

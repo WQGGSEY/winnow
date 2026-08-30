@@ -110,7 +110,7 @@ class AppState:
     sessions: dict[str, LiveSession] = field(default_factory=dict)
     env: Environment | None = None
     # Test hook: when set, the launcher passes this as the agent's
-    # `command_runner`, bypassing the real claude CLI. Production code never
+    # `command_runner`, bypassing the real Codex CLI. Production code never
     # touches this field — only tests / browser e2e fakes inject here.
     command_runner_override: Any = None
 
@@ -332,7 +332,7 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
             .get("allowed_models", [])
         )
         # Strict: model MUST be in allowed_models (no free-form input).
-        # Free-form would let typos through and silently send Claude Code a
+        # Free-form would let typos through and silently send Codex a
         # nonexistent model id. Operators expand allowed_models in
         # settings.json when a new model ships.
         if not allowed:
@@ -340,7 +340,7 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
                 500,
                 "settings.runtime.llm_orchestrator.mcp.allowed_models is "
                 "empty; cannot accept any model. Populate the list with "
-                "valid Claude model ids.",
+                "valid Codex model IDs.",
             )
         if model not in allowed:
             raise HTTPException(
@@ -459,7 +459,7 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
         ``<phase>.attempt<N>/`` so the operator can still inspect what
         went wrong, then re-launches the phase fresh. Works for any
         phase including upstream failures we can't anticipate
-        (Claude API blips, rate limits, content-policy hits, network
+        (Codex runtime failures, rate limits, content-policy hits, network
         drops). Without this the only escape from a failed phase was to
         hand-edit thread.json or delete the thread entirely.
         """
@@ -613,6 +613,35 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
         target_scope = (body.get("target_scope") or "directional").strip()
         if target_scope not in {"deployment", "feasibility", "directional"}:
             raise HTTPException(400, f"invalid target_scope: {target_scope!r}")
+        requested_adapter = str(body.get("data_source_anchor") or "").strip() or None
+        from research_harness.data_adapters import (
+            AdapterError,
+            probe_registered_adapters,
+            select_snapshot,
+        )
+        try:
+            selected_snapshot = select_snapshot(
+                probe_registered_adapters(s.repo_root), requested_adapter
+            )
+        except AdapterError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if target_scope == "deployment" and selected_snapshot is None:
+            raise HTTPException(400, "deployment requires one ready registered adapter")
+        selected_adapter = (
+            selected_snapshot["adapter_id"] if selected_snapshot is not None else None
+        )
+        from research_harness.thread_supervisor import (
+            ensure_existing_envelope_selection_matches,
+        )
+        try:
+            ensure_existing_envelope_selection_matches(
+                s.repo_root,
+                thread_id,
+                target_scope=target_scope,
+                data_source_anchor=selected_adapter,
+            )
+        except AdapterError as exc:
+            raise HTTPException(409, str(exc)) from exc
         # PR10b: refuse to start/resume once a publication artifact
         # exists. The frontend hides the button in this case, but we
         # enforce here as well so direct API hits respect the rule.
@@ -645,6 +674,8 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
             "--repo-root", str(s.repo_root),
             "--target-scope", target_scope,
         ]
+        if selected_adapter is not None:
+            cmd.extend(["--data-source-anchor", selected_adapter])
         # Redirect stdio to a file so frontend can later tail it.
         log_dir = s.repo_root / "runs" / "threads" / thread_id
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -679,6 +710,7 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
             "pid": proc.pid,
             "running": running,
             "target_scope": target_scope,
+            "data_source_anchor": selected_adapter,
             "log_path": str(stdout_path),
         })
 
@@ -690,7 +722,7 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
 
         Flow:
           1. SIGTERM → supervisor's handler cascades to its active
-             claude subprocess. Typical exit: 1-3 seconds.
+             Codex subprocess. Typical exit: 1-3 seconds.
           2. Poll PID liveness for up to 3 seconds (0.3s intervals).
           3. If still alive: SIGKILL.
           4. Unlink lock file if it survived (it shouldn't, but
@@ -765,7 +797,7 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
 
     @app.get("/api/threads/{thread_id}/supervisor/log/stream")
     async def supervisor_log_stream(thread_id: str) -> StreamingResponse:
-        """Tail-follow supervisor.log + claude_subprocess.log as SSE.
+        """Tail-follow supervisor.log + codex_subprocess.log as SSE.
 
         Initial: emits one `snapshot` event per file with the last 200
         lines. Then polls every 500ms and emits one `append` event per
@@ -922,7 +954,7 @@ async def _sse_stream(session: LiveSession):
 
 
 async def _tail_supervisor_logs(tdir: Path):
-    """Tail two append-only logs (supervisor.log + claude_subprocess.log)
+    """Tail two append-only logs (supervisor.log + codex_subprocess.log)
     as SSE. Emits a `snapshot` event per file with last 200 lines on
     connect, then `append` events per new line every 500ms.
 
@@ -933,7 +965,7 @@ async def _tail_supervisor_logs(tdir: Path):
     POLL = 0.5
     HEARTBEAT = 5.0
     sup_path = tdir / "supervisor.log"
-    sub_path = tdir / "claude_subprocess.log"
+    sub_path = tdir / "codex_subprocess.log"
 
     state = {
         "supervisor": {"path": sup_path, "offset": 0, "snapshotted": False, "buf": ""},
@@ -1207,7 +1239,7 @@ async def _launch_market(s: AppState, index: dict[str, Any]) -> None:
 async def _launch_connector(s: AppState, index: dict[str, Any]) -> None:
     """ADR 0012 domain-connector phase: P -> diverse far-framed claim_contracts.
 
-    Mirrors _launch_market (background, no user input) but is live-claude, so it
+    Mirrors _launch_market (background, no user input) but uses a live agent, so it
     passes acks=True — the operator's per-phase execute-ack modal click is the
     consent. Reads the thread's grilling_session and writes connector_session.json
     under the connector/ phase dir."""
@@ -1277,7 +1309,7 @@ async def _launch_connector(s: AppState, index: dict[str, Any]) -> None:
 async def _launch_production(s: AppState, index: dict[str, Any]) -> None:
     """Production launch is always refused from the frontend.
 
-    Reasoning happens inside Claude Code interactive via the MCP server.
+    Reasoning happens inside Codex through the per-invocation MCP server.
     The operator copies the handoff command from the 'Advance to
     production →' modal and runs it in a separate terminal. The legacy
     in-process production_runner path has been removed.
@@ -1287,7 +1319,7 @@ async def _launch_production(s: AppState, index: dict[str, Any]) -> None:
         409,
         "Production launch is disabled at this endpoint. Use the supervisor "
         "card on the Production tab — click ▶ Start supervisor. The "
-        "supervisor spawns claude subprocesses under your subscription "
+        "supervisor spawns Codex subprocesses under your login "
         "pool, auto-bootstraps the feasibility envelope, and drives "
         "production to dual-gate publish hands-free.",
     )
@@ -1303,7 +1335,7 @@ def _read_supervisor_state(repo_root: Path, thread_id: str) -> dict[str, Any]:
       - running: bool
       - pid: int | None
       - log_tail: list[str] (last ~30 lines of supervisor.log)
-      - subprocess_log_tail: list[str] (last ~10 lines of claude_subprocess.log)
+      - subprocess_log_tail: list[str] (last ~10 lines of codex_subprocess.log)
       - needed_resources: list[dict] (parsed from needed_resources.yaml)
       - target_scope: str | None (parsed from supervisor.log if present)
     """
@@ -1345,8 +1377,8 @@ def _read_supervisor_state(repo_root: Path, thread_id: str) -> dict[str, Any]:
         except OSError:
             pass
 
-    # Claude subprocess log tail (last 10 lines — heavy, keep small).
-    subproc_log = tdir / "claude_subprocess.log"
+    # Codex subprocess log tail (last 10 lines; keep this view small).
+    subproc_log = tdir / "codex_subprocess.log"
     if subproc_log.exists():
         try:
             data = subproc_log.read_bytes()
@@ -1479,7 +1511,7 @@ def _read_phase_artifacts(
                 node_dialogs[dp.parent.name] = d.get("entries", [])
         if node_dialogs:
             result["node_dialogs"] = node_dialogs
-        # In-progress nodes — anything Claude Code is mid-way through.
+        # In-progress nodes: anything Codex is processing.
         # Mirrors the resume-aware selector in mcp_server so the operator
         # sees the same state machine.
         mid_states = {
@@ -1519,6 +1551,14 @@ def _read_phase_artifacts(
             result["last_activity_mtime"] = last_activity
         # PR10: supervisor state for the production panel.
         result["supervisor"] = _read_supervisor_state(repo_root, thread_id)
+        if not result["supervisor"]["running"]:
+            with contextlib.suppress(Exception):
+                from research_harness.data_adapters import adapter_status_rows
+                result["ready_adapters"] = [
+                    row
+                    for row in adapter_status_rows(repo_root)
+                    if row.get("status") == "ready"
+                ]
         # Hands-free escalation: pending operator prompts surfaced by the
         # auto-resolver when it refused to chain. Frontend renders these as
         # input cards so the operator can answer without dropping to CLI.
@@ -1546,7 +1586,7 @@ def _read_phase_artifacts(
             or (pdir / "production_run_summary.json").exists()
         )
         # MCP-mode progress: list per-node MCP decision files + their
-        # mtimes so the operator can see Claude Code's last action.
+        # mtimes so the operator can see Codex's last action.
         mcp_progress: list[dict[str, Any]] = []
         for dp in sorted((pdir / "tree" / "nodes").glob("*/mcp_professor_decision.json")):
             with contextlib.suppress(OSError, json.JSONDecodeError):
@@ -1631,7 +1671,8 @@ def _register_datasets_routes(app: FastAPI, s: AppState) -> None:
         return HTMLResponse(
             tmpl.render(
                 adapters=datasets.list_adapters(s.repo_root),
-                allowed_kinds=sorted(datasets.ALLOWED_KINDS),
+                materializer_types=sorted(datasets.MATERIALIZER_TYPES),
+                dataset_roles=sorted(datasets.DATASET_ROLES),
                 max_upload_mb=datasets.MAX_UPLOAD_BYTES // (1 << 20),
                 flash=flash,
                 error=error,
@@ -1649,7 +1690,8 @@ def _register_datasets_routes(app: FastAPI, s: AppState) -> None:
     @app.post("/datasets/upload")
     async def upload_dataset(
         adapter_id: str = Form(...),
-        kind: str = Form(...),
+        materializer_type: str = Form(...),
+        role: str = Form(...),
         provenance: str = Form(...),
         file: UploadFile = File(...),
     ) -> HTMLResponse:
@@ -1663,7 +1705,8 @@ def _register_datasets_routes(app: FastAPI, s: AppState) -> None:
             datasets.register_adapter(
                 s.repo_root,
                 adapter_id=result.adapter_id,
-                kind=kind,
+                materializer_type=materializer_type,
+                role=role,
                 source=f"file://{result.materialized_path}",
                 provenance=provenance,
                 upload_meta={
@@ -1685,7 +1728,8 @@ def _register_datasets_routes(app: FastAPI, s: AppState) -> None:
     @app.post("/datasets/register")
     async def register_by_path(
         adapter_id: str = Form(...),
-        kind: str = Form(...),
+        materializer_type: str = Form(...),
+        role: str = Form(...),
         source: str = Form(...),
         provenance: str = Form(...),
     ) -> HTMLResponse:
@@ -1693,7 +1737,8 @@ def _register_datasets_routes(app: FastAPI, s: AppState) -> None:
             entry = datasets.register_adapter(
                 s.repo_root,
                 adapter_id=adapter_id,
-                kind=kind,
+                materializer_type=materializer_type,
+                role=role,
                 source=source,
                 provenance=provenance,
             )

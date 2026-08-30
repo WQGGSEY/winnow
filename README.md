@@ -1,10 +1,9 @@
 # Research Harness
 
-Production-track research harness inspired by Sakana AI Scientist-v2, with
-Claude Code subscription workers treated as bounded runtime tools rather than
-plain completion API calls. The current generation adds a user-facing entry
-flow: a grilling agent, a market research agent (PDF retrieval and dossier
-generation), a root-node generator, and a periodic lesson distillation agent.
+Production-track research harness inspired by Sakana AI Scientist-v2. Codex
+workers are bounded runtime tools behind provider-neutral request, result,
+usage, auth, and event types. The active new-thread flow is grilling,
+connector, then supervisor-driven forest production.
 
 References:
 
@@ -15,26 +14,19 @@ References:
 
 ```text
 user goal
-  -> grilling agent (multi-turn, sonnet) -> grilling_session.json
-  -> market research agent (arXiv + Google Scholar, agent-level not worker)
-        -> reference_papers/ (PDFs + metadata)
-        -> baseline_dossier (memory/baseline_dossiers/)
-        -> baseline_analysis.md
-  -> research_refiner agent (3-action: ASK | PROPOSE_DATASET | DONE)
-        -> refined_research_plan.json (validation_procedure + dataset_specs
-           + sota_reconciliations + acknowledged_limitations)
-        -> dataset_manifest.json (per-node, type-keyed materializer dispatch)
-  -> root node generator -> root_node.json (reads refined plan when present)
-  -> MCP server (Claude Code interactive drives production via tools)
+  -> grilling agent (multi-turn Codex) -> grilling_session.json
+  -> domain connector (multi-call Codex generation) -> connector_session.json
+        -> diverse claim contracts
+  -> MCP server (supervised Codex sessions drive production via tools)
+        -> multi-root production forest -> strongest survivor
         -> publication artifacts (paper.html, interactive_summary.html, slides_summary.html)
 ```
 
-See [docs/adr/0001-research-refiner-and-dataset-cache.md](docs/adr/0001-research-refiner-and-dataset-cache.md)
-for the design rationale (research_refiner role, 3-action protocol,
-dataset materializer Protocol, per-node manifest pattern).
+See [docs/PIPELINE.md](docs/PIPELINE.md) for the authoritative new-thread flow.
+The older market and refiner agents remain available only for historical runs.
 
 `research_harness.research_runner` is the high-level CLI that drives this. Live
-Claude invocations remain behind explicit billing + execution acknowledgements.
+Codex invocations remain behind subscription-quota and execution acknowledgements.
 
 ## Included
 
@@ -43,35 +35,35 @@ Claude invocations remain behind explicit billing + execution acknowledgements.
 - Always-included one-line lesson memory.
 - Deterministic critic folder routing.
 - Rebuttal packet, rebuttal critic stage, AC decision.
-- Worker-task contracts that restrict Claude worker output to source patches or
+- Worker-task contracts that restrict Codex worker output to source patches or
   observed results; the harness derives worker reports.
 - Deterministic experiment-plan contracts, local runner manifest validation,
   bounded execution, baseline-evidence checks, and source/metrics-evidence
   ingestion into worker reports.
-- Live Claude smoke runner + operator-controlled live node dispatch with
+- Live Codex smoke runner + operator-controlled live node dispatch with
   reduction/memory/rebuttal modules behind approval gates.
-- MCP-driven production pipeline (`research_harness.mcp_server`): Claude
-  Code interactive calls per-stage tools (`prepare_rebuttal_packet`,
+- MCP-driven production pipeline (`research_harness.mcp_server`): Codex calls
+  per-stage tools (`prepare_rebuttal_packet`,
   `submit_rebuttal_critic_review`, `submit_orchestrator_reduction`,
   `submit_ac_decision`, `submit_camera_ready_revision`,
   `prepare_paper_writing_context`, `submit_paper_outline`,
   `register_paper_figure`, `submit_paper_section`, `render_final_paper`) to
   produce a real Sakana-v2 ICML paper with practitioner-reviewed
   evidence and camera-ready directives. See `docs/MCP_OPERATIONS.md`.
-- **Grilling agent** (`research_harness.agents.grilling`): multi-turn sonnet
+- **Grilling agent** (`research_harness.agents.grilling`): multi-turn Codex
   loop driven by the harness; outputs schema-valid `grilling_session.json`.
-- **Market research agent** (`research_harness.agents.market_research`):
+- **Legacy market research agent** (`research_harness.agents.market_research`):
   agent-level (tools allowed, not a worker). arXiv API + Google Scholar
   scraping; downloads PDFs; produces a baseline_dossier candidate satisfying
   full dossier invariants.
 - **Root node generator** (`research_harness.orchestrator.root_node_from_grilling`):
   deterministic conversion of grilling output into a schema-valid root node;
   placeholder baseline_dossier_id is replaced after market research.
-- **Lesson distillation agent** (`research_harness.memory.lesson_distillation`):
+- **Legacy lesson distillation agent** (`research_harness.memory.lesson_distillation`):
   deterministic byte-threshold trigger; live sonnet compresses lessons; old
   `lessons.yaml` archived under `memory/lessons/archive/`; approval gate
   required before writing.
-- **research_refiner agent** (`research_harness.agents.research_refiner`):
+- **Legacy research_refiner agent** (`research_harness.agents.research_refiner`):
   multi-turn live sonnet between market_research and root_node. 3-action
   protocol (`ASK | PROPOSE_DATASET | DONE`). PROPOSE_DATASET silently
   dispatches to the dataset materializer registry and injects the result
@@ -92,8 +84,8 @@ Claude invocations remain behind explicit billing + execution acknowledgements.
 ## Operator Frontend (local UI)
 
 Localhost single-user web UI in front of the harness CLI. Replaces
-terminal interaction for grilling / refiner chat and exposes per-phase
-artifacts in a Claude.ai-style sidebar + accordion. See
+terminal interaction for grilling and exposes per-phase artifacts in a
+sidebar and accordion. See
 [docs/adr/0002-operator-frontend-in-process.md](docs/adr/0002-operator-frontend-in-process.md)
 and [docs/adr/0003-operator-frontend-htmx-stack.md](docs/adr/0003-operator-frontend-htmx-stack.md)
 for design rationale, and `CONTEXT.md` (operator_frontend,
@@ -116,14 +108,14 @@ What you get:
 - **Sidebar** lists every `research_thread` under `runs/threads/<thread_id>/`.
   Each row shows the current phase × status + outcome badge. Click `+ New`
   to mint a `thread_<8hex>` and start a grilling session.
-- **Accordion** per thread: Grilling / Market research / Refiner / Production.
+- **Accordion** per new thread: Grilling / Connector / Production.
   The current phase auto-expands; completed phases collapse with a one-line
   summary. Each panel shows curated cards plus a raw-JSON `<details>` fallback.
-- **Live chat** (SSE) for the multi-turn agents (grilling, refiner). The
+- **Live chat** (SSE) for grilling. The
   agent's ASK arrives as a streamed message; replies POST back through the
   in-process `input_provider`.
-- **Per-round persistence**: every grilling / refiner round is flushed to
-  `grilling_session.json` / `refined_research_plan.json` with status
+- **Per-round persistence**: every grilling round is flushed to
+  `grilling_session.json` with status
   `in_progress` immediately after the user reply is appended. On server
   restart, in-flight threads are demoted to `awaiting_input` and gain a
   Resume button.
@@ -143,28 +135,28 @@ separate from any legacy single-phase runs.
 ## Run The Full Research Pipeline
 
 ```bash
-# 1. grilling — multi-turn live sonnet interview
-RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack \
-RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE=live_smoke_ack \
+# 1. grilling — multi-turn live Codex interview
+RESEARCH_HARNESS_ALLOW_CODEX_LIVE=subscription_ack \
+RESEARCH_HARNESS_EXECUTE_CODEX_LIVE=live_smoke_ack \
 python -B -m research_harness.research_runner grill \
   --user-goal "your research goal" \
   --billing-ack --execute-ack \
   --run-dir runs/grilling/<id>
 
-# 2. refine — iterate on the research_refiner alone against an existing
+# Legacy only: refine iterates on the dormant research_refiner against an existing
 #    grilling session + market brief.
 python -B -m research_harness.research_runner refine \
   --grilling-session runs/grilling/<id>/grilling_session.json \
   --market-research-brief runs/research/<id>/market_research/market_research_brief.json \
   --billing-ack --execute-ack
 
-# 3. distill — periodic deterministic distillation (triggered by lesson byte total)
+# Legacy only: distill uses the dormant Claude lesson runtime.
 RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack \
 RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE=live_smoke_ack \
 python -B -m research_harness.research_runner distill --approve
 ```
 
-`grill` runs a bounded multi-turn loop against Claude sonnet (each round emits
+`grill` runs a bounded multi-turn loop against Codex (each round emits
 either `{"action":"ASK","question":...}` or `{"action":"DONE","extracted":...}`);
 the harness asks the user via stdin between turns. The session is force-extracted
 on max_rounds and persisted as schema-valid `grilling_session.json`.
@@ -177,11 +169,11 @@ after `--approve`.
 
 ## Run The Production Pipeline
 
-Production is driven by Claude Code interactive via the MCP server, not by
-a one-shot CLI. Start the operator frontend, advance a thread through
-grilling and market research, then click "Advance to production →" to copy
-the MCP handoff command and run it in a separate `claude` terminal. See
-`docs/MCP_OPERATIONS.md` for the full hand-off + tool catalog.
+Production is driven by Codex JSONL sessions supervised by
+`research_harness.thread_supervisor`. Start the operator frontend, complete
+grilling and connector, then start the supervisor from the production panel.
+Each invocation receives the repository MCP configuration directly; no global
+MCP registration is required. See `docs/MCP_OPERATIONS.md`.
 
 ## Experiment Plan Templates (per-domain, directory-based)
 
@@ -271,28 +263,23 @@ full authoring contract.
 
 ## Per-Agent Model Selection
 
-`settings.json` exposes per-role model selection for every live-Claude
-agent. Defaults to `sonnet` everywhere; override one role at a time:
+`settings.json` exposes per-role model selection for active Codex agents. The
+default is `gpt-5.6-sol`; override one role at a time:
 
 ```json
 "runtime": {
   "agent_models": {
-    "default": "sonnet",
-    "grilling_agent": "opus",
-    "market_research_agent": "sonnet",
-    "lesson_distillation_agent": "haiku"
+    "default": "gpt-5.6-sol",
+    "grilling_agent": "gpt-5.6-sol",
+    "domain_connector_agent": "gpt-5.6-sol"
   }
 }
 ```
 
-Resolution order (per role): explicit role entry → `default` → live
-backend's `model` → literal `"sonnet"`. All three agents
-(`research_harness.agents.grilling`,
-`research_harness.agents.market_research`,
-`research_harness.memory.lesson_distillation`) call
-`research_harness.config.resolve_agent_model(settings, role)` when
-constructing the live CLI invocation, so changing settings is the only
-thing you need to do.
+Resolution order is explicit role entry, then `default`, then
+`gpt-5.6-sol`. Dormant market, refiner, and lesson-distillation code reads
+`legacy_claude_agent_models` instead, so Codex model IDs do not leak into the
+legacy runtime.
 
 ## Critic Personas
 
@@ -371,7 +358,7 @@ which metric must beat current-best, naive, and random/null baselines. If a
 worker reports a supported result but the mandatory baseline comparison fails,
 the claim is downgraded to a non-promotable `negative_result`. Runner failures,
 missing metrics, or missing baseline evidence become non-promotable worker
-reports. Live Claude Code remains behind `research_harness.workers.live_gate`
+reports. Live Codex remains behind `research_harness.workers.live_gate`
 and is not called by tree search.
 
 ## Run Pre-Live Local Preflight
@@ -381,11 +368,11 @@ python -B -m research_harness.local_preflight
 ```
 
 This checks config/profile loading, node invariants, deterministic critic
-routing, dry-run Claude invocation envelope generation, worker-report schema
+routing, dry-run Codex invocation envelope generation, worker-report schema
 validation, experiment-plan contract validation, deterministic runner
 manifest/result validation, baseline dossier validation, tree-search runner
 artifact validation, rebuttal/AC gating, and interactive HTML generation without
-calling Claude Code.
+calling Codex.
 
 ## Build Manual Live Smoke Plan
 
@@ -393,15 +380,13 @@ calling Claude Code.
 python -B -m research_harness.workers.live_gate
 ```
 
-This still does not call Claude Code. It writes a schema-valid manual smoke
-plan and runbook under `runs/manual_live_smoke/`, checks subscription auth
-precedence, records the exact manual command, records the expected raw stdout
-path, and records the ingest command. By default, the plan is blocked by the
-billing guard; live Claude Code requires an explicit
-`RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack` acknowledgement. The auth
-probe accepts only Claude.ai subscription auth status and stores no email,
-organization id, or token fields. Claude live output is constrained to
-`worker_task_result`; `claude_stdout_ingest` requires the matching
+This still does not call Codex. It writes a schema-valid manual smoke plan and
+runbook under `runs/manual_live_smoke/`, records the exact command, and records
+the expected JSONL and ingest paths. By default, the plan is blocked by the
+usage guard; live Codex requires an explicit
+`RESEARCH_HARNESS_ALLOW_CODEX_LIVE=subscription_ack` acknowledgement. The auth
+probe accepts ChatGPT login and stores only redacted status fields. Codex live
+output is constrained to `worker_task_result`; `codex_stdout_ingest` requires the matching
 `manual_live_smoke_plan.json` for live backend stdout and writes
 `worker_report.json` only after gate, schema, and scope validation.
 
@@ -409,17 +394,17 @@ For a repeatable one-node smoke after reviewing the generated plan, use the
 explicit runner:
 
 ```bash
-RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack \
-RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE=live_smoke_ack \
+RESEARCH_HARNESS_ALLOW_CODEX_LIVE=subscription_ack \
+RESEARCH_HARNESS_EXECUTE_CODEX_LIVE=live_smoke_ack \
 python -B -m research_harness.workers.live_smoke_runner
 ```
 
 The runner still keeps `execution_enabled: false` in the plan. It only runs the
-single smoke command after the second execution acknowledgement, unsets
-`ANTHROPIC_API_KEY`, captures stdout/stderr, ingests stdout through the same
-live gate, and writes `live_smoke_run_summary.json` with token/cost estimates.
+single smoke command after the second execution acknowledgement, captures
+stdout/stderr, ingests JSONL through the same live gate, and writes
+`live_smoke_run_summary.json` with the five Codex token counters.
 Internally the same runner path now supports a single arbitrary node through
-`run_live_node_once(...)`, but tree search still rejects `claude_code_live` so
+`run_live_node_once(...)`, but tree search still rejects `codex_live` so
 the live worker cannot expand into autonomous search execution.
 
 To dispatch the next queued `search_state` node without letting tree search call
@@ -444,11 +429,11 @@ research_profile.md                    Positive research taste and branch-genera
 lessons.yaml                           Active one-line lessons always included in orchestration.
 critics/                               Deterministic critic personas.
 memory/                                Failure, lesson, and baseline dossier indexes.
-research_harness/agents/grilling.py    Multi-turn grilling agent (sonnet).
+research_harness/agents/grilling.py    Multi-turn Codex grilling agent.
 research_harness/agents/market_research.py  Agent-level paper search and dossier candidate generation.
 research_harness/memory/lesson_distillation.py  Periodic deterministic-trigger distillation.
 research_harness/orchestrator/         Tree search, reduction, live dispatch, root node generator.
-research_harness/mcp_server.py         MCP server — Claude Code interactive drives production.
+research_harness/mcp_server.py         MCP server used by Codex production sessions.
 research_harness/publishing/sakana_paper.py  Sakana-v2 ICML paper assembler (LLM-written sections).
 research_harness/research_runner.py    User-facing CLI (grill / refine / distill).
 ```
@@ -464,7 +449,7 @@ research_harness/research_runner.py    User-facing CLI (grill / refine / distill
 - Critics are read-only and selected by deterministic governance.
 - Experiments require claim contracts.
 - Missing mandatory baselines make a claim not evaluable or confounded.
-- Claude Code subscription auth is runtime preflight responsibility.
+- Codex ChatGPT login is a runtime preflight responsibility.
 - Long-running jobs belong to deterministic runners, not agent sessions.
 - Publication requires rebuttal and AC gating when enabled.
 - `lessons.yaml` and `memory/baseline_dossiers/` mutations require the

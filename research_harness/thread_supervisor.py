@@ -1,25 +1,23 @@
-"""Thread supervisor — true hands-free e2e automation.
+"""Thread supervisor for hands-free production sessions.
 
-Watches a single thread, spawns `claude` CLI subprocesses via pty when the
+Watches a single thread, spawns Codex JSONL subprocesses when the
 MCP server has been idle past a threshold, feeds the resume prompt
 deterministically, and only terminates when the thread reaches a terminal
 outcome (paper accept or honest_failure).
 
 This is the missing piece between the MCP server (which exposes tools but
-needs Claude Code interactive to drive them) and operator hands-free
+needs an agent session to drive them) and operator hands-free
 operation. The operator runs:
 
     python -m research_harness.thread_supervisor watch <thread_id>
 
 once. The supervisor handles every subsequent session respawn until the
-thread terminates. No API tokens used — the spawned `claude` subprocess
-runs under the operator's subscription pool.
+thread terminates. The spawned Codex subprocess uses the operator's ChatGPT login.
 
 Design constraints:
-- Subscription pool only. No Anthropic API path, ever.
-- pty stdlib only — zero new dependencies.
+- ChatGPT login only. No direct API path.
 - Single supervisor per thread (lock file enforced).
-- Survives subprocess crashes, claude CLI session limits, MCP daemon
+- Survives subprocess crashes, Codex session limits, MCP daemon
   restarts. The only fatal state is operator SIGINT or thread terminal.
 """
 
@@ -27,24 +25,25 @@ from __future__ import annotations
 
 import argparse
 import atexit
-import errno
+import hashlib
 import json
 import os
-import pty
-import re
-import select
 import signal
 import sys
 import threading
 import time
 from pathlib import Path
 
+from research_harness.agent_runtime import AgentPrompt, ResearchHarnessMcp
+from research_harness.adapters.codex_cli import CodexCliAdapter
+from research_harness.config import load_settings
+
 LOG = sys.stderr
 
 
 # --- thresholds (configurable via CLI flags) ----------------------------- #
 
-DEFAULT_MAX_IDLE_SECONDS = 600.0   # 10 min — claude session typically idle
+DEFAULT_MAX_IDLE_SECONDS = 600.0   # 10 min — an agent session is typically idle
                                    #          between MCP calls during heavy
                                    #          experiments; we want to detect
                                    #          true death, not a long step.
@@ -52,10 +51,9 @@ DEFAULT_POLL_SECONDS = 30.0        # check every 30s
 DEFAULT_MILESTONE_CYCLE = 10       # informational logging milestone (PR8:
                                    #          no longer a termination cause —
                                    #          supervisor never quits on count)
-DEFAULT_CLAUDE_BOOT_DELAY = 3.0    # seconds to wait after fork before
-                                   #          writing the resume prompt
-DEFAULT_CLAUDE_MODEL = "claude-opus-4-7"
-DEFAULT_CLAUDE_STALL_TIMEOUT = 600.0  # kill a claude cycle that emits NO output
+DEFAULT_CODEX_BOOT_DELAY = 0.0
+DEFAULT_CODEX_MODEL = "gpt-5.6-sol"
+DEFAULT_CODEX_STALL_TIMEOUT = 600.0  # kill a Codex cycle that emits NO output
                                       #   for this long (a hang — e.g. model/API
                                       #   stall after a tool call). Distinct from
                                       #   the fast-fail EXIT detector, which never
@@ -63,7 +61,7 @@ DEFAULT_CLAUDE_STALL_TIMEOUT = 600.0  # kill a claude cycle that emits NO output
                                       #   never exits. A healthy cycle streams
                                       #   tool_use/tool_result lines continuously.
 
-# PR8: rate-limit backoff. When claude subprocess fails fast (exit < 30s)
+# PR8: rate-limit backoff. When the Codex subprocess fails fast (exit < 30s)
 # we treat it as a likely rate-limit and back off exponentially. Backoff
 # resets when a cycle runs healthily for >= RATE_LIMIT_HEALTHY_CYCLE_SECONDS.
 DEFAULT_RATE_LIMIT_BACKOFF_INITIAL = 60.0
@@ -79,16 +77,236 @@ def _thread_dir(repo: Path, tid: str) -> Path:
     return repo / "runs" / "threads" / tid
 
 
+def _canonical_json_sha256(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def _terminal_evidence_is_strong(
+    *,
+    repo: Path,
+    tid: str,
+    state: dict[str, object],
+    adaptive: dict[str, object],
+    receipt: dict[str, object],
+    promoted_node: dict[str, object],
+    artifacts: dict[str, dict[str, object]],
+    experiment_plan: dict[str, object],
+    worker_report: dict[str, object],
+) -> bool:
+    """Re-derive strong completion from typed evidence, not receipt labels."""
+
+    try:
+        from research_harness.construct_adversary import (
+            evaluate_construct_adversary_report,
+        )
+        from research_harness.falsifier import (
+            PRODUCED_BY as FALSIFIER_PRODUCED_BY,
+            evaluate_predicate,
+            transfer_evidence_admissible,
+        )
+        from research_harness.mcp_server import _construct_adversary_thresholds
+        from research_harness.orchestrator.adaptive_search import (
+            experiment_fingerprint,
+            strategy_fingerprint,
+        )
+        from research_harness.orchestrator.strong_result import (
+            StrongExecutionEvidenceError,
+            verify_strong_execution_evidence,
+        )
+        from research_harness.schemas.validator import validate_named_schema
+
+        validate_named_schema("node", promoted_node)
+        validate_named_schema("experiment_plan", experiment_plan)
+        validate_named_schema("worker_report", worker_report)
+        validate_named_schema("falsifier_result", artifacts["falsifier_result"])
+        validate_named_schema("ac_decision", artifacts["ac_decision"])
+        validate_named_schema("user_goal_attestation", artifacts["attestation"])
+
+        frozen_question = json.loads(
+            (
+                _thread_dir(repo, tid)
+                / "production"
+                / "frozen_question.json"
+            ).read_text(encoding="utf-8")
+        )
+        validate_named_schema("frozen_question", frozen_question)
+        stamped_construct = artifacts["construct_adversary"]
+        raw_construct = {
+            key: value
+            for key, value in stamped_construct.items()
+            if key not in {"harness_verdict", "harness_reasons"}
+        }
+        validate_named_schema("construct_adversary_report", raw_construct)
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return False
+
+    strategy = promoted_node.get("strategy") or {}
+    if not isinstance(strategy, dict):
+        return False
+    strategy_id = receipt.get("strategy_id")
+    if strategy_fingerprint(
+        mechanism=str(strategy.get("mechanism") or ""),
+        intervention=str(strategy.get("intervention") or ""),
+    ) != strategy_id:
+        return False
+    goal = adaptive.get("goal") or {}
+    if not isinstance(goal, dict) or strategy.get("goal_id") != goal.get("id"):
+        return False
+    registered_strategy = next(
+        (
+            candidate
+            for candidate in adaptive.get("strategies") or []
+            if isinstance(candidate, dict) and candidate.get("id") == strategy_id
+        ),
+        None,
+    )
+    if registered_strategy != strategy:
+        return False
+    promoted_node_id = receipt.get("promoted_node_id")
+    if (
+        promoted_node.get("id") != promoted_node_id
+        or promoted_node.get("status") != "promoted"
+        or promoted_node_id not in (state.get("promoted_node_ids") or [])
+    ):
+        return False
+
+    experiment_id = experiment_fingerprint(experiment_plan)
+    if (
+        receipt.get("experiment_id") != experiment_id
+        or experiment_plan.get("node_id") != promoted_node_id
+        or worker_report.get("node_id") != promoted_node_id
+    ):
+        return False
+    executed = next(
+        (
+            experiment
+            for experiment in adaptive.get("experiments") or []
+            if isinstance(experiment, dict)
+            and experiment.get("id") == experiment_id
+            and experiment.get("node_id") == promoted_node_id
+            and experiment.get("strategy_id") == strategy_id
+            and experiment.get("status") == "executed"
+        ),
+        None,
+    )
+    if executed is None:
+        return False
+    if (
+        worker_report.get("status") != "completed"
+        or worker_report.get("claim_verdict_candidate") != "supported"
+        or (worker_report.get("baseline_evidence_status") or {}).get("overall")
+        != "passed"
+        or worker_report.get("disproof_conditions_hit")
+    ):
+        return False
+    node_dir = (
+        _thread_dir(repo, tid)
+        / "production"
+        / "tree"
+        / "nodes"
+        / str(promoted_node_id)
+    )
+    try:
+        execution_evidence = verify_strong_execution_evidence(
+            node=promoted_node,
+            experiment_plan=experiment_plan,
+            worker_report=worker_report,
+            node_dir=node_dir,
+            tree_dir=node_dir.parent.parent,
+            settings=load_settings(repo) if (repo / "settings.json").exists() else {},
+        )
+    except StrongExecutionEvidenceError:
+        return False
+    if any(
+        receipt.get(key) != execution_evidence[key]
+        for key in (
+            "job_manifest_sha256",
+            "runner_result_sha256",
+            "metrics_evidence_sha256",
+        )
+    ):
+        return False
+
+    falsifier = artifacts["falsifier_result"]
+    frozen_falsifier = (goal.get("bar") or {}).get("external_falsifier") or {}
+    predicate = falsifier.get("predicate") or {}
+    if (
+        falsifier.get("thread_id") != tid
+        or falsifier.get("produced_by") != FALSIFIER_PRODUCED_BY
+        or falsifier.get("kind") != "real_holdout"
+        or falsifier.get("kind") != frozen_falsifier.get("kind")
+        or falsifier.get("holdout_source_id")
+        != frozen_falsifier.get("holdout_source_id")
+        or predicate != (frozen_falsifier.get("predicate") or {})
+        or falsifier.get("passed") is not True
+        or falsifier.get("verdict") != "passed"
+        or not transfer_evidence_admissible(falsifier)
+        or not evaluate_predicate(
+            float(falsifier.get("observed")),
+            str(predicate.get("op")),
+            float(predicate.get("threshold")),
+        )
+    ):
+        return False
+
+    construct = artifacts["construct_adversary"]
+    settings = load_settings(repo) if (repo / "settings.json").exists() else {}
+    min_budget, min_worlds = _construct_adversary_thresholds(settings)
+    construct_verdict = evaluate_construct_adversary_report(
+        raw_construct,
+        min_budget=min_budget,
+        min_distinct_worlds=min_worlds,
+    )
+    if (
+        construct.get("harness_verdict") != "survived"
+        or construct_verdict.get("verdict") != "survived"
+        or construct.get("thread_id") != tid
+        or construct.get("question_id") != frozen_question.get("question_id")
+        or construct.get("construction_ref") != promoted_node_id
+    ):
+        return False
+
+    ac = artifacts["ac_decision"]
+    methodology = (ac.get("rebuttal_synthesis") or {}).get(
+        "methodology_assessment", {}
+    )
+    if (
+        ac.get("decision") not in {"accept", "revise"}
+        or ac.get("blocking_reasons")
+        or ac.get("required_next_search_nodes")
+        or methodology.get("aggregate_verdict") != "provides"
+    ):
+        return False
+    attestation = artifacts["attestation"]
+    ledger = attestation.get("referent_ledger") or {}
+    if (
+        attestation.get("thread_id") != tid
+        or attestation.get("promoted_node_id") != promoted_node_id
+        or attestation.get("achieved") is not True
+        or attestation.get("attested_status") != "goal_achieved"
+        or attestation.get("verdict_strength") != "transfer_valid"
+        or attestation.get("required_additional_research")
+        or ledger.get("has_real_referent") is not True
+        or ledger.get("max_reachable_verdict") != "transfer_valid"
+        or (attestation.get("scope_attainment") or {}).get("narrowed") is True
+        or receipt.get("verdict_strength") != "transfer_valid"
+    ):
+        return False
+    return True
+
+
 def resolve_supervisor_model(repo: Path, tid: str) -> str:
-    """Model the production supervisor drives `claude` with.
+    """Model the production supervisor drives Codex with.
 
     Implements the documented contract (settings.json _model_comment):
     'thread.json.mcp_model overrides default_model'. Resolution order:
       1. thread.json.mcp_model        — per-thread frontend selection
       2. runtime.llm_orchestrator.mcp.default_model  — operator/project default
-      3. DEFAULT_CLAUDE_MODEL          — last-resort fallback
+      3. DEFAULT_CODEX_MODEL          — last-resort fallback
 
-    Previously the supervisor always spawned DEFAULT_CLAUDE_MODEL, so the
+    Previously the supervisor always spawned a fixed model, so the
     production phase ignored every model setting the operator configured.
     """
     # 1. per-thread override.
@@ -113,25 +331,16 @@ def resolve_supervisor_model(repo: Path, tid: str) -> str:
     except (OSError, json.JSONDecodeError):
         pass
     # 3. fallback.
-    return DEFAULT_CLAUDE_MODEL
+    return DEFAULT_CODEX_MODEL
 
 
 def is_terminal(repo: Path, tid: str) -> tuple[bool, str | None]:
-    """Terminate on either honest publication outcome:
+    """Return true only for a rendered, verified strong result.
 
-    - the dual gate: AC decision in {accept, revise} AND a paper rendered
-      AND user_goal_attestation.achieved=true (now backed by an external
-      falsifier — ADR 0006) → 'accept_with_goal_achieved'.
-    - ADR 0006 honest ceiling: attested_status=='unverified_screen' with the
-      honest-failure paper rendered → 'accept_with_unverified_screen'. This
-      is a recorded terminal, NOT an infinite retry — the air-gapped run
-      genuinely cannot register a falsifier, so the screen stands.
-
-    Everything else (not_achieved honest_failure, max_cycles, rate limits)
-    is a state to retreat from and retry.
-
-    Returns (is_terminal, 'accept_with_goal_achieved' |
-    'accept_with_unverified_screen' | None).
+    Negative papers, bounded results, construct-valid screens, and unverified
+    screens remain useful artifacts. They do not satisfy the research goal.
+    Adaptive runs additionally require the typed strong-result receipt in the
+    canonical search state.
     """
     pdir = _thread_dir(repo, tid) / "production"
     summary_path = pdir / "production_run_summary.json"
@@ -156,23 +365,7 @@ def is_terminal(repo: Path, tid: str) -> tuple[bool, str | None]:
                 attestation = None
     attestation = attestation or {}
 
-    # ADR 0006/0008: an honest screen is a first-class terminal once the honest
-    # paper exists. construct_valid_screen (Axis 1: funded adversary survived)
-    # and unverified_screen (internally_valid floor) both terminate — distinct
-    # outcome labels. Checked BEFORE the honest_failure retreat so they are not
-    # swept into the retry loop.
-    _screen_terminal = {
-        "construct_valid_screen": "accept_with_construct_valid",
-        "unverified_screen": "accept_with_unverified_screen",
-    }
-    _astatus = attestation.get("attested_status")
-    if _astatus in _screen_terminal and (
-        rendered or s.get("outcome") in {"honest_failure", "bounded_result"}
-    ):
-        return True, _screen_terminal[_astatus]
-
-    # honest_failure (not_achieved) does not terminate — supervisor retries.
-    if s.get("outcome") == "honest_failure":
+    if s.get("outcome") in {"honest_failure", "bounded_result"}:
         return False, None
 
     ac_decision = (rebuttal.get("ac_decision") or {}).get("decision")
@@ -184,7 +377,157 @@ def is_terminal(repo: Path, tid: str) -> tuple[bool, str | None]:
     if not attestation.get("achieved"):
         return False, None
 
+    state_path = pdir / "tree" / "search_state.json"
+    if not state_path.exists():
+        return False, None
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        adaptive = state.get("adaptive") or {}
+    except (OSError, json.JSONDecodeError):
+        return False, None
+    if not adaptive:
+        return False, None
+    try:
+        from research_harness.orchestrator.adaptive_search import build_research_goal
+
+        rebuilt_goal = build_research_goal(
+            thread=json.loads(
+                (_thread_dir(repo, tid) / "thread.json").read_text(encoding="utf-8")
+            ),
+            grilling=json.loads(
+                (_thread_dir(repo, tid) / "grilling" / "grilling_session.json").read_text(
+                    encoding="utf-8"
+                )
+            ),
+            envelope=json.loads(
+                (pdir / "feasibility_envelope.json").read_text(encoding="utf-8")
+            ),
+        )
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False, None
+    frozen_goal = adaptive.get("goal") or {}
+    if (
+        frozen_goal.get("source") != "pre_generation"
+        or frozen_goal.get("strong_completion_blocked") is True
+        or rebuilt_goal.get("id") != frozen_goal.get("id")
+        or rebuilt_goal.get("bar_digest") != frozen_goal.get("bar_digest")
+    ):
+        return False, None
+    receipt = adaptive.get("strong_result_receipt") or {}
+    strategy_id = receipt.get("strategy_id")
+    promoted_node_id = receipt.get("promoted_node_id")
+    known_strategy_ids = {
+        strategy.get("id")
+        for strategy in adaptive.get("strategies") or []
+        if isinstance(strategy, dict) and strategy.get("id")
+    }
+    nodes_by_id = {
+        node.get("id"): node
+        for node in state.get("nodes") or []
+        if isinstance(node, dict) and node.get("id")
+    }
+    promoted_node = nodes_by_id.get(promoted_node_id) or {}
+    executed_strategy = any(
+        isinstance(experiment, dict)
+        and experiment.get("node_id") == promoted_node_id
+        and experiment.get("strategy_id") == strategy_id
+        and experiment.get("status") == "executed"
+        for experiment in adaptive.get("experiments") or []
+    )
+    rebuttal_dir = pdir / "rebuttal"
+    node_dir = pdir / "tree" / "nodes" / str(promoted_node_id)
+    artifact_hashes = {
+        "falsifier_result_sha256": (
+            rebuttal_dir / "falsifier_result.json",
+            "falsifier_result",
+        ),
+        "construct_adversary_sha256": (
+            rebuttal_dir / "construct_adversary_report.json",
+            "construct_adversary",
+        ),
+        "ac_decision_sha256": (
+            rebuttal_dir / "ac_decision.json",
+            "ac_decision",
+        ),
+        "critic_resolution_sha256": (
+            rebuttal_dir / "orchestrator_reduction.json",
+            "critic_resolution",
+        ),
+        "attestation_sha256": (
+            rebuttal_dir / "user_goal_attestation.json",
+            "attestation",
+        ),
+        "experiment_plan_sha256": (
+            node_dir / "experiment_plan.json",
+            "experiment_plan",
+        ),
+        "worker_report_sha256": (
+            node_dir / "worker_report.json",
+            "worker_report",
+        ),
+    }
+    hashes_match = True
+    loaded_artifacts: dict[str, dict[str, object]] = {}
+    for receipt_key, (artifact_path, artifact_name) in artifact_hashes.items():
+        try:
+            artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            hashes_match = False
+            break
+        if not isinstance(artifact, dict):
+            hashes_match = False
+            break
+        loaded_artifacts[artifact_name] = artifact
+        if receipt.get(receipt_key) != _canonical_json_sha256(artifact):
+            hashes_match = False
+            break
+    if (
+        adaptive.get("disposition") != "goal_achieved"
+        or receipt.get("verified") is not True
+        or receipt.get("goal_id") != (adaptive.get("goal") or {}).get("id")
+        or receipt.get("bar_digest")
+        != (adaptive.get("goal") or {}).get("bar_digest")
+        or not strategy_id
+        or strategy_id not in known_strategy_ids
+        or (promoted_node.get("strategy") or {}).get("id") != strategy_id
+        or not executed_strategy
+        or not hashes_match
+    ):
+        return False, None
+    if not _terminal_evidence_is_strong(
+        repo=repo,
+        tid=tid,
+        state=state,
+        adaptive=adaptive,
+        receipt=receipt,
+        promoted_node=promoted_node,
+        artifacts=loaded_artifacts,
+        experiment_plan=loaded_artifacts["experiment_plan"],
+        worker_report=loaded_artifacts["worker_report"],
+    ):
+        return False, None
+
     return True, "accept_with_goal_achieved"
+
+
+def read_search_pause(repo: Path, tid: str) -> dict[str, object] | None:
+    """Read a resumable adaptive pause without classifying it as completion."""
+
+    state_path = _thread_dir(repo, tid) / "production" / "tree" / "search_state.json"
+    if not state_path.exists():
+        return None
+    try:
+        adaptive = json.loads(state_path.read_text(encoding="utf-8")).get(
+            "adaptive"
+        ) or {}
+    except (OSError, json.JSONDecodeError):
+        return None
+    pause = adaptive.get("pause")
+    if adaptive.get("disposition") != "paused_needs_expansion" or not isinstance(
+        pause, dict
+    ):
+        return None
+    return pause
 
 
 def collect_needed_resources(repo: Path, tid: str) -> list[dict[str, object]]:
@@ -303,11 +646,46 @@ def mcp_idle_seconds(repo: Path, tid: str) -> float:
 # --- envelope auto-bootstrap (supervisor side) -------------------------- #
 
 
+def ensure_existing_envelope_selection_matches(
+    repo: Path,
+    tid: str,
+    *,
+    target_scope: str,
+    data_source_anchor: str | None,
+) -> None:
+    """Fail closed when a resume request conflicts with frozen operator intent."""
+    from research_harness.data_adapters import AdapterError
+
+    env_path = _thread_dir(repo, tid) / "production" / "feasibility_envelope.json"
+    if not env_path.exists():
+        return
+    try:
+        envelope = json.loads(env_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise AdapterError(f"existing feasibility envelope is unreadable: {exc}") from exc
+    intent = envelope.get("operator_intent") or {}
+    existing_scope = intent.get("target_deploy_grade_scope")
+    existing_anchor = intent.get("data_source_anchor")
+    mismatches = []
+    if existing_scope != target_scope:
+        mismatches.append(f"scope is {existing_scope!r}, requested {target_scope!r}")
+    if existing_anchor != data_source_anchor:
+        mismatches.append(
+            f"data_source_anchor is {existing_anchor!r}, requested {data_source_anchor!r}"
+        )
+    if mismatches:
+        raise AdapterError(
+            "existing feasibility envelope conflicts with this supervisor start: "
+            + "; ".join(mismatches)
+        )
+
+
 def bootstrap_envelope_if_missing(
     repo: Path,
     tid: str,
     *,
     target_scope: str = "directional",
+    data_source_anchor: str | None = None,
 ) -> dict[str, object] | None:
     """Auto-construct a FeasibilityEnvelope from settings.json + thread
     market dossier and write it to the thread's production dir, if no
@@ -316,13 +694,19 @@ def bootstrap_envelope_if_missing(
     The operator should NOT have to hand-craft this on every new thread.
     The supervisor is the operator's stand-in: it reads what the harness
     actually has (registered data adapters, available oracle = the
-    subscription Claude Code itself, compute envelope from settings) and
+    Codex ChatGPT session, compute envelope from settings) and
     builds the envelope. Returns the envelope dict that was written (or
     None if already present / failed).
     """
     env_path = _thread_dir(repo, tid) / "production" / "feasibility_envelope.json"
     if env_path.exists():
-        return None  # already there; respect existing operator/Professor input.
+        ensure_existing_envelope_selection_matches(
+            repo,
+            tid,
+            target_scope=target_scope,
+            data_source_anchor=data_source_anchor,
+        )
+        return None
 
     # Read settings.
     settings_path = repo / "settings.json"
@@ -333,7 +717,6 @@ def bootstrap_envelope_if_missing(
         except (OSError, json.JSONDecodeError):
             pass
 
-    data_adapters = (settings.get("data_adapters") or {}).get("registered") or []
     prod_term = settings.get("production_termination") or {}
     # Conservative default compute budget — operator can override by
     # adjusting settings.production_termination or by writing the
@@ -344,17 +727,31 @@ def bootstrap_envelope_if_missing(
         "max_total_node_hours": 8.0,
     }
 
-    # data_sources_available: every registered real adapter + 'synthetic'.
+    from research_harness.data_adapters import (
+        AdapterError,
+        ensure_thread_adapter_snapshots,
+        select_snapshot,
+    )
+
+    snapshot_document = ensure_thread_adapter_snapshots(
+        repo, _thread_dir(repo, tid)
+    )
     data_sources: list[dict[str, object]] = []
-    for a in data_adapters:
-        if not isinstance(a, dict) or not a.get("id"):
-            continue
+    for snapshot in snapshot_document["snapshots"]:
         data_sources.append({
             "kind": "real_adapter",
-            "id": a["id"],
-            "scope_note": a.get("provenance", ""),
+            "id": snapshot["adapter_id"],
+            "snapshot_id": snapshot["snapshot_id"],
+            "scope_note": snapshot["provenance"],
         })
     data_sources.append({"kind": "synthetic", "id": "synthetic_generator_default"})
+
+    try:
+        selected_snapshot = select_snapshot(snapshot_document, data_source_anchor)
+    except AdapterError:
+        raise
+    if target_scope == "deployment" and selected_snapshot is None:
+        raise AdapterError("deployment requires one ready registered adapter")
 
     # Pull baseline provenance from the thread's market dossier candidate
     # (if present) so the envelope's baseline_provenance_available is real.
@@ -434,10 +831,20 @@ def bootstrap_envelope_if_missing(
         "thread_id": tid,
         "data_sources_available": data_sources,
         "llm_oracles_available": [{
-            "kind": "subscription_claude_code",
+            "kind": "subscription_codex",
             "model": resolve_supervisor_model(repo, tid),
         }],
         "compute_budget": compute,
+        "runtime_capabilities": list(
+            dict.fromkeys(
+                str(value)
+                for value in (
+                    ((settings.get("runtime") or {}).get("runner_capabilities") or [])
+                    if isinstance(settings.get("runtime") or {}, dict)
+                    else []
+                )
+            )
+        ),
         "baseline_provenance_available": baseline_prov,
         "operator_intent": {
             "target_deploy_grade_scope": target_scope,
@@ -447,9 +854,14 @@ def bootstrap_envelope_if_missing(
         "max_attestable_status": max_attestable,
         "notes": bootstrap_note,
     }
+    if selected_snapshot is not None:
+        envelope["operator_intent"].update({
+            "data_source_anchor": selected_snapshot["adapter_id"],
+            "data_source_snapshot_id": selected_snapshot["snapshot_id"],
+        })
 
     # Validate against the schema before writing. If validation fails, do
-    # NOT write a bad envelope — Claude Code can then submit one itself.
+    # NOT write a bad envelope. Codex can then submit one itself.
     try:
         from research_harness.schemas.validator import validate_named_schema
         validate_named_schema("feasibility_envelope", envelope)
@@ -515,6 +927,27 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
     last_ac = state.get("last_ac_decision")
     needs = update_needed_resources_file(repo, tid)
 
+    executable_overrides: dict[str, object] = {}
+    environment_override_keys: list[str] = []
+    settings_path = repo / "settings.json"
+    if settings_path.exists():
+        try:
+            runtime = (
+                json.loads(settings_path.read_text(encoding="utf-8")).get("runtime")
+                or {}
+            )
+            if isinstance(runtime, dict):
+                configured_executables = runtime.get("runner_executable_overrides") or {}
+                if isinstance(configured_executables, dict):
+                    executable_overrides = configured_executables
+                configured_environment = runtime.get("runner_environment_overrides") or {}
+                if isinstance(configured_environment, dict):
+                    environment_override_keys = sorted(
+                        str(key) for key in configured_environment
+                    )
+        except (OSError, json.JSONDecodeError):
+            pass
+
     needs_block = ["needed_resources (불만족 상태 / 다음 cycle에 해결 시도):"]
     if needs:
         for n in needs:
@@ -530,20 +963,15 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         f"[supervisor cycle #{cycle}] 이전 세션이 한도로 종료됐어. 새 세션이야.",
         "디스크 상태를 읽고 어디서 멈췄는지 파악해서 이어가.",
         "",
-        "**절대 종료 조건 (PR8 + ADR 0006):** 이 thread는 다음 두 honest",
-        "종료 중 하나에 도달해야 끝나:",
-        "  (A) GOAL ACHIEVED: submit_ac_decision ∈ {accept, revise} AND",
+        "**절대 종료 조건 (ADR 0013):** 이 연구는 강한 결과 하나로만 끝나:",
+        "  GOAL ACHIEVED: submit_ac_decision ∈ {accept, revise} AND",
         "      submit_professor_user_goal_attestation achieved=true.",
         "      ※ ADR 0006: achieved=true는 external falsifier 통과 없이는",
         "        구조적으로 거부됨. 필요조건: envelope.max_attestable_status=",
         "        goal_achieved (= falsifier 등록됨) + 통과한 falsifier_result.",
-        "  (B) UNVERIFIED SCREEN: envelope.max_attestable_status=unverified_screen",
-        "      이면 (falsifier 등록 불가 = air-gapped synthetic-only) achieved=true는",
-        "      불가능. achieved=false로 정직하게 attest → harness가 attested_status=",
-        "      unverified_screen로 stamp → render_honest_failure_paper로 publish.",
-        "      이건 retry가 아니라 RECORDED TERMINAL (정직한 screen 종료).",
-        "→ 그 외(attested_status=not_achieved honest_failure)만 'still working'",
-        "  = retreat 신호. 다음 cycle에 새 angle / chunk / 자원 / falsifier로 재시도.",
+        "  construct_valid_screen, unverified_screen, bounded_result, honest_failure는",
+        "  진행 증거일 뿐 연구 완료가 아니다. 실행할 수 있는 새 전략이 없으면",
+        "  paused_needs_expansion으로 멈추고 missing capability와 resume condition을 남겨.",
         "",
         "현재 상태 (디스크 스냅샷):",
         f"  - promoted nodes: {promoted}",
@@ -554,30 +982,33 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "",
         *needs_block,
         "",
+        "Operator-owned experiment runtime:",
+        "  - LocalRunner executable overrides: "
+        + json.dumps(executable_overrides, ensure_ascii=False, sort_keys=True),
+        "  - LocalRunner environment override keys: "
+        + json.dumps(environment_override_keys, ensure_ascii=False),
+        "  - ambient shell Python은 실험 Python이 아니다. 자원 가능 여부는 위",
+        "    LocalRunner 설정이나 실제 execute_node_experiment 결과로 판정해.",
+        "",
         "방향:",
         f"  1. get_research_state(thread_id=\"{tid}\") 로 정확한 현재 상태 확인.",
-        "  2. needed_resources가 있고 그게 해결 가능하면 (예: synthetic→다른 oracle,",
-        "     scope 좁히기, chunk 쪼개기) 그쪽으로. 자원 자체가 부족하면 (real data adapter",
-        "     없음 등) feasibility_envelope 다시 보고 scope을 'feasibility' 또는",
-        "     'directional'로 narrow + dual-gate 통과 가능한 형태로 reframe.",
+        "  2. needed_resources가 해결 가능하면 먼저 해결해. 자원 자체가 부족하면",
+        "     frozen bar를 좁히지 말고 paused_needs_expansion에 정확히 기록해.",
         "  3. mid-state 노드 있으면 그 노드의 다음 도구 호출 (resume_production_state",
         "     또는 get_next_admissible_node의 status=resume 응답).",
         "  4. 없으면 get_next_admissible_node로 다음 ready 노드 처리.",
-        "  5. publish 직전 단계 도달하면 envelope.max_attestable_status 먼저 확인:",
-        "     • goal_achieved (falsifier 등록됨): (a) submit_ac_decision ∈",
+        "  5. publish 직전 단계 도달하면: (a) submit_ac_decision ∈",
         "       {accept, revise}; (b) compute_falsifier_result로 held-out 검증",
         "       (cross_generator_transfer면 ranking_a / 다른 generator B의 ranking_b);",
         "       (c) 통과하면 submit_professor_user_goal_attestation achieved=true.",
         "       falsifier가 fail하면 achieved=true 불가 — 파이프라인 개선 후 재측정.",
-        "     • unverified_screen (falsifier 등록 불가): achieved=true 시도하지 마.",
-        "       achieved=false로 attest → attested_status=unverified_screen stamp →",
-        "       render_honest_failure_paper로 honest screen publish → TERMINAL.",
-        "  5b. (선택) air-gapped인데 정직한 약-falsifier를 쓰고 싶으면: 별개의",
+        "  5b. air-gapped인데 약-falsifier를 추가하려면: 별개의",
         "      generator B를 holdout으로 잡고 submit_feasibility_envelope에",
         "      external_falsifier(kind=cross_generator_transfer, holdout_source_id,",
         "      predicate{spearman_rho>=θ}) 등록 → 위 goal_achieved 경로로.",
-        "  6. claim 자체가 envelope에 맞지 않으면 revise_root_after_reject로",
-        "     scope을 envelope-fit하게 narrow. (예: deployment → feasibility)",
+        "  6. 음성 결정에는 frozen success criterion을 직접 참조하는 causal strategy",
+        "     두 개 이상을 submit_professor_decision.follow_up_children에 넣어.",
+        "     같은 claim을 validity/mechanism 같은 접두어로 복사하면 거부된다.",
         "",
         "Anti-laziness 룰 작동 중 (PR1):",
         "  - claim narrowing-without-breadth → reject",
@@ -602,9 +1033,8 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "  - 너의 prune/contradicted 결정은 memory/failures/ 에 자동 기록됨.",
         "",
         "세션 한도 가까워지면 self-judge로 멈춰. 한 줄 status 남기고 종료해.",
-        "supervisor가 곧 새 cycle spawn 해서 이어받을 거야. not_achieved 상태에서",
-        "honest_failure로 끝내지 마 — 그건 retreat 신호. 단, max_attestable_status=",
-        "unverified_screen이면 honest_failure render가 정당한 TERMINAL이다 (ADR 0006).",
+        "supervisor가 곧 새 cycle spawn 해서 이어받을 거야. 약한 screen이나",
+        "honest_failure를 완료로 취급하지 마. 새 작업이 불가능하면 pause를 남겨.",
         "",
         "지금 시작:",
     ]
@@ -620,93 +1050,6 @@ def _which(name: str) -> str | None:
         if os.access(full, os.X_OK):
             return full
     return None
-
-
-_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[NOPDM]|[\x07\x08\x0b\x0c\x0e\x0f]")
-
-
-def _strip_ansi(text: str) -> str:
-    """Remove ANSI escape codes + control chars from a string so the
-    log file is human-readable. claude's startup banner emits a lot of
-    color/cursor codes even in non-interactive mode."""
-    return _ANSI_RE.sub("", text)
-
-
-def _format_stream_json_event(line: str) -> str | None:
-    """Parse one line of claude --output-format=stream-json output and
-    return a readable single-line log entry. Returns None when the line
-    is uninteresting (ping, system noise) and should be dropped."""
-    line = line.strip()
-    if not line or not line.startswith("{"):
-        return None
-    try:
-        ev = json.loads(line)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(ev, dict):
-        return None
-    etype = ev.get("type", "")
-    if etype == "system":
-        sub = ev.get("subtype") or ev.get("session_id", "")
-        return f"[system] {sub}"
-    if etype == "assistant":
-        msg = ev.get("message") or {}
-        contents = msg.get("content") or []
-        out: list[str] = []
-        for c in contents:
-            if not isinstance(c, dict):
-                continue
-            ct = c.get("type")
-            if ct == "text":
-                txt = (c.get("text") or "").strip()
-                if txt:
-                    out.append(f"text> {txt[:300]}")
-            elif ct == "tool_use":
-                name = c.get("name", "?")
-                inp = c.get("input") or {}
-                # Only print key names so we don't dump full prompts.
-                key_summary = ", ".join(sorted(inp.keys())[:6])
-                out.append(f"tool_use> {name}({key_summary})")
-            elif ct == "thinking":
-                txt = (c.get("thinking") or c.get("text") or "")
-                if txt:
-                    out.append(f"thinking> {txt.strip()[:200]}")
-        return "\n".join(out) if out else None
-    if etype == "user":
-        msg = ev.get("message") or {}
-        contents = msg.get("content") or []
-        for c in contents:
-            if isinstance(c, dict) and c.get("type") == "tool_result":
-                content = c.get("content")
-                if isinstance(content, list) and content:
-                    first = content[0]
-                    if isinstance(first, dict):
-                        txt = (first.get("text") or "")[:200]
-                        return f"tool_result> {txt}"
-                elif isinstance(content, str):
-                    return f"tool_result> {content[:200]}"
-        return None
-    if etype == "result":
-        subtype = ev.get("subtype", "")
-        cost = ev.get("total_cost_usd")
-        turns = ev.get("num_turns")
-        return f"[result] subtype={subtype} turns={turns} cost=${cost}"
-    return None
-
-
-def _kill_process_tree(proc, sig: int) -> None:
-    """Signal the whole process group (claude + any children, e.g. the MCP
-    server) so a hung subprocess whose child still holds the stdout pipe is
-    actually torn down — terminating only the leader can leave the readline
-    loop blocked on a child that inherited the pipe. Falls back to signalling
-    just the process if the group lookup fails (e.g. it already exited)."""
-    try:
-        os.killpg(os.getpgid(proc.pid), sig)
-    except (ProcessLookupError, PermissionError, OSError):
-        try:
-            proc.send_signal(sig)
-        except Exception:  # noqa: BLE001
-            pass
 
 
 def _experiment_running(state_path: Path) -> "bool | None":
@@ -729,7 +1072,7 @@ def _should_terminate_stall(
     experiment_running: "bool | None",
 ) -> bool:
     """Stall-watchdog decision. A synchronous execute_node_experiment blocks
-    claude output for the experiment's whole duration, so a legit long experiment
+    agent output for the experiment's whole duration, so a legit long experiment
     looks identical to a hang. Kill only a TRUE hang (silent past stall_timeout
     AND no node experiment running), or ANY silence past the hard cap."""
     if silent <= stall_timeout:
@@ -741,81 +1084,30 @@ def _should_terminate_stall(
     return False  # running (True) or unknown (None) -> defer up to the hard cap
 
 
-def _experiment_env_from_mcp_registration() -> dict[str, str]:
-    """Return the research_harness MCP server's declared ``env`` (e.g.
-    ``COIN_DATA_DIR``) from ``~/.claude.json``.
-
-    This is the ONE source of truth for the experiment environment: the MCP
-    server hands these vars to every experiment subprocess (registration ``-e``),
-    so the supervisor injects the SAME set into the spawned ``claude`` shell — the
-    Professor's diagnostic shell then matches the runner and cannot drift from it.
-    Best-effort: returns {} if the config is missing/unreadable (PATH parity in
-    spawn_claude_session still applies). General: whatever the operator declared.
-    """
-    try:
-        cfg = json.loads((Path.home() / ".claude.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    projects = cfg.get("projects")
-    if not isinstance(projects, dict):
-        return {}
-    repo_root = str(Path(__file__).resolve().parents[1])
-    # Prefer this repo's project entry; fall back to any project that registers
-    # research_harness (a single-machine harness has exactly one).
-    ordered = [projects.get(repo_root)] + [
-        v for k, v in projects.items() if k != repo_root
-    ]
-    for proj in ordered:
-        if not isinstance(proj, dict):
-            continue
-        srv = (proj.get("mcpServers") or {}).get("research_harness")
-        if isinstance(srv, dict) and isinstance(srv.get("env"), dict):
-            return {str(k): str(v) for k, v in srv["env"].items()}
-    return {}
-
-
-def spawn_claude_session(
+def spawn_codex_session(
     prompt: str,
     *,
-    model: str = DEFAULT_CLAUDE_MODEL,
-    boot_delay: float = DEFAULT_CLAUDE_BOOT_DELAY,
+    repo_root: Path | None = None,
+    model: str = DEFAULT_CODEX_MODEL,
+    boot_delay: float = DEFAULT_CODEX_BOOT_DELAY,
     log_path: Path | None = None,
     active_child_ref: dict | None = None,
-    stall_timeout: float = DEFAULT_CLAUDE_STALL_TIMEOUT,
+    stall_timeout: float = DEFAULT_CODEX_STALL_TIMEOUT,
     state_path: Path | None = None,
     experiment_hard_cap: float | None = None,
 ) -> int:
-    """Run `claude -p <prompt>` (non-interactive) as a managed
-    subprocess with stream-json output. Each event (assistant text,
-    tool_use, tool_result, result) is parsed and written as one
-    readable line to log_path. ANSI escape codes are stripped.
-
-    Why not pty + interactive `claude`: that path hung at empty stdout
-    on every spawn (TTY dialog blocking prompt injection). Why not
-    `--output-format text`: claude's startup banner emits ASCII art +
-    ANSI codes, and tool-use progress is buffered until completion,
-    so the log was unreadable cruft until cycle end. stream-json gives
-    line-by-line visibility into tool calls + reasoning.
-
-    Subscription pool only. No API path.
-    """
+    """Run one ephemeral Codex JSONL session with per-invocation MCP config."""
     import subprocess as _subprocess
 
-    claude_bin = _which("claude")
-    if not claude_bin:
+    codex_bin = _which("codex")
+    if not codex_bin:
         raise RuntimeError(
-            "`claude` CLI not found in PATH. Install Claude Code "
-            "and ensure `claude` is on the operator's PATH. "
-            "Supervisor uses the subscription pool — no API fallback."
+            "`codex` CLI not found in PATH. Install Codex and run `codex login`."
         )
-    del boot_delay  # kept for API compat; no TTY surface to wait on
-
-    cmd = [
-        claude_bin, "-p", prompt,
-        "--model", model,
-        "--output-format", "stream-json",
-        "--verbose",  # stream-json requires --verbose in claude v2+
-    ]
+    del boot_delay
+    repo_root = (repo_root or Path(__file__).resolve().parents[1]).resolve()
+    settings = load_settings(repo_root)
+    mcp = ResearchHarnessMcp.from_settings(repo_root, settings)
     log_fh = log_path.open("a", encoding="utf-8") if log_path else None
 
     # Match the Professor's shell environment to the EXPERIMENT RUNNER's, so its
@@ -833,25 +1125,22 @@ def spawn_claude_session(
     venv_bin = Path(__file__).resolve().parents[1] / "venv" / "bin"
     if venv_bin.is_dir():
         child_env["PATH"] = f"{venv_bin}{os.pathsep}{child_env.get('PATH', '')}"
-    child_env.update(_experiment_env_from_mcp_registration())
-
-    proc = _subprocess.Popen(
-        cmd,
-        stdin=_subprocess.DEVNULL,
-        stdout=_subprocess.PIPE,
-        stderr=_subprocess.STDOUT,
-        text=True,
-        bufsize=1,  # line-buffered
-        close_fds=True,
-        start_new_session=True,  # own process group so the watchdog can tear
-                                 # down claude + its MCP-server children together
+    child_env.update(mcp.environment)
+    session = CodexCliAdapter(
+        codex_path=codex_bin,
+        popen=_subprocess.Popen,
+    ).start_session(
+        prompt=AgentPrompt(instructions="", input=prompt),
+        model=model,
+        cwd=repo_root,
+        mcp=mcp,
         env=child_env,
     )
     if active_child_ref is not None:
-        active_child_ref["pid"] = proc.pid
+        active_child_ref["pid"] = session.pid
 
     if log_fh:
-        log_fh.write(f"\n=== claude spawn pid={proc.pid} {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+        log_fh.write(f"\n=== codex spawn pid={session.pid} {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
         log_fh.flush()
 
     # Stall watchdog: a healthy cycle streams events continuously. If the
@@ -873,9 +1162,9 @@ def spawn_claude_session(
             running = _experiment_running(state_path) if state_path is not None else False
             if not _should_terminate_stall(silent, stall_timeout, experiment_hard_cap, running):
                 # A node experiment is running (execute_node_experiment blocks
-                # claude output for its whole duration) — defer, not a hang.
+                # agent output for its whole duration, so defer the watchdog.
                 if not deferred_logged:
-                    dmsg = (f"\n=== watchdog: claude silent {silent:.0f}s but a node "
+                    dmsg = (f"\n=== watchdog: codex silent {silent:.0f}s but a node "
                             f"experiment is running — deferring kill (hard cap "
                             f"{experiment_hard_cap:.0f}s) ===\n")
                     for fh in (log_fh, LOG):
@@ -893,7 +1182,7 @@ def spawn_claude_session(
                 else f"no output for {stall_timeout:.0f}s and no running experiment"
             )
             msg = (f"\n=== watchdog: {reason} ({silent:.0f}s) — "
-                   f"terminating claude (pid={proc.pid}) ===\n")
+                   f"terminating codex (pid={session.pid}) ===\n")
             for fh in (log_fh, LOG):
                 try:
                     if fh:
@@ -901,30 +1190,20 @@ def spawn_claude_session(
                         fh.flush()
                 except Exception:  # noqa: BLE001
                     pass
-            _kill_process_tree(proc, signal.SIGTERM)
+            session.terminate()
             try:
-                proc.wait(timeout=5)
+                session.wait(timeout=5)
             except _subprocess.TimeoutExpired:
-                _kill_process_tree(proc, signal.SIGKILL)
+                session.terminate(force=True)
             return
 
     watchdog = threading.Thread(target=_watchdog, daemon=True)
     watchdog.start()
 
     try:
-        assert proc.stdout is not None
-        for line in proc.stdout:
+        for event in session.events():
             last_activity[0] = time.time()
-            clean = _strip_ansi(line).rstrip("\n")
-            formatted = _format_stream_json_event(clean)
-            if formatted is None:
-                # Fall back to raw line if it has content but isn't
-                # one of our recognized event types — keeps surprises
-                # visible rather than silently dropped.
-                if clean.strip() and not clean.startswith("{"):
-                    formatted = clean
-                else:
-                    continue
+            formatted = f"{event.kind}> {event.summary[:400]}"
             stamped = f"[{time.strftime('%H:%M:%S')}] {formatted}"
             if log_fh:
                 try:
@@ -937,14 +1216,13 @@ def spawn_claude_session(
                 LOG.flush()
             except Exception:  # noqa: BLE001
                 pass
-        proc.wait()
-        return proc.returncode if proc.returncode is not None else 1
+        return session.wait()
     except KeyboardInterrupt:
-        _kill_process_tree(proc, signal.SIGTERM)
+        session.terminate()
         try:
-            proc.wait(timeout=3)
+            session.wait(timeout=3)
         except _subprocess.TimeoutExpired:
-            _kill_process_tree(proc, signal.SIGKILL)
+            session.terminate(force=True)
         raise
     finally:
         stop_watchdog.set()
@@ -1015,6 +1293,39 @@ def _log(supervisor_log_path: Path, msg: str) -> None:
     print(line, end="", file=LOG, flush=True)
 
 
+def _sync_terminal_thread_index(repo: Path, tid: str, outcome: str | None) -> None:
+    index_path = _thread_dir(repo, tid) / "thread.json"
+    if not index_path.exists():
+        return
+    from research_harness.frontend.threads import update_thread
+
+    sidebar_outcome = (
+        "accept" if outcome == "accept_with_goal_achieved" else "inconclusive"
+    )
+    update_thread(
+        repo,
+        tid,
+        current_phase="production",
+        phase_status="complete",
+        outcome=sidebar_outcome,
+    )
+
+
+def _sync_paused_thread_index(repo: Path, tid: str) -> None:
+    index_path = _thread_dir(repo, tid) / "thread.json"
+    if not index_path.exists():
+        return
+    from research_harness.frontend.threads import update_thread
+
+    update_thread(
+        repo,
+        tid,
+        current_phase="production",
+        phase_status="awaiting_input",
+        outcome=None,
+    )
+
+
 def watch_thread(
     repo: Path,
     tid: str,
@@ -1022,18 +1333,19 @@ def watch_thread(
     max_idle_seconds: float = DEFAULT_MAX_IDLE_SECONDS,
     poll_seconds: float = DEFAULT_POLL_SECONDS,
     milestone_cycle: int = DEFAULT_MILESTONE_CYCLE,
-    model: str = DEFAULT_CLAUDE_MODEL,
-    boot_delay: float = DEFAULT_CLAUDE_BOOT_DELAY,
+    model: str = DEFAULT_CODEX_MODEL,
+    boot_delay: float = DEFAULT_CODEX_BOOT_DELAY,
     rate_limit_backoff_initial: float = DEFAULT_RATE_LIMIT_BACKOFF_INITIAL,
     rate_limit_backoff_max: float = DEFAULT_RATE_LIMIT_BACKOFF_MAX,
     target_scope: str = "directional",  # bootstrap envelope target
+    data_source_anchor: str | None = None,
     max_cycles: int | None = None,  # PR8: only honored when explicitly set;
                                     #      default behavior never quits on count.
 ) -> dict[str, object]:
     """PR8 supervisor loop. ONLY exits when the dual-gate publish outcome
     is reached (AC accept + Professor user_goal_attestation.achieved=true)
     OR the operator sends SIGINT/SIGTERM. honest_failure is treated as a
-    retreat state — supervisor respawns claude with instructions to try a
+    retreat state. The supervisor starts Codex with instructions to try a
     different angle. Subscription rate-limit fast-fails trigger
     exponential backoff (1m → 2m → 4m → ... cap).
 
@@ -1057,12 +1369,12 @@ def watch_thread(
         interrupted["flag"] = True
         _log(
             log_path,
-            "signal received — terminating active claude subprocess then exiting.",
+            "signal received, terminating active Codex subprocess then exiting.",
         )
-        # Cascade the signal to the active claude subprocess so the
+        # Cascade the signal to the active Codex subprocess so the
         # current cycle ends in seconds, not minutes. Without this, the
         # supervisor's loop can only check the interrupted flag between
-        # cycles — i.e., after the running claude subprocess exits on
+        # cycles, after the running Codex subprocess exits on
         # its own — and the operator sees the supervisor 'still running'
         # in the UI for the whole subprocess lifetime.
         child_pid = active_child.get("pid")
@@ -1091,9 +1403,14 @@ def watch_thread(
 
     # PR7+PR8: auto-bootstrap the feasibility envelope from settings.json +
     # market dossier. Operator no longer needs to hand-craft the envelope
-    # nor instruct Claude Code to submit it — supervisor is the operator's
+    # nor instruct Codex to submit it. The supervisor is the operator's
     # stand-in.
-    bootstrapped = bootstrap_envelope_if_missing(repo, tid, target_scope=target_scope)
+    bootstrapped = bootstrap_envelope_if_missing(
+        repo,
+        tid,
+        target_scope=target_scope,
+        data_source_anchor=data_source_anchor,
+    )
     if bootstrapped is not None:
         adapter_ids = [
             s.get("id") for s in bootstrapped.get("data_sources_available", [])
@@ -1106,7 +1423,7 @@ def watch_thread(
             f"baseline_provenance_count={len(bootstrapped.get('baseline_provenance_available') or [])}",
         )
 
-    # Stall-watchdog inputs: a synchronous execute_node_experiment blocks claude
+    # Stall-watchdog inputs: a synchronous execute_node_experiment blocks Codex
     # output for the experiment's whole duration, so the watchdog must not mistake
     # a legit long experiment for a hang. It defers killing while a node is
     # 'running', up to a hard cap = longest configured experiment + a margin.
@@ -1114,11 +1431,11 @@ def watch_thread(
     try:
         from research_harness.config import load_settings as _ls
         _rt = (_ls(repo).get("runtime", {}).get("runner_timeouts", {}) or {})
-        _max_rt = max((float(v) for v in _rt.values()), default=DEFAULT_CLAUDE_STALL_TIMEOUT)
+        _max_rt = max((float(v) for v in _rt.values()), default=DEFAULT_CODEX_STALL_TIMEOUT)
     except Exception:  # noqa: BLE001
-        _max_rt = DEFAULT_CLAUDE_STALL_TIMEOUT
-    experiment_hard_cap = _max_rt + DEFAULT_CLAUDE_STALL_TIMEOUT
-    _log(log_path, f"stall watchdog: stall_timeout={DEFAULT_CLAUDE_STALL_TIMEOUT:.0f}s "
+        _max_rt = DEFAULT_CODEX_STALL_TIMEOUT
+    experiment_hard_cap = _max_rt + DEFAULT_CODEX_STALL_TIMEOUT
+    _log(log_path, f"stall watchdog: stall_timeout={DEFAULT_CODEX_STALL_TIMEOUT:.0f}s "
                    f"experiment_hard_cap={experiment_hard_cap:.0f}s (longest runner_timeout + margin)")
 
     cycle = 0
@@ -1127,8 +1444,23 @@ def watch_thread(
     while True:
         terminal, outcome = is_terminal(repo, tid)
         if terminal:
+            _sync_terminal_thread_index(repo, tid, outcome)
             _log(log_path, f"DUAL-GATE PASS: outcome={outcome!r} after {cycle} cycle(s). exiting cleanly.")
             return {"status": "terminal", "outcome": outcome, "cycles": cycle}
+
+        pause = read_search_pause(repo, tid)
+        if pause is not None:
+            _sync_paused_thread_index(repo, tid)
+            _log(
+                log_path,
+                "adaptive search paused with an explicit resume condition; "
+                "not marking the research complete.",
+            )
+            return {
+                "status": "paused_needs_expansion",
+                "pause": pause,
+                "cycles": cycle,
+            }
 
         if interrupted["flag"]:
             _log(log_path, "interrupted by signal — exiting.")
@@ -1149,7 +1481,7 @@ def watch_thread(
             )
 
         idle = mcp_idle_seconds(repo, tid)
-        # Cold start: on the very first cycle there is no prior claude session to
+        # Cold start: on the first cycle there is no prior Codex session to
         # be "idle" relative to — the only recent write is the envelope
         # auto-bootstrap, which would otherwise force a full max_idle wait before
         # the first spawn (the ~10-min cold-start delay). Spawn cycle #1
@@ -1159,22 +1491,23 @@ def watch_thread(
             time.sleep(poll_seconds)
             continue
 
-        # Spawn a (new) claude cycle. update needed_resources before generating
+        # Start a new Codex cycle. Update needed_resources before generating
         # the resume prompt so the LLM sees the latest gaps.
         update_needed_resources_file(repo, tid)
         cycle += 1
         prompt = build_resume_prompt(repo, tid, cycle)
         if cycle == 1:
-            _log(log_path, "cycle #1: cold start — spawning first claude immediately (idle gate applies from cycle #2)")
+            _log(log_path, "cycle #1: cold start, starting Codex immediately (idle gate applies from cycle #2)")
         else:
-            _log(log_path, f"cycle #{cycle}: idle={idle:.0f}s > {max_idle_seconds:.0f}s — spawning claude")
+            _log(log_path, f"cycle #{cycle}: idle={idle:.0f}s > {max_idle_seconds:.0f}s, starting Codex")
         spawn_started = time.time()
         try:
-            exit_code = spawn_claude_session(
+            exit_code = spawn_codex_session(
                 prompt,
+                repo_root=repo,
                 model=model,
                 boot_delay=boot_delay,
-                log_path=tdir / "claude_subprocess.log",
+                log_path=tdir / "codex_subprocess.log",
                 active_child_ref=active_child,
                 state_path=state_path,
                 experiment_hard_cap=experiment_hard_cap,
@@ -1182,9 +1515,9 @@ def watch_thread(
             spawn_elapsed = time.time() - spawn_started
             _log(
                 log_path,
-                f"cycle #{cycle}: claude subprocess exited code={exit_code} after {spawn_elapsed:.1f}s",
+                f"cycle #{cycle}: Codex subprocess exited code={exit_code} after {spawn_elapsed:.1f}s",
             )
-            # PR8 rate-limit detection. A real claude session normally runs
+            # PR8 rate-limit detection. A real Codex session normally runs
             # at least several minutes (MCP tool calls + reasoning). A
             # sub-30s exit usually means auth/rate-limit/binary failure.
             if spawn_elapsed < RATE_LIMIT_FAST_FAIL_SECONDS:
@@ -1222,8 +1555,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="research_harness.thread_supervisor",
         description=(
-            "True hands-free thread executor: spawn `claude` CLI subprocesses "
-            "via pty under subscription pool until the thread reaches a "
+            "True hands-free thread executor. Start Codex JSONL subprocesses "
+            "under ChatGPT login until the thread reaches a "
             "terminal publication outcome."
         ),
     )
@@ -1249,6 +1582,11 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     p_watch.add_argument(
+        "--data-source-anchor",
+        default=None,
+        help="Registered local adapter ID selected by the operator.",
+    )
+    p_watch.add_argument(
         "--model", default=None,
         help=(
             "Override the production model. When omitted (the frontend path), "
@@ -1256,7 +1594,7 @@ def main(argv: list[str] | None = None) -> int:
             "settings.runtime.llm_orchestrator.mcp.default_model -> default."
         ),
     )
-    p_watch.add_argument("--boot-delay", type=float, default=DEFAULT_CLAUDE_BOOT_DELAY)
+    p_watch.add_argument("--boot-delay", type=float, default=DEFAULT_CODEX_BOOT_DELAY)
 
     args = parser.parse_args(argv)
     if args.cmd == "watch":
@@ -1275,9 +1613,14 @@ def main(argv: list[str] | None = None) -> int:
             model=model,
             boot_delay=args.boot_delay,
             target_scope=args.target_scope,
+            data_source_anchor=args.data_source_anchor,
         )
         print(json.dumps(result, indent=2, ensure_ascii=False))
-        return 0 if result.get("status") in {"terminal", "interrupted"} else 1
+        return 0 if result.get("status") in {
+            "terminal",
+            "paused_needs_expansion",
+            "interrupted",
+        } else 1
     return 2
 
 

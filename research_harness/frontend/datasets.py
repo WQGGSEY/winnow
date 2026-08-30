@@ -29,6 +29,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO
 
+from research_harness.data_adapters import (
+    DATASET_ROLES,
+    MATERIALIZER_TYPES,
+    adapter_status_rows,
+)
+
 # Extension allowlist — explicit deny by default. Executables, shells,
 # and notebooks are intentionally excluded; the operator can still drop
 # such files manually and use "register by path" if they really need to.
@@ -46,10 +52,6 @@ ALLOWED_EXTENSIONS: frozenset[str] = frozenset(
         # plain text / reference
         ".txt", ".md",
     }
-)
-
-ALLOWED_KINDS: frozenset[str] = frozenset(
-    {"raw_data", "benchmark", "model_weights", "factor_set", "custom", "real_panel"}
 )
 
 # Streaming chunk size for upload writes. Tuned to keep memory bounded
@@ -247,7 +249,8 @@ def register_adapter(
     repo_root: Path,
     *,
     adapter_id: str,
-    kind: str,
+    materializer_type: str,
+    role: str,
     source: str,
     provenance: str,
     upload_meta: dict[str, Any] | None = None,
@@ -265,10 +268,13 @@ def register_adapter(
     we replace in-place (no duplicate entries).
     """
     _validate_adapter_id(adapter_id)
-    if kind not in ALLOWED_KINDS:
+    if materializer_type not in MATERIALIZER_TYPES:
         raise DatasetError(
-            f"invalid kind {kind!r}; allowed: {sorted(ALLOWED_KINDS)}"
+            "invalid materializer_type "
+            f"{materializer_type!r}; allowed: {sorted(MATERIALIZER_TYPES)}"
         )
+    if role not in DATASET_ROLES:
+        raise DatasetError(f"invalid role {role!r}; allowed: {sorted(DATASET_ROLES)}")
     if not source.strip():
         raise DatasetError("source is required")
     if not (source.startswith("file://") or source.startswith("/")):
@@ -280,10 +286,10 @@ def register_adapter(
 
     entry: dict[str, Any] = {
         "id": adapter_id,
-        "kind": kind,
+        "materializer_type": materializer_type,
+        "role": role,
         "source": source,
         "provenance": provenance,
-        "module": "research_harness.datasets.local_path",
     }
     if upload_meta is not None:
         entry["_upload"] = upload_meta
@@ -318,16 +324,7 @@ def list_adapters(repo_root: Path) -> list[dict[str, Any]]:
     (whole-array operator override per ADR 0005, applied per-id here as
     a UX convenience so operators see one row instead of two).
     """
-    by_id: dict[str, dict[str, Any]] = {}
-    for entry in _load_project_adapters(repo_root):
-        if not isinstance(entry, dict) or not entry.get("id"):
-            continue
-        by_id[entry["id"]] = {**entry, "_scope": "project"}
-    for entry in _operator_adapters(_load_local(repo_root)):
-        if not isinstance(entry, dict) or not entry.get("id"):
-            continue
-        by_id[entry["id"]] = {**entry, "_scope": "operator"}
-    return sorted(by_id.values(), key=lambda e: e.get("id", ""))
+    return adapter_status_rows(repo_root)
 
 
 def delete_adapter(repo_root: Path, adapter_id: str) -> bool:
@@ -383,7 +380,8 @@ def delete_adapter(repo_root: Path, adapter_id: str) -> bool:
 
 __all__ = [
     "ALLOWED_EXTENSIONS",
-    "ALLOWED_KINDS",
+    "DATASET_ROLES",
+    "MATERIALIZER_TYPES",
     "DatasetError",
     "MAX_UPLOAD_BYTES",
     "UploadResult",

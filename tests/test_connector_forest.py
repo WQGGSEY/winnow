@@ -104,6 +104,24 @@ def test_forest_state_is_schema_valid():
     validate_search_state(state)  # raises if invalid
 
 
+def test_forest_propagates_supervisor_owned_adapter_selection():
+    selection = {"adapter_id": "local_data", "snapshot_id": "as_" + "a" * 64}
+    state = build_forest_search_state(
+        _valid_grilling(),
+        _claims(),
+        search_id="s_forest",
+        policy=_POLICY,
+        deploy_grade_scope="deployment",
+        data_selection=selection,
+    )
+
+    for node in state["nodes"]:
+        contract = node["claim_contract"]
+        assert contract["deploy_grade_scope"] == "deployment"
+        assert contract["data_source_anchor"] == "local_data"
+        assert contract["data_source_snapshot_id"] == selection["snapshot_id"]
+
+
 def test_empty_claims_raises():
     with pytest.raises(ValueError):
         build_forest_search_state(

@@ -11,6 +11,7 @@ from research_harness.orchestrator.experiment_plan import (
     ExperimentPlanError,
     FALLBACK_TEMPLATE_ID,
     build_experiment_plan_for_node,
+    validate_experiment_plan,
 )
 
 
@@ -152,6 +153,34 @@ class ExperimentPlanRouterTests(unittest.TestCase):
                 Path(tmp), node, Path(tmp) / "run", settings=None
             )
             self.assertEqual(used, FALLBACK_TEMPLATE_ID)
+
+    def test_registered_adapter_plan_requires_runtime_manifest_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = root / "run"
+            node = _demo_node_with_domain("unmatched_domain_xyz")
+            node["claim_contract"]["data_source_snapshot_id"] = "as_" + "a" * 64
+            plan, _ = build_experiment_plan_for_node(root, node, run_dir, settings=None)
+
+            with self.assertRaisesRegex(
+                ExperimentPlanError, "RESEARCH_HARNESS_INPUT_MANIFEST"
+            ):
+                validate_experiment_plan(node, plan, run_dir)
+
+            plan["source_files"][0]["content"] += """
+import os
+manifest_path = os.environ["RESEARCH_HARNESS_INPUT_MANIFEST"]
+dataset_path = manifest["inputs"]
+"""
+            with self.assertRaisesRegex(
+                ExperimentPlanError, "primary_dataset.relative_path"
+            ):
+                validate_experiment_plan(node, plan, run_dir)
+
+            plan["source_files"][0]["content"] += (
+                '\ndataset_path = manifest["primary_dataset"]["relative_path"]\n'
+            )
+            validate_experiment_plan(node, plan, run_dir)
 
 
 if __name__ == "__main__":

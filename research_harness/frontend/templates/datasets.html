@@ -42,7 +42,8 @@
           <thead>
             <tr style="border-bottom: 1px solid #444;">
               <th style="text-align: left; padding: 0.5rem;">id</th>
-              <th style="text-align: left; padding: 0.5rem;">kind</th>
+              <th style="text-align: left; padding: 0.5rem;">type / role</th>
+              <th style="text-align: left; padding: 0.5rem;">readiness</th>
               <th style="text-align: left; padding: 0.5rem;">scope</th>
               <th style="text-align: left; padding: 0.5rem;">source</th>
               <th style="text-align: left; padding: 0.5rem;">provenance</th>
@@ -53,7 +54,11 @@
             {% for a in adapters %}
               <tr style="border-bottom: 1px solid #2a2a2a;">
                 <td style="padding: 0.5rem;"><code>{{ a.id }}</code></td>
-                <td style="padding: 0.5rem;">{{ a.kind or "—" }}</td>
+                <td style="padding: 0.5rem;">{{ a.materializer_type or "-" }} / {{ a.role or "-" }}</td>
+                <td style="padding: 0.5rem;">
+                  <span class="badge {% if a.status == 'ready' %}live{% endif %}">{{ a.status }}</span>
+                  {% if a.error %}<div class="hint">{{ a.error }}</div>{% endif %}
+                </td>
                 <td style="padding: 0.5rem;">
                   <span class="badge {% if a._scope == 'operator' %}live{% else %}auto{% endif %}">{{ a._scope }}</span>
                 </td>
@@ -98,9 +103,15 @@
                      placeholder="my_dataset_2026">
             </label>
             <label>
-              <span>kind</span>
-              <select name="kind" required>
-                {% for k in allowed_kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}
+              <span>materializer type</span>
+              <select name="materializer_type" required>
+                {% for k in materializer_types %}<option value="{{ k }}">{{ k }}</option>{% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>role</span>
+              <select name="role" required>
+                {% for role in dataset_roles %}<option value="{{ role }}">{{ role }}</option>{% endfor %}
               </select>
             </label>
             <label>
@@ -128,9 +139,15 @@
                      placeholder="wq_brain_snapshot_2024">
             </label>
             <label>
-              <span>kind</span>
-              <select name="kind" required>
-                {% for k in allowed_kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}
+              <span>materializer type</span>
+              <select name="materializer_type" required>
+                {% for k in materializer_types %}<option value="{{ k }}">{{ k }}</option>{% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>role</span>
+              <select name="role" required>
+                {% for role in dataset_roles %}<option value="{{ role }}">{{ role }}</option>{% endfor %}
               </select>
             </label>
             <label>

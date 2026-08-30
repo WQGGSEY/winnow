@@ -20,21 +20,35 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def _make_completed(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(
-        args=["claude"], returncode=returncode, stdout=stdout, stderr=""
+        args=["codex"], returncode=returncode, stdout=stdout, stderr=""
     )
 
 
 def _wrap_assistant_text(text: str, cost: float = 0.001) -> str:
-    payload = {
-        "type": "result",
-        "subtype": "success",
-        "is_error": False,
-        "num_turns": 1,
-        "result": text,
-        "total_cost_usd": cost,
-        "usage": {"input_tokens": 10, "output_tokens": 5},
-    }
-    return json.dumps(payload)
+    del cost
+    return "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "test"}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"type": "agent_message", "text": text},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "turn.completed",
+                    "usage": {
+                        "input_tokens": 10,
+                        "cached_input_tokens": 2,
+                        "cache_write_input_tokens": 1,
+                        "output_tokens": 5,
+                        "reasoning_output_tokens": 3,
+                    },
+                }
+            ),
+        ]
+    )
 
 
 class FakeClaudeRunner:
@@ -45,7 +59,7 @@ class FakeClaudeRunner:
     def __call__(self, cmd, *, input, capture_output, text, timeout, check, env):
         self.calls.append({"cmd": cmd, "input": input, "env_keys": list(env.keys())})
         if not self.responses:
-            raise AssertionError("FakeClaudeRunner exhausted responses")
+            raise AssertionError("Fake runner exhausted responses")
         return _make_completed(self.responses.pop(0))
 
 
@@ -59,7 +73,7 @@ class GrillingTests(unittest.TestCase):
                 billing_ack=False,
             )
             self.assertEqual(session["status"], "blocked_by_gate")
-            self.assertIn("RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE", session["error"])
+            self.assertIn("RESEARCH_HARNESS_ALLOW_CODEX_LIVE", session["error"])
             self.assertTrue((Path(tmp) / "grilling_session.json").exists())
 
     def test_execution_gate_blocks_after_billing(self) -> None:
@@ -144,7 +158,8 @@ class GrillingTests(unittest.TestCase):
             self.assertEqual(session["rounds"][0]["question"], "what domain?")
             self.assertEqual(session["rounds"][0]["user_response"], "summarization of long docs")
             self.assertEqual(session["usage_estimate"]["rounds_used"], 3)
-            self.assertGreater(session["usage_estimate"]["total_cost_usd"], 0)
+            self.assertNotIn("total_cost_usd", session["usage_estimate"])
+            self.assertEqual(session["usage_estimate"]["cached_input_tokens"], 6)
 
     def test_max_rounds_forces_extract(self) -> None:
         extracted = {

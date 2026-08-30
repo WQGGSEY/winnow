@@ -21,7 +21,7 @@ def _valid_envelope() -> dict:
             {"kind": "synthetic", "id": "synth_panel_v1"},
         ],
         "llm_oracles_available": [
-            {"kind": "subscription_claude_code", "model": "claude-opus-4-7"},
+            {"kind": "subscription_codex", "model": "gpt-5.6-sol"},
         ],
         "compute_budget": {
             "max_runner_seconds_per_node": 900,

@@ -22,7 +22,33 @@
       "type": "string",
       "enum": ["queued", "running", "done", "pruned"]
     },
-    "reason": { "type": "string" }
+    "reason": { "type": "string" },
+    "priority_components": {
+      "type": "object",
+      "required": [
+        "bar_gap_closure",
+        "information_gain",
+        "mechanism_novelty",
+        "capability_fit",
+        "normalized_cost",
+        "evidence_basis",
+        "score"
+      ],
+      "properties": {
+        "bar_gap_closure": { "type": "number", "minimum": 0, "maximum": 1 },
+        "information_gain": { "type": "number", "minimum": 0, "maximum": 1 },
+        "mechanism_novelty": { "type": "number", "minimum": 0, "maximum": 1 },
+        "capability_fit": { "type": "number", "minimum": 0, "maximum": 1 },
+        "normalized_cost": { "type": "number", "minimum": 0, "maximum": 1 },
+        "evidence_basis": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^observation_[a-f0-9]{64}$" },
+          "minItems": 1
+        },
+        "score": { "type": "number" }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

@@ -47,7 +47,7 @@ def _make_search_state(node_types: list[str]) -> dict:
                     "taste_constraints_applied": [],
                 },
                 "claim_contract": {
-                    "claim_under_test": f"{t} claim about something specific.",
+                    "claim_under_test": "A shared problem-level test claim.",
                     "mandatory_baselines": ["a", "b", "c"],
                     "success_criteria": ["s1"],
                     "disproof_conditions": ["d1"],
@@ -128,6 +128,14 @@ class MCPServerTests(unittest.TestCase):
     def test_tools_list_exposes_all_expected_tools(self) -> None:
         r = srv._handle_request({"id": 1, "method": "tools/list"}, {})
         names = {t["name"] for t in r["result"]["tools"]}
+        design_tool = next(
+            tool
+            for tool in r["result"]["tools"]
+            if tool["name"] == "design_experiment_template"
+        )
+        self.assertIn("EVIDENCE OUTPUT CONTRACT", design_tool["description"])
+        self.assertIn("top-level `baselines`", design_tool["description"])
+        self.assertIn("primary_dataset.relative_path", design_tool["description"])
         # Pre-Phase-A baseline tools (deterministic pipeline).
         baseline_expected = {
             "get_research_state",

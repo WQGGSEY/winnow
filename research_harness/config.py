@@ -216,13 +216,13 @@ def load_lessons(repo_root: Path) -> dict[str, Any]:
 
 
 def resolve_agent_model(settings: Mapping[str, Any], role: str) -> str:
-    """Pick the model name for a given agent role.
+    """Pick the Codex model name for an active agent role.
 
     Resolution order:
       1. settings.runtime.agent_models.<role>
       2. settings.runtime.agent_models.default
-      3. settings.runtime.worker_backends.claude_code_live.model
-      4. literal "claude-sonnet-4-6" as a last-resort default.
+      3. settings.runtime.worker_backends.codex_live.model
+      4. literal "gpt-5.6-sol" as a last-resort default.
 
     Accepts any ``Mapping`` so that ADR-0005 ``ResolvedSettings`` (which is
     a Mapping but not a dict subclass) flows through the same path as a
@@ -239,24 +239,38 @@ def resolve_agent_model(settings: Mapping[str, Any], role: str) -> str:
         if isinstance(default, str) and default.strip():
             return default
     live = (
-        runtime.get("worker_backends", {}).get("claude_code_live", {})
+        runtime.get("worker_backends", {}).get("codex_live", {})
         if isinstance(runtime.get("worker_backends"), Mapping)
         else {}
     )
     fallback = live.get("model") if isinstance(live, Mapping) else None
     if isinstance(fallback, str) and fallback.strip():
         return fallback
+    return "gpt-5.6-sol"
+
+
+def resolve_legacy_claude_agent_model(settings: Mapping[str, Any], role: str) -> str:
+    """Pick a Claude model only for the dormant market, refiner, and lesson code."""
+
+    runtime = settings.get("runtime", {}) if isinstance(settings, Mapping) else {}
+    models = runtime.get("legacy_claude_agent_models", {}) or {}
+    if isinstance(models, Mapping):
+        explicit = models.get(role)
+        if isinstance(explicit, str) and explicit.strip():
+            return explicit
+        default = models.get("default")
+        if isinstance(default, str) and default.strip():
+            return default
     return "claude-sonnet-4-6"
 
 
 def resolve_agent_budget(settings: Mapping[str, Any], role: str) -> str:
-    """Pick the per-call USD budget cap for a given agent role.
+    """Pick a Claude USD cap only for dormant legacy agent code.
 
-    Resolution order (mirrors ``resolve_agent_model``):
-      1. settings.runtime.agent_budgets.<role>
-      2. settings.runtime.agent_budgets.default
-      3. settings.runtime.worker_backends.claude_code_live.max_budget_usd
-      4. literal "0.25" as a last-resort default.
+    Resolution order:
+      1. settings.runtime.legacy_claude_agent_budgets.<role>
+      2. settings.runtime.legacy_claude_agent_budgets.default
+      3. literal "0.25" as a last-resort default.
 
     Returns the value as a string because that's what the Claude CLI's
     ``--max-budget-usd`` flag expects. Values in settings may be either
@@ -265,7 +279,7 @@ def resolve_agent_budget(settings: Mapping[str, Any], role: str) -> str:
     """
 
     runtime = settings.get("runtime", {}) if isinstance(settings, Mapping) else {}
-    agent_budgets = runtime.get("agent_budgets", {}) or {}
+    agent_budgets = runtime.get("legacy_claude_agent_budgets", {}) or {}
     if isinstance(agent_budgets, Mapping):
         explicit = agent_budgets.get(role)
         if explicit is not None and str(explicit).strip():
@@ -273,14 +287,6 @@ def resolve_agent_budget(settings: Mapping[str, Any], role: str) -> str:
         default = agent_budgets.get("default")
         if default is not None and str(default).strip():
             return str(default)
-    live = (
-        runtime.get("worker_backends", {}).get("claude_code_live", {})
-        if isinstance(runtime.get("worker_backends"), Mapping)
-        else {}
-    )
-    fallback = live.get("max_budget_usd") if isinstance(live, Mapping) else None
-    if fallback is not None and str(fallback).strip():
-        return str(fallback)
     return "0.25"
 
 
@@ -431,4 +437,3 @@ def load_critic_profile(path: Path) -> dict[str, Any]:
     frontmatter["body"] = body
     frontmatter["path"] = str(path)
     return frontmatter
-

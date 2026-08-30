@@ -74,7 +74,16 @@
       },
       "additionalProperties": true
     },
-    "inputs": { "type": "object" },
+    "inputs": {
+      "type": "object",
+      "properties": {
+        "datasets": { "type": "array" },
+        "snapshots": { "type": "array" },
+        "runtime_manifest": { "type": "string", "minLength": 1 },
+        "snapshot_id": { "type": "string", "pattern": "^as_[a-f0-9]{64}$" }
+      },
+      "additionalProperties": false
+    },
     "expected_outputs": { "type": "object" },
     "baseline_evidence_requirements": {
       "type": "array",

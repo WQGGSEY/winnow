@@ -35,7 +35,7 @@
     inspectorTitle.textContent = "No graph data yet";
     inspectorSubtitle.textContent =
       "Run production to populate the claim tree. This page polls "
-      + "/api/threads/<tid>/graph_data — when Claude Code commits the "
+      + "/api/threads/<tid>/graph_data — when Codex commits the "
       + "first node, the graph will appear automatically.";
     // Do NOT return — we still want the polling block at the bottom to
     // register so the empty page upgrades itself when nodes show up.
@@ -567,7 +567,7 @@
     }
   }
 
-  // Track which nodes Claude Code is currently mid-way through. Server
+  // Track which nodes Codex is currently processing. Server
   // returns this on /graph_data as `in_progress_nodes`. We mark the SVG
   // <g> with .in-progress so CSS can pulse the ring, and surface a small
   // "working on" pill in the topbar so the operator doesn't have to scan
@@ -665,7 +665,7 @@
 
   // --- 6. Helpers --------------------------------------------------------
 
-  // Older dialog.json entries can carry trailing Claude Code tool-call
+  // Older dialog.json entries can carry trailing agent tool-call
   // envelope leakage — closing </commentary>, </response_to_grad_student>,
   // </invoke>, or a stray <parameter name="...">JSON</parameter> block
   // appended after the real prose. The MCP server now sanitizes new

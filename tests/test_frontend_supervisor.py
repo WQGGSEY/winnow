@@ -99,6 +99,115 @@ class SupervisorRoutesTests(unittest.TestCase):
             )
             self.assertEqual(r.status_code, 400)
 
+    def test_deployment_start_rejects_without_ready_adapter(self):
+        with TemporaryDirectory() as tmp:
+            repo = _setup_repo(Path(tmp))
+            client = self._client(repo)
+
+            r = client.post(
+                "/api/threads/thread_t1/supervisor/start",
+                json={"target_scope": "deployment"},
+            )
+
+            self.assertEqual(r.status_code, 400)
+            self.assertIn("requires", r.text)
+
+    def test_start_passes_ready_adapter_to_supervisor(self):
+        with TemporaryDirectory() as tmp:
+            repo = _setup_repo(Path(tmp))
+            source = repo / "dataset.json"
+            source.write_text("{}", encoding="utf-8")
+            (repo / "settings.json").write_text(
+                json.dumps(
+                    {
+                        "data_adapters": {
+                            "registered": [
+                                {
+                                    "id": "local_data",
+                                    "materializer_type": "benchmark",
+                                    "role": "evaluation",
+                                    "source": str(source),
+                                    "provenance": "fixture",
+                                }
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            client = self._client(repo)
+            with mock.patch.object(fserver, "subprocess") as proc_mod:
+                fake_proc = mock.MagicMock(pid=12345)
+                proc_mod.Popen.return_value = fake_proc
+                proc_mod.STDOUT = -2
+                proc_mod.DEVNULL = -3
+
+                r = client.post(
+                    "/api/threads/thread_t1/supervisor/start",
+                    json={"target_scope": "deployment"},
+                )
+
+            self.assertEqual(r.status_code, 200, r.text)
+            command = proc_mod.Popen.call_args.args[0]
+            self.assertIn("--data-source-anchor", command)
+            self.assertEqual(
+                command[command.index("--data-source-anchor") + 1], "local_data"
+            )
+            self.assertEqual(r.json()["data_source_anchor"], "local_data")
+
+    def test_start_rejects_selection_that_conflicts_with_existing_envelope(self):
+        with TemporaryDirectory() as tmp:
+            repo = _setup_repo(Path(tmp))
+            source = repo / "dataset.json"
+            source.write_text("{}", encoding="utf-8")
+            (repo / "settings.json").write_text(
+                json.dumps(
+                    {
+                        "data_adapters": {
+                            "registered": [
+                                {
+                                    "id": "local_data",
+                                    "materializer_type": "benchmark",
+                                    "role": "evaluation",
+                                    "source": str(source),
+                                    "provenance": "fixture",
+                                }
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            envelope = repo / "runs" / "threads" / "thread_t1" / "production" / "feasibility_envelope.json"
+            envelope.write_text(
+                json.dumps(
+                    {
+                        "operator_intent": {
+                            "target_deploy_grade_scope": "directional",
+                            "data_source_anchor": "local_data",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            client = self._client(repo)
+
+            with mock.patch.object(fserver, "subprocess") as proc_mod:
+                proc_mod.Popen.return_value = mock.MagicMock(pid=12345)
+                proc_mod.STDOUT = -2
+                proc_mod.DEVNULL = -3
+                r = client.post(
+                    "/api/threads/thread_t1/supervisor/start",
+                    json={
+                        "target_scope": "deployment",
+                        "data_source_anchor": "local_data",
+                    },
+                )
+
+            self.assertEqual(r.status_code, 409)
+            self.assertIn("existing feasibility envelope", r.text)
+            proc_mod.Popen.assert_not_called()
+
     def test_start_spawns_subprocess(self):
         with TemporaryDirectory() as tmp:
             repo = _setup_repo(Path(tmp))

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from research_harness.connector.claude_call import CommandRunner, call_claude_json
+from research_harness.connector.codex_call import CommandRunner, call_agent_json
 
 # A constructed correspondence with at least this many non-trivial element↔
 # counterpart pairs counts as a demonstration → pass. Lenient on purpose.
@@ -76,8 +76,7 @@ def prune1_check(
     reading: dict[str, Any],
     *,
     model: str,
-    max_budget: str,
-    claude_path: str,
+    codex_path: str,
     runner: CommandRunner,
     min_pairs: int = MIN_CORRESPONDENCE_PAIRS,
     timeout_seconds: int = 180,
@@ -89,12 +88,11 @@ def prune1_check(
     ``constructible`` self-report.
     """
     field_code = reading.get("field", {}).get("code")
-    parsed, usage = call_claude_json(
+    parsed, usage = call_agent_json(
         system_prompt=_SYSTEM_PROMPT,
         user_prompt=_build_user_prompt(abstraction_text, reading),
         model=model,
-        max_budget=max_budget,
-        claude_path=claude_path,
+        codex_path=codex_path,
         runner=runner,
         timeout_seconds=timeout_seconds,
         label=f"prune1[{field_code}]",
@@ -111,5 +109,5 @@ def prune1_check(
         # drive the verdict (a declared value the harness does not trust).
         "llm_constructible_flag": bool(parsed.get("constructible")),
         "note": str(parsed.get("note") or "").strip(),
-        "usage": usage,
+        "usage": usage.as_dict(),
     }

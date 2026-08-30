@@ -113,7 +113,8 @@ class DatasetsModuleTests(unittest.TestCase):
         datasets.register_adapter(
             self.repo,
             adapter_id="local_x",
-            kind="custom",
+            materializer_type="custom",
+            role="other",
             source="file:///abs/local/x",
             provenance="manually placed",
         )
@@ -127,21 +128,24 @@ class DatasetsModuleTests(unittest.TestCase):
         datasets.register_adapter(
             self.repo,
             adapter_id="dup",
-            kind="custom",
+            materializer_type="custom",
+            role="other",
             source="file:///v1",
             provenance="first",
         )
         datasets.register_adapter(
             self.repo,
             adapter_id="dup",
-            kind="raw_data",
+            materializer_type="raw_data",
+            role="training",
             source="file:///v2",
             provenance="second",
         )
         regs = _read_local(self.repo)["data_adapters"]["registered"]
         self.assertEqual(len(regs), 1)
         self.assertEqual(regs[0]["source"], "file:///v2")
-        self.assertEqual(regs[0]["kind"], "raw_data")
+        self.assertEqual(regs[0]["materializer_type"], "raw_data")
+        self.assertEqual(regs[0]["role"], "training")
 
     def test_register_preserves_other_operator_keys(self) -> None:
         # Pre-existing operator state (e.g. ack settings) must survive registration.
@@ -152,7 +156,8 @@ class DatasetsModuleTests(unittest.TestCase):
         datasets.register_adapter(
             self.repo,
             adapter_id="a",
-            kind="custom",
+            materializer_type="custom",
+            role="other",
             source="/abs/a",
             provenance="p",
         )
@@ -167,7 +172,8 @@ class DatasetsModuleTests(unittest.TestCase):
             datasets.register_adapter(
                 self.repo,
                 adapter_id="x",
-                kind="bogus_kind",
+                materializer_type="bogus_kind",
+                role="other",
                 source="/abs/x",
                 provenance="p",
             )
@@ -178,7 +184,8 @@ class DatasetsModuleTests(unittest.TestCase):
             datasets.register_adapter(
                 self.repo,
                 adapter_id="x",
-                kind="custom",
+                materializer_type="custom",
+                role="other",
                 source="https://example.com/data.csv",
                 provenance="p",
             )
@@ -189,21 +196,23 @@ class DatasetsModuleTests(unittest.TestCase):
         _seed_project_settings(
             self.repo,
             [
-                {"id": "proj_a", "kind": "benchmark", "source": "hf://x", "provenance": "pa"},
-                {"id": "both", "kind": "custom", "source": "/proj/path", "provenance": "from-project"},
+                {"id": "proj_a", "materializer_type": "benchmark", "role": "evaluation", "source": "/missing/project", "provenance": "pa"},
+                {"id": "both", "materializer_type": "custom", "role": "other", "source": "/proj/path", "provenance": "from-project"},
             ],
         )
         datasets.register_adapter(
             self.repo,
             adapter_id="op_b",
-            kind="custom",
+            materializer_type="custom",
+            role="other",
             source="/op/path",
             provenance="from-operator",
         )
         datasets.register_adapter(
             self.repo,
             adapter_id="both",
-            kind="custom",
+            materializer_type="custom",
+            role="other",
             source="/op/override",
             provenance="overridden",
         )
@@ -230,7 +239,8 @@ class DatasetsModuleTests(unittest.TestCase):
         datasets.register_adapter(
             self.repo,
             adapter_id="del_me",
-            kind="custom",
+            materializer_type="custom",
+            role="other",
             source=f"file://{result.materialized_path}",
             provenance="to be deleted",
         )
@@ -256,7 +266,8 @@ class DatasetsModuleTests(unittest.TestCase):
         datasets.register_adapter(
             self.repo,
             adapter_id="external",
-            kind="custom",
+            materializer_type="custom",
+            role="other",
             source=f"file://{external}",
             provenance="path-registered, lives outside uploads",
         )
@@ -283,13 +294,17 @@ class DatasetsRoutesTests(unittest.TestCase):
             "/datasets/upload",
             data={
                 "adapter_id": "upload_test",
-                "kind": "custom",
+                "materializer_type": "custom",
+                "role": "other",
                 "provenance": "test upload",
             },
             files={"file": ("data.csv", b"a,b\n1,2\n", "text/csv")},
         )
         self.assertEqual(resp.status_code, 200)
         self.assertIn("Uploaded and registered upload_test", resp.text)
+        self.assertIn("upload_test", resp.text)
+        self.assertIn("ready", resp.text)
+        self.assertIn('/datasets/upload_test/delete', resp.text)
         # File on disk
         target = datasets.upload_root(self.repo) / "upload_test" / "data.csv"
         self.assertTrue(target.exists())
@@ -297,12 +312,14 @@ class DatasetsRoutesTests(unittest.TestCase):
         regs = _read_local(self.repo)["data_adapters"]["registered"]
         self.assertEqual(len(regs), 1)
         self.assertEqual(regs[0]["id"], "upload_test")
+        self.assertEqual(regs[0]["materializer_type"], "custom")
+        self.assertEqual(regs[0]["role"], "other")
         self.assertIn("_upload", regs[0])
 
     def test_upload_rejects_bad_extension_via_route(self) -> None:
         resp = self.client.post(
             "/datasets/upload",
-            data={"adapter_id": "evil", "kind": "custom", "provenance": "p"},
+            data={"adapter_id": "evil", "materializer_type": "custom", "role": "other", "provenance": "p"},
             files={"file": ("payload.sh", b"#!/bin/sh\n", "application/x-sh")},
         )
         self.assertEqual(resp.status_code, 200)
@@ -315,7 +332,8 @@ class DatasetsRoutesTests(unittest.TestCase):
             "/datasets/register",
             data={
                 "adapter_id": "path_reg",
-                "kind": "custom",
+                "materializer_type": "custom",
+                "role": "other",
                 "source": "/abs/some/path",
                 "provenance": "registered by path",
             },
@@ -333,7 +351,8 @@ class DatasetsRoutesTests(unittest.TestCase):
             "/datasets/register",
             data={
                 "adapter_id": "del_test",
-                "kind": "custom",
+                "materializer_type": "custom",
+                "role": "other",
                 "source": "/abs/x",
                 "provenance": "to be deleted",
             },

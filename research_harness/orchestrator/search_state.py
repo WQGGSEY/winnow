@@ -15,7 +15,7 @@ class SearchStateError(ValueError):
 ALLOWED_TRANSITIONS = {
     "proposed": {"ready", "pruned"},
     "ready": {"running", "pruned", "blocked"},
-    "running": {"completed_worker_report", "blocked", "failed"},
+    "running": {"ready", "completed_worker_report", "blocked", "failed"},
     "completed_worker_report": {"critic_reviewed", "blocked", "failed"},
     "critic_reviewed": {"orchestrator_reduced", "blocked", "failed"},
     "orchestrator_reduced": {"promoted", "needs_child_branch", "pruned", "blocked", "failed"},
@@ -184,7 +184,9 @@ def _frontier_depth(state: dict[str, Any], node_id: str) -> int:
 
 
 def _update_frontier_status(state: dict[str, Any], node_id: str, node_status: str) -> None:
-    if node_status == "running":
+    if node_status == "ready":
+        frontier_status = "queued"
+    elif node_status == "running":
         frontier_status = "running"
     elif node_status in TERMINAL_STATUSES or node_status in {
         "completed_worker_report",

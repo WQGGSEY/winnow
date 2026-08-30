@@ -27,7 +27,7 @@
   "properties": {
     "backend": {
       "type": "string",
-      "enum": ["claude_code_dry_run", "claude_code_live"]
+      "enum": ["codex_dry_run", "codex_live"]
     },
     "invocation_id": { "type": "string", "pattern": "^invoke_[A-Za-z0-9_\\-]+$" },
     "node_id": { "type": "string" },

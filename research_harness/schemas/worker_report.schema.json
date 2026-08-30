@@ -55,7 +55,25 @@
         "additionalProperties": false
       }
     },
-    "failure_record_candidate": { "type": ["object", "null"] }
+    "failure_record_candidate": { "type": ["object", "null"] },
+    "input_evidence": {
+      "type": "object",
+      "required": [
+        "adapter_id",
+        "snapshot_id",
+        "content_sha256",
+        "manifest_sha256",
+        "manifest_path"
+      ],
+      "properties": {
+        "adapter_id": { "type": "string", "minLength": 1 },
+        "snapshot_id": { "type": "string", "pattern": "^as_[a-f0-9]{64}$" },
+        "content_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "manifest_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "manifest_path": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

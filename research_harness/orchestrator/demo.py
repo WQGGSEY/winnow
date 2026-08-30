@@ -30,7 +30,7 @@ from research_harness.publishing.rebuttal import (
 from research_harness.runner.evidence import build_worker_report_from_runner_evidence
 from research_harness.runner.local_runner import LocalRunner
 from research_harness.schemas.validator import validate_named_schema
-from research_harness.workers.claude_code_invoker import ClaudeCodeInvoker
+from research_harness.workers.codex_invoker import CodexInvoker
 from research_harness.workers.workspace import prepare_node_workspace
 
 
@@ -63,7 +63,7 @@ def _demo_node() -> dict[str, Any]:
             ],
             "inherited_assumptions": [
                 "Outer orchestrator owns search policy.",
-                "Claude Code workers are bounded tools, not autonomous researchers.",
+                "Codex workers are bounded tools, not autonomous researchers.",
             ],
             "introduced_assumptions": [
                 "Runtime envelopes are sufficient to make subscription workers usable in the tree.",
@@ -76,13 +76,13 @@ def _demo_node() -> dict[str, Any]:
         },
         "claim_contract": {
             "claim_under_test": (
-                "A Sakana-v2-compatible harness can use bounded Claude Code "
+                "A Sakana-v2-compatible harness can use bounded Codex "
                 "subscription workers without corrupting the outer tree search."
             ),
             "mandatory_baselines": [
                 "current_best_known: Sakana AI Scientist-v2 search skeleton",
-                "naive: direct llm.generate to Claude Code port",
-                "random_or_null: ad hoc Claude Code sessions without harness",
+                "naive: direct llm.generate to Codex port",
+                "random_or_null: ad hoc Codex sessions without harness",
             ],
             "success_criteria": [
                 "Worker writes only node-local artifacts.",
@@ -161,7 +161,7 @@ def run_demo(repo_root: Path | None = None, run_dir: Path | None = None) -> Path
     _write_json(run_dir / "experiment_plan.json", experiment_plan)
 
     workspace_paths = prepare_node_workspace(run_dir, node["id"])
-    invocation_envelope = ClaudeCodeInvoker(
+    invocation_envelope = CodexInvoker(
         workspace_paths["workspace"],
         settings,
         repo_root=repo_root,

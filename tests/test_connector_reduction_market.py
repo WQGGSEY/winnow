@@ -69,14 +69,11 @@ def test_research_far_method_degrades_on_fetch_error():
 
 
 def _envelope(inner_obj):
-    return json.dumps(
-        {
-            "type": "result",
-            "is_error": False,
-            "result": json.dumps(inner_obj),
-            "total_cost_usd": 0.02,
-            "usage": {"input_tokens": 9, "output_tokens": 13},
-        }
+    return "\n".join(
+        [
+            json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(inner_obj)}}),
+            json.dumps({"type": "turn.completed", "usage": {"input_tokens": 9, "output_tokens": 13}}),
+        ]
     )
 
 
@@ -133,8 +130,8 @@ _WELL_FORMED = {
 
 def test_reduce_produces_claim_contract_when_well_formed():
     fake = FakeClaude([_WELL_FORMED])
-    out = reduce_to_claim(_grilling(), _reading(), _prune1(), model="m", max_budget="1",
-                          claude_path="claude", runner=fake,
+    out = reduce_to_claim(_grilling(), _reading(), _prune1(), model="m",
+                          codex_path="codex", runner=fake,
                           method_research={"papers": [{"title": "Replicator Dynamics on Networks", "url": "u"}]})
     assert out["reduced"] is True
     cc = out["claim_contract"]
@@ -152,8 +149,8 @@ def test_reduce_produces_claim_contract_when_well_formed():
 def test_reduce_malformed_contract_kills_reading():
     bad = dict(_WELL_FORMED, mandatory_baselines=[])  # well-formedness fails
     fake = FakeClaude([bad])
-    out = reduce_to_claim(_grilling(), _reading(), _prune1(), model="m", max_budget="1",
-                          claude_path="claude", runner=fake)
+    out = reduce_to_claim(_grilling(), _reading(), _prune1(), model="m",
+                          codex_path="codex", runner=fake)
     assert out["reduced"] is False
     assert out["claim_contract"] is None
     assert out["well_formed"] is False
@@ -162,8 +159,8 @@ def test_reduce_malformed_contract_kills_reading():
 def test_reduce_explicit_decline_kills_even_if_fields_present():
     declined = dict(_WELL_FORMED, reducible=False)  # all fields present but declined
     fake = FakeClaude([declined])
-    out = reduce_to_claim(_grilling(), _reading(), _prune1(), model="m", max_budget="1",
-                          claude_path="claude", runner=fake)
+    out = reduce_to_claim(_grilling(), _reading(), _prune1(), model="m",
+                          codex_path="codex", runner=fake)
     assert out["reduced"] is False
     assert out["claim_contract"] is None
     assert out["well_formed"] is True  # fields were fine; the model declined

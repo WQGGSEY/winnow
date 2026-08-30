@@ -65,7 +65,7 @@ def build_live_dispatch_plan(
     *,
     run_dir: Path | None = None,
     node_id: str | None = None,
-    claude_path: str | None = None,
+    codex_path: str | None = None,
     billing_ack: bool | None = None,
 ) -> dict[str, Any]:
     """Create a non-executing live dispatch plan for one queued search node."""
@@ -79,7 +79,7 @@ def build_live_dispatch_plan(
         repo_root,
         target["node"],
         run_dir=live_run_dir,
-        claude_path=claude_path,
+        codex_path=codex_path,
         billing_ack=billing_ack,
     )
     dispatch = _build_dispatch_record(
@@ -105,7 +105,7 @@ def run_live_dispatch_once(
     *,
     run_dir: Path | None = None,
     node_id: str | None = None,
-    claude_path: str | None = None,
+    codex_path: str | None = None,
     billing_ack: bool | None = None,
     execution_ack: bool | None = None,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
@@ -122,7 +122,7 @@ def run_live_dispatch_once(
         repo_root,
         target["node"],
         run_dir=live_run_dir,
-        claude_path=claude_path,
+        codex_path=codex_path,
         billing_ack=billing_ack,
         execution_ack=execution_ack,
         timeout_seconds=timeout_seconds,
@@ -200,7 +200,7 @@ def _build_dispatch_record(
         load_settings(repo_root)
         .get("runtime", {})
         .get("worker_backends", {})
-        .get("claude_code_live", {})
+        .get("codex_live", {})
     )
     dispatch = {
         "type": "live_node_dispatch",
@@ -258,7 +258,7 @@ def main() -> None:
     parser.add_argument("--search-state", required=True, type=Path)
     parser.add_argument("--run-dir", type=Path)
     parser.add_argument("--node-id")
-    parser.add_argument("--claude-path")
+    parser.add_argument("--codex-path")
     parser.add_argument("--billing-ack", action="store_true")
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--execute-ack", action="store_true")
@@ -273,7 +273,7 @@ def main() -> None:
                 args.search_state,
                 run_dir=args.run_dir,
                 node_id=args.node_id,
-                claude_path=args.claude_path,
+                codex_path=args.codex_path,
                 billing_ack=True if args.billing_ack else None,
                 execution_ack=True if args.execute_ack else None,
                 timeout_seconds=args.timeout_seconds,
@@ -284,7 +284,7 @@ def main() -> None:
                 args.search_state,
                 run_dir=args.run_dir,
                 node_id=args.node_id,
-                claude_path=args.claude_path,
+                codex_path=args.codex_path,
                 billing_ack=True if args.billing_ack else None,
             )
     except LiveDispatchError as exc:

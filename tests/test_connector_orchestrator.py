@@ -30,15 +30,16 @@ _CLEAN_ABSTRACTION = (
 
 
 def _envelope(inner_obj):
-    return json.dumps({
-        "type": "result", "is_error": False,
-        "result": json.dumps(inner_obj),
-        "total_cost_usd": 0.01, "usage": {"input_tokens": 3, "output_tokens": 4},
-    })
+    return "\n".join(
+        [
+            json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(inner_obj)}}),
+            json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3, "output_tokens": 4}}),
+        ]
+    )
 
 
-class RoutingFakeClaude:
-    """Routes each call to a canned response by its system-prompt; records all."""
+class RoutingFakeCodex:
+    """Route each call by its composed instructions and record the prompt."""
 
     def __init__(self, responses):
         self.responses = responses  # kind -> dict (inner obj) or "ERROR"
@@ -51,7 +52,7 @@ class RoutingFakeClaude:
         return "unknown"
 
     def __call__(self, cmd, **kwargs):
-        system = cmd[cmd.index("--system-prompt") + 1]
+        system = kwargs.get("input") or ""
         kind = self._route(system)
         self.calls.append({"kind": kind, "user": kwargs.get("input")})
         resp = self.responses.get(kind, "ERROR")
@@ -115,7 +116,7 @@ def _fetcher(url):
 
 
 def test_happy_path_keeps_quota_claims_and_writes_valid_session(tmp_path):
-    fake = RoutingFakeClaude({
+    fake = RoutingFakeCodex({
         "abstraction": _ABSTRACTION_OK, "reading": _READING_OK,
         "prune1": _PRUNE1_PASS, "reduction": _REDUCE_OK,
     })
@@ -143,7 +144,7 @@ def test_happy_path_keeps_quota_claims_and_writes_valid_session(tmp_path):
 
 
 def test_firewall_p_absent_from_p_blind_steps(tmp_path):
-    fake = RoutingFakeClaude({
+    fake = RoutingFakeCodex({
         "abstraction": _ABSTRACTION_OK, "reading": _READING_OK,
         "prune1": _PRUNE1_PASS, "reduction": _REDUCE_OK,
     })
@@ -165,7 +166,7 @@ def test_firewall_p_absent_from_p_blind_steps(tmp_path):
 
 
 def test_prune1_all_fail_yields_no_claims_and_logs_cap(tmp_path):
-    fake = RoutingFakeClaude({
+    fake = RoutingFakeCodex({
         "abstraction": _ABSTRACTION_OK, "reading": _READING_OK,
         "prune1": _PRUNE1_FAIL, "reduction": _REDUCE_OK,
     })
@@ -184,7 +185,7 @@ def test_prune1_all_fail_yields_no_claims_and_logs_cap(tmp_path):
 
 
 def test_reduction_decline_yields_no_claims(tmp_path):
-    fake = RoutingFakeClaude({
+    fake = RoutingFakeCodex({
         "abstraction": _ABSTRACTION_OK, "reading": _READING_OK,
         "prune1": _PRUNE1_PASS, "reduction": _REDUCE_DECLINE,
     })
@@ -199,7 +200,7 @@ def test_reduction_decline_yields_no_claims(tmp_path):
 
 
 def test_blocked_by_ack_does_not_call_model(tmp_path):
-    fake = RoutingFakeClaude({"abstraction": _ABSTRACTION_OK})
+    fake = RoutingFakeCodex({"abstraction": _ABSTRACTION_OK})
     out = run_domain_connector(
         REPO_ROOT, _valid_grilling(), run_dir=tmp_path / "connector",
         billing_ack=False, execution_ack=True, command_runner=fake,
@@ -213,7 +214,7 @@ def test_blocked_by_ack_does_not_call_model(tmp_path):
 def test_per_field_llm_error_is_logged_not_fatal(tmp_path):
     # abstraction OK, but every reading errors → each attempt records the error,
     # the loop survives, and we end cleanly with no claims.
-    fake = RoutingFakeClaude({"abstraction": _ABSTRACTION_OK, "reading": "ERROR"})
+    fake = RoutingFakeCodex({"abstraction": _ABSTRACTION_OK, "reading": "ERROR"})
     out = run_domain_connector(
         REPO_ROOT, _valid_grilling(), run_dir=tmp_path / "connector",
         billing_ack=True, execution_ack=True, command_runner=fake,
@@ -228,7 +229,7 @@ def test_per_field_llm_error_is_logged_not_fatal(tmp_path):
 def test_emits_live_progress_events(tmp_path):
     # The event_emitter (bridged to SSE by the frontend) sees the full narrative:
     # abstraction -> per-field reading/prune-1/reduction -> claim kept.
-    fake = RoutingFakeClaude({
+    fake = RoutingFakeCodex({
         "abstraction": _ABSTRACTION_OK, "reading": _READING_OK,
         "prune1": _PRUNE1_PASS, "reduction": _REDUCE_OK,
     })

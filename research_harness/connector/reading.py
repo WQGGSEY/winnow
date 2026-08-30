@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from research_harness.connector.claude_call import CommandRunner, call_claude_json
+from research_harness.connector.codex_call import CommandRunner, call_agent_json
 
 _SYSTEM_PROMPT = (
     "You read a single vague structural skeleton through the lens of ONE "
@@ -56,8 +56,7 @@ def generate_reading(
     field: dict[str, Any],
     *,
     model: str,
-    max_budget: str,
-    claude_path: str,
+    codex_path: str,
     runner: CommandRunner,
     timeout_seconds: int = 180,
 ) -> dict[str, Any]:
@@ -65,12 +64,11 @@ def generate_reading(
 
     Returns ``{field, reading, field_mechanism, predicted_behavior, usage}``.
     """
-    parsed, usage = call_claude_json(
+    parsed, usage = call_agent_json(
         system_prompt=_SYSTEM_PROMPT,
         user_prompt=_build_user_prompt(abstraction_text, field),
         model=model,
-        max_budget=max_budget,
-        claude_path=claude_path,
+        codex_path=codex_path,
         runner=runner,
         timeout_seconds=timeout_seconds,
         label=f"reading[{field.get('code')}]",
@@ -83,5 +81,5 @@ def generate_reading(
         "reading": reading,
         "field_mechanism": str(parsed.get("field_mechanism") or "").strip(),
         "predicted_behavior": str(parsed.get("predicted_behavior") or "").strip(),
-        "usage": usage,
+        "usage": usage.as_dict(),
     }

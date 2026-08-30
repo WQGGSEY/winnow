@@ -1,6 +1,6 @@
 """Server smoke tests via FastAPI's TestClient.
 
-These do NOT invoke live Claude. They exercise the routing, template
+These do NOT invoke live Codex. They exercise the routing, template
 rendering, thread CRUD, subscription_ack gating, and the file-serving
 path traversal guard.
 """
@@ -59,6 +59,31 @@ class ServerSmokeTests(unittest.TestCase):
         for phase in ("Grilling", "Domain connector", "Production"):
             self.assertIn(phase, resp.text)
         self.assertNotIn("Refiner", resp.text)
+
+    def test_thread_page_renders_codex_model_picker(self) -> None:
+        (self.repo / "settings.json").write_text(
+            json.dumps(
+                {
+                    "runtime": {
+                        "llm_orchestrator": {
+                            "backend": "codex_mcp",
+                            "mcp": {
+                                "default_model": "gpt-5.6-sol",
+                                "allowed_models": ["gpt-5.6-sol", "gpt-5.6-terra"],
+                            },
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        thread = threads.create_thread(self.repo, user_goal="choose a Codex model")
+
+        resp = self.client.get(f"/threads/{thread['thread_id']}")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("data-mcp-model-select", resp.text)
+        self.assertIn("gpt-5.6-sol", resp.text)
 
     def test_thread_page_404_for_missing(self) -> None:
         resp = self.client.get("/threads/thread_doesnotexist")
@@ -152,10 +177,10 @@ class ServerSmokeTests(unittest.TestCase):
             resp = self.client.get(f"/threads/{t['thread_id']}")
             self.assertEqual(resp.status_code, 200)
             # The chat panel should pre-render with a disabled reply form, the
-            # "agent is contacting Claude" placeholder, and the chat list
+            # "agent is contacting Codex" placeholder, and the chat list
             # ready for SSE-driven population — so the user sees progress
             # instead of a 500 or an empty "not yet run" state.
-            self.assertIn("agent is contacting Claude", resp.text)
+            self.assertIn("agent is contacting Codex", resp.text)
             self.assertIn(f'id="chat-{t["thread_id"]}"', resp.text)
             self.assertIn("Waiting for the first question", resp.text)
             # And critically — the reply form is present but disabled

@@ -9,7 +9,7 @@
             data-phase="grilling"
             data-thread-id="{{ thread.thread_id }}"
             data-endpoint="/api/threads/{{ thread.thread_id }}/grilling/start"
-            data-cost-note="Multi-turn live sonnet (~$0.05-$0.20 expected)">
+            data-cost-note="Multi-turn live Codex session; may use subscription quota or extra usage.">
       Start grilling
     </button>
   </div>
@@ -45,7 +45,7 @@
         <span>status: <strong class="status-{{ session.status }}">{{ session.status }}</strong></span>
       {% else %}
         <span>status: <strong class="status-running">starting</strong></span>
-        <span>agent is contacting Claude…</span>
+        <span>agent is contacting Codex…</span>
       {% endif %}
     </header>
 
@@ -203,7 +203,7 @@
                 data-phase="connector"
                 data-thread-id="{{ thread.thread_id }}"
                 data-endpoint="/api/threads/{{ thread.thread_id }}/connector/start"
-                data-cost-note="Domain connector (ADR 0012): de-domains P and force-reads it through randomly-sampled fields to generate diverse far-framed claims. Makes several live claude calls under your subscription.">
+                data-cost-note="Domain connector (ADR 0012): de-domains P and force-reads it through randomly sampled fields. Uses several live Codex calls.">
           Advance to domain connector →
         </button>
       {% endif %}

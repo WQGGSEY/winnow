@@ -30,7 +30,7 @@ def build_worker_task(
 ) -> dict[str, Any]:
     role = node["runtime_profile"]["worker_type"]
     if role == "runner_job":
-        raise WorkerTaskError("runner_job is not a Claude Code worker task role")
+        raise WorkerTaskError("runner_job is not a Codex worker task role")
     workspace = workspace.resolve()
     output_kinds = _output_kinds_for_role(role)
     task = {
@@ -284,10 +284,15 @@ def _blocked_scope_report(
         "status": "invalid_worker_output",
         "claim_verdict_candidate": "not_evaluable",
         "metrics": {
-            "claude_cli_subtype": cli_result.get("subtype"),
-            "claude_cli_is_error": bool(cli_result.get("is_error")),
-            "claude_cli_num_turns": cli_result.get("num_turns"),
-            "claude_cli_reported_total_cost_usd": cli_result.get("total_cost_usd"),
+            "codex_input_tokens": cli_result.get("input_tokens", 0),
+            "codex_cached_input_tokens": cli_result.get("cached_input_tokens", 0),
+            "codex_cache_write_input_tokens": cli_result.get(
+                "cache_write_input_tokens", 0
+            ),
+            "codex_output_tokens": cli_result.get("output_tokens", 0),
+            "codex_reasoning_output_tokens": cli_result.get(
+                "reasoning_output_tokens", 0
+            ),
         },
         "baselines": {},
         "disproof_conditions_hit": [],
@@ -302,8 +307,7 @@ def _blocked_scope_report(
         ],
         "failure_record_candidate": {
             "category": "scope_violation",
-            "tags": ["claude_cli", *tags],
-            "cli_subtype": cli_result.get("subtype"),
+            "tags": ["codex_cli", *tags],
             "reason": evidence,
         },
     }

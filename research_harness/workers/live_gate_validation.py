@@ -7,7 +7,7 @@ from research_harness.schemas.validator import validate_named_schema
 
 
 class LiveGateValidationError(ValueError):
-    """Raised when live Claude output is not covered by an approved gate plan."""
+    """Raised when live Codex output is not covered by an approved gate plan."""
 
 
 def validate_live_ingest_gate(
@@ -20,32 +20,25 @@ def validate_live_ingest_gate(
     validate_named_schema("manual_live_smoke_plan", plan)
     validate_named_schema("invocation_envelope", envelope)
 
-    if envelope.get("backend") != "claude_code_live":
-        raise LiveGateValidationError("live ingest gate only applies to claude_code_live")
+    if envelope.get("backend") != "codex_live":
+        raise LiveGateValidationError("live ingest gate only applies to codex_live")
     if plan["status"] != "ready_to_manually_run":
         raise LiveGateValidationError(f"live gate is not ready: {plan['status']}")
     if plan["execution_enabled"]:
         raise LiveGateValidationError("live gate must not enable automatic execution")
     if not plan["auth_preflight"]["ok"]:
         raise LiveGateValidationError("live gate auth preflight did not pass")
-    if plan["auth_preflight"]["mode"] != "subscription_oauth":
-        raise LiveGateValidationError("live gate auth mode must be subscription_oauth")
+    if plan["auth_preflight"]["mode"] != "chatgpt_login":
+        raise LiveGateValidationError("live gate auth mode must be chatgpt_login")
     if not plan["billing_guard"]["ack_ok"]:
         raise LiveGateValidationError("live gate billing acknowledgement is missing")
-    if plan["billing_guard"]["api_key_present"]:
-        raise LiveGateValidationError(
-            "ANTHROPIC_API_KEY was present when the live gate was built"
-        )
-
     runtime_guard = plan["runtime_guard"]
     if runtime_guard["execution_mode"] != "manual_only":
         raise LiveGateValidationError("live gate execution_mode must be manual_only")
     if runtime_guard["auto_execution"] != "forbidden":
         raise LiveGateValidationError("live gate auto_execution must be forbidden")
-    if not runtime_guard["requires_subscription_oauth"]:
-        raise LiveGateValidationError("live gate must require subscription OAuth")
-    if not runtime_guard["requires_anthropic_api_key_unset"]:
-        raise LiveGateValidationError("live gate must require ANTHROPIC_API_KEY unset")
+    if not runtime_guard["requires_chatgpt_login"]:
+        raise LiveGateValidationError("live gate must require ChatGPT login")
     if runtime_guard["output_contract"] != "worker_task_result_then_harness_worker_report":
         raise LiveGateValidationError("live gate output contract is not worker_task_result")
 

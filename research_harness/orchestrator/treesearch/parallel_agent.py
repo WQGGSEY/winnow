@@ -663,20 +663,26 @@ def _build_follow_up_children(
         child["lineage"]["inherited_assumptions"] = [
             *parent["lineage"]["inherited_assumptions"],
             *parent["lineage"]["introduced_assumptions"],
-            f"Parent claim {parent['id']} was promoted; successor extends it.",
+            f"Successor derives from evidence recorded on parent {parent['id']}.",
         ]
-        child["lineage"]["introduced_assumptions"] = [
-            f"Professor opened this successor claim: {follow.get('rationale', '')}",
-        ]
+        strategy = follow.get("_adaptive_strategy")
+        if isinstance(strategy, dict):
+            child["strategy"] = deepcopy(strategy)
+            child["lineage"]["introduced_assumptions"] = [
+                f"Causal mechanism: {strategy.get('mechanism', '')}",
+                f"Executable intervention: {strategy.get('intervention', '')}",
+            ]
+        else:
+            child["lineage"]["introduced_assumptions"] = [
+                f"Professor opened this successor claim: {follow.get('rationale', '')}",
+            ]
         child["claim_contract"]["claim_under_test"] = successor_claim
-        child["claim_contract"]["success_criteria"] = [
-            f"Test {ftype} successor of parent {parent['id']} per professor brief.",
-            *parent["claim_contract"]["success_criteria"],
-        ]
-        child["claim_contract"]["disproof_conditions"] = [
-            f"The {ftype} successor cannot be evaluated under the parent's setup.",
-            *parent["claim_contract"]["disproof_conditions"],
-        ]
+        # The successor changes the proposed mechanism, not the bar. Adaptive
+        # callers replace any connector-authored root criteria with the one
+        # problem-level frozen contract before validation.
+        frozen_bar = follow.get("_frozen_bar_contract")
+        if isinstance(frozen_bar, dict):
+            child["claim_contract"].update(deepcopy(frozen_bar))
         child["failure_retrieval"]["query_tags"] = sorted(
             set(
                 [

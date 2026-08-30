@@ -8,7 +8,7 @@
               data-phase="connector"
               data-thread-id="{{ thread.thread_id }}"
               data-endpoint="/api/threads/{{ thread.thread_id }}/connector/start"
-              data-cost-note="Domain connector (ADR 0012): de-domains P + force-reads it through random fields to generate diverse far-framed claims. Several live claude calls under your subscription.">
+              data-cost-note="Domain connector (ADR 0012): de-domains P and force-reads it through random fields. Uses several live Codex calls.">
         ▶ Run domain connector
       </button>
     {% endif %}
@@ -107,7 +107,7 @@
         <div class="market-next-step callout">
           {% if sess.claims %}
             <strong>{{ sess.claims|length }} far-framed claim(s) generated.</strong>
-            In a Claude Code production session, call
+            In a Codex production session, call
             <code>seed_forest_from_connector</code> to build the multi-root forest,
             then run the per-node gate + per-survivor terminal +
             <code>select_strongest_survivor</code> for the single earned output.
@@ -126,7 +126,7 @@
               data-phase="connector"
               data-thread-id="{{ thread.thread_id }}"
               data-endpoint="/api/threads/{{ thread.thread_id }}/connector/retry"
-              data-cost-note="Re-run the domain connector — archives this attempt as connector.attemptN/ and starts fresh from the SAME grilling (no re-grilling). Several live claude calls.">
+              data-cost-note="Re-run the domain connector. Archives this attempt as connector.attemptN/ and starts from the same grilling. Uses several live Codex calls.">
         ↻ Re-run domain connector
       </button>
     {% endif %}

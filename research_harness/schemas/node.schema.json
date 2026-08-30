@@ -120,6 +120,11 @@
         "data_source_anchor": {
           "type": "string",
           "description": "PR7: Reference to the data source backing this claim. Must be either an adapter_id from settings.json.data_adapters (real data) or 'synthetic:<generator_label>' (synthetic). 'deployment' scope requires a registered adapter_id."
+        },
+        "data_source_snapshot_id": {
+          "type": "string",
+          "pattern": "^as_[a-f0-9]{64}$",
+          "description": "Immutable thread snapshot selected by the supervisor for a registered local adapter."
         }
       },
       "additionalProperties": false
@@ -185,8 +190,58 @@
         "verdict": { "type": ["string", "null"] }
       },
       "additionalProperties": true
+    },
+    "strategy": {
+      "type": "object",
+      "required": [
+        "id",
+        "goal_id",
+        "family",
+        "mechanism",
+        "intervention",
+        "information_target",
+        "predicted_outcomes",
+        "tests_bar_gaps",
+        "required_capabilities",
+        "estimated_cost",
+        "derived_from_observation_id",
+        "status",
+        "priority"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^strategy_[a-f0-9]{64}$" },
+        "goal_id": { "type": "string", "pattern": "^goal_[a-f0-9]{64}$" },
+        "family": { "type": "string", "minLength": 1 },
+        "mechanism": { "type": "string", "minLength": 1 },
+        "intervention": { "type": "string", "minLength": 1 },
+        "information_target": { "type": "string", "minLength": 1 },
+        "predicted_outcomes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 2
+        },
+        "tests_bar_gaps": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "required_capabilities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "estimated_cost": { "type": "number", "minimum": 0, "maximum": 1 },
+        "derived_from_observation_id": {
+          "type": "string",
+          "pattern": "^observation_[a-f0-9]{64}$"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["candidate", "active", "refuted", "cleared_bar"]
+        },
+        "priority": { "type": "object" }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false
 }
-

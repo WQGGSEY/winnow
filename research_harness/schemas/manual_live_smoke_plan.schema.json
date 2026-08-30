@@ -9,7 +9,7 @@
     "reason",
     "preflight_summary",
     "auth_preflight",
-    "claude_cli",
+    "codex_cli",
     "billing_guard",
     "runtime_guard",
     "live_invocation_envelope_path",
@@ -47,17 +47,15 @@
         "details": {
           "type": ["object", "null"],
           "properties": {
-            "logged_in": { "type": "boolean" },
             "auth_method": { "type": ["string", "null"] },
-            "api_provider": { "type": ["string", "null"] },
-            "subscription_type": { "type": ["string", "null"] }
+            "status": { "type": "string" }
           },
           "additionalProperties": false
         }
       },
       "additionalProperties": false
     },
-    "claude_cli": {
+    "codex_cli": {
       "type": "object",
       "required": ["found", "path"],
       "properties": {
@@ -72,15 +70,13 @@
         "requires_ack",
         "ack_env",
         "ack_value",
-        "ack_ok",
-        "api_key_present"
+        "ack_ok"
       ],
       "properties": {
         "requires_ack": { "type": "boolean" },
         "ack_env": { "type": ["string", "null"] },
         "ack_value": { "type": ["string", "null"] },
-        "ack_ok": { "type": "boolean" },
-        "api_key_present": { "type": "boolean" }
+        "ack_ok": { "type": "boolean" }
       },
       "additionalProperties": false
     },
@@ -89,15 +85,13 @@
       "required": [
         "execution_mode",
         "auto_execution",
-        "requires_subscription_oauth",
-        "requires_anthropic_api_key_unset",
+        "requires_chatgpt_login",
         "output_contract"
       ],
       "properties": {
         "execution_mode": { "type": "string", "enum": ["manual_only"] },
         "auto_execution": { "type": "string", "enum": ["forbidden"] },
-        "requires_subscription_oauth": { "type": "boolean" },
-        "requires_anthropic_api_key_unset": { "type": "boolean" },
+        "requires_chatgpt_login": { "type": "boolean" },
         "output_contract": {
           "type": "string",
           "enum": ["worker_task_result_then_harness_worker_report"]

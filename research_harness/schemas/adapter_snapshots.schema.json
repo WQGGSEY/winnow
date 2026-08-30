@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/adapter_snapshots.schema.json",
+  "title": "AdapterSnapshots",
+  "type": "object",
+  "required": ["schema_version", "snapshots", "problems"],
+  "properties": {
+    "schema_version": { "type": "integer", "enum": [1] },
+    "snapshots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "snapshot_id",
+          "adapter_id",
+          "materializer_type",
+          "role",
+          "source",
+          "provenance",
+          "source_scope",
+          "content_sha256",
+          "size_bytes",
+          "entry_count"
+        ],
+        "properties": {
+          "snapshot_id": { "type": "string", "pattern": "^as_[a-f0-9]{64}$" },
+          "adapter_id": { "type": "string", "minLength": 1 },
+          "materializer_type": {
+            "type": "string",
+            "enum": ["raw_data", "benchmark", "model_weights", "factor_set", "custom"]
+          },
+          "role": {
+            "type": "string",
+            "enum": ["training", "evaluation", "baseline_reference", "baseline_implementation", "other"]
+          },
+          "source": { "type": "string", "minLength": 1 },
+          "provenance": { "type": "string", "minLength": 1 },
+          "source_scope": { "type": "string", "enum": ["project", "operator"] },
+          "content_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "size_bytes": { "type": "integer", "minimum": 0 },
+          "entry_count": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "problems": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["adapter_id", "scope", "code", "message"],
+        "properties": {
+          "adapter_id": { "type": ["string", "null"] },
+          "scope": { "type": "string", "enum": ["project", "operator"] },
+          "code": { "type": "string", "minLength": 1 },
+          "message": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -76,21 +76,21 @@ def _stage_template(root: Path, dirname: str, domain: str) -> Path:
 
 
 def _make_completed(stdout: str) -> subprocess.CompletedProcess:
-    return subprocess.CompletedProcess(args=["claude"], returncode=0, stdout=stdout, stderr="")
+    return subprocess.CompletedProcess(args=["codex"], returncode=0, stdout=stdout, stderr="")
 
 
 def _wrap_assistant_text(text: str) -> str:
-    return json.dumps(
-        {
-            "type": "result",
-            "subtype": "success",
-            "is_error": False,
-            "num_turns": 1,
-            "result": text,
-            "total_cost_usd": 0.001,
-            "usage": {"input_tokens": 10, "output_tokens": 5},
-        }
-    )
+    return "\n".join(
+        json.dumps(event)
+        for event in (
+            {"type": "thread.started", "thread_id": "template-test"},
+            {"type": "item.completed", "item": {"type": "agent_message", "text": text}},
+            {
+                "type": "turn.completed",
+                "usage": {"input_tokens": 10, "cached_input_tokens": 0, "output_tokens": 5},
+            },
+        )
+    ) + "\n"
 
 
 class TemplateDirectoryRouterTests(unittest.TestCase):
@@ -148,9 +148,7 @@ class TemplateDirectoryRouterTests(unittest.TestCase):
 
 class GrillingAllowedDomainsTests(unittest.TestCase):
     def _captured_system_prompt(self, runner_calls: list[dict]) -> str:
-        cmd = runner_calls[0]["cmd"]
-        sys_index = cmd.index("--system-prompt")
-        return cmd[sys_index + 1]
+        return runner_calls[0]["input"]
 
     def test_domain_is_free_form_in_system_prompt(self) -> None:
         """The harness no longer pre-registers domains. Grilling treats the
@@ -160,7 +158,7 @@ class GrillingAllowedDomainsTests(unittest.TestCase):
         captured = []
 
         def _runner(cmd, *, input, capture_output, text, timeout, check, env):
-            captured.append({"cmd": cmd})
+            captured.append({"cmd": cmd, "input": input})
             return _make_completed(
                 _wrap_assistant_text(
                     json.dumps(
@@ -207,38 +205,38 @@ class AgentModelResolveTests(unittest.TestCase):
         settings = {
             "runtime": {
                 "agent_models": {
-                    "default": "haiku",
-                    "grilling_agent": "opus",
-                    "market_research_agent": "sonnet",
+                    "default": "gpt-5.4",
+                    "grilling_agent": "gpt-5.6-sol",
+                    "domain_connector_agent": "gpt-5.6-terra",
                 }
             }
         }
-        self.assertEqual(resolve_agent_model(settings, "grilling_agent"), "opus")
-        self.assertEqual(resolve_agent_model(settings, "market_research_agent"), "sonnet")
+        self.assertEqual(resolve_agent_model(settings, "grilling_agent"), "gpt-5.6-sol")
+        self.assertEqual(resolve_agent_model(settings, "domain_connector_agent"), "gpt-5.6-terra")
         # role with no entry uses default
-        self.assertEqual(resolve_agent_model(settings, "lesson_distillation_agent"), "haiku")
+        self.assertEqual(resolve_agent_model(settings, "other_agent"), "gpt-5.4")
 
     def test_falls_back_to_live_backend_model(self) -> None:
         settings = {
             "runtime": {
                 "worker_backends": {
-                    "claude_code_live": {"model": "sonnet"}
+                    "codex_live": {"model": "gpt-5.6-luna"}
                 }
             }
         }
-        self.assertEqual(resolve_agent_model(settings, "grilling_agent"), "sonnet")
+        self.assertEqual(resolve_agent_model(settings, "grilling_agent"), "gpt-5.6-luna")
 
-    def test_falls_back_to_literal_sonnet_when_nothing_configured(self) -> None:
+    def test_falls_back_to_default_codex_model_when_nothing_configured(self) -> None:
         self.assertEqual(
-            resolve_agent_model({}, "grilling_agent"), "claude-sonnet-4-6"
+            resolve_agent_model({}, "grilling_agent"), "gpt-5.6-sol"
         )
 
 
-class AgentBudgetResolveTests(unittest.TestCase):
+class LegacyAgentBudgetResolveTests(unittest.TestCase):
     def test_per_role_overrides_default(self) -> None:
         settings = {
             "runtime": {
-                "agent_budgets": {
+                "legacy_claude_agent_budgets": {
                     "default": "0.5",
                     "grilling_agent": "0.25",
                     "research_refiner_agent": "1.0",
@@ -250,15 +248,15 @@ class AgentBudgetResolveTests(unittest.TestCase):
         # role with no entry uses default
         self.assertEqual(resolve_agent_budget(settings, "market_research_agent"), "0.5")
 
-    def test_falls_back_to_live_backend_max_budget(self) -> None:
+    def test_does_not_consume_codex_worker_configuration(self) -> None:
         settings = {
             "runtime": {
                 "worker_backends": {
-                    "claude_code_live": {"max_budget_usd": "0.5"}
+                    "codex_live": {"model": "gpt-5.6-sol"}
                 }
             }
         }
-        self.assertEqual(resolve_agent_budget(settings, "grilling_agent"), "0.5")
+        self.assertEqual(resolve_agent_budget(settings, "grilling_agent"), "0.25")
 
     def test_falls_back_to_literal_default_when_nothing_configured(self) -> None:
         self.assertEqual(resolve_agent_budget({}, "grilling_agent"), "0.25")
@@ -268,7 +266,7 @@ class AgentBudgetResolveTests(unittest.TestCase):
         flow through to the Claude CLI as a string."""
         settings = {
             "runtime": {
-                "agent_budgets": {
+                "legacy_claude_agent_budgets": {
                     "grilling_agent": 0.5,  # number, not string
                     "default": 0.25,
                 }

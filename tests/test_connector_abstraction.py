@@ -12,23 +12,23 @@ from research_harness.connector.abstraction import (
     generate_abstraction,
     scan_for_leak,
 )
-from research_harness.connector.claude_call import (
+from research_harness.connector.codex_call import (
     ConnectorLLMError,
-    call_claude_json,
+    call_agent_json,
 )
 
 
 def _envelope(inner_obj, *, is_error=False, subtype=None, cost=0.01):
-    payload = {
-        "type": "result",
-        "is_error": is_error,
-        "result": json.dumps(inner_obj) if inner_obj is not None else "",
-        "total_cost_usd": cost,
-        "usage": {"input_tokens": 11, "output_tokens": 22},
-    }
-    if subtype:
-        payload["subtype"] = subtype
-    return json.dumps(payload)
+    del cost
+    if is_error:
+        return json.dumps({"type": "turn.failed", "error": subtype or "error"})
+    text = json.dumps(inner_obj) if inner_obj is not None else ""
+    return "\n".join(
+        [
+            json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": text}}),
+            json.dumps({"type": "turn.completed", "usage": {"input_tokens": 11, "output_tokens": 22}}),
+        ]
+    )
 
 
 class FakeClaude:
@@ -52,53 +52,52 @@ class FakeClaude:
 # ----------------------------------------------------------- claude_call
 
 
-def test_call_claude_json_parses_inner_and_pops_api_key(monkeypatch):
+def test_call_agent_json_parses_inner_and_pops_api_key(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-should-be-removed")
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://injected.example/proxy")
     fake = FakeClaude([{"abstraction": "x", "domain_terms_stripped": []}])
-    parsed, usage = call_claude_json(
+    parsed, usage = call_agent_json(
         system_prompt="sys",
         user_prompt="usr",
         model="m",
-        max_budget="0.5",
-        claude_path="claude",
+        codex_path="codex",
         runner=fake,
     )
     assert parsed["abstraction"] == "x"
-    assert usage["input_tokens"] == 11 and usage["output_tokens"] == 22
+    assert usage.input_tokens == 11 and usage.output_tokens == 22
     # subscription-only: BOTH the API key and base-URL override must be stripped
     # from the child env so the call uses the default subscription path.
     assert "ANTHROPIC_API_KEY" not in fake.calls[0]["env"]
     assert "ANTHROPIC_BASE_URL" not in fake.calls[0]["env"]
 
 
-def test_call_claude_json_raises_on_cli_error_envelope():
+def test_call_agent_json_raises_on_cli_error_event():
     fake = FakeClaude([None])
     fake._queue = []  # force raw envelope path below
     fake._raw_stdout = _envelope({"x": 1}, is_error=True, subtype="budget")
     with pytest.raises(ConnectorLLMError):
-        call_claude_json(
-            system_prompt="s", user_prompt="u", model="m", max_budget="1",
-            claude_path="claude", runner=fake,
+        call_agent_json(
+            system_prompt="s", user_prompt="u", model="m",
+            codex_path="codex", runner=fake,
         )
 
 
-def test_call_claude_json_raises_on_nonzero_exit():
+def test_call_agent_json_raises_on_nonzero_exit():
     fake = FakeClaude([{"a": 1}], returncode=2)
     with pytest.raises(ConnectorLLMError):
-        call_claude_json(
-            system_prompt="s", user_prompt="u", model="m", max_budget="1",
-            claude_path="claude", runner=fake,
+        call_agent_json(
+            system_prompt="s", user_prompt="u", model="m",
+            codex_path="codex", runner=fake,
         )
 
 
-def test_call_claude_json_raises_on_non_json_inner():
+def test_call_agent_json_raises_on_non_json_inner():
     fake = FakeClaude([], raw_stdout=_envelope("not json at all"))
     # inner result is the literal string "not json at all" → JSON parse fails.
     with pytest.raises(ConnectorLLMError):
-        call_claude_json(
-            system_prompt="s", user_prompt="u", model="m", max_budget="1",
-            claude_path="claude", runner=fake,
+        call_agent_json(
+            system_prompt="s", user_prompt="u", model="m",
+            codex_path="codex", runner=fake,
         )
 
 
@@ -138,8 +137,8 @@ _LEAKY = "One seeks to predict future returns of a stock from order patterns."
 def test_generate_abstraction_clean_on_first_try():
     fake = FakeClaude([{"abstraction": _CLEAN, "domain_terms_stripped": ["stock"]}])
     out = generate_abstraction(
-        {"extracted": _extracted()}, model="m", max_budget="1",
-        claude_path="claude", runner=fake,
+        {"extracted": _extracted()}, model="m",
+        codex_path="codex", runner=fake,
     )
     assert out["firewall_clean"] is True
     assert out["residual_leaked_terms"] == []
@@ -153,8 +152,8 @@ def test_generate_abstraction_regenerates_then_clean():
         {"abstraction": _CLEAN, "domain_terms_stripped": ["stock", "returns"]},
     ])
     out = generate_abstraction(
-        {"extracted": _extracted()}, model="m", max_budget="1",
-        claude_path="claude", runner=fake, max_regen=2,
+        {"extracted": _extracted()}, model="m",
+        codex_path="codex", runner=fake, max_regen=2,
     )
     assert out["regen_attempts"] == 2
     assert out["firewall_clean"] is True
@@ -168,8 +167,8 @@ def test_generate_abstraction_proceeds_with_residual_leak_after_budget():
         {"abstraction": _LEAKY, "domain_terms_stripped": []},
     ])
     out = generate_abstraction(
-        {"extracted": _extracted()}, model="m", max_budget="1",
-        claude_path="claude", runner=fake, max_regen=1,
+        {"extracted": _extracted()}, model="m",
+        codex_path="codex", runner=fake, max_regen=1,
     )
     assert out["regen_attempts"] == 2  # max_regen=1 → up to 2 attempts
     assert out["firewall_clean"] is False
@@ -180,6 +179,6 @@ def test_generate_abstraction_empty_text_raises():
     fake = FakeClaude([{"abstraction": "   ", "domain_terms_stripped": []}])
     with pytest.raises(ValueError):
         generate_abstraction(
-            {"extracted": _extracted()}, model="m", max_budget="1",
-            claude_path="claude", runner=fake,
+            {"extracted": _extracted()}, model="m",
+            codex_path="codex", runner=fake,
         )

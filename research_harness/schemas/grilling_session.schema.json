@@ -243,12 +243,17 @@
     },
     "usage_estimate": {
       "type": "object",
-      "required": ["rounds_used", "total_cost_usd", "total_input_tokens", "total_output_tokens"],
+      "required": ["rounds_used"],
       "properties": {
         "rounds_used": { "type": "integer", "minimum": 0 },
-        "total_cost_usd": { "type": ["number", "null"] },
-        "total_input_tokens": { "type": "integer", "minimum": 0 },
-        "total_output_tokens": { "type": "integer", "minimum": 0 }
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "cached_input_tokens": { "type": "integer", "minimum": 0 },
+        "cache_write_input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "reasoning_output_tokens": { "type": "integer", "minimum": 0 },
+        "total_cost_usd": { "type": ["number", "null"], "description": "Legacy Claude artifact field." },
+        "total_input_tokens": { "type": "integer", "minimum": 0, "description": "Legacy artifact field." },
+        "total_output_tokens": { "type": "integer", "minimum": 0, "description": "Legacy artifact field." }
       },
       "additionalProperties": false
     },
