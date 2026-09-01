@@ -12,7 +12,6 @@ from research_harness.orchestrator.adaptive_search import (
     experiment_fingerprint,
     make_negative_observation,
     normalize_required_capabilities,
-    prepare_strategy_expansion,
 )
 
 
@@ -67,30 +66,6 @@ def test_runtime_capabilities_normalize_legacy_resource_prose() -> None:
     }
 
 
-def _candidate(
-    family: str,
-    mechanism: str,
-    intervention: str,
-    gap: str,
-) -> dict:
-    return {
-        "type": "mechanism",
-        "successor_claim": f"Test {family} against the frozen bar.",
-        "rationale": f"The failed observation points to {mechanism}.",
-        "strategy_family": family,
-        "mechanism": mechanism,
-        "intervention": intervention,
-        "information_target": f"Whether {mechanism} explains the failure.",
-        "predicted_outcomes": [
-            "If present, the intervention improves the failed comparison.",
-            "If absent, the failed comparison remains unchanged.",
-        ],
-        "tests_bar_gaps": [gap],
-        "required_capabilities": ["data:taxonomy"],
-        "estimated_cost": 0.25,
-    }
-
-
 def test_research_goal_is_content_addressed_and_problem_level() -> None:
     goal = _goal()
     same = _goal()
@@ -100,112 +75,6 @@ def test_research_goal_is_content_addressed_and_problem_level() -> None:
     assert goal["bar_digest"].startswith("sha256:")
     assert goal["bar"]["target_scope"] == "deployment"
     assert goal["bar"]["data_source_snapshot_id"] == "as_" + "1" * 64
-
-
-def test_negative_expansion_requires_two_causal_strategies_on_same_bar() -> None:
-    goal = _goal()
-    observation = make_negative_observation(
-        node_id="n_parent",
-        worker_report={
-            "claim_verdict_candidate": "contradicted",
-            "metrics": {"accuracy": 0.4},
-            "baselines": {"word": 0.4},
-            "input_evidence": {"snapshot_id": "as_" + "1" * 64},
-        },
-        final_verdict="accuracy tied the word baseline",
-    )
-    prepared = prepare_strategy_expansion(
-        goal=goal,
-        observation=observation,
-        candidates=[
-            _candidate(
-                "boundary-aware features",
-                "word boundaries erase discriminative fragments",
-                "add boundary-crossing character features",
-                "accuracy improves",
-            ),
-            _candidate(
-                "archive-conditioned smoothing",
-                "rare archives are over-smoothed",
-                "condition smoothing on archive support",
-                "macro-F1 improves",
-            ),
-        ],
-        known_strategy_ids=set(),
-        available_capabilities={"data:taxonomy"},
-        depth=2,
-        max_depth=5,
-    )
-
-    assert len(prepared) == 2
-    assert len({item["id"] for item in prepared}) == 2
-    assert {item["goal_id"] for item in prepared} == {goal["id"]}
-    assert all(item["derived_from_observation_id"] == observation["id"] for item in prepared)
-    assert all(item["priority"]["evidence_basis"] == [observation["id"]] for item in prepared)
-
-
-def test_negative_expansion_rejects_verification_axis_clones() -> None:
-    goal = _goal()
-    observation = make_negative_observation(
-        node_id="n_parent", worker_report={}, final_verdict="negative"
-    )
-    duplicate = _candidate(
-        "validity",
-        "the same causal mechanism",
-        "the same executable intervention",
-        "accuracy improves",
-    )
-
-    with pytest.raises(AdaptiveSearchError, match="distinct"):
-        prepare_strategy_expansion(
-            goal=goal,
-            observation=observation,
-            candidates=[duplicate, deepcopy(duplicate)],
-            known_strategy_ids=set(),
-            available_capabilities={"data:taxonomy"},
-            depth=1,
-            max_depth=5,
-        )
-
-
-def test_priority_measures_causal_novelty_against_known_strategies() -> None:
-    goal = _goal()
-    observation = make_negative_observation(
-        node_id="n_parent", worker_report={}, final_verdict="negative"
-    )
-    prepared = prepare_strategy_expansion(
-        goal=goal,
-        observation=observation,
-        candidates=[
-            _candidate(
-                "similar smoothing",
-                "rare archives are over smoothed",
-                "condition smoothing on archive support",
-                "accuracy improves",
-            ),
-            _candidate(
-                "boundary interactions",
-                "token boundaries erase cross-fragment interactions",
-                "add boundary crossing interaction features",
-                "macro-F1 improves",
-            ),
-        ],
-        known_strategy_ids={"strategy_existing"},
-        known_strategies=[
-            {
-                "mechanism": "rare archives are over-smoothed",
-                "intervention": "condition smoothing on archive support",
-            }
-        ],
-        available_capabilities={"data:taxonomy"},
-        depth=1,
-        max_depth=5,
-    )
-
-    assert (
-        prepared[0]["priority"]["mechanism_novelty"]
-        < prepared[1]["priority"]["mechanism_novelty"]
-    )
 
 
 def test_experiment_fingerprint_ignores_node_labels_but_tracks_recipe() -> None:

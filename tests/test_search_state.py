@@ -32,6 +32,8 @@ class SearchStateTests(unittest.TestCase):
         self.assertEqual(state["sunk_cost_policy"], "progress_gated")
         self.assertEqual(state["scaleup_policy"], "disallow_by_default")
         self.assertIn("current_branch_has_positive_signal", policy["scaleup_requires"])
+        self.assertIsInstance(policy["num_drafts"], int)
+        self.assertGreaterEqual(policy["num_drafts"], 1)
 
     def test_valid_transition_chain_records_history(self) -> None:
         state = initialize_search_state(

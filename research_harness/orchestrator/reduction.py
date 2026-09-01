@@ -27,11 +27,11 @@ def reduce_node(
     if blocking_reviews:
         final_verdict = "confounded_or_not_evaluable"
         research_status = "confounded_or_not_evaluable"
-        next_transition = "needs_child_branch"
+        next_transition = "pruned"
     elif _failure_category(worker_report) == "confounded_result":
         final_verdict = "confounded_or_not_evaluable"
         research_status = "confounded_or_not_evaluable"
-        next_transition = "needs_child_branch"
+        next_transition = "pruned"
     elif worker_report["claim_verdict_candidate"] == "supported":
         final_verdict = "supported_with_scope_narrowing"
         research_status = "supported_with_scope_narrowing"
@@ -39,26 +39,11 @@ def reduce_node(
     else:
         final_verdict = worker_report["claim_verdict_candidate"]
         research_status = "interpretable_negative_result"
-        next_transition = "needs_child_branch"
+        next_transition = "pruned"
 
     lesson_candidates: list[str] = []
     for review in critic_reviews:
         lesson_candidates.extend(review.get("lesson_candidates", []))
-
-    child_branch_suggestions = (
-        [
-            {
-                "type": "validity",
-                "reason": "Unexpected observation should be checked without letting the worker pursue it.",
-                "source": "worker_report.unexpected_observations",
-            }
-        ]
-        if worker_report.get("unexpected_observations")
-        else []
-    )
-    if next_transition == "needs_child_branch" and branch_prior:
-        child_branch_suggestions.extend(branch_prior.get("branch_suggestions", []))
-    child_branch_suggestions.extend(_baseline_branch_suggestions(worker_report))
 
     reduction = {
         "node_id": node["id"],
@@ -79,7 +64,7 @@ def reduce_node(
             "risk_controls": [],
             "branch_suggestions": [],
         },
-        "child_branch_suggestions": child_branch_suggestions,
+        "child_branch_suggestions": [],
     }
     return reduction
 
@@ -89,32 +74,3 @@ def _failure_category(worker_report: dict[str, Any]) -> str | None:
     if not isinstance(candidate, dict):
         return None
     return str(candidate.get("category") or "")
-
-
-def _baseline_branch_suggestions(worker_report: dict[str, Any]) -> list[dict[str, str]]:
-    baseline_status = worker_report.get("baseline_evidence_status")
-    if not isinstance(baseline_status, dict):
-        return []
-    if baseline_status.get("overall") == "passed":
-        return []
-    return [
-        {
-            "type": "necessity"
-            if baseline_status.get("overall") == "failed"
-            else "validity",
-            "reason": "Mandatory baseline evidence did not support promotion: "
-            + _baseline_status_reason(baseline_status),
-            "source": "worker_report.baseline_evidence_status",
-        }
-    ]
-
-
-def _baseline_status_reason(baseline_status: dict[str, Any]) -> str:
-    failures = [
-        result
-        for result in baseline_status.get("results", [])
-        if result.get("status") != "passed"
-    ]
-    if not failures:
-        return "no failing requirement recorded"
-    return "; ".join(str(result.get("reason")) for result in failures)

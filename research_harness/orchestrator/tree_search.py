@@ -14,7 +14,6 @@ from research_harness.memory.failure_memory import (
     record_runner_failure_candidate,
 )
 from research_harness.orchestrator.branch_prior import build_failure_branch_prior
-from research_harness.orchestrator.child_nodes import draft_child_nodes
 from research_harness.orchestrator.demo import _demo_node
 from research_harness.orchestrator.experiment_plan import (
     FALLBACK_TEMPLATE_ID,
@@ -25,7 +24,6 @@ from research_harness.orchestrator.experiment_plan import (
 )
 from research_harness.orchestrator.reduction import reduce_node
 from research_harness.orchestrator.search_state import (
-    add_child_nodes,
     initialize_search_state,
     search_policy_from_config,
     transition_node,
@@ -150,34 +148,13 @@ def run_mock_tree_search(
                 event="promotion",
                 reason="node promoted by reduction",
             )
-        elif reduction["next_transition"] == "needs_child_branch":
-            children = draft_child_nodes(
-                node,
-                reduction,
-                parent_depth=int(item["depth"]),
-                max_depth=int(policy["max_depth"]),
-            )
-            add_child_nodes(
-                state,
-                node["id"],
-                children,
-                reason="reduction requested child branch",
-            )
-            transition_node(
-                state,
-                node["id"],
-                "needs_child_branch",
-                event="branch",
-                reason="node requires child branch",
-                created_child_ids=[child["id"] for child in children],
-            )
         else:
             transition_node(
                 state,
                 node["id"],
                 "pruned",
                 event="prune",
-                reason=f"unhandled transition {reduction['next_transition']}",
+                reason="direction closed by reduction",
             )
         artifacts.append(
             {

@@ -25,14 +25,11 @@ from typing import Any
 
 from research_harness.config import load_settings
 from research_harness.orchestrator.llm_orchestrator.persona_validator import (
-    validate_baseline_provenance,
     validate_camera_ready_directives,
     validate_claim_contract,
     validate_claim_fits_envelope,
     validate_decision_rule_for_capability_claim,
     validate_grad_student_review,
-    validate_revision_after_reject,
-    validate_synthetic_data_bridging,
 )
 
 
@@ -140,20 +137,9 @@ TOOL_DEFINITIONS = [
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
             "Returns the SINGLE next node the lab should work on. Selection "
-            "policy (deterministic, the harness owns this — do NOT pick a "
-            "different node):\n"
-            "  1. Compute the active research stage from coverage. Stages: "
-            "scope_pinning (admits validity/taste/operational) → "
-            "baseline_evidence (capability) → mechanism_or_necessity "
-            "(mechanism/necessity) → boundary_ablation (boundary/constraint). "
-            "Advance when the current stage has at least one promoted node "
-            "OR has no remaining queued admissible nodes.\n"
-            "  2. From the queued frontier, keep only nodes whose type the "
-            "active stage admits.\n"
-            "  3. Sort by type weight (validity=0, capability=1, "
-            "necessity=2, mechanism=3, boundary=4, constraint=5, "
-            "operational=6, taste=7), then depth asc, then id.\n"
-            "  4. Return the top-1.\n"
+            "is deterministic: the durable reorientation binding identifies "
+            "exactly one authoritative node. Historical nodes remain readable "
+            "for audit but cannot be dispatched or mutated.\n"
             "After processing the returned node (review → run → professor "
             "decision), call this again to get the next. Token-efficient: "
             "ONE node at a time, no parallel chains."
@@ -182,6 +168,12 @@ TOOL_DEFINITIONS = [
             "properties": {
                 "thread_id": {"type": "string"},
                 "command_id": {"type": "string", "minLength": 1},
+                "expected_revision": {"type": "integer", "minimum": 0},
+                "expected_checkpoint_id": {"type": "string", "minLength": 1},
+                "expected_strong_result_receipt_sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$",
+                },
                 "acquisition": {
                     "type": "object",
                     "required": ["needs"],
@@ -225,8 +217,7 @@ TOOL_DEFINITIONS = [
             "scalar, owns the pass/fail): if a zero-skill exposure CLEARS the "
             "bar, the bar measures exposure not skill, and get_next_admissible_"
             "node blocks the search (bar_broken) until the bar is revised. Run "
-            "this FIRST — before the search spends a cycle. The cycle-1 twin of "
-            "the render_honest_failure_paper bar-sanity give-up gate."
+            "this FIRST, before the search spends a cycle."
         ),
         "inputSchema": {
             "type": "object",
@@ -557,11 +548,10 @@ TOOL_DEFINITIONS = [
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
             "Promote or prune a node after seeing the worker report and critic "
-            "reviews. For a negative result submit pruned with no "
-            "follow_up_children. The harness closes that direction from persisted "
+            "reviews. For a negative result submit pruned. The harness closes "
+            "that direction from persisted "
             "evidence, keeps its lesson private, and independently generates the "
-            "next direction from the frozen contract. Observation-derived child "
-            "claims and needs_child_branch are rejected."
+            "next direction from the frozen contract."
         ),
         "inputSchema": {
             "type": "object",
@@ -583,113 +573,6 @@ TOOL_DEFINITIONS = [
                     "type": "integer",
                     "description": "Optional adaptive-state revision for stale-writer rejection.",
                 },
-                "follow_up_children": {
-                    "type": "array",
-                    "maxItems": 0,
-                    "items": {
-                        "type": "object",
-                        "required": [
-                            "type",
-                            "successor_claim",
-                            "strategy_family",
-                            "mechanism",
-                            "intervention",
-                            "information_target",
-                            "predicted_outcomes",
-                            "tests_bar_gaps",
-                            "required_capabilities",
-                            "estimated_cost",
-                        ],
-                        "properties": {
-                            "type": {"type": "string"},
-                            "successor_claim": {"type": "string"},
-                            "rationale": {"type": "string"},
-                            "strategy_family": {"type": "string"},
-                            "mechanism": {"type": "string"},
-                            "intervention": {"type": "string"},
-                            "information_target": {"type": "string"},
-                            "predicted_outcomes": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "minItems": 2,
-                            },
-                            "tests_bar_gaps": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "minItems": 1,
-                            },
-                            "required_capabilities": {
-                                "type": "array",
-                                "items": {
-                                    "type": "string",
-                                    "pattern": "^(local_runner|cpu|accelerator:[a-z0-9_.-]+|module:[a-z0-9_.-]+|data:[a-z0-9_.-]+|oracle:[a-z0-9_.-]+)$",
-                                },
-                            },
-                            "estimated_cost": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1,
-                            },
-                        },
-                    },
-                },
-            },
-        },
-    },
-    {
-        "name": "revise_root_after_reject",
-        "description": (
-            f"{PROFESSOR_CONTRACT}\n\n"
-            "The AC rejected the paper. Propose a NEW root claim — stronger, "
-            "not safer — that addresses the AC's blocking reasons. Same "
-            "persona enforcement as design_initial_claim_contract: no "
-            "restatement of the AC's complaint, no placeholder baselines, "
-            "must reference the market output."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": [
-                "thread_id",
-                "new_claim_under_test",
-                "mandatory_baselines",
-                "success_criteria",
-                "disproof_conditions",
-                "deploy_grade_scope",
-            ],
-            "properties": {
-                "thread_id": {"type": "string"},
-                "new_claim_under_test": {"type": "string"},
-                "mandatory_baselines": {"type": "array", "items": {"type": "string"}},
-                "success_criteria": {"type": "array", "items": {"type": "string"}},
-                "disproof_conditions": {"type": "array", "items": {"type": "string"}},
-                "rationale": {"type": "string"},
-                "deploy_grade_scope": {
-                    "type": "string",
-                    "enum": ["deployment", "feasibility", "directional"],
-                    "description": (
-                        "PR7: required when a feasibility_envelope is on disk. "
-                        "Same semantics as design_initial_claim_contract."
-                    ),
-                },
-                "data_source_anchor": {
-                    "type": "string",
-                    "description": (
-                        "PR7: anchor id from envelope — real_adapter id or "
-                        "'synthetic:<label>'."
-                    ),
-                },
-                "evidence_breadth": {
-                    "type": "object",
-                    "description": (
-                        "Optional. Breadth of the revised claim's evidence "
-                        "(used by validate_revision_after_reject to detect "
-                        "narrowing-without-breadth)."
-                    ),
-                },
-                "previous_evidence_breadth": {
-                    "type": "object",
-                    "description": "Optional. Breadth of the prior rejected claim's evidence.",
-                },
             },
         },
     },
@@ -705,9 +588,10 @@ TOOL_DEFINITIONS = [
         ),
         "inputSchema": {
             "type": "object",
-            "required": ["thread_id", "submit"],
+            "required": ["thread_id", "node_id", "submit"],
             "properties": {
                 "thread_id": {"type": "string"},
+                "node_id": {"type": "string"},
                 "submit": {"type": "boolean"},
                 "advisor_message": {"type": "string"},
                 "missing_axes": {"type": "array", "items": {"type": "string"}},
@@ -933,8 +817,7 @@ TOOL_DEFINITIONS = [
             "The Professor must also attest that the ORIGINAL user intake "
             "problem (not the reshaped academic claim) is addressable with the "
             "evidence produced. If achieved=false, render_final_paper is "
-            "blocked and the system enters honest_failure exit unless "
-            "additional research is triggered. Schema enforces: at least 2 "
+            "blocked and the blind engine continues research. Schema enforces: at least 2 "
             "evidence anchors back to the intake, >=80-char concrete "
             "user-action statement, and required_additional_research listing "
             "when achieved=false."
@@ -952,152 +835,12 @@ TOOL_DEFINITIONS = [
         },
     },
     {
-        "name": "propose_alternative_root_directions",
-        "description": (
-            f"{PROFESSOR_CONTRACT}\n\n"
-            "When the AC has emitted decision=reject_and_diversify (or when the "
-            "operator wants fan-out before a single-shot revise), the Professor "
-            "proposes N>=3 alternative root claim angles covering distinct axes "
-            "(operational_root, taste_root, mechanism_root, "
-            "inverted_validity_root, different_method_root, "
-            "boundary_first_root, necessity_root). The system records the "
-            "alternatives; select_alternative_root picks one to bootstrap into "
-            "a fresh production attempt. This replaces linear "
-            "revise_root_after_reject when the rejected direction is "
-            "structurally hopeless rather than just under-evidenced."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["thread_id", "proposal"],
-            "properties": {
-                "thread_id": {"type": "string"},
-                "proposal": {
-                    "type": "object",
-                    "description": "AlternativeRootProposal — see alternative_root_proposal.schema.json. Must include >=3 distinct angle values.",
-                },
-            },
-        },
-    },
-    {
-        "name": "select_alternative_root",
-        "description": (
-            f"{PROFESSOR_CONTRACT}\n\n"
-            "After propose_alternative_root_directions, select ONE alternative "
-            "by index to bootstrap into a fresh production attempt. The "
-            "selected claim becomes the new root via the same archive-and-"
-            "rebuild path as revise_root_after_reject, but the operator log "
-            "preserves the full N-alternative slate so future audits can see "
-            "the diversification step happened."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["thread_id", "selected_index", "selection_rationale"],
-            "properties": {
-                "thread_id": {"type": "string"},
-                "selected_index": {"type": "integer", "minimum": 0},
-                "selection_rationale": {"type": "string"},
-            },
-        },
-    },
-    {
-        "name": "seed_alternative_root_formulation",
-        "description": (
-            f"{PROFESSOR_CONTRACT}\n\n"
-            "Multi-root tournament: pull a named formulation from "
-            "grilling_session.extracted.alternative_claim_formulations and "
-            "add it as a second/third root_node (parent=null) to the live "
-            "search_state. The current root is NOT touched — both run in "
-            "parallel and the strongest survives at publication time. "
-            "Use when the current root has been pruned (Rail 5 fires "
-            "must_revise_root) AND grilling produced an alternative the "
-            "operator hasn't tried yet — avoids hand-rolling a new claim "
-            "via revise_root_after_reject."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["thread_id", "formulation_id"],
-            "properties": {
-                "thread_id": {"type": "string"},
-                "formulation_id": {
-                    "type": "string",
-                    "description": "Matches grilling_session.extracted.alternative_claim_formulations[*].formulation_id.",
-                },
-                "seed_drafts": {
-                    "type": "boolean",
-                    "description": "If true (default), also seed typed sibling drafts under the new root via seed_drafts_from_root.",
-                },
-            },
-        },
-    },
-    {
-        "name": "seed_forest_from_connector",
-        "description": (
-            f"{PROFESSOR_CONTRACT}\n\n"
-            "ADR 0012 connector->production handoff. Reads the connector_session's "
-            "kept claim_contracts (the diverse far-framings of P that cleared "
-            "prune-1 + reduction) and seeds a MULTI-ROOT forest search_state: each "
-            "claim becomes a coexisting root (parent=null), each draft-seeded. "
-            "Replaces design_initial_claim_contract for the multi-root path; the "
-            "existing per-node gate then runs every tree, and select_strongest_survivor "
-            "picks the single output at the end. Refuses if production is already "
-            "seeded; 0 claims -> no_claims (render honest-failure)."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["thread_id"],
-            "properties": {"thread_id": {"type": "string"}},
-        },
-    },
-    {
-        "name": "select_strongest_survivor",
-        "description": (
-            f"{PROFESSOR_CONTRACT}\n\n"
-            "ADR 0012 forest terminal: of the connector forest's gate-survivor roots "
-            "(those with a promoted terminal node), select the SINGLE strongest-earned "
-            "one by verdict_strength (ADR 0008 ladder) then investigation_depth. Reads "
-            "each survivor root's per-root attestation; returns 'incomplete' if any "
-            "survivor still lacks its per-root terminal (run it first), 'honest_failure' "
-            "if there are no survivors, else 'ok' with the winner to render. There is "
-            "ONE output — other survivors are search by-products. (Single-root threads "
-            "use the legacy terminal, not this tool.)"
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["thread_id"],
-            "properties": {"thread_id": {"type": "string"}},
-        },
-    },
-    {
-        "name": "snapshot_root_terminal",
-        "description": (
-            f"{PROFESSOR_CONTRACT}\n\n"
-            "ADR 0012 forest (snapshot-and-reset): after a survivor root's full "
-            "terminal has run flat under production/rebuttal/, snapshot those "
-            "artifacts to production/rebuttal/<root_id>/ and reset the flat dir so "
-            "the next root's terminal starts clean. Call once per survivor root "
-            "right after its terminal completes; when all survivors are snapshotted, "
-            "call select_strongest_survivor. Single-root threads never call this."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["thread_id", "root_id"],
-            "properties": {
-                "thread_id": {"type": "string"},
-                "root_id": {
-                    "type": "string",
-                    "description": "The forest root (parent=null node id) whose just-completed flat terminal to snapshot.",
-                },
-            },
-        },
-    },
-    {
         "name": "enqueue_operator_prompt",
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
-            "Hands-free escalation channel. When the auto-resolver refuses to "
-            "chain (safety budget hit, identical-fingerprint loop, suggestion "
-            "confidence below the auto-dispatch bar), the rail surfaces a "
-            "prompt to the operator via this tool. The frontend renders "
+            "Hands-free operator coordination channel for a genuine decision "
+            "or missing context that cannot be resolved from durable state. "
+            "The frontend renders "
             "pending prompts in the production phase view; the operator's "
             "free-text response lands back via get_pending_operator_response. "
             "Fire-and-forget — does not block; caller polls separately."
@@ -1109,7 +852,7 @@ TOOL_DEFINITIONS = [
                 "thread_id": {"type": "string"},
                 "kind": {
                     "type": "string",
-                    "enum": ["auto_resolver_escalation", "decision_request", "context_request"],
+                    "enum": ["decision_request", "context_request"],
                 },
                 "prompt": {"type": "string", "minLength": 1},
                 "options": {
@@ -1149,47 +892,6 @@ TOOL_DEFINITIONS = [
         },
     },
     {
-        "name": "render_honest_failure_paper",
-        "description": (
-            "Terminal exit when no path to a positive deployable result exists. "
-            "Renders honest_failure.html under production/publication/ instead "
-            "of paper.html, documenting: the user's original intake, all "
-            "attempts made, the final attestation showing achieved=false, and "
-            "the concrete experiments that would change the answer. Used when "
-            "max_reject_cycles is exhausted or when the operator or agent "
-            "decides the direction is structurally hopeless and further "
-            "fan-out would not help. This is a HONEST outcome, not a failure "
-            "of the harness — better than publishing a misleading paper. "
-            "If the thread sets execution_constraints.require_skill_isolation, "
-            "this is REFUSED until bar_sanity proves the deployment bar is not "
-            "clearable by a NO-SKILL exposure baseline (suspect your own ruler "
-            "before declaring the world impossible)."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["thread_id"],
-            "properties": {
-                "thread_id": {"type": "string"},
-                "bar_sanity": {
-                    "type": "object",
-                    "description": (
-                        "Required when require_skill_isolation is set. Proof the "
-                        "deployment bar is not gameable by zero-skill exposure. "
-                        "{no_skill_exposure_metric: best value a NO-SKILL exposure "
-                        "baseline (e.g. a leveraged buy-and-hold sweep) reaches on the "
-                        "SAME deployment metric; detail: how computed}. If that value "
-                        "clears the predicate, the bar measures exposure not skill and "
-                        "the give-up is refused."
-                    ),
-                    "properties": {
-                        "no_skill_exposure_metric": {"type": "number"},
-                        "detail": {"type": "string"},
-                    },
-                },
-            },
-        },
-    },
-    {
         "name": "render_final_paper",
         "description": (
             "Assemble all submitted sections + registered figures + tables + "
@@ -1201,9 +903,7 @@ TOOL_DEFINITIONS = [
             "(a) AC decision in {accept, revise, revise_with_new_measurements} "
             "and (b) submit_professor_user_goal_attestation with achieved=true. "
             "If achieved=false or attestation missing, render is blocked and "
-            "the operator is told to either trigger fan-out via "
-            "propose_alternative_root_directions, run more measurements, or "
-            "call render_honest_failure_paper for the final honest-failure exit."
+            "the canonical blind engine continues through advance_research."
         ),
         "inputSchema": {
             "type": "object",
@@ -1212,7 +912,6 @@ TOOL_DEFINITIONS = [
         },
     },
 ]
-
 
 # --- Tool handlers -------------------------------------------------------- #
 
@@ -1420,8 +1119,9 @@ def _adaptive_capabilities(tid: str) -> set[str]:
 def _strong_candidate_for_terminal(
     tid: str,
     state: dict[str, Any],
+    *,
+    authoritative_node_id: str,
 ) -> dict[str, Any] | None:
-    """Return an evidence-backed adaptive promotion ready for rebuttal."""
 
     adaptive = state.get("adaptive") or {}
     known_strategy_ids = {
@@ -1431,15 +1131,14 @@ def _strong_candidate_for_terminal(
     }
     if not known_strategy_ids:
         return None
-    falsifier = _read_json(_rebuttal_dir(tid) / "falsifier_result.json") or {}
-    if falsifier.get("passed") is not True or falsifier.get("kind") != "real_holdout":
-        return None
     nodes_by_id = {node["id"]: node for node in state.get("nodes") or []}
     frontier_by_id = {
         item["node_id"]: item for item in state.get("frontier") or []
     }
     candidates: list[tuple[int, float, str, dict[str, Any]]] = []
     for node_id in state.get("promoted_node_ids") or []:
+        if node_id != authoritative_node_id:
+            continue
         node = nodes_by_id.get(node_id) or {}
         strategy_id = (node.get("strategy") or {}).get("id")
         if strategy_id not in known_strategy_ids:
@@ -1480,7 +1179,49 @@ def _strong_candidate_for_terminal(
         "node_id": node_id,
         "node_type": node.get("type"),
         "strategy_id": (node.get("strategy") or {}).get("id"),
-        "falsifier_observed": falsifier.get("observed"),
+    }
+
+
+def _authoritative_active_node_id(tid: str) -> str | None:
+    binding = _authoritative_strong_binding(tid)
+    return binding.node_id if binding is not None else None
+
+
+def _authoritative_strong_binding(tid: str, node_id: str | None = None):
+    from research_harness.orchestrator.blind_reorientation import (
+        parse_reorientation_state,
+    )
+    from research_harness.orchestrator.blind_sequential_research import (
+        BlindSequentialResearchError,
+        resolve_strong_result_binding,
+    )
+
+    root = _thread_dir(tid) / "production" / "reorientation"
+    raw_state = _read_json(root / "state.json")
+    raw_node_attempts = _read_json(root / "node_attempts.json")
+    if not isinstance(raw_state, dict) or not isinstance(raw_node_attempts, dict):
+        return None
+    try:
+        state = parse_reorientation_state(raw_state)
+        return resolve_strong_result_binding(
+            state,
+            raw_node_attempts,
+            node_id=node_id,
+        )
+    except (BlindSequentialResearchError, TypeError, ValueError):
+        return None
+
+
+def _require_authoritative_node(tid: str, node_id: str) -> dict[str, Any] | None:
+    authoritative = _authoritative_active_node_id(tid)
+    if authoritative == node_id:
+        return None
+    return {
+        "status": "rejected",
+        "reason": (
+            f"node {node_id!r} is not the authoritative blind node for the "
+            "active direction"
+        ),
     }
 
 
@@ -1700,61 +1441,6 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
     }
 
 
-# Claim-type weights — lower = run earlier. Same policy that
-# ParallelAgent.prioritize_claims used; relocated to the MCP boundary so
-# The agent session follows the same order it would have followed under the
-# automated loop.
-_TYPE_WEIGHTS = {
-    "validity": 0,
-    "capability": 1,
-    "necessity": 2,
-    "mechanism": 3,
-    "boundary": 4,
-    "constraint": 5,
-    "operational": 6,
-    "taste": 7,
-}
-
-# 4-stage claim-typed search (same as AgentManager.DEFAULT_STAGES_SPEC).
-_STAGES: list[dict[str, Any]] = [
-    {"name": "scope_pinning", "admits": {"validity", "taste", "operational"}},
-    {"name": "baseline_evidence", "admits": {"capability"}},
-    {"name": "mechanism_or_necessity", "admits": {"mechanism", "necessity"}},
-    {"name": "boundary_ablation", "admits": {"boundary", "constraint"}},
-]
-
-
-def _active_stage(search_state: dict[str, Any]) -> dict[str, Any]:
-    """Pick the leftmost stage that still has admissible queued work, OR
-    that has no promoted node of its admitted types yet."""
-    nodes_by_id = {n["id"]: n for n in search_state.get("nodes", [])}
-    promoted_types: set[str] = set()
-    for nid in search_state.get("promoted_node_ids", []):
-        node = nodes_by_id.get(nid)
-        if node:
-            promoted_types.add(node.get("type", ""))
-    queued = [
-        item for item in search_state.get("frontier", [])
-        if item.get("status") == "queued"
-    ]
-    queued_types = {
-        nodes_by_id.get(item["node_id"], {}).get("type", "")
-        for item in queued
-    }
-    for stage in _STAGES:
-        admits = stage["admits"]
-        has_pending = bool(admits & queued_types)
-        has_promoted = bool(admits & promoted_types)
-        if has_pending and not has_promoted:
-            return stage
-        if has_pending and has_promoted:
-            # Stage is in-progress; keep advancing children here unless an
-            # earlier stage has new work (handled by the leftmost-first loop).
-            return stage
-    # All stages have either no queued work or are fully covered.
-    return _STAGES[-1]
-
-
 _RESUME_NEXT_TOOL = {
     "running": "execute_node_experiment",
     "completed_worker_report": "run_critic_reviews",
@@ -1772,10 +1458,8 @@ def _bar_sanity_gate_status(tid: str) -> dict[str, Any] | None:
     submit_bar_sanity_result) has been shown NOT to clear the deployment
     predicate. A bar a zero-skill exposure clears measures exposure, not skill —
     so an impossibility found against it is an instrument failure, not a fact
-    about the world. This is the cycle-1 twin of the render_honest_failure_paper
-    bar-sanity gate: same deterministic check, moved to the front so an
-    exposure-gameable bar is caught before any search cycle is spent. Off-flag
-    threads (general ML) get None and behave exactly as before.
+    about the world. The check runs before any search cycle is spent. Off-flag
+    threads get None and proceed normally.
 
     Returns one of:
       None                     — gate inactive; proceed with normal selection.
@@ -1973,6 +1657,10 @@ def handle_advance_research(
         advance_kwargs["expected_strong_result_receipt_sha256"] = (
             expected_strong_receipt
         )
+    if args.get("expected_revision") is not None:
+        advance_kwargs["expected_revision"] = args["expected_revision"]
+    if args.get("expected_checkpoint_id") is not None:
+        advance_kwargs["expected_checkpoint_id"] = args["expected_checkpoint_id"]
     result = engine.advance_research(**advance_kwargs)
     with _exclusive_adaptive_writer(tid):
         current = _read_json(receipt_path)
@@ -2206,7 +1894,7 @@ def handle_get_next_admissible_node(args: dict[str, Any]) -> dict[str, Any]:
     tid = args["thread_id"]
     state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
     if not state_path.exists():
-        return _handle_get_next_admissible_node_locked(args)
+        return _advance_after_selector(tid)
     with _exclusive_adaptive_writer(tid):
         result = _handle_get_next_admissible_node_locked(args)
     if result.get("status") == _BLIND_REORIENTATION_REQUIRED:
@@ -2220,12 +1908,10 @@ def _handle_get_next_admissible_node_locked(
     """Selector with resume support.
 
     Priority order:
-      1. Any in-progress node (running / completed_worker_report /
-         critic_reviewed / orchestrator_reduced) — these are partially-
-         processed nodes that a previous agent session left stranded.
-         The response names the next MCP tool to call so the caller can
-         pick up exactly where the prior session stopped.
-      2. New queued admissible nodes per the 4-stage claim-typed policy.
+      1. Render a verified terminal result that still lacks publication files.
+      2. Advance blind research unless exactly one durable active attempt is
+         awaiting evidence.
+      3. Resume, retry, or dispatch only that attempt's materialized node.
     """
     from research_harness.orchestrator.search_state import (
         transition_node,
@@ -2236,14 +1922,53 @@ def _handle_get_next_admissible_node_locked(
     state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
     state = _read_json(state_path)
     if not state or not state.get("nodes"):
+        return _blind_reorientation_required(
+            "no authoritative blind direction has been materialized"
+        )
+    raw_adaptive = state.get("adaptive")
+    existing_adaptive = raw_adaptive if isinstance(raw_adaptive, dict) else {}
+    raw_attestation = _read_json(
+        _rebuttal_dir(tid) / "user_goal_attestation.json"
+    )
+    achieved_attestation = (
+        raw_attestation if isinstance(raw_attestation, dict) else {}
+    )
+    if (
+        existing_adaptive.get("disposition") == "goal_achieved"
+        and achieved_attestation.get("achieved") is True
+    ):
+        from research_harness.thread_supervisor import is_terminal
+
+        terminal_verified, _ = is_terminal(
+            _repo_root(),
+            tid,
+            require_rendered=False,
+        )
+        if not terminal_verified:
+            return {
+                "status": "hard_external_block",
+                "code": "operator_scope_conflict",
+                "required_external_action": (
+                    "Repair or remove the invalid adaptive strong-result receipt "
+                    "before resuming research."
+                ),
+            }
         return {
-            "status": "no_state",
+            "status": "goal_achieved_render_pending",
+            "promoted_node_id": achieved_attestation.get("promoted_node_id"),
+            "next_tool_to_call": "prepare_paper_writing_context",
             "reason": (
-                "search_state.json doesn't exist yet. Call "
-                "design_initial_claim_contract first — it bootstraps the "
-                "root node + search_state."
+                "The verified strong-result receipt and achieved attestation "
+                "exist, but the supervisor terminal also requires rendered "
+                "publication artifacts and production_run_summary.json. Finish "
+                "the paper writer; do not resume search or rebuttal."
             ),
         }
+    authoritative_node_id = _authoritative_active_node_id(tid)
+    if authoritative_node_id is None:
+        return _blind_reorientation_required(
+            "no authoritative active blind node is awaiting evidence"
+        )
     had_adaptive_state = isinstance(state.get("adaptive"), dict)
     try:
         adaptive = _ensure_adaptive_state(tid, state)
@@ -2257,12 +1982,6 @@ def _handle_get_next_admissible_node_locked(
     if not had_adaptive_state:
         _write_search_state_atomic(state_path, state)
 
-    # --- Cycle-1 skill-isolation gate. ----------------------------------
-    # A require_skill_isolation thread may not dispatch ANY node until a
-    # no-skill exposure baseline has been shown NOT to clear the deployment
-    # bar. This catches an exposure-gameable bar at cycle 1, before any search
-    # cycle is spent (the twin of the render_honest_failure_paper give-up gate).
-    # Off-flag threads return None here and fall straight through.
     bar_sanity = _bar_sanity_gate_status(tid)
     if bar_sanity is not None and bar_sanity["state"] != "ok":
         if bar_sanity["state"] == "required":
@@ -2302,39 +2021,27 @@ def _handle_get_next_admissible_node_locked(
             ),
         }
 
-    achieved_attestation = _read_json(
-        _rebuttal_dir(tid) / "user_goal_attestation.json"
-    ) or {}
-    if (
-        adaptive.get("disposition") == "goal_achieved"
-        and achieved_attestation.get("achieved") is True
-    ):
-        return {
-            "status": "goal_achieved_render_pending",
-            "promoted_node_id": achieved_attestation.get("promoted_node_id"),
-            "next_tool_to_call": "prepare_paper_writing_context",
-            "reason": (
-                "The verified strong-result receipt and achieved attestation "
-                "exist, but the supervisor terminal also requires rendered "
-                "publication artifacts and production_run_summary.json. Finish "
-                "the paper writer; do not resume search or rebuttal."
-            ),
-        }
-
-    strong_candidate = _strong_candidate_for_terminal(tid, state)
+    strong_candidate = _strong_candidate_for_terminal(
+        tid,
+        state,
+        authoritative_node_id=authoritative_node_id,
+    )
     if strong_candidate is not None:
         readiness = _read_json(
             _thread_dir(tid) / "production" / "tree" / "mcp_readiness.json"
         ) or {}
-        if readiness.get("submit") is not True:
+        if (
+            readiness.get("submit") is not True
+            or readiness.get("node_id") != authoritative_node_id
+        ):
             return {
                 "status": "strong_candidate_ready",
                 **strong_candidate,
                 "next_tool_to_call": "decide_publication_readiness",
                 "reason": (
                     "An adaptive strategy has supported runner evidence and a "
-                    "passing real holdout. Stop spending the frontier and move "
-                    "this candidate through rebuttal and the strong-result gates."
+                    "mandatory-baseline pass. Stop spending the frontier and move "
+                    "this candidate through rebuttal and the remaining strong-result gates."
                 ),
             }
         return {
@@ -2347,18 +2054,11 @@ def _handle_get_next_admissible_node_locked(
             ),
         }
 
-    existing_pause = adaptive.get("pause") or {}
-    if (
-        adaptive.get("disposition") == "paused_needs_expansion"
-        and existing_pause.get("reason") == "needs_strategy_expansion"
-    ):
-        return _blind_reorientation_required(
-            "the legacy expansion pause requires a blind new direction"
-        )
-
     nodes_by_id = {n["id"]: n for n in state["nodes"]}
 
     for node in state["nodes"]:
+        if node.get("id") != authoritative_node_id:
+            continue
         if node.get("status") != "critic_reviewed":
             continue
         if args.get("_allow_evidence_retry", True) is not True:
@@ -2414,19 +2114,13 @@ def _handle_get_next_admissible_node_locked(
         }
 
     # --- Resume path: pick up where the previous session stopped. -----
-    incomplete = []
-    for n in state["nodes"]:
-        if n.get("status") in _RESUME_NEXT_TOOL:
-            incomplete.append(n)
+    incomplete = [
+        node
+        for node in state["nodes"]
+        if node.get("id") == authoritative_node_id
+        and node.get("status") in _RESUME_NEXT_TOOL
+    ]
     if incomplete:
-        # Deepest-first so leaf-y mid-state nodes don't starve.
-        incomplete.sort(
-            key=lambda n: (
-                # type weight tiebreaker (validity first)
-                _TYPE_WEIGHTS.get(n.get("type", ""), 99),
-                n.get("id", ""),
-            )
-        )
         node = incomplete[0]
         nid = node["id"]
         next_tool = _RESUME_NEXT_TOOL[node["status"]]
@@ -2445,51 +2139,40 @@ def _handle_get_next_admissible_node_locked(
             ),
         }
 
-    # --- Fresh path: adaptive priority after the first learned strategy. ---
-    stage = _active_stage(state)
-    admits: set[str] = stage["admits"]
-    adaptive_active = bool(adaptive.get("strategies"))
-    candidates: list[
-        tuple[float, int, str, dict[str, Any], dict[str, Any]]
-    ] = []
+    candidates: list[tuple[int, str, dict[str, Any], dict[str, Any]]] = []
     unavailable_nodes: list[tuple[str, list[str]]] = []
     available_capabilities = _adaptive_capabilities(tid)
     from research_harness.orchestrator.adaptive_search import (
         normalize_required_capabilities,
     )
     for item in state.get("frontier", []):
+        if item.get("node_id") != authoritative_node_id:
+            continue
         if item.get("status") != "queued":
             continue
         node = nodes_by_id.get(item["node_id"])
         if not node:
             continue
-        if not adaptive_active and node.get("type") not in admits:
+        components = item.get("priority_components") or {}
+        strategy = node.get("strategy") or {}
+        required_capabilities = normalize_required_capabilities(
+            strategy.get("required_capabilities") or []
+        )
+        missing = sorted(required_capabilities - available_capabilities)
+        if strategy and missing:
+            unavailable_nodes.append((item["node_id"], missing))
             continue
-        if adaptive_active:
-            components = item.get("priority_components") or {}
-            strategy = node.get("strategy") or {}
-            required_capabilities = normalize_required_capabilities(
-                strategy.get("required_capabilities") or []
+        if strategy and float(components.get("capability_fit", 0.0)) <= 0.0:
+            components = dict(components)
+            components["capability_fit"] = 1.0
+            components["score"] = round(
+                float(components.get("score", 0.0)) + 1.0,
+                6,
             )
-            missing = sorted(required_capabilities - available_capabilities)
-            if strategy and missing:
-                unavailable_nodes.append((item["node_id"], missing))
-                continue
-            if strategy and float(components.get("capability_fit", 0.0)) <= 0.0:
-                components = dict(components)
-                components["capability_fit"] = 1.0
-                components["score"] = round(
-                    float(components.get("score", 0.0)) + 1.0,
-                    6,
-                )
-                item["priority_components"] = components
-                item["priority"] = components["score"]
-            priority = float(components.get("score", item.get("priority", 0.0)))
-            sort_key = -priority
-        else:
-            sort_key = float(_TYPE_WEIGHTS.get(node.get("type", ""), 99))
+            item["priority_components"] = components
+            item["priority"] = components["score"]
         candidates.append(
-            (sort_key, int(item.get("depth", 0)), item["node_id"], node, item)
+            (int(item.get("depth", 0)), item["node_id"], node, item)
         )
     if not candidates:
         for unavailable_node_id, missing in unavailable_nodes:
@@ -2511,10 +2194,9 @@ def _handle_get_next_admissible_node_locked(
             validate_search_state(state)
             _write_search_state_atomic(state_path, state)
         return _blind_reorientation_required(
-            "no runnable legacy node or verified strong result remains"
+            "the authoritative active node is not runnable"
         )
-    candidates.sort(key=lambda c: (c[0], c[1], c[2]))
-    _, depth, nid, node, frontier_item = candidates[0]
+    depth, nid, node, frontier_item = candidates[0]
     if adaptive.get("pause") is not None:
         adaptive["pause"] = None
         adaptive["disposition"] = "continue"
@@ -2524,7 +2206,7 @@ def _handle_get_next_admissible_node_locked(
         _write_search_state_atomic(state_path, state)
     response = {
         "status": "ok",
-        "active_stage": "adaptive_search" if adaptive_active else stage["name"],
+        "active_stage": "blind_sequential_research",
         "node_id": nid,
         "node_type": node.get("type"),
         "depth": depth,
@@ -2543,22 +2225,13 @@ def _handle_get_next_admissible_node_locked(
         ),
         "research_goal": adaptive["goal"],
     }
-    if adaptive_active:
-        response["priority_components"] = frontier_item.get(
-            "priority_components"
-        ) or {}
-        response["strategy"] = node.get("strategy") or {}
-        response["_selection_policy"] = (
-            f"Picked {nid} by harness-owned evidence-derived priority, then "
-            f"depth and content identity. {len(candidates) - 1} other queued "
-            "candidate(s) remain."
-        )
-    else:
-        response["_selection_policy"] = (
-            f"Picked {nid} via legacy bootstrap policy: stage={stage['name']}, "
-            "type weight, depth, and id. Evidence-derived priority takes over "
-            "after the first negative observation creates causal strategies."
-        )
+    response["priority_components"] = frontier_item.get(
+        "priority_components"
+    ) or {}
+    response["strategy"] = node.get("strategy") or {}
+    response["_selection_policy"] = (
+        f"Picked {nid}, the sole node bound to the active blind direction."
+    )
     return response
 
 
@@ -2653,8 +2326,7 @@ def handle_resume_production_state(args: dict[str, Any]) -> dict[str, Any]:
 
 def handle_submit_feasibility_envelope(args: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     """PR7: persist the operator+Professor feasibility envelope. Subsequent
-    design_initial_claim_contract and revise_root_after_reject calls read
-    this file and validate claim scope against it."""
+    contract compilation reads this file and validates claim scope against it."""
     from research_harness.schemas.validator import validate_named_schema
     tid = args["thread_id"]
     env = args["envelope"]
@@ -2820,6 +2492,24 @@ def handle_compute_falsifier_result(args: dict[str, Any]) -> dict[str, Any]:
             measured_known_baseline_transfer=measured_known,
             guard_thresholds=guard_thresholds,
         )
+        binding = _authoritative_strong_binding(tid)
+        if binding is None:
+            return {
+                "status": "rejected",
+                "reason": (
+                    "falsifier result requires one authoritative active blind "
+                    "direction"
+                ),
+            }
+        result.update(
+            {
+                "contract_id": binding.contract_id,
+                "attempt_id": binding.attempt_id,
+                "direction_id": binding.direction_id,
+                "node_id": binding.node_id,
+                "manifest_id": binding.manifest_id,
+            }
+        )
         validate_named_schema("falsifier_result", result)
     except FalsifierError as exc:
         return {"status": "rejected", "reason": f"falsifier predicate not evaluable: {exc}"}
@@ -2878,9 +2568,9 @@ def handle_compute_falsifier_result(args: dict[str, Any]) -> dict[str, Any]:
         next_step = (
             f"Falsifier FAILED (observed {result['observed']:.4g} vs "
             f"{result['predicate']['op']} {result['predicate']['threshold']}). "
-            "achieved=true remains refused. Either improve the pipeline so the "
-            "held-out ranking is preserved, or attest honestly with "
-            "attested_status=unverified_screen / not_achieved."
+            "This active direction is conclusively closed. Call advance_research "
+            "so the harness records the private lesson and generates a structurally "
+            "different blind direction."
         )
     return {
         "status": "ok",
@@ -3104,7 +2794,17 @@ def handle_design_initial_claim_contract(
     new_claim["deploy_grade_scope"] = args.get("deploy_grade_scope")
     if args.get("data_source_anchor"):
         new_claim["data_source_anchor"] = args["data_source_anchor"]
-    # Persist intake-to-claim hand-off.
+    bd_path = _thread_dir(tid) / "market" / "baseline_dossier_candidate.yaml"
+    dump_signals = _detect_deterministic_dump_dossier(bd_path)
+    if dump_signals:
+        return {
+            "status": "rejected",
+            "reason": (
+                "baseline_dossier_candidate.yaml is a deterministic dump. The operator "
+                "must review the market_research candidates and resolve the placeholder "
+                "before production can start. Signals: " + "; ".join(dump_signals)
+            ),
+        }
     handoff_path = _thread_dir(tid) / "production" / "intake_to_claim_dialog.json"
     handoff_path.parent.mkdir(parents=True, exist_ok=True)
     handoff_path.write_text(
@@ -3126,91 +2826,11 @@ def handle_design_initial_claim_contract(
         ) + "\n",
         encoding="utf-8",
     )
-    # Bootstrap search_state so subsequent MCP tools have something to read.
-    # Without this the agent calls get_next_admissible_node and gets
-    # `no_state`, leaving the production panel stuck on "not yet run".
-    from research_harness.orchestrator.root_node_from_grilling import (
-        attach_market_research_dossier,
-        build_root_node_from_grilling,
-        has_placeholder_baseline,
-    )
-    from research_harness.orchestrator.search_state import (
-        initialize_search_state,
-        search_policy_from_config,
-    )
-    from research_harness.orchestrator.treesearch.drafts import seed_drafts_from_root
-
-    repo = _repo_root()
-    market_brief = _read_json(
-        _thread_dir(tid) / "market" / "market_research_brief.json"
-    ) or {}
-    baseline_dossier_id = (
-        market_brief.get("baseline_dossier_id") or "bd_pending_market_research"
-    )
-    candidate_ids: list[str] = []
-    raw_candidates = market_brief.get("baseline_dossier_candidates_index")
-    if isinstance(raw_candidates, list):
-        candidate_ids = [
-            c["id"] for c in raw_candidates
-            if isinstance(c, dict) and c.get("id")
-        ]
-    root_node = build_root_node_from_grilling(
-        grilling or {},
-        baseline_dossier_id=baseline_dossier_id,
-        candidate_ids=candidate_ids,
-    )
-    # Overlay the Professor's strong+honest contract on top of grilling's
-    # placeholder contract.
-    root_node["claim_contract"] = {**root_node["claim_contract"], **new_claim}
-    if has_placeholder_baseline(root_node):
-        root_node = attach_market_research_dossier(
-            root_node,
-            baseline_dossier_id=baseline_dossier_id,
-            candidate_ids=candidate_ids,
-            baseline_analysis_md_path=market_brief.get("baseline_analysis_md_path"),
-        )
-    # --- Rail 2: baseline dossier substance preflight. -------------------
-    # Block production entry when the dossier is a deterministic dump
-    # (no operator-reviewed substance). thread_e5b277f9 entered production
-    # with selected.one_paragraph_reason="Top-ranked search result" and
-    # naive/null candidates = "TBD"; that should never have been allowed.
-    bd_path = _thread_dir(tid) / "market" / "baseline_dossier_candidate.yaml"
-    dump_signals = _detect_deterministic_dump_dossier(bd_path)
-    if dump_signals:
-        return {
-            "status": "rejected",
-            "reason": (
-                "baseline_dossier_candidate.yaml is a deterministic dump — operator "
-                "must review the market_research candidates and resolve the placeholder "
-                "before production can start. Signals: " + "; ".join(dump_signals)
-            ),
-        }
-    policy = search_policy_from_config(repo)
-    state = initialize_search_state(
-        search_id=f"s_{tid}", root_node=root_node, policy=policy
-    )
-    state["status"] = "running"
-    draft_ids = seed_drafts_from_root(
-        state,
-        num_drafts=int(policy["num_drafts"]),
-        max_depth=int(policy["max_depth"]),
-    )
-    tree_dir = _thread_dir(tid) / "production" / "tree"
-    tree_dir.mkdir(parents=True, exist_ok=True)
-    (tree_dir / "search_state.json").write_text(
-        json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
     return {
         "status": "accepted",
         "new_contract": new_claim,
-        "root_node_id": root_node["id"],
-        "draft_node_ids": draft_ids,
-        "search_state_initialized": True,
-        "next_step": (
-            "Call get_next_admissible_node to receive the next node to "
-            "process. The selector will pick by claim-type weight (validity "
-            "first)."
-        ),
+        "search_state_initialized": False,
+        "next_step": "Call advance_research to freeze the contract and generate one blind direction.",
     }
 
 
@@ -3224,9 +2844,11 @@ def handle_submit_grad_student_review(
     )
     if not result.ok:
         return {"status": "rejected", "reason": result.reject_message()}
-    # Persist into the node's dialog log so the frontend graph picks it up.
     tid = args["thread_id"]
     node_id = args["node_id"]
+    rejected = _require_authoritative_node(tid, node_id)
+    if rejected is not None:
+        return rejected
     dialog_path = (
         _thread_dir(tid) / "production" / "tree" / "nodes" / node_id / "dialog.json"
     )
@@ -3271,6 +2893,9 @@ def handle_design_experiment_template(args: dict[str, Any]) -> dict[str, Any]:
 
     tid = args["thread_id"]
     node_id = args["node_id"]
+    rejected = _require_authoritative_node(tid, node_id)
+    if rejected is not None:
+        return rejected
     plan_meta = args["plan_metadata"]
     if not isinstance(plan_meta, dict):
         return {"status": "rejected", "reason": "plan_metadata must be an object"}
@@ -3418,6 +3043,9 @@ def _handle_execute_node_experiment_locked(args: dict[str, Any]) -> dict[str, An
 
     tid = args["thread_id"]
     node_id = args["node_id"]
+    rejected = _require_authoritative_node(tid, node_id)
+    if rejected is not None:
+        return rejected
     repo = _repo_root()
     settings_local = _ls(repo)
     state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
@@ -3753,10 +3381,12 @@ def handle_run_critic_reviews(args: dict[str, Any]) -> dict[str, Any]:
         transition_node,
         validate_search_state,
     )
-    from research_harness.schemas.validator import validate_named_schema
 
     tid = args["thread_id"]
     node_id = args["node_id"]
+    rejected = _require_authoritative_node(tid, node_id)
+    if rejected is not None:
+        return rejected
     state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
     state = _read_json(state_path)
     if not state:
@@ -3795,134 +3425,6 @@ def handle_run_critic_reviews(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def handle_revise_root_after_reject(
-    args: dict[str, Any], settings: dict[str, Any]
-) -> dict[str, Any]:
-    """AC rejected the paper. Accept a new claim contract and re-bootstrap
-    production from a fresh root node."""
-    tid = args["thread_id"]
-    ac_path = _thread_dir(tid) / "production" / "rebuttal" / "ac_decision.json"
-    prev_ac = _read_json(ac_path)
-    # 'reject_and_diversify' routes through select_alternative_root, which
-    # delegates to this handler; accept both terminal-reject AC decisions.
-    if not prev_ac or prev_ac.get("decision") not in {"reject", "reject_and_diversify"}:
-        return {
-            "status": "rejected",
-            "reason": (
-                "revise_root_after_reject is only valid after an AC reject/reject_and_diversify. "
-                "Current ac_decision.json status: "
-                f"{(prev_ac or {}).get('decision', 'missing')}"
-            ),
-        }
-    new_claim = {
-        "claim_under_test": args["new_claim_under_test"],
-        "mandatory_baselines": args["mandatory_baselines"],
-        "success_criteria": args["success_criteria"],
-        "disproof_conditions": args["disproof_conditions"],
-    }
-    market_dir = _thread_dir(tid) / "market"
-    market_context = {
-        "baseline_dossier_yaml": (
-            (market_dir / "baseline_dossier_candidate.yaml").read_text(encoding="utf-8")
-            if (market_dir / "baseline_dossier_candidate.yaml").exists() else ""
-        ),
-        "baseline_analysis_md": (
-            (market_dir / "baseline_analysis.md").read_text(encoding="utf-8")
-            if (market_dir / "baseline_analysis.md").exists() else ""
-        ),
-        "reference_papers": [
-            {"filename": p.name}
-            for p in sorted((market_dir / "reference_papers").glob("*.pdf"))
-        ] if (market_dir / "reference_papers").is_dir() else [],
-    }
-    grilling = _read_json(_thread_dir(tid) / "grilling" / "grilling_session.json")
-    problem_statement = (
-        (grilling or {}).get("extracted", {}).get("claim_under_test") or ""
-    )
-    persona_cfg = _persona_cfg(settings)
-    result = validate_claim_contract(
-        new_claim=new_claim,
-        problem_statement=problem_statement,
-        market_context=market_context,
-        config=persona_cfg,
-    )
-    if not result.ok:
-        return {"status": "rejected", "reason": result.reject_message()}
-    # Anti-laziness: forbid narrowing the success threshold without
-    # proportionally widening evidence breadth. Pull the old claim from
-    # intake_to_claim_dialog.json (still on disk before we archive it below).
-    old_handoff = _read_json(
-        _thread_dir(tid) / "production" / "intake_to_claim_dialog.json"
-    ) or {}
-    old_claim = old_handoff.get("new_contract")
-    if old_claim:
-        narrow_check = validate_revision_after_reject(
-            new_claim=new_claim,
-            old_claim=old_claim,
-            new_evidence_breadth=args.get("evidence_breadth"),
-            old_evidence_breadth=args.get("previous_evidence_breadth"),
-            config=persona_cfg,
-        )
-        if not narrow_check.ok:
-            return {"status": "rejected", "reason": narrow_check.reject_message()}
-    # Capability claims must include a decision rule.
-    rule_check = validate_decision_rule_for_capability_claim(
-        claim_contract=new_claim,
-        config=persona_cfg,
-    )
-    if not rule_check.ok:
-        return {"status": "rejected", "reason": rule_check.reject_message()}
-    # PR7: re-check feasibility envelope on the revised claim.
-    envelope = _read_json(
-        _thread_dir(tid) / "production" / "feasibility_envelope.json"
-    )
-    registered = {
-        a.get("id")
-        for a in (settings.get("data_adapters", {}) or {}).get("registered", []) or []
-    }
-    env_check = validate_claim_fits_envelope(
-        claim_contract={**new_claim,
-                         "deploy_grade_scope": args.get("deploy_grade_scope"),
-                         "data_source_anchor": args.get("data_source_anchor")},
-        envelope=envelope,
-        registered_adapter_ids=registered,
-        config=persona_cfg,
-    )
-    if not env_check.ok:
-        return {"status": "rejected", "reason": env_check.reject_message()}
-    if args.get("deploy_grade_scope"):
-        new_claim["deploy_grade_scope"] = args["deploy_grade_scope"]
-    if args.get("data_source_anchor"):
-        new_claim["data_source_anchor"] = args["data_source_anchor"]
-    # Archive the rejected attempt and write the revised claim as a fresh
-    # intake_to_claim handoff so the operator can re-run production from scratch.
-    import time
-    attempt_root = _thread_dir(tid) / f"production.attempt_reject_{int(time.time())}"
-    prod_dir = _thread_dir(tid) / "production"
-    if prod_dir.exists():
-        prod_dir.rename(attempt_root)
-    prod_dir.mkdir(parents=True, exist_ok=True)
-    (prod_dir / "intake_to_claim_dialog.json").write_text(
-        json.dumps({
-            "original_contract": {"claim_under_test": problem_statement},
-            "new_contract": new_claim,
-            "dialog": [{
-                "speaker": "professor",
-                "intent": "revision_after_ac_reject",
-                "text": args.get("rationale", "AC rejected previous paper; honest+strong revision."),
-                "metadata": {
-                    "previous_ac_decision": prev_ac,
-                    "archived_attempt": str(attempt_root),
-                },
-            }],
-        }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    return {
-        "status": "accepted",
-        "new_contract": new_claim,
-        "archived_attempt": str(attempt_root),
-    }
-
-
 def handle_submit_professor_decision(
     args: dict[str, Any], settings: dict[str, Any]
 ) -> dict[str, Any]:
@@ -3951,17 +3453,24 @@ def handle_submit_professor_decision(
 def _handle_submit_professor_decision_locked(
     args: dict[str, Any], _settings: dict[str, Any]
 ) -> dict[str, Any]:
-    """Apply one idempotent Professor resolution to the active search state."""
     from research_harness.orchestrator.search_state import (
         transition_node,
         validate_search_state,
     )
-    from research_harness.schemas.validator import validate_named_schema
 
     tid = args["thread_id"]
     node_id = args["node_id"]
     transition = args["next_transition"]
-    follow_ups = args.get("follow_up_children") or []
+    if "follow_up_children" in args:
+        return {
+            "status": "rejected",
+            "reason": "follow_up_children is retired; submit only promoted or pruned",
+        }
+    if transition not in {"promoted", "pruned"}:
+        return {
+            "status": "rejected",
+            "reason": "next_transition must be promoted or pruned",
+        }
     state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
     state = _read_json(state_path)
     if not state:
@@ -4011,33 +3520,25 @@ def _handle_submit_professor_decision_locked(
             "received_revision": int(expected_revision),
         }
 
-    # The selector owns ordering. A decision for another fresh node is stale,
-    # even when the submitted node happens to be otherwise runnable.
     expected = _handle_get_next_admissible_node_locked(
         {"thread_id": tid, "_allow_evidence_retry": False}
     )
-    if expected.get("status") == "ok" and expected.get("node_id") != node_id:
+    if not (
+        expected.get("status") == "resume"
+        and expected.get("node_id") == node_id
+        and expected.get("next_tool_to_call") == "submit_professor_decision"
+    ):
         return {
             "status": "rejected",
             "reason": (
-                f"You submitted a decision for node {node_id!r}, but the "
-                f"adaptive selector points at {expected['node_id']!r} next. "
-                "Process that node and retry with its id."
+                f"node {node_id!r} is not the authoritative blind node awaiting "
+                "a Professor decision"
             ),
         }
     validate_search_state(state)
     node = next((n for n in state["nodes"] if n["id"] == node_id), None)
     if not node:
         return {"status": "rejected", "reason": f"node {node_id} not in search_state"}
-    if transition == "needs_child_branch" or follow_ups:
-        return {
-            "status": "rejected",
-            "reason": (
-                "blind sequential directions do not accept observation-derived "
-                "successors or other follow-up children; submit promoted or "
-                "pruned with no follow_up_children"
-            ),
-        }
     if transition == "promoted":
         worker_report = _read_json(
             state_path.parent / "nodes" / node_id / "worker_report.json"
@@ -4079,7 +3580,6 @@ def _handle_submit_professor_decision_locked(
                 ),
             }
 
-    # Record the reduction JSON for audit / frontend.
     decision_path = (
         _thread_dir(tid) / "production" / "tree" / "nodes" / node_id /
         "mcp_professor_decision.json"
@@ -4089,9 +3589,6 @@ def _handle_submit_professor_decision_locked(
         json.dumps(args, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
 
-    # Also append the Professor's natural-language reply + follow-up briefs
-    # into dialog.json so the frontend graph view / inspector shows real
-    # two-way conversation, not a one-sided grad-student monolog.
     dialog_path = decision_path.parent / "dialog.json"
     existing = _read_json(dialog_path) or {"node_id": node_id, "entries": []}
     command_already_logged = any(
@@ -4111,14 +3608,11 @@ def _handle_submit_professor_decision_locked(
             "metadata": {
                 "final_verdict": final_verdict,
                 "next_transition": transition,
-                "follow_up_count": len(follow_ups),
                 "source": "mcp_server",
                 "command_id": command_id,
             },
         })
     elif (final_verdict or transition) and not command_already_logged:
-        # Even when the agent did not supply a natural-language reply, log
-        # the bare decision so the dialog log isn't visibly silent.
         existing["entries"].append({
             "speaker": "professor",
             "intent": "verdict",
@@ -4137,41 +3631,12 @@ def _handle_submit_professor_decision_locked(
         json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
 
-    # Reach orchestrator_reduced. Allowed transitions require we already be
-    # at critic_reviewed; if the operator skipped run_critic_reviews, force
-    # a no-blocking review on the fly via the deterministic reviewer.
-    if node["status"] == "critic_reviewed":
-        transition_node(
-            state, node_id, "orchestrator_reduced",
-            event="mcp_professor_decision",
-            reason=args.get("final_verdict") or "mcp decision",
-        )
-    elif node["status"] == "completed_worker_report":
-        # Run critics on the fly so the transition chain is valid.
-        from research_harness.critics.governance import select_critics
-        from research_harness.critics.review_runner import run_critic_reviews as _run
-        worker_report = _read_json(
-            decision_path.parent / "worker_report.json"
-        ) or {}
-        routing = select_critics(_repo_root(), node)
-        reviews = _run(node, worker_report, routing)
-        for r in reviews:
-            validate_named_schema("critic_review", r)
-        (decision_path.parent / "critic_reviews.json").write_text(
-            json.dumps(reviews, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
-        transition_node(
-            state, node_id, "critic_reviewed",
-            event="critic_reviews",
-            reason="auto-run from mcp_submit_decision",
-        )
-        transition_node(
-            state, node_id, "orchestrator_reduced",
-            event="mcp_professor_decision",
-            reason=args.get("final_verdict") or "mcp decision",
-        )
+    transition_node(
+        state, node_id, "orchestrator_reduced",
+        event="mcp_professor_decision",
+        reason=args.get("final_verdict") or "mcp decision",
+    )
 
-    # Final transition.
     if transition == "promoted":
         transition_node(
             state, node_id, "promoted",
@@ -4186,11 +3651,6 @@ def _handle_submit_professor_decision_locked(
             reason="direction evidence reduced without a successor child",
         )
 
-    # PR4: Failure memory auto-generation. When a node ends in a state the
-    # rest of the harness considers a learnable failure (pruned, with an
-    # informative final_verdict), write a one-page failure record so future
-    # threads can retrieve it. Categories follow the existing memory/failures/
-    # taxonomy.
     final_verdict = args.get("final_verdict") or ""
     if transition == "pruned" and final_verdict:
         try:
@@ -4205,27 +3665,21 @@ def _handle_submit_professor_decision_locked(
                     _thread_dir(tid) / "production" / "tree" / "nodes" / node_id / "worker_report.json"
                 ) or {},
             )
-        except Exception:  # noqa: BLE001
-            # Non-fatal — failure memory is a secondary benefit, not a
-            # blocker for the primary search state mutation.
-            pass
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "status": "rejected",
+                "reason": f"failure lesson could not be persisted: {exc}",
+                "next_tool_to_call": "submit_professor_decision",
+            }
 
-    has_queued_work = any(it["status"] == "queued" for it in state["frontier"])
+    has_queued_work = any(
+        item.get("node_id") == node_id and item.get("status") == "queued"
+        for item in state["frontier"]
+    )
     state["status"] = "running" if has_queued_work else "blocked"
-    from research_harness.orchestrator.adaptive_search import derive_search_disposition
-
-    if not has_queued_work and adaptive.get("pause") is None:
-        adaptive["pause"] = {
-            "reason": "needs_strategy_expansion",
-            "caused_by_observation_ids": [],
-            "missing_capabilities": [],
-            "best_next_experiment": None,
-            "resume_condition": "materialize a distinct diagnostic strategy",
-        }
-    adaptive["disposition"] = derive_search_disposition(
-        has_queued_work=has_queued_work,
-        pause=adaptive.get("pause"),
-        verified_strong_receipt=adaptive.get("strong_result_receipt"),
+    adaptive["pause"] = None
+    adaptive["disposition"] = (
+        "goal_achieved" if adaptive.get("strong_result_receipt") else "continue"
     )
     adaptive["revision"] = int(adaptive["revision"]) + 1
     response: dict[str, Any] = {
@@ -4247,20 +3701,12 @@ def _handle_submit_professor_decision_locked(
 
 def handle_decide_publication_readiness(args: dict[str, Any]) -> dict[str, Any]:
     tid = args["thread_id"]
-    state = _read_json(
-        _thread_dir(tid) / "production" / "tree" / "search_state.json"
-    ) or {}
-    adaptive = state.get("adaptive") or {}
-    if adaptive.get("disposition") == "paused_needs_expansion":
-        return {
-            "status": "rejected",
-            "reason": (
-                "publication readiness cannot convert a resumable search pause "
-                "into scientific completion"
-            ),
-            "search_disposition": "paused_needs_expansion",
-            "pause": adaptive.get("pause"),
-        }
+    node_id = args.get("node_id")
+    if not isinstance(node_id, str):
+        return {"status": "rejected", "reason": "node_id is required"}
+    rejected = _require_authoritative_node(tid, node_id)
+    if rejected is not None:
+        return rejected
     readiness_path = (
         _thread_dir(tid) / "production" / "tree" / "mcp_readiness.json"
     )
@@ -4276,59 +3722,6 @@ def handle_decide_publication_readiness(args: dict[str, Any]) -> dict[str, Any]:
 
 def _rebuttal_dir(tid: str) -> Path:
     return _thread_dir(tid) / "production" / "rebuttal"
-
-
-# ADR 0012 forest: the terminal's flat artifacts under production/rebuttal/.
-# An explicit allowlist (not a name heuristic) so snapshot/reset/restore never
-# touch the per-root snapshot subdirs themselves.
-_TERMINAL_ARTIFACTS: tuple[str, ...] = (
-    "falsifier_result.json",
-    "construct_adversary_report.json",
-    "rebuttal_packet.md",
-    "rebuttal_routing.json",
-    "orchestrator_reduction.json",
-    "ac_decision.json",
-    "camera_ready_revision.json",
-    "user_goal_attestation.json",
-)
-_TERMINAL_ARTIFACT_DIRS: tuple[str, ...] = ("rebuttal_reviews",)
-
-
-def _copy_terminal_artifacts(src: Path, dst: Path) -> list[str]:
-    """Copy the flat terminal artifacts present in ``src`` into ``dst``."""
-    import shutil
-
-    dst.mkdir(parents=True, exist_ok=True)
-    copied: list[str] = []
-    for name in _TERMINAL_ARTIFACTS:
-        f = src / name
-        if f.is_file():
-            shutil.copy2(f, dst / name)
-            copied.append(name)
-    for name in _TERMINAL_ARTIFACT_DIRS:
-        d = src / name
-        if d.is_dir():
-            shutil.copytree(d, dst / name, dirs_exist_ok=True)
-            copied.append(name + "/")
-    return copied
-
-
-def _clear_terminal_artifacts(rebuttal: Path) -> None:
-    """Remove the flat terminal artifacts so the next root starts clean.
-
-    Only the allowlisted artifacts are removed — per-root snapshot subdirs and
-    anything else under rebuttal/ are left intact.
-    """
-    import shutil
-
-    for name in _TERMINAL_ARTIFACTS:
-        f = rebuttal / name
-        if f.is_file():
-            f.unlink()
-    for name in _TERMINAL_ARTIFACT_DIRS:
-        d = rebuttal / name
-        if d.is_dir():
-            shutil.rmtree(d)
 
 
 def _publication_dir(tid: str) -> Path:
@@ -4348,37 +3741,12 @@ def _resolve_promoted_node(tid: str, override_id: str | None = None) -> dict[str
     if not promoted:
         raise ValueError("no promoted nodes yet — rebuttal requires a promoted root")
     nodes_by_id = {node["id"]: node for node in state["nodes"]}
-    frontier_by_id = {
-        item["node_id"]: item for item in state.get("frontier", [])
-    }
-    adaptive_promoted = [
-        pid
-        for pid in promoted
-        if (nodes_by_id.get(pid, {}).get("strategy") or {}).get("id")
-    ]
-    if override_id:
-        target = override_id
-    elif adaptive_promoted:
-        target = max(
-            adaptive_promoted,
-            key=lambda pid: (
-                int(frontier_by_id.get(pid, {}).get("depth", 0)),
-                float(
-                    (frontier_by_id.get(pid, {}).get("priority_components") or {}).get(
-                        "score", frontier_by_id.get(pid, {}).get("priority", 0.0)
-                    )
-                ),
-                pid,
-            ),
-        )
-    else:
-        target = next(
-            (
-                pid
-                for pid in promoted
-                if nodes_by_id.get(pid, {}).get("parent") is None
-            ),
-            promoted[0],
+    target = _authoritative_active_node_id(tid)
+    if target is None or target not in promoted:
+        raise ValueError("the authoritative blind node is not promoted")
+    if override_id is not None and override_id != target:
+        raise ValueError(
+            f"promoted node override {override_id!r} is not the authoritative node"
         )
     node = nodes_by_id.get(target)
     if not node:
@@ -4394,7 +3762,10 @@ def handle_prepare_rebuttal_packet(args: dict[str, Any]) -> dict[str, Any]:
 
     tid = args["thread_id"]
     repo = _repo_root()
-    ctx = _resolve_promoted_node(tid, args.get("promoted_node_id"))
+    try:
+        ctx = _resolve_promoted_node(tid, args.get("promoted_node_id"))
+    except ValueError as exc:
+        return {"status": "rejected", "reason": str(exc)}
     node = ctx["node"]
     promoted_id = ctx["promoted_id"]
 
@@ -4663,56 +4034,6 @@ def handle_submit_orchestrator_reduction(args: dict[str, Any]) -> dict[str, Any]
     return {"status": "ok", "next_step": "Call submit_ac_decision next."}
 
 
-# --- Strictness rails (see docs/adr/0005 + post-thread_e5b277f9 review) -- #
-
-_NEGATIVE_SUCCESSOR_VERDICTS = {
-    "contradicted",
-    "confounded_or_not_evaluable",
-    "blocked_by_operational_issue",
-}
-_BLOCKING_SUCCESSOR_VERDICTS = {
-    "confounded_or_not_evaluable",
-    "blocked_by_operational_issue",
-}
-
-
-def _aggregate_successor_verdicts(tid: str, promoted_node_id: str) -> dict[str, Any]:
-    """Count direct-children final_verdicts of the promoted node.
-
-    Used by submit_ac_decision to block accept when the promoted root's
-    children largely returned negative — which is exactly the failure mode
-    thread_e5b277f9 hit (3/3 successors negative yet AC=accept).
-    """
-    state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
-    state = _read_json(state_path) or {}
-    children = [
-        n for n in state.get("nodes", [])
-        if n.get("parent") == promoted_node_id
-    ]
-    nodes_dir = _thread_dir(tid) / "production" / "tree" / "nodes"
-    negative: list[tuple[str, str]] = []
-    blocking: list[tuple[str, str]] = []
-    evaluated = 0
-    for child in children:
-        decision_path = nodes_dir / child["id"] / "mcp_professor_decision.json"
-        decision = _read_json(decision_path)
-        if not decision:
-            continue
-        evaluated += 1
-        fv = str(decision.get("final_verdict") or "")
-        if fv in _NEGATIVE_SUCCESSOR_VERDICTS:
-            negative.append((child["id"], fv))
-        if fv in _BLOCKING_SUCCESSOR_VERDICTS:
-            blocking.append((child["id"], fv))
-    return {
-        "total_children": len(children),
-        "evaluated": evaluated,
-        "negative_count": len(negative),
-        "negative_children": negative,
-        "blocking_children": blocking,
-    }
-
-
 _DETERMINISTIC_DUMP_REASON_PATTERNS = (
     "top-ranked search result",
     "tbd",
@@ -4776,7 +4097,10 @@ def _falsification_gate_enabled(settings: dict[str, Any]) -> bool:
 
 
 def _falsifier_result_blocks_achievement(
-    fr: dict[str, Any] | None, falsifier: dict[str, Any]
+    fr: dict[str, Any] | None,
+    falsifier: dict[str, Any],
+    *,
+    expected_binding: dict[str, str] | None = None,
 ) -> str | None:
     """ADR 0006: returns a rejection reason if the on-disk falsifier_result
     does not legitimately support achieved=true, else None. The result must
@@ -4819,6 +4143,17 @@ def _falsifier_result_blocks_achievement(
             "falsifier_result.predicate does not match the frozen external "
             "falsifier predicate. Recompute the result against the exact frozen bar."
         )
+    if expected_binding is not None:
+        mismatched = [
+            key
+            for key, expected in expected_binding.items()
+            if fr.get(key) != expected
+        ]
+        if mismatched:
+            return (
+                "falsifier_result does not match the active blind attempt binding: "
+                + ", ".join(mismatched)
+            )
     return None
 
 
@@ -4885,8 +4220,38 @@ def _real_referent_verified(tid: str) -> bool:
     falsifier = envelope.get("external_falsifier") or {}
     if falsifier.get("kind") != "real_holdout":
         return False
+    active = _authoritative_strong_binding(tid)
+    if active is not None:
+        expected_binding = {
+            "contract_id": active.contract_id,
+            "attempt_id": active.attempt_id,
+            "direction_id": active.direction_id,
+            "node_id": active.node_id,
+            "manifest_id": active.manifest_id,
+        }
+    else:
+        state = _read_json(
+            _thread_dir(tid) / "production" / "tree" / "search_state.json"
+        ) or {}
+        receipt = (state.get("adaptive") or {}).get("strong_result_receipt") or {}
+        expected_binding = {
+            "contract_id": receipt.get("contract_id"),
+            "attempt_id": receipt.get("attempt_id"),
+            "direction_id": receipt.get("direction_id"),
+            "node_id": receipt.get("promoted_node_id"),
+            "manifest_id": receipt.get("acquisition_manifest_id"),
+        }
+        if any(not isinstance(value, str) or not value for value in expected_binding.values()):
+            return False
     fr = _read_json(_rebuttal_dir(tid) / "falsifier_result.json")
-    return _falsifier_result_blocks_achievement(fr, falsifier) is None
+    return (
+        _falsifier_result_blocks_achievement(
+            fr,
+            falsifier,
+            expected_binding=expected_binding,
+        )
+        is None
+    )
 
 
 def _construct_referent_verified(tid: str, settings: dict[str, Any]) -> bool:
@@ -5050,166 +4415,12 @@ def _compute_scope_attainment(
 
 # --- ADR 0007: depth gate (premature-termination is the enemy) ---------- #
 
-_DEFAULT_MIN_DISTINCT_ATTEMPTS = 2
-# Nodes that actually ran and produced evidence (vs. proposed/ready/blocked).
-_RAN_STATUSES = {
-    "completed_worker_report", "critic_reviewed", "orchestrator_reduced",
-    "promoted", "needs_child_branch", "pruned",
-}
-
-
-def _premature_termination_gate_enabled(settings: dict[str, Any]) -> bool:
-    """ADR 0007: depth gate on the lazy door. Default ON; disabling is a
-    loosening (reverts to ADR 0006's unconditional honest-failure exit)."""
-    g = _persona_cfg(settings).get("premature_termination_gate")
-    if isinstance(g, dict):
-        return g.get("enabled", True) is not False
-    return True
-
-
-def _min_distinct_attempts(settings: dict[str, Any]) -> int:
-    g = _persona_cfg(settings).get("premature_termination_gate")
-    if isinstance(g, dict):
-        v = g.get("min_distinct_attempts")
-        if isinstance(v, int) and v >= 1:
-            return v
-    return _DEFAULT_MIN_DISTINCT_ATTEMPTS
-
-
 def _adversarial_dominance_enabled(settings: dict[str, Any]) -> bool:
     """ADR 0007 lever 0: a grounded critic kill freezes accept. Default ON."""
     g = _persona_cfg(settings).get("adversarial_dominance")
     if isinstance(g, dict):
         return g.get("enabled", True) is not False
     return True
-
-
-def _node_is_narrowing(node: dict[str, Any], root_scope: str | None) -> bool:
-    """ADR 0007: a scope-narrowing relabel is NOT a distinct depth attempt.
-    It repackages the same failure smaller. Detected by feasibility_narrowed
-    scope_kind, a deploy_grade_scope weaker than the root's, or a
-    feasibility-formulation node id."""
-    cc = node.get("claim_contract") or {}
-    if cc.get("scope_kind") == "feasibility_narrowed":
-        return True
-    sc = cc.get("deploy_grade_scope")
-    if (
-        sc in _SCOPE_RANK and root_scope in _SCOPE_RANK
-        and _SCOPE_RANK[sc] < _SCOPE_RANK[root_scope]
-    ):
-        return True
-    if "acf_feasibility" in str(node.get("id") or ""):
-        return True
-    return False
-
-
-def _node_final_verdict(tid: str, node_id: str) -> str:
-    dec = _read_json(
-        _thread_dir(tid) / "production" / "tree" / "nodes" / node_id
-        / "mcp_professor_decision.json"
-    )
-    return str((dec or {}).get("final_verdict") or "")
-
-
-def _investigation_depth(tid: str) -> dict[str, Any]:
-    """ADR 0007: measure earned depth, the reward axis. distinct_attempts
-    counts genuine attempts (ran nodes that are NOT scope-narrowing relabels)
-    plus archived prior root attempts; narrowing pivots are excluded and
-    surfaced separately as the visible penalty. killed_hypotheses counts
-    load-bearing negatives (contradicted) — a deep negative closes hypothesis
-    space."""
-    state = _read_json(_thread_dir(tid) / "production" / "tree" / "search_state.json") or {}
-    nodes = state.get("nodes") or []
-    root_scope: str | None = None
-    for r in nodes:
-        if r.get("parent") in (None, ""):
-            sc = (r.get("claim_contract") or {}).get("deploy_grade_scope")
-            if sc in _SCOPE_RANK:
-                root_scope = sc
-                break
-    ran = [n for n in nodes if n.get("status") in _RAN_STATUSES]
-    narrowing = [n for n in ran if _node_is_narrowing(n, root_scope)]
-    narrowing_ids = {id(n) for n in narrowing}
-    distinct = [n for n in ran if id(n) not in narrowing_ids]
-    killed = [
-        n for n in distinct
-        if _node_final_verdict(tid, n.get("id", "")) == "contradicted"
-    ]
-    archived = [
-        p.name for p in _thread_dir(tid).glob("production.attempt_*") if p.is_dir()
-    ]
-    return {
-        "distinct_attempts": len(distinct) + len(archived),
-        "tree_distinct_attempts": len(distinct),
-        "narrowing_pivots": len(narrowing),
-        "killed_hypotheses": len(killed),
-        "archived_attempts": len(archived),
-    }
-
-
-def _subtree_node_ids(state: dict[str, Any], root_id: str) -> set[str]:
-    """All node ids in root_id's subtree (root + descendants via parent links)."""
-    nodes = state.get("nodes") or []
-    children: dict[Any, list[str]] = {}
-    for n in nodes:
-        children.setdefault(n.get("parent"), []).append(n.get("id"))
-    out: set[str] = set()
-    stack = [root_id]
-    while stack:
-        nid = stack.pop()
-        if nid in out:
-            continue
-        out.add(nid)
-        stack.extend(c for c in children.get(nid, []) if c)
-    return out
-
-
-def _investigation_depth_for_root(tid: str, root_id: str) -> dict[str, Any]:
-    """ADR 0012 forest tie-break: per-root subtree depth. Mirrors
-    _investigation_depth but restricted to root_id's subtree; archived prior
-    attempts are thread-level and do not apply per-root (excluded)."""
-    state = _read_json(_thread_dir(tid) / "production" / "tree" / "search_state.json") or {}
-    all_nodes = state.get("nodes") or []
-    subtree = _subtree_node_ids(state, root_id)
-    nodes = [n for n in all_nodes if n.get("id") in subtree]
-    rnode = next((n for n in all_nodes if n.get("id") == root_id), None)
-    sc = ((rnode or {}).get("claim_contract") or {}).get("deploy_grade_scope")
-    root_scope = sc if sc in _SCOPE_RANK else None
-    ran = [n for n in nodes if n.get("status") in _RAN_STATUSES]
-    narrowing = [n for n in ran if _node_is_narrowing(n, root_scope)]
-    narrowing_ids = {id(n) for n in narrowing}
-    distinct = [n for n in ran if id(n) not in narrowing_ids]
-    killed = [
-        n for n in distinct
-        if _node_final_verdict(tid, n.get("id", "")) == "contradicted"
-    ]
-    return {
-        "distinct_attempts": len(distinct),
-        "tree_distinct_attempts": len(distinct),
-        "narrowing_pivots": len(narrowing),
-        "killed_hypotheses": len(killed),
-        "archived_attempts": 0,
-    }
-
-
-def _forest_survivor_roots(tid: str) -> list[dict[str, Any]]:
-    """ADR 0012: forest roots (parent=None) with a promoted node in their
-    subtree. Returns [{root_id, promoted_node_id}] — the root itself if
-    promoted, else the first promoted descendant (search_state order)."""
-    state = _read_json(_thread_dir(tid) / "production" / "tree" / "search_state.json") or {}
-    nodes = state.get("nodes") or []
-    promoted_list = state.get("promoted_node_ids") or []
-    promoted_set = set(promoted_list)
-    roots = [n.get("id") for n in nodes if n.get("parent") in (None, "")]
-    survivors: list[dict[str, Any]] = []
-    for rid in roots:
-        sub = _subtree_node_ids(state, rid)
-        prom_in = [pid for pid in promoted_list if pid in sub]
-        if not prom_in:
-            continue
-        pnode = rid if rid in promoted_set else prom_in[0]
-        survivors.append({"root_id": rid, "promoted_node_id": pnode})
-    return survivors
 
 
 # --- ADR 0007 lever 0: adversarial-dominant aggregation ----------------- #
@@ -5302,17 +4513,10 @@ def _check_user_goal_anchor_bindings(
 
 def _compute_ac_downclamp_signals(
     tid: str,
-    successor_agg: dict[str, Any],
     anchor_check: dict[str, list[Any]] | None = None,
 ) -> list[str]:
     """Collect signals that justify auto-clamping AC confidence to 'low'."""
     reasons: list[str] = []
-    if successor_agg["evaluated"] > 0:
-        ratio = successor_agg["negative_count"] / successor_agg["evaluated"]
-        if ratio >= 0.5:
-            reasons.append(
-                f"successor_negative_ratio={successor_agg['negative_count']}/{successor_agg['evaluated']}>=0.5"
-            )
     real_adapter = _has_real_data_adapter(tid)
     if real_adapter is False:
         reasons.append("feasibility_envelope.data_sources_available has no real_adapter (synthetic-only)")
@@ -5329,117 +4533,7 @@ def _compute_ac_downclamp_signals(
     return reasons
 
 
-def _detect_must_revise_root_signal(state: dict[str, Any]) -> dict[str, Any] | None:
-    """Rail 5: detect when the deepest promoted node has collapsed branches.
-
-    Triggers when a promoted node has >=3 negative direct children (status pruned
-    AND final_verdict in NEGATIVE set, OR status pruned with no decision-file
-    counted via status alone) and 0 promoted children. Returns dict with the
-    promoted_node_id + alternative root candidates already in the tree, or None.
-    """
-    nodes = state.get("nodes") or []
-    if not nodes:
-        return None
-    by_id = {n["id"]: n for n in nodes}
-
-    # Find promoted leaves (promoted nodes with no promoted children).
-    promoted_ids = {n["id"] for n in nodes if n.get("status") == "promoted"}
-    if not promoted_ids:
-        return None
-    promoted_with_promoted_child: set[str] = set()
-    for n in nodes:
-        if n.get("status") == "promoted" and n.get("parent") in promoted_ids:
-            promoted_with_promoted_child.add(n["parent"])
-    promoted_leaves = promoted_ids - promoted_with_promoted_child
-
-    for leaf_id in promoted_leaves:
-        children = [n for n in nodes if n.get("parent") == leaf_id]
-        if not children:
-            continue
-        negative_children = [
-            n["id"] for n in children
-            if n.get("status") == "pruned"
-        ]
-        promoted_children = [n["id"] for n in children if n.get("status") == "promoted"]
-        if promoted_children or len(negative_children) < 3:
-            continue
-        # Surface dangling alternative roots: sibling drafts of leaf_id whose
-        # status is queued/pruned but were never tried — operator may want to
-        # pick them up via revise_root_after_reject.
-        parent_id = by_id[leaf_id].get("parent")
-        siblings = [
-            n["id"] for n in nodes
-            if n.get("parent") == parent_id and n["id"] != leaf_id
-        ] if parent_id else []
-        return {
-            "promoted_node_id": leaf_id,
-            "negative_children": negative_children,
-            "alternative_root_candidates": siblings,
-        }
-    return None
-
-
-# Map of tool_name → handler used by the inline auto-dispatcher. Kept narrow
-# on purpose: only rails whose auto-action is genuinely "fire and continue"
-# should be listed here. Adding a new entry implies operator-grade trust that
-# the action is non-destructive and idempotent within chain_safety_check.
-def _auto_dispatchable_handlers() -> dict[str, Any]:
-    return {
-        "seed_alternative_root_formulation": handle_seed_alternative_root_formulation,
-    }
-
-
-def _escalate_to_operator(
-    tid: str,
-    suggestion: Any,
-    *,
-    refusal_reason: str,
-) -> dict[str, Any]:
-    """Enqueue an operator prompt summarizing a refused auto-action so the
-    frontend can render it and let the operator decide what to do next.
-
-    Returns a small dict the caller can attach to the response under
-    ``operator_prompt`` so the LLM driving the session knows where to poll.
-    """
-    from research_harness.orchestrator.operator_prompts import enqueue_prompt
-
-    prompt_text = (
-        f"Auto-resolver refused to dispatch {suggestion.tool!r} "
-        f"(source: {suggestion.source_rail}). Reason: {refusal_reason}. "
-        f"Rationale that triggered the suggestion: {suggestion.rationale}"
-    )
-    # Stable event_id so retries don't pile up duplicate prompts for the
-    # same suggestion+refusal combination.
-    event_id = f"opr_esc_{suggestion.source_rail}_{abs(hash(refusal_reason)) & 0xFFFFFFFF:08x}"
-    try:
-        record = enqueue_prompt(
-            _thread_dir(tid),
-            kind="auto_resolver_escalation",
-            prompt=prompt_text,
-            options=[
-                "dispatch_anyway",
-                "abandon_and_revise_root",
-                "render_honest_failure_paper",
-            ],
-            source_rail=suggestion.source_rail,
-            event_id=event_id,
-        )
-    except ValueError:
-        # Idempotent: if a prompt for this exact (source_rail, refusal)
-        # already exists, surface the same event_id without duplicating.
-        return {"event_id": event_id, "status": "already_enqueued"}
-    return {
-        "event_id": record["event_id"],
-        "status": "enqueued",
-        "next_step": (
-            "Poll get_pending_operator_response with this event_id to consume "
-            "the operator's reply once it lands."
-        ),
-    }
-
-
 def handle_enqueue_operator_prompt(args: dict[str, Any]) -> dict[str, Any]:
-    """MCP-side wrapper around operator_prompts.enqueue_prompt."""
     from research_harness.orchestrator.operator_prompts import enqueue_prompt
 
     tid = args["thread_id"]
@@ -5480,412 +4574,6 @@ def handle_get_pending_operator_response(args: dict[str, Any]) -> dict[str, Any]
         "source_rail": record.get("source_rail"),
         "created_at": record["created_at"],
         "responded_at": record.get("responded_at"),
-    }
-
-
-def _maybe_auto_dispatch(tid: str, response: dict[str, Any]) -> dict[str, Any]:
-    """If response carries an auto_action_suggestion that passes safety, run it.
-
-    Mutates the response by appending an ``auto_resolved`` field describing
-    what was dispatched (or refused, with the safety reason). The original
-    detection fields (status, reason, etc.) are preserved so the audit trail
-    of why the auto-action fired is never lost.
-    """
-    from research_harness.orchestrator.auto_resolver import (
-        chain_safety_check, pick_auto_action, record_auto_action,
-    )
-
-    suggestion = pick_auto_action(response)
-    if suggestion is None:
-        return response
-    handlers = _auto_dispatchable_handlers()
-    handler = handlers.get(suggestion.tool)
-    if handler is None:
-        response["auto_resolved"] = {
-            "dispatched": False,
-            "reason": f"tool {suggestion.tool!r} not in auto-dispatchable allowlist",
-        }
-        record_auto_action(
-            _thread_dir(tid), suggestion,
-            outcome="refused_by_safety_check",
-            refusal_reason="not in auto-dispatchable allowlist",
-        )
-        response["operator_prompt"] = _escalate_to_operator(
-            tid, suggestion,
-            refusal_reason=f"tool {suggestion.tool!r} not in auto-dispatchable allowlist",
-        )
-        return response
-    verdict = chain_safety_check(_thread_dir(tid), suggestion)
-    if not verdict.ok:
-        response["auto_resolved"] = {
-            "dispatched": False,
-            "reason": verdict.reason,
-            "history_length": verdict.history_length,
-        }
-        record_auto_action(
-            _thread_dir(tid), suggestion,
-            outcome="refused_by_safety_check",
-            refusal_reason=verdict.reason,
-        )
-        response["operator_prompt"] = _escalate_to_operator(
-            tid, suggestion, refusal_reason=verdict.reason,
-        )
-        return response
-    try:
-        chained = handler(suggestion.args)
-    except Exception as exc:  # noqa: BLE001
-        response["auto_resolved"] = {
-            "dispatched": True,
-            "tool": suggestion.tool,
-            "error": f"{type(exc).__name__}: {exc}",
-        }
-        record_auto_action(
-            _thread_dir(tid), suggestion,
-            outcome="dispatch_error",
-            refusal_reason=str(exc),
-        )
-        response["operator_prompt"] = _escalate_to_operator(
-            tid, suggestion, refusal_reason=f"dispatch error: {exc}",
-        )
-        return response
-    response["auto_resolved"] = {
-        "dispatched": True,
-        "tool": suggestion.tool,
-        "args": suggestion.args,
-        "rationale": suggestion.rationale,
-        "source_rail": suggestion.source_rail,
-        "result": chained,
-    }
-    record_auto_action(
-        _thread_dir(tid), suggestion,
-        outcome="ok" if chained.get("status") == "ok" else "rejected",
-        dispatch_result=chained,
-    )
-    return response
-
-
-def handle_seed_alternative_root_formulation(args: dict[str, Any]) -> dict[str, Any]:
-    """Multi-root: add a second/third root from grilling.alternative_claim_formulations.
-
-    The current root is untouched — both run in parallel via the same
-    search_state. seed_drafts_from_root by default fires for the new root only
-    (it's idempotent against the existing root's already-populated children).
-    """
-    from research_harness.orchestrator.root_node_from_grilling import (
-        build_root_node_from_grilling,
-    )
-    from research_harness.orchestrator.search_state import (
-        search_policy_from_config,
-    )
-    from research_harness.orchestrator.treesearch.drafts import seed_drafts_from_root
-    from research_harness.orchestrator.validation import validate_node_invariants
-    from research_harness.schemas.validator import validate_named_schema
-
-    tid = args["thread_id"]
-    formulation_id = args["formulation_id"]
-    seed_drafts_flag = args.get("seed_drafts", True)
-
-    grilling = _read_json(_thread_dir(tid) / "grilling" / "grilling_session.json")
-    if not grilling:
-        return {"status": "rejected", "reason": "grilling_session.json missing — run grilling first"}
-    formulations = (grilling.get("extracted") or {}).get("alternative_claim_formulations") or []
-    chosen = next(
-        (f for f in formulations if isinstance(f, dict) and f.get("formulation_id") == formulation_id),
-        None,
-    )
-    if not chosen:
-        available = [f.get("formulation_id") for f in formulations if isinstance(f, dict)]
-        return {
-            "status": "rejected",
-            "reason": f"formulation_id {formulation_id!r} not found in grilling.alternative_claim_formulations. Available: {available}",
-        }
-
-    state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
-    state = _read_json(state_path)
-    if not state or not state.get("nodes"):
-        return {
-            "status": "rejected",
-            "reason": "search_state.json missing — design_initial_claim_contract must run first to seed the primary root",
-        }
-
-    market_brief = _read_json(_thread_dir(tid) / "market" / "market_research_brief.json") or {}
-    baseline_dossier_id = market_brief.get("baseline_dossier_id") or "bd_pending_market_research"
-    candidate_ids: list[str] = []
-    raw_candidates = market_brief.get("baseline_dossier_candidates_index")
-    if isinstance(raw_candidates, list):
-        candidate_ids = [c["id"] for c in raw_candidates if isinstance(c, dict) and c.get("id")]
-
-    # Build a new root node with the formulation's claim overriding grilling's.
-    new_root = build_root_node_from_grilling(
-        grilling,
-        baseline_dossier_id=baseline_dossier_id,
-        candidate_ids=candidate_ids,
-        node_id_suffix=f"root_{formulation_id}",
-    )
-    new_root["claim_contract"]["claim_under_test"] = chosen["claim_under_test"]
-    new_root["lineage"]["introduced_assumptions"].append(
-        f"alternative_claim_formulation: {formulation_id} (scope_kind={chosen.get('scope_kind')})"
-    )
-    validate_node_invariants(new_root)
-    validate_named_schema("node", new_root)
-
-    if any(n["id"] == new_root["id"] for n in state["nodes"]):
-        return {
-            "status": "rejected",
-            "reason": f"root with id {new_root['id']} already exists in search_state — formulation has already been seeded",
-        }
-
-    state["nodes"].append(new_root)
-    state["frontier"].append({
-        "node_id": new_root["id"], "parent": None, "depth": 0, "priority": 1.0,
-        "stage": new_root.get("stage", "promotion"), "status": "queued",
-        "reason": f"alternative root from formulation {formulation_id}",
-    })
-    state["transitions"].append({
-        "node_id": new_root["id"], "from_status": "ready", "to_status": "ready",
-        "event": "seed_alternative_root", "reason": f"formulation_id={formulation_id}",
-        "created_child_ids": [],
-    })
-
-    draft_ids: list[str] = []
-    if seed_drafts_flag:
-        policy = search_policy_from_config(_repo_root())
-        draft_ids = seed_drafts_from_root(
-            state,
-            num_drafts=int(policy["num_drafts"]),
-            max_depth=int(policy["max_depth"]),
-            root_id=new_root["id"],
-        )
-
-    state_path.write_text(
-        json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    return {
-        "status": "ok",
-        "new_root_id": new_root["id"],
-        "formulation_id": formulation_id,
-        "scope_kind": chosen.get("scope_kind"),
-        "seeded_draft_ids": draft_ids,
-        "next_step": (
-            "Call get_next_admissible_node — the new root + drafts are now in the frontier. "
-            "Both the original root tree and this one will be expanded in parallel."
-        ),
-    }
-
-
-def handle_seed_forest_from_connector(args: dict[str, Any]) -> dict[str, Any]:
-    """ADR 0012 connector->production handoff.
-
-    Reads the connector_session's kept claim_contracts and seeds a MULTI-ROOT
-    forest search_state (each claim = a coexisting parent=null root, draft-seeded
-    via the existing scaffold). Replaces design_initial_claim_contract for the
-    multi-root path. Refuses if production is already seeded; 0 claims ->
-    no_claims (the production phase then renders honest-failure).
-    """
-    from research_harness.connector.forest import build_forest_search_state
-    from research_harness.orchestrator.search_state import search_policy_from_config
-
-    tid = args["thread_id"]
-    grilling = _read_json(_thread_dir(tid) / "grilling" / "grilling_session.json")
-    if not grilling:
-        return {"status": "rejected", "reason": "grilling_session.json missing — run grilling first"}
-    connector = _read_json(_thread_dir(tid) / "connector" / "connector_session.json")
-    if not connector:
-        return {
-            "status": "rejected",
-            "reason": "connector_session.json missing — run the connector phase first",
-        }
-
-    conn_status = connector.get("status")
-    claims = connector.get("claims") or []
-    if conn_status in {"blocked_by_gate", "blocked_by_execution_ack", "aborted", "in_progress"}:
-        return {"status": "rejected", "reason": f"connector did not complete (status={conn_status!r})"}
-    if not claims:
-        return {
-            "status": "no_claims",
-            "reason": "connector produced 0 claims (completed_no_claims) — no forest to seed",
-            "next_step": "render_honest_failure_paper: the connector found no reducible far-framing.",
-        }
-
-    state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
-    if state_path.exists():
-        return {
-            "status": "rejected",
-            "reason": "production already seeded (search_state.json exists) — refusing to clobber",
-        }
-
-    policy = search_policy_from_config(_repo_root())
-    envelope = _read_json(
-        _thread_dir(tid) / "production" / "feasibility_envelope.json"
-    ) or {}
-    operator_intent = envelope.get("operator_intent") or {}
-    deploy_grade_scope = operator_intent.get("target_deploy_grade_scope")
-    adapter_id = operator_intent.get("data_source_anchor")
-    snapshot_id = operator_intent.get("data_source_snapshot_id")
-    data_selection = None
-    if adapter_id or snapshot_id:
-        if not adapter_id or not snapshot_id:
-            return {
-                "status": "rejected",
-                "reason": "feasibility envelope has an incomplete adapter selection",
-            }
-        from research_harness.data_adapters import AdapterError, require_thread_snapshot
-        try:
-            require_thread_snapshot(
-                _thread_dir(tid),
-                adapter_id=str(adapter_id),
-                snapshot_id=str(snapshot_id),
-            )
-        except AdapterError as exc:
-            return {"status": "rejected", "reason": str(exc)}
-        data_selection = {
-            "adapter_id": str(adapter_id),
-            "snapshot_id": str(snapshot_id),
-        }
-    if deploy_grade_scope == "deployment" and data_selection is None:
-        return {
-            "status": "rejected",
-            "reason": "deployment requires the supervisor's persisted adapter selection",
-        }
-    state = build_forest_search_state(
-        grilling,
-        claims,
-        search_id=f"s_{tid}",
-        policy=policy,
-        deploy_grade_scope=deploy_grade_scope,
-        data_selection=data_selection,
-    )
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    root_ids = [n["id"] for n in state["nodes"] if n.get("parent") is None]
-    return {
-        "status": "ok",
-        "num_roots": len(root_ids),
-        "root_ids": root_ids,
-        "search_state_path": str(state_path),
-        "next_step": (
-            "Call get_next_admissible_node — the forest's N roots + their drafts are in "
-            "the frontier. The existing per-node gate runs every tree; at the end, "
-            "select_strongest_survivor picks the single earned output (per-survivor terminal)."
-        ),
-    }
-
-
-def handle_snapshot_root_terminal(args: dict[str, Any]) -> dict[str, Any]:
-    """ADR 0012 forest (snapshot-and-reset): after a survivor root's full terminal
-    has run flat under production/rebuttal/, snapshot those artifacts into
-    production/rebuttal/<root_id>/ and RESET the flat dir so the next root's
-    terminal starts clean. select_strongest_survivor then reads the per-root
-    snapshots. Single-root threads never call this (they keep the flat path)."""
-    tid = args["thread_id"]
-    root_id = args["root_id"]
-    rebuttal = _rebuttal_dir(tid)
-    dest = rebuttal / root_id
-    copied = _copy_terminal_artifacts(rebuttal, dest)
-    if not copied:
-        return {
-            "status": "rejected",
-            "reason": (
-                "no flat terminal artifacts under production/rebuttal/ to snapshot — "
-                "run this root's terminal first (compute_falsifier_result -> "
-                "submit_construct_adversary_report -> ... -> "
-                "submit_professor_user_goal_attestation)."
-            ),
-        }
-    _clear_terminal_artifacts(rebuttal)
-    return {
-        "status": "ok",
-        "root_id": root_id,
-        "snapshot_dir": str(dest),
-        "snapshotted": copied,
-        "reset": True,
-        "next_step": (
-            "Run the next survivor root's terminal (flat) + snapshot_root_terminal "
-            "again. When every survivor is snapshotted, call select_strongest_survivor."
-        ),
-    }
-
-
-def handle_select_strongest_survivor(args: dict[str, Any]) -> dict[str, Any]:
-    """ADR 0012 forest terminal: pick the single strongest-earned survivor.
-
-    Reads each survivor root's per-root attestation (verdict_strength) + per-root
-    investigation_depth, ranks via connector.select.select_strongest, records
-    forest_selection.json, and returns the winner (the production then renders
-    the winner's paper). 0 survivors -> honest_failure. If a survivor lacks its
-    per-root attestation, returns incomplete (run that root's terminal first).
-    The single-root legacy path is untouched — this is only for the connector
-    forest (>1 coexisting root).
-    """
-    from research_harness.connector.select import select_strongest
-
-    tid = args["thread_id"]
-    survivors = _forest_survivor_roots(tid)
-    if not survivors:
-        return {
-            "status": "honest_failure",
-            "reason": "no forest survivor reached a promoted terminal",
-            "next_step": "render_honest_failure_paper — no claim earned standing.",
-        }
-
-    candidates: list[dict[str, Any]] = []
-    pending: list[str] = []
-    for s in survivors:
-        rid = s["root_id"]
-        att = _read_json(_rebuttal_dir(tid) / rid / "user_goal_attestation.json")
-        if not att:
-            pending.append(rid)
-            continue
-        depth = _investigation_depth_for_root(tid, rid)
-        candidates.append({
-            "node_id": rid,
-            "promoted_node_id": s["promoted_node_id"],
-            "verdict_strength": att.get("verdict_strength"),
-            "distinct_attempts": depth["distinct_attempts"],
-        })
-
-    if pending:
-        return {
-            "status": "incomplete",
-            "pending_roots": pending,
-            "reason": "these survivor roots have no per-root attestation yet",
-            "next_step": (
-                "Run the per-survivor terminal (prepare_rebuttal_packet -> ... -> "
-                "submit_professor_user_goal_attestation with promoted_node_id=<root>) "
-                "for each pending root, then call select_strongest_survivor again."
-            ),
-        }
-
-    result = select_strongest(candidates)
-    winner = result["winner"]
-    selection = {
-        "selected_root_id": winner["node_id"] if winner else None,
-        "selected_promoted_node_id": winner["promoted_node_id"] if winner else None,
-        "verdict_strength": winner["verdict_strength"] if winner else None,
-        "ranking": result["ranking"],
-        "num_survivors": len(survivors),
-    }
-    sel_path = _thread_dir(tid) / "production" / "tree" / "forest_selection.json"
-    sel_path.parent.mkdir(parents=True, exist_ok=True)
-    sel_path.write_text(json.dumps(selection, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    # Restore the winner's snapshotted terminal to the flat rebuttal/ dir so
-    # render_final_paper (which reads flat, unchanged) renders the winner. The
-    # winner's snapshot subdir is left intact for audit.
-    if winner:
-        rebuttal = _rebuttal_dir(tid)
-        _clear_terminal_artifacts(rebuttal)
-        _copy_terminal_artifacts(rebuttal / winner["node_id"], rebuttal)
-    return {
-        "status": "ok",
-        "selected_root_id": selection["selected_root_id"],
-        "selected_promoted_node_id": selection["selected_promoted_node_id"],
-        "verdict_strength": selection["verdict_strength"],
-        "ranking": selection["ranking"],
-        "next_step": (
-            "render_final_paper for the winner (promoted_node_id="
-            f"{selection['selected_promoted_node_id']}). The other survivors are "
-            "search by-products — there is ONE output."
-        ),
     }
 
 
@@ -5936,91 +4624,15 @@ def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
                 "undefeated_kills": [k["critic_id"] for k in undefeated],
             }
 
-    # --- Rail 1: successor-verdict aggregator + hard accept gate. --------
-    # Block accept when the promoted root's direct children largely failed.
-    successor_agg = {"total_children": 0, "evaluated": 0, "negative_count": 0,
-                     "negative_children": [], "blocking_children": []}
-    try:
-        promoted_ctx = _resolve_promoted_node(tid)
-        successor_agg = _aggregate_successor_verdicts(tid, promoted_ctx["promoted_id"])
-    except (OSError, ValueError):
-        # Tree state missing — fall through; schema gate already ran.
-        pass
-    if decision.get("decision") == "accept" and successor_agg["evaluated"] >= 2:
-        ratio = successor_agg["negative_count"] / successor_agg["evaluated"]
-        if ratio >= 2 / 3:
-            # Hands-free: if an unseeded alternative_claim_formulation is
-            # available, attach an auto_action_suggestion so the auto-resolver
-            # can pivot to it without operator selection.
-            response: dict[str, Any] = {
-                "status": "rejected",
-                "reason": (
-                    f"accept blocked by successor-verdict rail: "
-                    f"{successor_agg['negative_count']}/{successor_agg['evaluated']} direct children of the promoted root "
-                    f"returned negative verdicts {successor_agg['negative_children']}. "
-                    f"Either downgrade to revise_with_new_measurements / reject_and_diversify, "
-                    f"or call revise_root_after_reject to swap the root before re-attempting accept."
-                ),
-            }
-            grilling = _read_json(_thread_dir(tid) / "grilling" / "grilling_session.json") or {}
-            formulations = (grilling.get("extracted") or {}).get("alternative_claim_formulations") or []
-            try:
-                state_for_ids = _read_json(
-                    _thread_dir(tid) / "production" / "tree" / "search_state.json"
-                ) or {}
-                existing_root_ids = {n["id"] for n in state_for_ids.get("nodes", []) if n.get("parent") is None}
-            except (OSError, ValueError):
-                existing_root_ids = set()
-            unseeded = [
-                f for f in formulations
-                if isinstance(f, dict)
-                and not any(rid.endswith(f"_root_{f.get('formulation_id')}") for rid in existing_root_ids)
-            ]
-            if unseeded:
-                ranked = sorted(
-                    unseeded,
-                    key=lambda f: (f.get("ranked_priority") or 99, f.get("formulation_id") or ""),
-                )
-                top = ranked[0]
-                response["auto_action_suggestion"] = {
-                    "tool": "seed_alternative_root_formulation",
-                    "args": {"thread_id": tid, "formulation_id": top["formulation_id"]},
-                    "source_rail": "rail_1_accept_block_two_thirds_negative",
-                    "rationale": (
-                        f"accept blocked because {successor_agg['negative_count']}/"
-                        f"{successor_agg['evaluated']} successors negative; unseeded "
-                        f"formulation {top['formulation_id']!r} ({top.get('scope_kind')}) "
-                        f"is next-priority alternative — pivot instead of revising the dead root."
-                    ),
-                    "confidence": "high",
-                }
-                response = _maybe_auto_dispatch(tid, response)
-            return response
-        if successor_agg["blocking_children"]:
-            return {
-                "status": "rejected",
-                "reason": (
-                    f"accept blocked: successor(s) {successor_agg['blocking_children']} returned blocking verdicts "
-                    f"(confounded_or_not_evaluable / blocked_by_operational_issue). "
-                    f"Resolve or branch around the operational issue before accepting."
-                ),
-            }
-
-    # --- Rail 3: user_goal anchor binding check. -------------------------
-    # If the operator explicitly bound an anchor to a metric key, that key
-    # MUST exist with a non-null value in the promoted node's worker_report
-    # — otherwise the accept is silently overclaiming on the user's
-    # original intent (the thread_e5b277f9 failure mode).
     anchor_check = {"unbound": [], "unmeasured": []}
     try:
-        if successor_agg["total_children"] >= 0:  # i.e. we resolved a promoted node
-            promoted_ctx = _resolve_promoted_node(tid)
-            wr_path = (
-                _thread_dir(tid) / "production" / "tree" / "nodes"
-                / promoted_ctx["promoted_id"] / "worker_report.json"
-            )
-            worker_report = _read_json(wr_path) or {}
-            anchor_check = _check_user_goal_anchor_bindings(tid, worker_report)
+        promoted_ctx = _resolve_promoted_node(tid)
+        wr_path = (
+            _thread_dir(tid) / "production" / "tree" / "nodes"
+            / promoted_ctx["promoted_id"] / "worker_report.json"
+        )
+        worker_report = _read_json(wr_path) or {}
+        anchor_check = _check_user_goal_anchor_bindings(tid, worker_report)
     except (OSError, ValueError):
         pass
     if decision.get("decision") == "accept" and anchor_check["unmeasured"]:
@@ -6054,8 +4666,7 @@ def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
         if not dir_check.ok:
             return {"status": "rejected", "reason": dir_check.reject_message()}
 
-    # --- Rail 4: confidence down-clamp based on uncertainty signals. -----
-    downclamp_reasons = _compute_ac_downclamp_signals(tid, successor_agg, anchor_check)
+    downclamp_reasons = _compute_ac_downclamp_signals(tid, anchor_check)
     if downclamp_reasons:
         decision = dict(decision)
         decision["confidence"] = "low"
@@ -6072,7 +4683,7 @@ def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
     next_step = (
         "Call submit_camera_ready_revision next — the Professor must address every directive."
         if decision["decision"] in {"accept", "revise"}
-        else "AC rejected. Call revise_root_after_reject to propose a stronger claim."
+        else "AC rejected. Call advance_research to continue the canonical blind engine."
     )
     return {"status": "ok", "decision": decision["decision"], "next_step": next_step}
 
@@ -6438,6 +5049,15 @@ def handle_submit_professor_user_goal_attestation(
                 ),
                 "referent_ledger": ledger,
             }
+    if attestation.get("achieved") and not isinstance(adaptive, dict):
+        return {
+            "status": "rejected",
+            "reason": (
+                "achieved=true requires an active blind research state and its "
+                "attempt-bound strong-result receipt"
+            ),
+            "referent_ledger": ledger,
+        }
 
     # Harness-stamp verdict strength + first-class status. The LLM authors none
     # of these — they are derived from executed, harness-checked evidence.
@@ -6941,23 +5561,23 @@ def handle_submit_professor_user_goal_attestation(
             "construct-adversary FAILED to break the frozen question — the "
             "strongest air-gapped terminal. NECESSARY, NOT SUFFICIENT: it says "
             "nothing about reality (transfer_valid stays unsayable without a real "
-            "referent). Publish the screen honestly via render_honest_failure_paper; "
-            "the manuscript must state narrowing ≠ closing."
+            "referent). Continue through advance_research until a real holdout "
+            "supports a verified strong result."
         )
     elif status == "unverified_screen":
         next_step = (
             "attested_status=unverified_screen (internally_valid floor): no funded "
             "adversary has survived against the frozen question yet. Before "
-            "terminating, EARN construct_valid — pin_frozen_question (if not pinned) "
+            "continuing, EARN construct_valid. Pin_frozen_question (if not pinned), "
             "then submit_construct_adversary_report with a real funded search. If "
-            "genuinely exhausted, render_honest_failure_paper (depth gate applies)."
+            "that direction closes, call advance_research."
         )
     else:  # not_achieved
         next_step = (
             "attested_status=not_achieved. A real referent IS registered but its "
             "falsifier has not passed. Run/repair compute_falsifier_result against "
-            "the real holdout and re-attest; or if the direction is hopeless, "
-            "propose_alternative_root_directions / render_honest_failure_paper."
+            "the real holdout and re-attest. If the direction closes, call "
+            "advance_research."
         )
     return {
         "status": "ok",
@@ -6968,412 +5588,6 @@ def handle_submit_professor_user_goal_attestation(
         "strong_result_receipt": strong_receipt,
         "blind_reorientation": blind_terminal,
         "next_step": next_step,
-    }
-
-
-def handle_propose_alternative_root_directions(args: dict[str, Any]) -> dict[str, Any]:
-    """Professor proposes N>=3 alternative root claim angles after AC
-    reject_and_diversify (or operator request). Replaces single-shot
-    revise_root_after_reject when the direction is structurally hopeless."""
-    from research_harness.schemas.validator import validate_named_schema
-
-    tid = args["thread_id"]
-    proposal = args["proposal"]
-    try:
-        validate_named_schema("alternative_root_proposal", proposal)
-    except Exception as exc:  # noqa: BLE001
-        return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
-
-    # Diversification check: N>=3 alternatives across >=3 distinct angles.
-    alternatives = proposal["alternatives"]
-    angles = {a.get("angle") for a in alternatives}
-    if len(angles) < 3:
-        return {
-            "status": "rejected",
-            "reason": (
-                f"propose_alternative_root_directions requires >=3 DISTINCT "
-                f"angles, but you submitted only {len(angles)}: {sorted(angles)}. "
-                "Repeating the same angle with different wording is not "
-                "diversification — pick from at least 3 of "
-                "{operational_root, taste_root, mechanism_root, "
-                "inverted_validity_root, different_method_root, "
-                "boundary_first_root, necessity_root}."
-            ),
-        }
-
-    proposal_path = _thread_dir(tid) / "production" / "alternative_root_proposal.json"
-    proposal_path.parent.mkdir(parents=True, exist_ok=True)
-    proposal_path.write_text(
-        json.dumps(proposal, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-    # Track cycle count to enforce termination later.
-    cycles_path = _thread_dir(tid) / "production" / "fanout_cycles.json"
-    cycles = _read_json(cycles_path) or {"count": 0, "history": []}
-    cycles["count"] = int(cycles.get("count", 0)) + 1
-    cycles["history"].append({"angle_set": sorted(angles)})
-    cycles_path.write_text(
-        json.dumps(cycles, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-
-    return {
-        "status": "ok",
-        "alternatives_count": len(alternatives),
-        "distinct_angles": sorted(angles),
-        "cycle_count": cycles["count"],
-        "next_step": (
-            "Call select_alternative_root with selected_index in "
-            f"[0..{len(alternatives) - 1}] to pick one alternative; the "
-            "selected claim becomes the new root via the same archive-and-"
-            "rebuild path as revise_root_after_reject."
-        ),
-    }
-
-
-def handle_select_alternative_root(args: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    """Pick one of the N alternatives proposed earlier and bootstrap it as
-    the new root."""
-    tid = args["thread_id"]
-    idx = int(args["selected_index"])
-    proposal = _read_json(_thread_dir(tid) / "production" / "alternative_root_proposal.json")
-    if not proposal:
-        return {
-            "status": "rejected",
-            "reason": "propose_alternative_root_directions must run before select_alternative_root",
-        }
-    alternatives = proposal.get("alternatives") or []
-    if idx < 0 or idx >= len(alternatives):
-        return {"status": "rejected", "reason": f"selected_index {idx} out of range [0,{len(alternatives)})"}
-
-    chosen = alternatives[idx]
-    # Bootstrap as revise_root_after_reject with the chosen alternative's fields.
-    revise_args = {
-        "thread_id": tid,
-        "new_claim_under_test": chosen["claim_under_test"],
-        "mandatory_baselines": chosen["mandatory_baselines"],
-        "success_criteria": chosen["success_criteria"],
-        "disproof_conditions": chosen["disproof_conditions"],
-        "rationale": (
-            f"[Fan-out selected angle={chosen['angle']}] {chosen.get('rationale','')}\n\n"
-            f"Selection rationale: {args.get('selection_rationale','')}\n\n"
-            f"Why this angle: {chosen.get('why_this_angle','')}"
-        ),
-    }
-    return handle_revise_root_after_reject(revise_args, settings)
-
-
-def handle_render_honest_failure_paper(args: dict[str, Any]) -> dict[str, Any]:
-    """Honest-failure exit: when N alternative roots all failed or
-    user_goal_attestation.achieved=false with no path to flip it, produce
-    an honest-failure summary instead of a paper. The output is also an
-    HTML artifact but explicitly framed as 'we tried X/Y/Z; none worked
-    because A/B/C; here is what would change our answer'."""
-    tid = args["thread_id"]
-    repo = _repo_root()
-    pdir = _thread_dir(tid) / "production"
-    pdir.mkdir(parents=True, exist_ok=True)
-
-    # Gather all evidence the system has accumulated.
-    intake = _read_json(pdir / "intake_to_claim_dialog.json") or {}
-    thread_index = _read_json(_thread_dir(tid) / "thread.json") or {}
-    user_problem = (
-        intake.get("original_contract", {}).get("claim_under_test")
-        or thread_index.get("user_goal")
-        or ""
-    )
-    attestation = _read_json(_rebuttal_dir(tid) / "user_goal_attestation.json") or {}
-    fanout = _read_json(pdir / "fanout_cycles.json") or {}
-    proposal = _read_json(pdir / "alternative_root_proposal.json") or {}
-    archived_attempts = sorted(
-        p.name for p in _thread_dir(tid).glob("production.attempt_*") if p.is_dir()
-    )
-
-    # --- ADR 0007: depth gate on the lazy door. --------------------------
-    # A weak/negative terminal is the MIRROR of the fake-strength terminal:
-    # both are premature termination. It renders only when the give-up was
-    # EARNED — (a) a load-bearing mechanism is stated and (b) distinct
-    # genuine attempts (narrowing relabels excluded) are exhausted.
-    # Otherwise: refuse and send the system back to dig.
-    from research_harness.config import load_settings as _ls
-    settings = _ls(repo)
-    if _premature_termination_gate_enabled(settings):
-        depth = _investigation_depth(tid)
-        min_attempts = _min_distinct_attempts(settings)
-        reduction = _read_json(_rebuttal_dir(tid) / "orchestrator_reduction.json") or {}
-        mechanism = attestation.get("load_bearing_mechanism") or ""
-        has_mechanism = (
-            len(str(mechanism).strip()) >= 80
-            or bool(reduction.get("blocking_objections"))
-        )
-        if depth["distinct_attempts"] < min_attempts or not has_mechanism:
-            problems = []
-            if depth["distinct_attempts"] < min_attempts:
-                problems.append(
-                    f"only {depth['distinct_attempts']} distinct genuine attempt(s) "
-                    f"(need >= {min_attempts}; narrowing_pivots="
-                    f"{depth['narrowing_pivots']} do NOT count — scope-narrowing is "
-                    "relabeling, not depth)"
-                )
-            if not has_mechanism:
-                problems.append(
-                    "no load-bearing mechanism stated (set attestation."
-                    "load_bearing_mechanism: WHY this fails / what must be true to "
-                    "succeed, >=80 chars, or record blocking_objections in the "
-                    "orchestrator_reduction)"
-                )
-            return {
-                "status": "rejected",
-                "reason": (
-                    "ADR 0007 depth gate — premature termination refused: "
-                    + "; ".join(problems)
-                    + ". A shallow give-up scores as low as fake strength. Generate "
-                    "and TRY the next diagnostic hypothesis (why did it fail / what "
-                    "would have to be true / adjacent hypothesis) until it cracks or "
-                    "genuine attempts are exhausted — then re-render."
-                ),
-                "investigation_depth": depth,
-            }
-
-        # ADR 0007 rev.2 (A2): attemptable-in-envelope gate. A give-up is not
-        # honest while work the harness CAN do remains. Block + route to fan-out.
-        # attemptable_in_envelope is harness-stamped at attestation time; only an
-        # item the harness confirmed needs an out-of-envelope resource is exempt.
-        attemptable_undone = [
-            r for r in (attestation.get("required_additional_research") or [])
-            if isinstance(r, dict) and r.get("attemptable_in_envelope") is True
-        ]
-        if attemptable_undone:
-            return {
-                "status": "rejected",
-                "reason": (
-                    "ADR 0007 rev.2 attemptable gate — honest-failure refused: "
-                    f"{len(attemptable_undone)} required-research item(s) are "
-                    "attemptable IN-ENVELOPE and not yet done: "
-                    + "; ".join((r.get("experiment") or "")[:80] for r in attemptable_undone)
-                    + ". A give-up is not honest while in-envelope work remains. Fan "
-                    "out and run them (propose_alternative_root_directions), or — if "
-                    "an item genuinely needs an out-of-envelope resource (real_adapter "
-                    "/ live network / operator) — declare it in required_resources so "
-                    "the harness reclassifies it as not attemptable."
-                ),
-                "attemptable_required_research": [
-                    r.get("experiment") for r in attemptable_undone
-                ],
-                "auto_action_suggestion": {
-                    "tool": "propose_alternative_root_directions",
-                    "source_rail": "attemptable_required_research_blocks_honest_failure",
-                    "rationale": (
-                        "honest-failure blocked because in-envelope required research "
-                        "remains undone; fan out to attempt it before terminating."
-                    ),
-                    "confidence": "high",
-                },
-            }
-
-    import html as _h
-    pub_dir = pdir / "publication"
-    pub_dir.mkdir(parents=True, exist_ok=True)
-    # ADR 0010 (T2-18): construct_valid_screen is a BOUNDED RESULT — a funded
-    # construct-adversary FAILED to break the frozen question, so the construction
-    # is construct-valid (close to the QUESTION). That is a bounded POSITIVE, not a
-    # failure; only unverified_screen / not_achieved render as honest-failure. The
-    # operator-stamped attested_status routes this; a node cannot relabel itself.
-    bounded = attestation.get("attested_status") == "construct_valid_screen"
-    outcome = "bounded_result" if bounded else "honest_failure"
-
-    # Bar-sanity gate: a "no edge / impossibility" terminal is not honest until the
-    # thread has ruled out its OWN bar as the binding constraint. A deployment bar a
-    # NO-SKILL exposure baseline (e.g. leveraged buy-and-hold) can clear measures
-    # EXPOSURE, not skill -- so "no edge exists" is unfounded. The world is ground-
-    # truth: suspect the instrument before declaring the world impossible. Only a
-    # real honest-failure (not a bounded construct_valid_screen positive) is gated.
-    if not bounded:
-        from research_harness.settings_scoped import resolve_for_thread as _rft
-        _bs_env = _read_json(pdir / "feasibility_envelope.json") or {}
-        _skill_iso = bool(
-            _rft(repo, tid).get_dotted(
-                "execution_constraints.require_skill_isolation", False
-            )
-            or (_bs_env.get("execution_constraints") or {}).get("require_skill_isolation")
-        )
-        if _skill_iso:
-            _pred = (_bs_env.get("external_falsifier") or {}).get("predicate") or {}
-            _null_val = (args.get("bar_sanity") or {}).get("no_skill_exposure_metric")
-            if _null_val is None:
-                return {
-                    "status": "rejected",
-                    "reason": (
-                        "bar-sanity gate (require_skill_isolation) — give-up refused: "
-                        "before concluding 'no edge / impossibility', rule out that your "
-                        "OWN bar is the binding constraint. Run a NO-SKILL exposure "
-                        "baseline (e.g. a leveraged buy-and-hold sweep) through the SAME "
-                        "deployment metric and pass bar_sanity={'no_skill_exposure_metric'"
-                        ": <best value a zero-skill exposure strategy reaches>, 'detail': "
-                        "<sweep + how computed>}. The world is ground-truth -- suspect "
-                        "your instrument before declaring the world impossible."
-                    ),
-                }
-            try:
-                from research_harness.falsifier import evaluate_predicate as _ep
-                _gamed = bool(
-                    _pred.get("op") and "threshold" in _pred
-                    and _ep(float(_null_val), _pred["op"], float(_pred["threshold"]))
-                )
-            except (TypeError, ValueError):
-                _gamed = False
-            if _gamed:
-                return {
-                    "status": "rejected",
-                    "reason": (
-                        f"bar-sanity gate — give-up refused: a NO-SKILL exposure baseline "
-                        f"reaches {_null_val} on metric {_pred.get('metric')!r}, which "
-                        f"CLEARS your bar ({_pred.get('op')} {_pred.get('threshold')}). A "
-                        "bar zero-skill exposure (leverage) clears measures EXPOSURE, not "
-                        "skill -- so 'no edge exists' is UNFOUNDED; the bar is mis-"
-                        "specified. Revise it to isolate skill (cash-relative / risk-"
-                        "adjusted / exposure-matched), re-grade, and do NOT render an "
-                        "impossibility result against an exposure-gameable bar."
-                    ),
-                }
-
-    out_path = pub_dir / (f"{outcome}.html")
-    title = "Bounded Result" if bounded else "Honest Failure"
-    accent = "#2f7d4f" if bounded else "#c25450"
-    lead = (
-        "A funded construct-adversary FAILED to break this thread's frozen question: "
-        "the construction is construct-valid (close to the QUESTION). This is a "
-        "BOUNDED POSITIVE, not a failure — but it is NOT reality-close (transfer_valid "
-        "is unsayable air-gapped), so narrowing ≠ closing. The user's problem, the "
-        "screen, and what a real referent would add are below."
-        if bounded else
-        "This thread did not produce a deployable result. Rather than publish a "
-        "weak paper to hide that, the harness terminates with this honest "
-        "failure report. The user's original problem, every attempt that was "
-        "made, and what would change the answer are below."
-    )
-    body_html = (
-        "<!doctype html><html><head><meta charset='utf-8'>"
-        f"<title>{title} — {_h.escape(tid)}</title>"
-        "<style>body{font-family:Georgia,serif;max-width:900px;margin:2em auto;padding:0 2em;line-height:1.55;}"
-        f"h1{{color:{accent};}}h2{{border-bottom:1px solid #ccc;padding-bottom:4px;}}"
-        f".callout{{background:#f4f6f4;border-left:3px solid {accent};padding:10px 14px;margin:1em 0;}}"
-        "code{background:#f4f4f4;padding:1px 4px;}"
-        "</style></head><body>"
-        f"<h1>{title} Report</h1>"
-        f"<p><strong>Thread:</strong> <code>{_h.escape(tid)}</code></p>"
-        "<div class='callout'>" + lead + "</div>"
-        f"<h2>Original user intake</h2><p>{_h.escape(user_problem)}</p>"
-        f"<h2>Final Professor attestation</h2>"
-        f"<p>achieved = <strong>{attestation.get('achieved')}</strong></p>"
-        f"<p>{_h.escape(attestation.get('what_user_can_do_with_this_paper',''))}</p>"
-        f"<h2>What would change our answer</h2>"
-        + "<ul>"
-        + "".join(
-            f"<li><code>{_h.escape(r.get('axis',''))}</code>: "
-            f"{_h.escape(r.get('experiment',''))} "
-            f"<em>({_h.escape(r.get('rationale',''))})</em></li>"
-            for r in (attestation.get("required_additional_research") or [])
-        )
-        + "</ul>"
-        f"<h2>Diversification attempts</h2>"
-        f"<p>Fan-out cycles: {fanout.get('count', 0)}</p>"
-        f"<p>Archived production attempts: {len(archived_attempts)}</p>"
-        + "<ul>"
-        + "".join(f"<li><code>{_h.escape(a)}</code></li>" for a in archived_attempts)
-        + "</ul>"
-        f"<h2>Last alternative root slate</h2>"
-        + "<ol>"
-        + "".join(
-            f"<li><strong>{_h.escape(a.get('angle',''))}</strong>: "
-            f"{_h.escape(a.get('claim_under_test',''))[:240]}</li>"
-            for a in (proposal.get("alternatives") or [])
-        )
-        + "</ol>"
-        "<h2>Honest limits of this search</h2>"
-        "<div class='callout'>"
-        "This harness is a full-auto single model. It can reach up to "
-        "<em>unbridged-recombination</em> novelty (recombining known frames in a way "
-        "no single frame gave); it <strong>cannot</strong> reach "
-        "<em>absent-concept</em> novelty (a concept outside its and the taxonomy's "
-        "manifold), and it cannot tell which of the two a given failure is. The "
-        "far-framing domain taxonomy is operator-curated, so its coverage is the "
-        "operator's concept coverage — a domain that could have bridged to the answer "
-        "but was never listed is unreachable. Where a transfer screen was run, "
-        "behavioral distance shows generator B was measurably distinct from A but "
-        "cannot certify the divergence lay on the question's axis (reality-closeness "
-        "needs a real referent the operator holds). These bounds are stated, not hidden."
-        "</div>"
-        "</body></html>"
-    )
-    out_path.write_text(body_html, encoding="utf-8")
-
-    summary = {
-        "type": "production_run_summary",
-        "outcome": outcome,
-        "thread_id": tid,
-        "user_intake": user_problem,
-        "attestation": attestation,
-        "fanout_cycles": fanout.get("count", 0),
-        "archived_attempts": archived_attempts,
-        "investigation_depth": _investigation_depth(tid),
-        "publication_dispatch": {
-            "decision": outcome,
-            "rendered_artifacts": [
-                {"output": f"{outcome}_html", "artifact_path": str(out_path)}
-            ],
-        },
-    }
-    (pdir / "production_run_summary.json").write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    state_path = pdir / "tree" / "search_state.json"
-    state = _read_json(state_path) or {}
-    adaptive = state.get("adaptive")
-    if isinstance(adaptive, dict):
-        required = attestation.get("required_additional_research") or []
-        missing_capabilities = sorted(
-            {
-                str(resource.get("ref"))
-                for item in required
-                if isinstance(item, dict)
-                for resource in item.get("required_resources") or []
-                if isinstance(resource, dict) and resource.get("ref")
-            }
-        )
-        adaptive["pause"] = {
-            "reason": (
-                "missing_capability"
-                if missing_capabilities
-                else "needs_strategy_expansion"
-            ),
-            "caused_by_observation_ids": [
-                observation.get("id")
-                for observation in adaptive.get("observations") or []
-                if isinstance(observation, dict) and observation.get("id")
-            ][-3:],
-            "missing_capabilities": missing_capabilities,
-            "best_next_experiment": required[0] if required else None,
-            "resume_condition": (
-                "provide the missing capability or materialize a new causal strategy"
-            ),
-            "progress_artifact": str(out_path),
-        }
-        adaptive["disposition"] = "paused_needs_expansion"
-        adaptive["revision"] = int(adaptive["revision"]) + 1
-        state["status"] = "blocked"
-        from research_harness.orchestrator.search_state import validate_search_state
-
-        validate_search_state(state)
-        _write_search_state_atomic(state_path, state)
-    return {
-        "status": "ok",
-        "outcome": outcome,
-        "artifact_path": str(out_path),
-        "search_disposition": (
-            adaptive.get("disposition") if isinstance(adaptive, dict) else None
-        ),
     }
 
 
@@ -7391,8 +5605,7 @@ def handle_render_final_paper(args: dict[str, Any]) -> dict[str, Any]:
             "reason": (
                 f"DUAL GATE blocked: AC decision is {ac_decision_val!r} — "
                 "paper render requires AC ∈ {accept, revise, revise_with_new_measurements}. "
-                "Call propose_alternative_root_directions if reject_and_diversify, "
-                "or revise_root_after_reject if reject."
+                "Call advance_research to continue the canonical blind engine."
             ),
         }
     attestation = _read_json(_rebuttal_dir(tid) / "user_goal_attestation.json") or {}
@@ -7411,10 +5624,8 @@ def handle_render_final_paper(args: dict[str, Any]) -> dict[str, Any]:
             "status": "rejected",
             "reason": (
                 "DUAL GATE blocked: user_goal_attestation.achieved=false. "
-                "Either (a) run the required_additional_research experiments and "
-                "re-attest with achieved=true, (b) fan out via "
-                "propose_alternative_root_directions, or (c) accept the honest-"
-                "failure exit via render_honest_failure_paper."
+                "Run the required additional research and re-attest, or call "
+                "advance_research when the direction closes."
             ),
         }
     paper_dir = _paper_dir(tid)
@@ -7578,8 +5789,6 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_submit_grad_student_review(args, settings)
             elif name == "submit_professor_decision":
                 result = handle_submit_professor_decision(args, settings)
-            elif name == "revise_root_after_reject":
-                result = handle_revise_root_after_reject(args, settings)
             elif name == "decide_publication_readiness":
                 result = handle_decide_publication_readiness(args)
             elif name == "prepare_rebuttal_packet":
@@ -7602,24 +5811,10 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_submit_paper_section(args)
             elif name == "submit_professor_user_goal_attestation":
                 result = handle_submit_professor_user_goal_attestation(args)
-            elif name == "propose_alternative_root_directions":
-                result = handle_propose_alternative_root_directions(args)
-            elif name == "select_alternative_root":
-                result = handle_select_alternative_root(args, settings)
-            elif name == "seed_alternative_root_formulation":
-                result = handle_seed_alternative_root_formulation(args)
-            elif name == "seed_forest_from_connector":
-                result = handle_seed_forest_from_connector(args)
-            elif name == "select_strongest_survivor":
-                result = handle_select_strongest_survivor(args)
-            elif name == "snapshot_root_terminal":
-                result = handle_snapshot_root_terminal(args)
             elif name == "enqueue_operator_prompt":
                 result = handle_enqueue_operator_prompt(args)
             elif name == "get_pending_operator_response":
                 result = handle_get_pending_operator_response(args)
-            elif name == "render_honest_failure_paper":
-                result = handle_render_honest_failure_paper(args)
             elif name == "render_final_paper":
                 result = handle_render_final_paper(args)
             else:

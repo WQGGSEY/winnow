@@ -79,7 +79,6 @@ def test_parallel_agent_step_runs_one_node(tmp_path: Path):
     assert summary["worker_status"] in {"completed", "failed", "invalid_worker_output"}
     assert summary["next_transition"] in {
         "promoted",
-        "needs_child_branch",
         "pruned",
     }
     # Journal recorded the reduction.

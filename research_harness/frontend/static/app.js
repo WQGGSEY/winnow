@@ -779,8 +779,7 @@
 
 
 /* === Operator-prompt chip handler ==========================================
-   When the auto-resolver enqueues an escalation, the production panel
-   renders quick-pick chips above the free-text textarea. Clicking a chip
+   The production panel renders quick-pick chips above the free-text textarea. Clicking a chip
    populates the textarea with its label so the operator can edit-then-send
    rather than retyping the suggestion verbatim. */
 (function () {

@@ -342,6 +342,11 @@ def _write_verified_terminal_state(tdir: Path) -> None:
     }
     falsifier = {
         "thread_id": tdir.name,
+        "contract_id": contract.contract_id,
+        "attempt_id": attempt_id,
+        "direction_id": direction_id,
+        "node_id": node_id,
+        "manifest_id": manifest_id,
         "kind": "real_holdout",
         "holdout_source_id": "holdout",
         "predicate": {"metric": "score", "op": ">=", "threshold": 1.0},
@@ -791,6 +796,20 @@ class TerminalDetectionTests(unittest.TestCase):
             self.assertEqual(ts.is_terminal(repo, "t1"), (False, None))
 
             _write_verified_terminal_state(tdir)
+            state = json.loads(state_path.read_text())
+            falsifier_path = (
+                tdir / "production" / "rebuttal" / "falsifier_result.json"
+            )
+            falsifier = json.loads(falsifier_path.read_text())
+            falsifier["attempt_id"] = "attempt_from_previous_direction"
+            falsifier_path.write_text(json.dumps(falsifier), encoding="utf-8")
+            state["adaptive"]["strong_result_receipt"][
+                "falsifier_result_sha256"
+            ] = ts._canonical_json_sha256(falsifier)
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            self.assertEqual(ts.is_terminal(repo, "t1"), (False, None))
+
+            _write_verified_terminal_state(tdir)
             reorientation_path = (
                 tdir / "production" / "reorientation" / "state.json"
             )
@@ -939,7 +958,7 @@ class TerminalDetectionTests(unittest.TestCase):
             t, outcome = ts.is_terminal(repo, "t1")
             self.assertFalse(t)
 
-    def test_paused_watch_updates_canonical_thread_index_without_completion(self):
+    def test_legacy_pause_does_not_stop_blind_reorientation(self):
         with TemporaryDirectory() as tmp:
             repo = Path(tmp)
             tid = "thread_terminal"
@@ -999,13 +1018,30 @@ class TerminalDetectionTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            result = ts.watch_thread(repo, tid)
+            with mock.patch.object(
+                ts,
+                "advance_resumable_reorientation",
+                return_value=None,
+            ), mock.patch.object(
+                ts,
+                "mcp_idle_seconds",
+                return_value=float("inf"),
+            ), mock.patch.object(
+                ts,
+                "spawn_codex_session",
+                return_value=0,
+            ) as spawn:
+                result = ts.watch_thread(
+                    repo,
+                    tid,
+                    max_cycles=1,
+                    rate_limit_backoff_initial=0.001,
+                )
 
-            self.assertEqual(result["status"], "paused_needs_expansion")
-            self.assertEqual(result["pause"]["reason"], "missing_capability")
+            self.assertEqual(result["status"], "max_cycles_exceeded")
+            spawn.assert_called_once()
             index = json.loads((tdir / "thread.json").read_text(encoding="utf-8"))
-            self.assertEqual(index["current_phase"], "production")
-            self.assertEqual(index["phase_status"], "awaiting_input")
+            self.assertNotEqual(index["phase_status"], "awaiting_input")
             self.assertIsNone(index["outcome"])
 
 
@@ -1500,7 +1536,8 @@ class ResumePromptTests(unittest.TestCase):
             self.assertIn("t1", prompt)
             self.assertIn("cycle #3", prompt)
             self.assertIn("goal achieved", prompt.lower())
-            self.assertIn("paused_needs_expansion", prompt)
+            self.assertIn("advance_research", prompt)
+            self.assertIn("hard_external_block", prompt)
             self.assertIn("honest_failure", prompt)
             self.assertIn("anti-laziness", prompt.lower())
 
@@ -1615,19 +1652,11 @@ class WatchLoopTests(unittest.TestCase):
                 "checkpoint_id": "checkpoint_" + "1" * 64,
                 "supervisor_resume_kind": "physical_checkpoint_no_progress",
             }
-            stale_pause = {
-                "reason": "needs_strategy_expansion",
-                "resume_condition": "legacy selector expands the frontier",
-            }
             with mock.patch.object(
                 ts,
                 "advance_resumable_reorientation",
                 return_value=no_progress,
             ), mock.patch.object(
-                ts,
-                "read_search_pause",
-                return_value=stale_pause,
-            ) as read_pause, mock.patch.object(
                 ts,
                 "spawn_codex_session",
                 return_value=0,
@@ -1641,7 +1670,6 @@ class WatchLoopTests(unittest.TestCase):
                     rate_limit_backoff_initial=0.001,
                 )
 
-            read_pause.assert_not_called()
             spawn.assert_called_once()
             self.assertEqual(result["status"], "max_cycles_exceeded")
 
@@ -1773,9 +1801,9 @@ class EnvelopeAutoBootstrapTests(unittest.TestCase):
             mdir = repo / "runs" / "threads" / "t1" / "market"
             mdir.mkdir(parents=True, exist_ok=True)
             (mdir / "market_research_brief.json").write_text(json.dumps({
-                "baseline_dossier_candidates_index": [
+                "papers": [
                     {"id": "c1", "arxiv_id": "2401.12345"},
-                    {"id": "c2", "filename": "paper.pdf"},
+                    {"id": "c2", "pdf_path": "paper.pdf"},
                 ]
             }), encoding="utf-8")
         settings = {

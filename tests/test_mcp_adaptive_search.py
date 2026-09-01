@@ -14,6 +14,12 @@ from research_harness.acquisition import (
     serialize_command,
 )
 from research_harness.orchestrator.adaptive_search import experiment_fingerprint
+from research_harness.orchestrator.blind_reorientation import (
+    AwaitingEvidence,
+    DirectionAttemptRef,
+    ReorientationState,
+    serialize_reorientation_state,
+)
 from research_harness.orchestrator.direction_generation import (
     make_direction_draft,
     make_direction_fingerprint,
@@ -114,6 +120,48 @@ def _write_thread(tmp_path: Path, tid: str, state: dict) -> Path:
     node_dir = tree / "nodes" / "n_parent"
     node_dir.mkdir(parents=True)
     (tree / "search_state.json").write_text(json.dumps(state), encoding="utf-8")
+    reorientation = thread_dir / "production" / "reorientation"
+    reorientation.mkdir()
+    attempt = DirectionAttemptRef(
+        attempt_id="attempt_parent",
+        direction_id="direction_" + "d" * 64,
+        fingerprint=make_direction_fingerprint(
+            mechanism="parent mechanism",
+            intervention="parent intervention",
+            observables_and_data="parent observations",
+            analysis_unit="parent unit",
+            timescale="parent timescale",
+            system_boundary="parent boundary",
+        ),
+        ordinal=0,
+    )
+    reorientation_state = ReorientationState(
+        version=2,
+        contract_id="contract_" + "e" * 64,
+        revision=1,
+        closed_attempts=(),
+        phase=AwaitingEvidence(active_attempt=attempt),
+    )
+    (reorientation / "state.json").write_text(
+        json.dumps(serialize_reorientation_state(reorientation_state)),
+        encoding="utf-8",
+    )
+    (reorientation / "node_attempts.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "nodes": {
+                    "n_parent": {
+                        "attempt_id": attempt.attempt_id,
+                        "direction_id": attempt.direction_id,
+                        "manifest_id": "acqmanifest_" + "f" * 64,
+                        "legacy_audit_only": False,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     (node_dir / "worker_report.json").write_text(
         json.dumps(
             {
@@ -183,6 +231,73 @@ def _write_thread(tmp_path: Path, tid: str, state: dict) -> Path:
         encoding="utf-8",
     )
     return thread_dir
+
+
+def _drop_authoritative_binding(thread_dir: Path) -> None:
+    reorientation = thread_dir / "production" / "reorientation"
+    for path in reorientation.iterdir():
+        path.unlink()
+    reorientation.rmdir()
+
+
+def test_authoritative_node_requires_one_nonlegacy_durable_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = "t_authoritative_binding"
+    thread_dir = tmp_path / tid
+    reorientation = thread_dir / "production" / "reorientation"
+    reorientation.mkdir(parents=True)
+    fingerprint = make_direction_fingerprint(
+        mechanism="mechanism",
+        intervention="intervention",
+        observables_and_data="observables",
+        analysis_unit="analysis unit",
+        timescale="timescale",
+        system_boundary="system boundary",
+    )
+    attempt = DirectionAttemptRef(
+        attempt_id="attempt_active",
+        direction_id="direction_" + "a" * 64,
+        fingerprint=fingerprint,
+        ordinal=0,
+    )
+    state = ReorientationState(
+        version=2,
+        contract_id="contract_" + "b" * 64,
+        revision=1,
+        closed_attempts=(),
+        phase=AwaitingEvidence(active_attempt=attempt),
+    )
+    (reorientation / "state.json").write_text(
+        json.dumps(serialize_reorientation_state(state)), encoding="utf-8"
+    )
+    node_attempts = {
+        "version": 1,
+        "nodes": {
+            "n_active": {
+                "attempt_id": attempt.attempt_id,
+                "direction_id": attempt.direction_id,
+                "manifest_id": "acqmanifest_" + "c" * 64,
+                "legacy_audit_only": False,
+            }
+        },
+    }
+    index_path = reorientation / "node_attempts.json"
+    index_path.write_text(json.dumps(node_attempts), encoding="utf-8")
+    monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: tmp_path / _tid)
+
+    assert mcp._authoritative_active_node_id(tid) == "n_active"
+
+    node_attempts["nodes"]["n_active"]["legacy_audit_only"] = True
+    index_path.write_text(json.dumps(node_attempts), encoding="utf-8")
+    assert mcp._authoritative_active_node_id(tid) is None
+
+    node_attempts["nodes"]["n_active"]["legacy_audit_only"] = False
+    node_attempts["nodes"]["n_duplicate"] = dict(
+        node_attempts["nodes"]["n_active"]
+    )
+    index_path.write_text(json.dumps(node_attempts), encoding="utf-8")
+    assert mcp._authoritative_active_node_id(tid) is None
 
 
 def _candidate(
@@ -272,7 +387,7 @@ def test_negative_decision_rejects_observation_derived_successors(
     response = mcp.handle_submit_professor_decision(_negative_args(tid), settings={})
 
     assert response["status"] == "rejected"
-    assert "observation-derived successors" in response["reason"]
+    assert "follow_up_children is retired" in response["reason"]
 
     persisted = json.loads(
         (thread_dir / "production" / "tree" / "search_state.json").read_text()
@@ -316,7 +431,7 @@ def test_pruned_decision_closes_direction_and_advances_blind_engine(
     )
     args = _negative_args(tid)
     args["next_transition"] = "pruned"
-    args["follow_up_children"] = []
+    args.pop("follow_up_children")
 
     response = mcp.handle_submit_professor_decision(args, settings={})
     retry = mcp.handle_submit_professor_decision(args, settings={})
@@ -334,6 +449,35 @@ def test_pruned_decision_closes_direction_and_advances_blind_engine(
     assert len(engine.calls) == 1
 
 
+def test_pruned_decision_retries_when_failure_lesson_cannot_persist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = "t_failure_lesson"
+    thread_dir = _write_thread(tmp_path, tid, _state())
+    monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: tmp_path / _tid)
+
+    def fail_failure_record(**_kwargs: object) -> None:
+        raise OSError("read-only memory")
+
+    monkeypatch.setattr(
+        mcp,
+        "_write_failure_record",
+        fail_failure_record,
+    )
+    args = _negative_args(tid)
+    args["next_transition"] = "pruned"
+    args.pop("follow_up_children")
+
+    response = mcp.handle_submit_professor_decision(args, settings={})
+
+    assert response["status"] == "rejected"
+    assert "failure lesson could not be persisted" in response["reason"]
+    persisted = json.loads(
+        (thread_dir / "production" / "tree" / "search_state.json").read_text()
+    )
+    assert persisted["nodes"][0]["status"] == "critic_reviewed"
+
+
 def test_promotion_rejects_worker_report_without_supported_evidence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -347,7 +491,6 @@ def test_promotion_rejects_worker_report_without_supported_evidence(
             "node_id": "n_parent",
             "next_transition": "promoted",
             "final_verdict": "supported",
-            "follow_up_children": [],
         },
         settings={},
     )
@@ -382,7 +525,6 @@ def test_prune_rejects_worker_report_without_conclusive_failure(
             "node_id": "n_parent",
             "next_transition": "pruned",
             "final_verdict": "execution failed before a conclusion",
-            "follow_up_children": [],
         },
         settings={},
     )
@@ -451,6 +593,11 @@ def test_selector_requires_experiment_revision_for_inconclusive_evidence(
         "research_harness.orchestrator.experiment_plan.validate_experiment_plan",
         lambda *_args, **_kwargs: None,
     )
+    monkeypatch.setattr(
+        mcp,
+        "_authoritative_active_node_id",
+        lambda _tid: "n_parent",
+    )
 
     selected = mcp.handle_get_next_admissible_node({"thread_id": tid})
     (template_dir / "plan.json").write_text(
@@ -504,6 +651,11 @@ def test_supported_adaptive_promotion_preempts_remaining_frontier_for_rebuttal(
         json.dumps({"kind": "real_holdout", "passed": True, "observed": 0.2}),
         encoding="utf-8",
     )
+    monkeypatch.setattr(
+        mcp,
+        "_authoritative_active_node_id",
+        lambda _tid: "n_parent",
+    )
 
     selected = mcp.handle_get_next_admissible_node({"thread_id": tid})
 
@@ -512,7 +664,7 @@ def test_supported_adaptive_promotion_preempts_remaining_frontier_for_rebuttal(
     assert selected["next_tool_to_call"] == "decide_publication_readiness"
 
     (thread_dir / "production" / "tree" / "mcp_readiness.json").write_text(
-        json.dumps({"submit": True}), encoding="utf-8"
+        json.dumps({"submit": True, "node_id": "n_parent"}), encoding="utf-8"
     )
     selected = mcp.handle_get_next_admissible_node({"thread_id": tid})
     assert selected["status"] == "rebuttal_ready"
@@ -526,9 +678,125 @@ def test_supported_adaptive_promotion_preempts_remaining_frontier_for_rebuttal(
         json.dumps({"achieved": True, "promoted_node_id": "n_parent"}),
         encoding="utf-8",
     )
+    import research_harness.thread_supervisor as supervisor
+
+    monkeypatch.setattr(
+        supervisor,
+        "is_terminal",
+        lambda *_args, **_kwargs: (False, None),
+    )
+    selected = mcp.handle_get_next_admissible_node({"thread_id": tid})
+    assert selected["status"] == "hard_external_block"
+    assert selected["code"] == "operator_scope_conflict"
+    monkeypatch.setattr(
+        supervisor,
+        "is_terminal",
+        lambda *_args, **_kwargs: (True, "sha256:" + "a" * 64),
+    )
+    monkeypatch.setattr(
+        mcp,
+        "_authoritative_active_node_id",
+        lambda _tid: pytest.fail("terminal render must precede the active-node gate"),
+    )
     selected = mcp.handle_get_next_admissible_node({"thread_id": tid})
     assert selected["status"] == "goal_achieved_render_pending"
     assert selected["next_tool_to_call"] == "prepare_paper_writing_context"
+
+
+def test_node_mutation_rejects_non_authoritative_legacy_node(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mcp, "_thread_dir", lambda tid: tmp_path / tid)
+    monkeypatch.setattr(
+        mcp,
+        "_authoritative_active_node_id",
+        lambda _tid: "n_active",
+    )
+
+    result = mcp.handle_design_experiment_template(
+        {
+            "thread_id": "t_gate",
+            "node_id": "n_legacy",
+            "plan_metadata": {"source_files": []},
+        }
+    )
+
+    assert result["status"] == "rejected"
+    assert "not the authoritative blind node" in result["reason"]
+    assert not (tmp_path / "t_gate" / "production").exists()
+
+
+def test_readiness_records_authoritative_candidate_despite_legacy_pause(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mcp, "_thread_dir", lambda tid: tmp_path / tid)
+    monkeypatch.setattr(
+        mcp,
+        "_authoritative_active_node_id",
+        lambda _tid: "n_active",
+    )
+
+    result = mcp.handle_decide_publication_readiness(
+        {
+            "thread_id": "t_readiness",
+            "node_id": "n_active",
+            "submit": True,
+        }
+    )
+
+    assert result == {"status": "recorded"}
+    persisted = json.loads(
+        (
+            tmp_path
+            / "t_readiness"
+            / "production"
+            / "tree"
+            / "mcp_readiness.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert persisted["node_id"] == "n_active"
+
+
+def test_unbound_legacy_strong_candidate_cannot_enter_rebuttal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = "t_unbound_legacy_strong"
+    state = _state(status="promoted")
+    state["promoted_node_ids"] = ["n_parent"]
+    state["nodes"][0]["strategy"] = {"id": "strategy_legacy"}
+    thread_dir = _write_thread(tmp_path, tid, state)
+    _drop_authoritative_binding(thread_dir)
+    monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: tmp_path / _tid)
+    adaptive = mcp._ensure_adaptive_state(tid, state)
+    adaptive["strategies"] = [{"id": "strategy_legacy"}]
+    (thread_dir / "production" / "tree" / "search_state.json").write_text(
+        json.dumps(state), encoding="utf-8"
+    )
+    node_dir = thread_dir / "production" / "tree" / "nodes" / "n_parent"
+    worker = json.loads((node_dir / "worker_report.json").read_text())
+    worker.update(
+        claim_verdict_candidate="supported",
+        baseline_evidence_status={"overall": "passed", "results": []},
+        disproof_conditions_hit=[],
+    )
+    (node_dir / "worker_report.json").write_text(
+        json.dumps(worker), encoding="utf-8"
+    )
+    rebuttal = thread_dir / "production" / "rebuttal"
+    rebuttal.mkdir()
+    (rebuttal / "falsifier_result.json").write_text(
+        json.dumps({"kind": "real_holdout", "passed": True, "observed": 0.2}),
+        encoding="utf-8",
+    )
+    engine = _BlindEngine({"status": "direction_ready", "node_id": "n_blind"})
+    monkeypatch.setattr(mcp, "_build_blind_research_engine", lambda _tid: engine)
+
+    selected = mcp.handle_get_next_admissible_node({"thread_id": tid})
+
+    assert selected == {"status": "direction_ready", "node_id": "n_blind"}
+    assert len(engine.calls) == 1
 
 
 def test_empty_frontier_advances_blind_engine_outside_writer_lock(
@@ -620,6 +888,44 @@ def test_advance_research_forwards_stable_command_to_blind_engine(
 
     assert retry == response
     assert engine.calls == [("step_1", None)]
+
+
+def test_advance_research_forwards_optimistic_concurrency_guards(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _RecordingEngine:
+        def __init__(self):
+            self.kwargs = None
+
+        def advance_research(self, **kwargs):
+            self.kwargs = kwargs
+            return {"status": "state_changed"}
+
+    engine = _RecordingEngine()
+    monkeypatch.setattr(mcp, "_thread_dir", lambda tid: tmp_path / tid)
+    monkeypatch.setattr(
+        mcp,
+        "_build_blind_research_engine",
+        lambda _tid: engine,
+    )
+
+    mcp.handle_advance_research(
+        {
+            "thread_id": "t_guarded",
+            "command_id": "step_guarded",
+            "expected_revision": 7,
+            "expected_checkpoint_id": "checkpoint_fixture",
+        },
+        settings={},
+    )
+
+    assert engine.kwargs == {
+        "command_id": "step_guarded",
+        "acquisition_command": None,
+        "expected_revision": 7,
+        "expected_checkpoint_id": "checkpoint_fixture",
+    }
 
 
 def test_blind_engine_uses_thread_scoped_agent_models(
@@ -779,7 +1085,7 @@ def test_professor_command_id_reuse_with_changed_payload_is_rejected(
     )
     args = _negative_args(tid)
     args["next_transition"] = "pruned"
-    args["follow_up_children"] = []
+    args.pop("follow_up_children")
 
     assert mcp.handle_submit_professor_decision(args, settings={})["status"] == "accepted"
     collision = mcp.handle_submit_professor_decision(
@@ -831,6 +1137,7 @@ def test_unavailable_legacy_strategy_routes_to_blind_reorientation(
     tid = "t_missing_capability"
     state = _state(status="ready")
     thread_dir = _write_thread(tmp_path, tid, state)
+    _drop_authoritative_binding(thread_dir)
     monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: tmp_path / _tid)
     adaptive = mcp._ensure_adaptive_state(tid, state)
     strategy = {
@@ -890,24 +1197,29 @@ def test_unavailable_legacy_strategy_routes_to_blind_reorientation(
     persisted = json.loads(
         (thread_dir / "production" / "tree" / "search_state.json").read_text()
     )
-    assert persisted["nodes"][0]["status"] == "blocked"
-    assert persisted["frontier"][0]["status"] == "done"
+    assert persisted["nodes"][0]["status"] == "ready"
+    assert persisted["frontier"][0]["status"] == "queued"
 
 
-def test_first_selection_persists_adaptive_state_before_execution(
+def test_legacy_ready_node_routes_to_blind_reorientation_without_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     tid = "t_first_selection"
     thread_dir = _write_thread(tmp_path, tid, _state(status="ready"))
+    _drop_authoritative_binding(thread_dir)
     monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: tmp_path / _tid)
+    engine = _BlindEngine({"status": "direction_ready", "node_id": "n_blind"})
+    monkeypatch.setattr(mcp, "_build_blind_research_engine", lambda _tid: engine)
 
     selected = mcp.handle_get_next_admissible_node({"thread_id": tid})
 
-    assert selected["status"] == "ok"
+    assert selected == {"status": "direction_ready", "node_id": "n_blind"}
+    assert len(engine.calls) == 1
     persisted = json.loads(
         (thread_dir / "production" / "tree" / "search_state.json").read_text()
     )
-    assert persisted["adaptive"]["goal"]["source"] == "pre_generation"
+    assert persisted["nodes"][0]["status"] == "ready"
+    assert "adaptive" not in persisted
 
 
 def test_legacy_migration_pauses_when_root_bars_disagree(
@@ -931,6 +1243,7 @@ def test_legacy_migration_pauses_when_root_bars_disagree(
         }
     )
     thread_dir = _write_thread(tmp_path, tid, state)
+    _drop_authoritative_binding(thread_dir)
     (thread_dir / "thread.json").write_text("{}", encoding="utf-8")
     (thread_dir / "grilling" / "grilling_session.json").write_text(
         "{}", encoding="utf-8"
@@ -939,8 +1252,8 @@ def test_legacy_migration_pauses_when_root_bars_disagree(
 
     response = mcp.handle_get_next_admissible_node({"thread_id": tid})
 
-    assert response["status"] == "paused_needs_expansion"
-    assert "claim contracts disagree" in response["reason"]
+    assert response["status"] == "hard_external_block"
+    assert response["code"] == "operator_scope_conflict"
 
 
 def test_duplicate_experiment_is_rejected_before_runner(

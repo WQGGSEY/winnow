@@ -5,7 +5,11 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
+
+import research_harness.connector.orchestrator as connector_orchestrator
 from research_harness.connector.orchestrator import run_domain_connector
 from research_harness.schemas.validator import validate_named_schema
 
@@ -27,6 +31,22 @@ _CLEAN_ABSTRACTION = (
     "A set of interacting units emits an ongoing stream of indicators; one seeks "
     "to anticipate a future aggregate value from irregularities in that stream."
 )
+
+
+@pytest.fixture(autouse=True)
+def _successful_baseline_research(monkeypatch):
+    def run(_repo_root, _grilling_session, *, run_dir, http_fetcher):
+        del http_fetcher
+        return SimpleNamespace(
+            brief={
+                "status": "completed",
+                "brief_path": str(run_dir / "market_research_brief.json"),
+                "baseline_dossier_id": "bd_fixture",
+                "usage": {"papers_found": 1},
+            }
+        )
+
+    monkeypatch.setattr(connector_orchestrator, "_run_baseline_research", run)
 
 
 def _envelope(inner_obj):
@@ -129,6 +149,7 @@ def test_happy_path_keeps_quota_claims_and_writes_valid_session(tmp_path):
     assert s["status"] == "completed"
     assert s["stopped_reason"] == "quota_met"
     assert s["quota_met"] is True
+    assert s["baseline_research"]["baseline_dossier_id"] == "bd_fixture"
     assert len(out.claims) == 2
     assert s["fields_tried"] == 2
     cc = out.claims[0]["claim_contract"]
@@ -243,9 +264,39 @@ def test_emits_live_progress_events(tmp_path):
     types = [e["type"] for e in events]
     assert types[0] == "abstraction_start"
     for t in ("abstraction_done", "field_start", "reading_done", "prune1_done",
-              "market_done", "reduction_done", "claim_kept"):
+              "market_done", "reduction_done", "claim_kept",
+              "baseline_research_start", "baseline_research_done"):
         assert t in types, f"missing event {t!r} in {types}"
     kept = next(e for e in events if e["type"] == "claim_kept")
     assert kept["kept"] == 1 and kept["claim_under_test"]
     abst = next(e for e in events if e["type"] == "abstraction_done")
     assert abst["firewall_clean"] is True and abst["abstraction"]
+
+
+def test_baseline_research_failure_blocks_production_handoff(tmp_path):
+    fake = RoutingFakeCodex({
+        "abstraction": _ABSTRACTION_OK,
+        "reading": _READING_OK,
+        "prune1": _PRUNE1_PASS,
+        "reduction": _REDUCE_OK,
+    })
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("source unavailable")
+
+    out = run_domain_connector(
+        REPO_ROOT,
+        _valid_grilling(),
+        run_dir=tmp_path / "connector",
+        billing_ack=True,
+        execution_ack=True,
+        command_runner=fake,
+        http_fetcher=_fetcher,
+        quota=1,
+        max_fields_tried=1,
+        field_seed=1,
+        baseline_research_runner=fail,
+    )
+
+    assert out.session["status"] == "aborted"
+    assert "baseline research failed" in out.session["error"]

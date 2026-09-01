@@ -9,6 +9,7 @@ attested achieved=true on same-DGP self-grading.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -232,6 +233,17 @@ def _setup_falsifier_repo(tmp_path, monkeypatch, tid, falsifier):
     pdir.mkdir(parents=True, exist_ok=True)
     (pdir / "feasibility_envelope.json").write_text(
         json.dumps(_base_envelope(tid, external_falsifier=falsifier))
+    )
+    monkeypatch.setattr(
+        M,
+        "_authoritative_strong_binding",
+        lambda _tid: SimpleNamespace(
+            contract_id="contract_" + "1" * 64,
+            attempt_id="attempt_fixture",
+            direction_id="direction_" + "2" * 64,
+            node_id="node_fixture",
+            manifest_id="acqmanifest_" + "3" * 64,
+        ),
     )
 
 
@@ -583,8 +595,7 @@ def test_gate_refuses_achieved_true_when_real_referent_registered_but_no_result(
     assert "transfer_valid" in out["reason"]
 
 
-def test_gate_allows_achieved_true_with_passing_real_referent(tmp_path, monkeypatch):
-    # ADR 0008: only a REAL referent reaches transfer_valid -> goal_achieved.
+def test_gate_refuses_unbound_passing_real_referent(tmp_path, monkeypatch):
     tid = "t_gate3"
     env = _base_envelope(tid, external_falsifier=_real_falsifier())
     _setup_thread(tmp_path, monkeypatch, tid, env)
@@ -592,9 +603,7 @@ def test_gate_allows_achieved_true_with_passing_real_referent(tmp_path, monkeypa
     out = M.handle_submit_professor_user_goal_attestation(
         {"thread_id": tid, "attestation": _attestation(True, with_followup=False)}
     )
-    assert out["status"] == "ok"
-    assert out["attested_status"] == "goal_achieved"
-    assert out["verdict_strength"] == "transfer_valid"
+    assert out["status"] == "rejected"
 
 
 def test_cross_generator_transfer_does_not_unlock_goal_achieved(tmp_path, monkeypatch):
@@ -659,6 +668,35 @@ def test_gate_refuses_stale_falsifier_predicate() -> None:
     assert "predicate" in reason
 
 
+def test_gate_refuses_falsifier_from_another_attempt() -> None:
+    frozen = _real_falsifier()
+    expected = {
+        "contract_id": "contract_" + "a" * 64,
+        "attempt_id": "attempt_current",
+        "direction_id": "direction_" + "b" * 64,
+        "node_id": "n_current",
+        "manifest_id": "acqmanifest_" + "c" * 64,
+    }
+    result = {
+        "produced_by": F.PRODUCED_BY,
+        "passed": True,
+        "kind": frozen["kind"],
+        "holdout_source_id": frozen["holdout_source_id"],
+        "predicate": frozen["predicate"],
+        **expected,
+        "attempt_id": "attempt_stale",
+    }
+
+    reason = M._falsifier_result_blocks_achievement(
+        result,
+        frozen,
+        expected_binding=expected,
+    )
+
+    assert reason is not None
+    assert "attempt_id" in reason
+
+
 def test_achieved_false_stamps_unverified_screen_when_no_referent(tmp_path, monkeypatch):
     tid = "t_gate6"
     _setup_thread(tmp_path, monkeypatch, tid, _base_envelope(tid))
@@ -682,13 +720,13 @@ def test_achieved_false_stamps_not_achieved_when_real_referent_registered(tmp_pa
     assert out["attested_status"] == "not_achieved"
 
 
-def test_gate_disabled_allows_achieved_true_without_referent(tmp_path, monkeypatch):
+def test_gate_disabled_still_requires_blind_attempt_binding(tmp_path, monkeypatch):
     tid = "t_gate8"
     _setup_thread(tmp_path, monkeypatch, tid, _base_envelope(tid), gate=False)
     out = M.handle_submit_professor_user_goal_attestation(
         {"thread_id": tid, "attestation": _attestation(True, with_followup=False)}
     )
-    assert out["status"] == "ok"  # toggle off reverts to pre-gate behaviour
+    assert out["status"] == "rejected"
 
 
 # --- ADR 0007 rev.2 (A2): attemptability stamped from envelope membership #

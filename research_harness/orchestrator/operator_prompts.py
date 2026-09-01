@@ -1,10 +1,8 @@
 """Operator-prompt queue: file-based bidirectional channel.
 
-When the auto-resolver refuses to chain (loop detected, budget exhausted, or
-suggestion confidence < high), it enqueues an operator prompt instead of
-silently dropping the escalation. The frontend renders pending prompts in
-the production phase view and POSTs operator responses back; the Claude
-Code subprocess polls ``take_pending_response`` to consume them.
+The frontend renders pending prompts in the production phase view and POSTs
+operator responses back. The Codex subprocess polls ``take_pending_response``
+to consume them.
 
 Storage is a single append-only JSONL at
 ``<thread_dir>/production/operator_prompts.jsonl``. Each entry is one of:
@@ -27,11 +25,7 @@ from pathlib import Path
 from typing import Any
 
 VALID_KINDS = {
-    # Escalation from the auto-resolver after a refused dispatch.
-    "auto_resolver_escalation",
-    # Generic operator-decision prompt (used by future rails).
     "decision_request",
-    # Free-form note from the Claude Code subprocess asking for context.
     "context_request",
 }
 

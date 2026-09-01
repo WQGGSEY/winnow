@@ -23,6 +23,7 @@ def isolated_thread(tmp_path, monkeypatch):
     tree_dir = pdir / "tree"
     nodes_dir = tree_dir / "nodes"
     node_id = "n_root"
+    monkeypatch.setattr(M, "_authoritative_active_node_id", lambda _tid: node_id)
     node_dir = nodes_dir / node_id
     node_dir.mkdir(parents=True, exist_ok=True)
 
@@ -306,29 +307,6 @@ def test_camera_ready_must_address_every_directive(isolated_thread):
     assert "directive" in out["reason"].lower()
 
 
-# --- Strictness rails (post-thread_e5b277f9 review) --------------------- #
-
-
-def _write_child_decision(tmp_path, tid, child_id, parent_id, final_verdict):
-    """Append a child node to search_state + write its professor decision file."""
-    tree_dir = tmp_path / "runs" / "threads" / tid / "production" / "tree"
-    state = json.loads((tree_dir / "search_state.json").read_text(encoding="utf-8"))
-    state["nodes"].append({
-        "id": child_id, "type": "mechanism", "domain": state["nodes"][0]["domain"],
-        "stage": "promotion", "parent": parent_id, "status": "pruned",
-        "claim_contract": state["nodes"][0]["claim_contract"],
-        "baseline_refs": state["nodes"][0]["baseline_refs"],
-    })
-    (tree_dir / "search_state.json").write_text(json.dumps(state), encoding="utf-8")
-    child_dir = tree_dir / "nodes" / child_id
-    child_dir.mkdir(parents=True, exist_ok=True)
-    (child_dir / "mcp_professor_decision.json").write_text(
-        json.dumps({"node_id": child_id, "final_verdict": final_verdict,
-                    "next_transition": "pruned", "response_to_grad_student": "x"}),
-        encoding="utf-8",
-    )
-
-
 def _run_to_ac(tid, node_id):
     """Run prepare_rebuttal_packet → submit reviews → reduction. Returns nothing."""
     prep = M.handle_prepare_rebuttal_packet({"thread_id": tid})
@@ -373,85 +351,6 @@ def _minimal_ac(decision="accept"):
             },
         },
     }
-
-
-def test_ac_accept_blocked_when_two_thirds_successors_negative(isolated_thread, tmp_path):
-    """Rail 1: thread_e5b277f9 reproducer — 3/3 children negative must block accept."""
-    tid, node_id = isolated_thread
-    for i, verdict in enumerate(["contradicted", "contradicted", "blocked_by_operational_issue"]):
-        _write_child_decision(tmp_path, tid, f"{node_id}_succ0{i+1}", node_id, verdict)
-    _run_to_ac(tid, node_id)
-    out = M.handle_submit_ac_decision({"thread_id": tid, "ac_decision": _minimal_ac("accept")})
-    assert out["status"] == "rejected"
-    assert "successor-verdict rail" in out["reason"]
-    assert "3/3" in out["reason"]
-
-
-def test_rail1_auto_dispatches_seed_alternative_when_unseeded_exists(isolated_thread, tmp_path, monkeypatch):
-    """Hands-free: Rail 1 accept-block + unseeded formulation → server inline
-    seeds the alternative root and returns auto_resolved."""
-    monkeypatch.setattr(M, "_repo_root", lambda: Path(__file__).resolve().parents[1])
-    tid, node_id = isolated_thread
-    for i, verdict in enumerate(["contradicted", "contradicted", "contradicted"]):
-        _write_child_decision(tmp_path, tid, f"{node_id}_succ0{i+1}", node_id, verdict)
-    # Populate grilling with an unseeded formulation.
-    gdir = tmp_path / "runs" / "threads" / tid / "grilling"
-    gdir.mkdir(parents=True, exist_ok=True)
-    (gdir / "grilling_session.json").write_text(json.dumps({
-        "session_id": "grill_x", "status": "done", "user_goal": "g",
-        "max_rounds": 1, "rounds": [], "model": "mock",
-        "created_at": "2026-05-29T00:00:00+00:00",
-        "usage_estimate": {"rounds_used": 0, "total_cost_usd": 0.0,
-                            "total_input_tokens": 0, "total_output_tokens": 0},
-        "extracted": {
-            "root_goal_id": "rg_test", "domain": "test", "node_type": "validity",
-            "claim_under_test": "primary", "mandatory_baselines": ["b"],
-            "success_criteria": ["s"], "disproof_conditions": ["d"],
-            "goal_facets": [], "taste_constraints": [], "search_query_seed": "x",
-            "alternative_claim_formulations": [
-                {"formulation_id": "acf_feasibility_alt", "scope_kind": "feasibility_narrowed",
-                 "scope_note": "narrower", "ranked_priority": 1,
-                 "claim_under_test": "primary at feasibility"},
-            ],
-        },
-    }), encoding="utf-8")
-    _run_to_ac(tid, node_id)
-    out = M.handle_submit_ac_decision({"thread_id": tid, "ac_decision": _minimal_ac("accept")})
-    assert out["status"] == "rejected"
-    assert out["auto_action_suggestion"]["source_rail"] == "rail_1_accept_block_two_thirds_negative"
-    # The inline auto-dispatcher fired. The chained handler's happy path is
-    # covered separately in test_seed_alternative_root_formulation_adds_parallel_root;
-    # here we just verify the Rail 1 → auto-dispatch wiring works end-to-end.
-    assert out["auto_resolved"]["dispatched"] is True
-    assert out["auto_resolved"]["tool"] == "seed_alternative_root_formulation"
-    # An auto_actions.jsonl entry was written, capturing the attempt.
-    hist = tmp_path / "runs" / "threads" / tid / "production" / "auto_actions.jsonl"
-    assert hist.exists()
-    entries = [json.loads(line) for line in hist.read_text(encoding="utf-8").splitlines() if line]
-    assert entries[-1]["tool"] == "seed_alternative_root_formulation"
-    assert entries[-1]["source_rail"] == "rail_1_accept_block_two_thirds_negative"
-
-
-def test_ac_accept_blocked_when_any_blocking_successor(isolated_thread, tmp_path):
-    """Rail 1: one confounded/blocked child blocks accept even if others passed."""
-    tid, node_id = isolated_thread
-    _write_child_decision(tmp_path, tid, f"{node_id}_succ01", node_id, "supported_with_scope_narrowing")
-    _write_child_decision(tmp_path, tid, f"{node_id}_succ02", node_id, "confounded_or_not_evaluable")
-    _run_to_ac(tid, node_id)
-    out = M.handle_submit_ac_decision({"thread_id": tid, "ac_decision": _minimal_ac("accept")})
-    assert out["status"] == "rejected"
-    assert "blocking verdicts" in out["reason"]
-
-
-def test_ac_accept_allowed_when_successors_mostly_supported(isolated_thread, tmp_path):
-    """Rail 1: 2/3 supported children → accept passes the rail."""
-    tid, node_id = isolated_thread
-    _write_child_decision(tmp_path, tid, f"{node_id}_succ01", node_id, "supported_with_scope_narrowing")
-    _write_child_decision(tmp_path, tid, f"{node_id}_succ02", node_id, "supported")
-    _write_child_decision(tmp_path, tid, f"{node_id}_succ03", node_id, "contradicted")
-    _run_to_ac(tid, node_id)
-    out = M.handle_submit_ac_decision({"thread_id": tid, "ac_decision": _minimal_ac("accept")})
-    assert out["status"] == "ok"
 
 
 def test_ac_confidence_downclamped_when_no_real_adapter(isolated_thread, tmp_path):

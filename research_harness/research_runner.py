@@ -72,9 +72,11 @@ def cmd_connector(
     max_fields_tried: int | None = None,
     field_seed: int | None = None,
 ) -> dict[str, Any]:
-    """ADR 0012 domain-connector: turn a grilled problem P into diverse,
-    far-framed claim_contracts (connector_session.json). Downstream,
-    seed_forest_from_connector (MCP) builds the production forest from them."""
+    """Turn a grilled problem into connector research inputs.
+
+    Production freezes the accepted intake handoff into one SolutionContract;
+    connector alternatives remain audit context and never become live roots.
+    """
     grilling_session = _load_grilling_session(grilling_session_path)
     outcome = run_domain_connector(
         repo_root,
@@ -120,9 +122,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         prog="research_runner",
         description=(
-            "High-level CLI: grill a user goal, run market research, generate "
-            "a root node, chain into the production pipeline, and run "
-            "lesson distillation."
+            "High-level CLI for grilling, connector research, refinement, "
+            "and lesson distillation."
         ),
     )
     subparsers = parser.add_subparsers(dest="cmd", required=True)
@@ -159,7 +160,7 @@ def main() -> None:
     p_conn.add_argument("--execute-ack", action="store_true")
     p_conn.add_argument("--quota", type=int, default=None,
                         help="Target number of readings that must clear prune-1 "
-                        "(= forest size). Default from settings.")
+                        "and reduction. Default from settings.")
     p_conn.add_argument("--max-fields-tried", type=int, default=None,
                         help="Compute cap on fields sampled. Default from settings.")
     p_conn.add_argument("--field-seed", type=int, default=None,

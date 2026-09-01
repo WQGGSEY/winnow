@@ -426,7 +426,6 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
 
     @app.get("/api/threads/{thread_id}/operator_prompts")
     async def operator_prompts_list(thread_id: str) -> JSONResponse:
-        """Pending operator prompts surfaced by auto-resolver escalations."""
         from research_harness.orchestrator.operator_prompts import list_pending
         _require_thread(s.repo_root, thread_id)
         tdir = s.repo_root / "runs" / "threads" / thread_id
@@ -434,7 +433,6 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
 
     @app.post("/api/threads/{thread_id}/operator_input")
     async def operator_input_submit(thread_id: str, req: Request) -> JSONResponse:
-        """Operator submits a free-text response to a pending escalation prompt."""
         from research_harness.orchestrator.operator_prompts import submit_response
         _require_thread(s.repo_root, thread_id)
         form = await req.form()
@@ -642,11 +640,8 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
             )
         except AdapterError as exc:
             raise HTTPException(409, str(exc)) from exc
-        # PR10b: refuse to start/resume once a publication artifact
-        # exists. The frontend hides the button in this case, but we
-        # enforce here as well so direct API hits respect the rule.
         pub_dir = s.repo_root / "runs" / "threads" / thread_id / "production" / "publication"
-        if (pub_dir / "paper.html").exists() or (pub_dir / "honest_failure.html").exists():
+        if (pub_dir / "paper.html").exists():
             raise HTTPException(
                 409,
                 "publication already exists for this thread; supervisor "
@@ -1559,21 +1554,14 @@ def _read_phase_artifacts(
                     for row in adapter_status_rows(repo_root)
                     if row.get("status") == "ready"
                 ]
-        # Hands-free escalation: pending operator prompts surfaced by the
-        # auto-resolver when it refused to chain. Frontend renders these as
-        # input cards so the operator can answer without dropping to CLI.
         with contextlib.suppress(Exception):
             from research_harness.orchestrator.operator_prompts import list_pending
             tdir = repo_root / "runs" / "threads" / thread_id
             pending = list_pending(tdir)
             if pending:
                 result["pending_operator_prompts"] = pending
-        # PR10b: distinguish "fresh thread" / "resumable mid-state" /
-        # "publication complete" so the supervisor card can render the
-        # correct button label. Resume = activity present, paper not yet.
         paper_path = pdir / "publication" / "paper.html"
-        honest_failure_path = pdir / "publication" / "honest_failure.html"
-        result["publication_exists"] = paper_path.exists() or honest_failure_path.exists()
+        result["publication_exists"] = paper_path.exists()
         # "production has activity" = at least one MCP-produced file under
         # production/. We exclude the auto-bootstrapped feasibility
         # envelope because a fresh supervisor start writes it before any
@@ -1596,7 +1584,6 @@ def _read_phase_artifacts(
                         "node_id": dp.parent.name,
                         "transition": d.get("next_transition"),
                         "final_verdict": d.get("final_verdict"),
-                        "follow_up_count": len(d.get("follow_up_children") or []),
                         "updated_at": dp.stat().st_mtime,
                     }
                 )

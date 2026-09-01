@@ -2,8 +2,8 @@
 
 Watches a single thread, spawns Codex JSONL subprocesses when the
 MCP server has been idle past a threshold, feeds the resume prompt
-deterministically, and only terminates when the thread reaches a terminal
-outcome (paper accept or honest_failure).
+deterministically, and only terminates when the thread reaches a verified
+strong-result publication.
 
 This is the missing piece between the MCP server (which exposes tools but
 needs an agent session to drive them) and operator hands-free
@@ -243,6 +243,12 @@ def _terminal_evidence_is_strong(
     predicate = falsifier.get("predicate") or {}
     if (
         falsifier.get("thread_id") != tid
+        or falsifier.get("contract_id") != receipt.get("contract_id")
+        or falsifier.get("attempt_id") != receipt.get("attempt_id")
+        or falsifier.get("direction_id") != receipt.get("direction_id")
+        or falsifier.get("node_id") != receipt.get("promoted_node_id")
+        or falsifier.get("manifest_id")
+        != receipt.get("acquisition_manifest_id")
         or falsifier.get("produced_by") != FALSIFIER_PRODUCED_BY
         or falsifier.get("kind") != "real_holdout"
         or falsifier.get("kind") != frozen_falsifier.get("kind")
@@ -764,32 +770,10 @@ def advance_resumable_reorientation(
     return {**result, "supervisor_resume_kind": resume_kind}
 
 
-def read_search_pause(repo: Path, tid: str) -> dict[str, object] | None:
-    """Read a resumable adaptive pause without classifying it as completion."""
-
-    state_path = _thread_dir(repo, tid) / "production" / "tree" / "search_state.json"
-    if not state_path.exists():
-        return None
-    try:
-        adaptive = json.loads(state_path.read_text(encoding="utf-8")).get(
-            "adaptive"
-        ) or {}
-    except (OSError, json.JSONDecodeError):
-        return None
-    pause = adaptive.get("pause")
-    if adaptive.get("disposition") != "paused_needs_expansion" or not isinstance(
-        pause, dict
-    ):
-        return None
-    return pause
-
-
 def collect_needed_resources(repo: Path, tid: str) -> list[dict[str, object]]:
-    """PR8: scan the thread state for unmet resource requirements that are
-    blocking publication. Combines:
-      - user_goal_attestation.required_additional_research (when achieved=false)
-      - alternative_root_proposal.alternatives' implicit resource needs
-      - feasibility_envelope gaps (e.g., target=deployment but no real adapter)
+    """Scan the thread state for unmet resources that block publication.
+
+    Sources are the latest user-goal attestation and feasibility-envelope gaps.
     The supervisor logs this to needed_resources.yaml so the operator can
     see what's blocking and add the missing pieces.
     """
@@ -876,9 +860,8 @@ def update_needed_resources_file(repo: Path, tid: str) -> list[dict[str, object]
 
 def mcp_idle_seconds(repo: Path, tid: str) -> float:
     """Return seconds since the most recent file mtime under the thread's
-    production directory. Used as a proxy for MCP activity — any
-    handle_submit_*, handle_render_*, or handle_revise_root_after_reject
-    call writes at least one file.
+    production directory. Used as a proxy for MCP activity because research
+    control and evidence submission calls write at least one production file.
 
     Returns inf when the production dir is empty or missing.
     """
@@ -1014,23 +997,21 @@ def bootstrap_envelope_if_missing(
     if market_brief_path.exists():
         try:
             brief = json.loads(market_brief_path.read_text(encoding="utf-8"))
-            for c in brief.get("baseline_dossier_candidates_index", []) or []:
-                if not isinstance(c, dict) or not c.get("id"):
+            for paper in brief.get("papers", []) or []:
+                if not isinstance(paper, dict) or not paper.get("id"):
                     continue
-                # Heuristic: anything cited via market_research has either
-                # a filename, arxiv id, doi, or repo url.
                 prov = (
-                    c.get("paper_citation")
-                    or c.get("arxiv_id")
-                    or c.get("doi")
-                    or c.get("repo_url")
-                    or c.get("filename")
-                    or c.get("title")
+                    paper.get("url")
+                    or paper.get("arxiv_id")
+                    or paper.get("doi")
+                    or paper.get("repo_url")
+                    or paper.get("pdf_path")
+                    or paper.get("title")
                     or ""
                 )
                 if prov:
                     baseline_prov.append({
-                        "candidate_id": c["id"],
+                        "candidate_id": paper["id"],
                         "provenance": str(prov),
                     })
         except (OSError, json.JSONDecodeError):
@@ -1223,9 +1204,9 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "      ※ ADR 0006: achieved=true는 external falsifier 통과 없이는",
         "        구조적으로 거부됨. 필요조건: envelope.max_attestable_status=",
         "        goal_achieved (= falsifier 등록됨) + 통과한 falsifier_result.",
-        "  construct_valid_screen, unverified_screen, bounded_result, honest_failure는",
+        "  construct_valid_screen, unverified_screen, bounded_result는",
         "  진행 증거일 뿐 연구 완료가 아니다. 실행할 수 있는 새 전략이 없으면",
-        "  paused_needs_expansion으로 멈추고 missing capability와 resume condition을 남겨.",
+        "  advance_research가 이전 실패를 보지 않는 새 방향을 생성하게 해.",
         "",
         "현재 상태 (디스크 스냅샷):",
         f"  - promoted nodes: {promoted}",
@@ -1246,23 +1227,20 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "",
         "방향:",
         f"  1. get_research_state(thread_id=\"{tid}\") 로 정확한 현재 상태 확인.",
-        "  2. needed_resources가 해결 가능하면 먼저 해결해. 자원 자체가 부족하면",
-        "     frozen bar를 좁히지 말고 paused_needs_expansion에 정확히 기록해.",
-        "  3. mid-state 노드 있으면 그 노드의 다음 도구 호출 (resume_production_state",
-        "     또는 get_next_admissible_node의 status=resume 응답).",
-        "  4. 없으면 get_next_admissible_node로 다음 ready 노드 처리.",
+        "  2. needed_resources가 있으면 advance_research의 획득 경계로 해결해.",
+        "     frozen bar를 좁히지 말고 checkpoint 또는 hard_external_block을 보존해.",
+        "  3. get_next_admissible_node를 호출해. 권위 있는 blind active node가 있으면",
+        "     그 노드만 재개하고, 없으면 advance_research로 새 방향을 준비한다.",
+        "  4. checkpointed이면 응답의 expected_revision과 checkpoint_id를 유지한",
+        "     채 다음 물리 사이클에서 재개해.",
         "  5. publish 직전 단계 도달하면: (a) submit_ac_decision ∈",
         "       {accept, revise}; (b) compute_falsifier_result로 held-out 검증",
-        "       (cross_generator_transfer면 ranking_a / 다른 generator B의 ranking_b);",
+        "       등록된 real holdout과 고정 predicate를 사용);",
         "       (c) 통과하면 submit_professor_user_goal_attestation achieved=true.",
         "       falsifier가 fail하면 achieved=true 불가 — 파이프라인 개선 후 재측정.",
-        "  5b. air-gapped인데 약-falsifier를 추가하려면: 별개의",
-        "      generator B를 holdout으로 잡고 submit_feasibility_envelope에",
-        "      external_falsifier(kind=cross_generator_transfer, holdout_source_id,",
-        "      predicate{spearman_rho>=θ}) 등록 → 위 goal_achieved 경로로.",
-        "  6. 음성 결정에는 frozen success criterion을 직접 참조하는 causal strategy",
-        "     두 개 이상을 submit_professor_decision.follow_up_children에 넣어.",
-        "     같은 claim을 validity/mechanism 같은 접두어로 복사하면 거부된다.",
+        "  6. 음성 결정은 submit_professor_decision에 pruned로 제출하고",
+        "     follow-up claim을 생성하지 마. 하네스가 실패 lesson을 비공개로 저장한 뒤",
+        "     SolutionContract + random perspective만으로 다음 방향을 독립 생성한다.",
         "",
         "Anti-laziness 룰 작동 중 (PR1):",
         "  - claim narrowing-without-breadth → reject",
@@ -1288,7 +1266,8 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "",
         "세션 한도 가까워지면 self-judge로 멈춰. 한 줄 status 남기고 종료해.",
         "supervisor가 곧 새 cycle spawn 해서 이어받을 거야. 약한 screen이나",
-        "honest_failure를 완료로 취급하지 마. 새 작업이 불가능하면 pause를 남겨.",
+        "historical honest_failure를 완료로 취급하지 마. 새 작업이 불가능하면",
+        "advance_research가 반환한 checkpoint 또는 hard_external_block을 남겨.",
         "",
         "지금 시작:",
     ]
@@ -1565,21 +1544,6 @@ def _sync_terminal_thread_index(repo: Path, tid: str, outcome: str | None) -> No
     )
 
 
-def _sync_paused_thread_index(repo: Path, tid: str) -> None:
-    index_path = _thread_dir(repo, tid) / "thread.json"
-    if not index_path.exists():
-        return
-    from research_harness.frontend.threads import update_thread
-
-    update_thread(
-        repo,
-        tid,
-        current_phase="production",
-        phase_status="awaiting_input",
-        outcome=None,
-    )
-
-
 def watch_thread(
     repo: Path,
     tid: str,
@@ -1596,11 +1560,10 @@ def watch_thread(
     max_cycles: int | None = None,  # PR8: only honored when explicitly set;
                                     #      default behavior never quits on count.
 ) -> dict[str, object]:
-    """PR8 supervisor loop. ONLY exits when the dual-gate publish outcome
-    is reached (AC accept + Professor user_goal_attestation.achieved=true)
-    OR the operator sends SIGINT/SIGTERM. honest_failure is treated as a
-    retreat state. The supervisor starts Codex with instructions to try a
-    different angle. Subscription rate-limit fast-fails trigger
+    """Run until the verified dual-gate publication or operator interruption.
+
+    Historical honest_failure artifacts are nonterminal. The supervisor starts
+    Codex with instructions to continue through the blind engine. Rate limits trigger
     exponential backoff (1m → 2m → 4m → ... cap).
 
     Exit conditions:
@@ -1710,7 +1673,6 @@ def watch_thread(
             _log(log_path, f"explicit max_cycles override ({max_cycles}) hit. exiting.")
             return {"status": "max_cycles_exceeded", "cycles": cycle}
 
-        skip_legacy_pause = False
         try:
             resumed = advance_resumable_reorientation(repo, tid)
         except (BlindSequentialResearchError, OSError, ValueError) as exc:
@@ -1729,29 +1691,11 @@ def watch_thread(
                     "deterministic reorientation advance: "
                     f"status={resumed.get('status')!r}",
                 )
-                physical_checkpoint_no_progress = (
-                    resume_kind == "physical_checkpoint_no_progress"
-                )
-                recovery_failed = (
-                    resume_kind == "strong_terminal_recovery_failed"
-                )
-                skip_legacy_pause = physical_checkpoint_no_progress or recovery_failed
-                if not skip_legacy_pause:
+                if resume_kind not in {
+                    "physical_checkpoint_no_progress",
+                    "strong_terminal_recovery_failed",
+                }:
                     continue
-
-        pause = None if skip_legacy_pause else read_search_pause(repo, tid)
-        if pause is not None:
-            _sync_paused_thread_index(repo, tid)
-            _log(
-                log_path,
-                "adaptive search paused with an explicit resume condition; "
-                "not marking the research complete.",
-            )
-            return {
-                "status": "paused_needs_expansion",
-                "pause": pause,
-                "cycles": cycle,
-            }
 
         # PR8 milestone-not-termination logging.
         if cycle > 0 and cycle % milestone_cycle == 0:
@@ -1901,7 +1845,6 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0 if result.get("status") in {
             "terminal",
-            "paused_needs_expansion",
             "interrupted",
         } else 1
     return 2

@@ -99,6 +99,11 @@ def _setup(tmp_path, monkeypatch):
     state_path = thread_dir / "production" / "tree" / "search_state.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(
+        mcp,
+        "_authoritative_active_node_id",
+        lambda _tid: node["id"],
+    )
 
     original_builder = plans.build_experiment_plan_for_node
 

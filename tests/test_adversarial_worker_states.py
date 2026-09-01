@@ -44,9 +44,10 @@ class AdversarialWorkerStateTests(unittest.TestCase):
         reduction = reduce_node(node, report, reviews)
         ac_decision = decide_acceptance(reviews, load_settings(REPO_ROOT))
 
-        self.assertEqual(reduction["next_transition"], "needs_child_branch")
+        self.assertEqual(reduction["next_transition"], "pruned")
         self.assertEqual(reduction["final_verdict"], "confounded_or_not_evaluable")
         self.assertIn("failure_branch_prior", reduction)
+        self.assertEqual(reduction["child_branch_suggestions"], [])
         self.assertEqual(ac_decision["decision"], "reject")
 
     def test_timeout_partial_cannot_support_claim_by_itself(self) -> None:

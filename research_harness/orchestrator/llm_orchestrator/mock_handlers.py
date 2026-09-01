@@ -35,7 +35,6 @@ def register_default_mock_handlers(client: MockLLMClient) -> None:
     client.register("professor.reduce", _professor_reduce_handler)
     client.register("professor.respond", _professor_respond_handler)
     client.register("professor.readiness", _professor_readiness_handler)
-    client.register("professor.revise_after_reject", _professor_revise_handler)
     client.register("professor.problem_to_claim", _professor_problem_to_claim_handler)
     client.register("professor.draft_roadmap", _professor_draft_roadmap_handler)
     client.register("professor.revise_roadmap", _professor_revise_roadmap_handler)
@@ -55,26 +54,19 @@ def _professor_reduce_handler(messages, system, json_schema_hint):
     deterministic = _extract_block(prompt, "Deterministic baseline decision (for reference)")
     parsed_baseline = _parse_json_block(deterministic) or {}
     final_verdict = parsed_baseline.get("final_verdict", "inconclusive")
-    next_transition = parsed_baseline.get("next_transition", "needs_child_branch")
-    suggestions_in = parsed_baseline.get("child_branch_suggestions") or []
+    next_transition = parsed_baseline.get("next_transition", "pruned")
     claim_line = _first_line_after(prompt, "Claim under test:")
     worker_status = _first_line_after(prompt, "Status:") or "n/a"
     verdict_candidate = _first_line_after(prompt, "Claim verdict candidate:") or "inconclusive"
     overall = _first_line_after(prompt, "Baseline evidence overall:") or "n/a"
     disproof_line = _first_line_after(prompt, "Disproof conditions hit:") or "[]"
-    node_type = _node_type_from_prompt(prompt)
 
-    follow_up_children: list[dict[str, Any]] = []
-    cleaned_suggestions: list[dict[str, Any]] = []
-
-    # Case (4) — claim is false: prune the branch.
     disproof_hit = "[]" not in disproof_line and disproof_line.strip()
     contradicted = (
         verdict_candidate == "contradicted"
         or disproof_hit
         or "failed" in overall
     )
-    # Case (3) — claim is supported: promote AND open follow-up successor claims.
     supported = "passed" in overall and not contradicted
 
     if contradicted:
@@ -83,150 +75,41 @@ def _professor_reduce_handler(messages, system, json_schema_hint):
         professor_response = (
             f"This branch is contradicted by the run — worker reported "
             f"`{verdict_candidate}` with baseline status `{overall}`. Pruning. "
-            f"I'll remember the lesson and avoid this design in successor claims."
+            "The harness will retain the evidence for private post-generation gates."
         )
     elif supported:
         next_transition = "promoted"
         final_verdict = "supported_with_scope_narrowing"
-        follow_up_children = _make_follow_up_claims(claim_line, node_type)
-        cohort_size = len(follow_up_children)
         professor_response = (
             f"Good work — `{claim_line[:120]}…` holds up under the baseline "
-            f"triad. Promoting this node. I'm spawning {cohort_size} successor "
-            f"claims for the next cohort to chase."
+            "triad. Promoting this direction for strong-result verification."
         )
     else:
-        cleaned_suggestions = _suggestions_with_focus(suggestions_in, claim_line)
-        focus_list = ", ".join(f"{s['type']}" for s in cleaned_suggestions)
+        next_transition = "pruned"
         professor_response = (
-            f"Worker run status: {worker_status}. Before I can promote this, "
-            f"please address: {focus_list}. I'll spawn the children — keep your "
-            f"scope on the parent claim, do not introduce new ones."
+            f"Worker run status: {worker_status}. This direction is not ready "
+            "for strong-result verification, so I am closing it."
         )
 
     research_status = (
         "supported_with_scope_narrowing"
         if next_transition == "promoted"
-        else (
-            "pruned_contradicted"
-            if next_transition == "pruned"
-            else parsed_baseline.get("research_status", "interpretable_negative_result")
-        )
+        else "pruned_contradicted"
     )
     payload = {
         "reduction": {
             "final_verdict": final_verdict,
             "research_status": research_status,
             "next_transition": next_transition,
-            "child_branch_suggestions": cleaned_suggestions,
+            "child_branch_suggestions": [],
             "accepted_lesson_candidates": parsed_baseline.get(
                 "accepted_lesson_candidates", []
             ),
         },
         "response_to_grad_student": professor_response,
-        "follow_up_children": follow_up_children,
     }
     text = json.dumps(payload, ensure_ascii=False)
     return LLMResponse(text=text, structured=payload)
-
-
-def _suggestions_with_focus(
-    suggestions_in: list[dict[str, Any]],
-    claim_line: str,
-) -> list[dict[str, Any]]:
-    cleaned: list[dict[str, Any]] = []
-    for s in suggestions_in[:2]:
-        if not isinstance(s, dict):
-            continue
-        cleaned.append(
-            {
-                "type": s.get("type", "validity"),
-                "reason": s.get("reason", "Address open objection."),
-                "source": "professor_decision",
-                "claim_focus": _claim_focus_for(s, claim_line),
-            }
-        )
-    if not cleaned:
-        cleaned.append(
-            {
-                "type": "validity",
-                "reason": "Tighten the experimental design before re-promotion.",
-                "source": "professor_decision",
-                "claim_focus": f"Re-test the validity axis of: {claim_line[:200]}",
-            }
-        )
-    return cleaned
-
-
-# Successor-claim templates by parent node_type. The Professor uses these
-# to grow the tree once the parent claim is supported. Each successor is a
-# *new* claim that depends on the parent's success, not a re-test of it.
-_FOLLOW_UP_TEMPLATES: dict[str, list[tuple[str, str, str]]] = {
-    "capability": [
-        ("mechanism", "Identify which component of the design causally drives the supported capability claim, i.e. {claim}", "supported capability → ask why"),
-        ("necessity", "Show the supported capability does not collapse when the strongest same-budget baseline is matched on the metric of interest", "supported capability → ask if it is necessary"),
-        ("boundary", "Map the regime boundary at which the supported capability breaks down", "supported capability → find its limits"),
-        ("constraint", "Test how the supported capability degrades under realistic operational constraints (latency, memory, distribution shift)", "supported capability → stress under ops"),
-    ],
-    "validity": [
-        ("capability", "Use the now-validated measurement methodology to test a primary capability claim built on top of: {claim}", "validated method → flip to capability"),
-        ("necessity", "Compare the validated method against the simplest published alternative on the same data", "validated method → necessity vs alternatives"),
-        ("boundary", "Identify the regimes where the validated method's assumptions still hold", "validated method → scope its assumptions"),
-        ("mechanism", "Explain why the validity check rejected confounds the naive heuristic missed", "validated method → mechanism diagnostic"),
-    ],
-    "necessity": [
-        ("mechanism", "Identify which structural choice in the necessary method is non-substitutable", "necessity supported → why"),
-        ("boundary", "Find the smallest regime where necessity still holds", "necessity supported → minimum sufficient regime"),
-        ("constraint", "Verify necessity survives operational constraints (compute / latency)", "necessity supported → operational test"),
-    ],
-    "mechanism": [
-        ("boundary", "Find the boundary where the proposed mechanism stops explaining behavior", "mechanism supported → find its edge"),
-        ("constraint", "Stress-test the mechanism under operational constraints", "mechanism supported → ops test"),
-        ("necessity", "Show the mechanism is required even when given a strong substitute", "mechanism supported → necessity"),
-    ],
-    "boundary": [
-        ("constraint", "Re-test the boundary under operational constraints", "boundary supported → ops"),
-        ("mechanism", "Explain what causes the boundary effect", "boundary supported → mechanism"),
-    ],
-    "constraint": [
-        ("boundary", "Find the operational regime where the constraint stops binding", "constraint supported → boundary"),
-    ],
-    "operational": [
-        ("validity", "Validate that the operational setup does not introduce confounds into the main claim", "operational supported → validity"),
-    ],
-    "taste": [],
-}
-
-
-def _make_follow_up_claims(claim_line: str, parent_type: str) -> list[dict[str, Any]]:
-    """Generate 1-4 successor claims for a promoted parent.
-
-    Each successor is a new claim the next grad-student cohort can test.
-    The harness will materialize them as child nodes typed by the
-    parent's logical follow-up axis (mechanism/necessity/boundary/constraint).
-    """
-    templates = _FOLLOW_UP_TEMPLATES.get(parent_type) or _FOLLOW_UP_TEMPLATES["capability"]
-    successors: list[dict[str, Any]] = []
-    parent_claim_short = claim_line[:200] if claim_line else "(parent claim)"
-    for index, (ftype, template, rationale) in enumerate(templates, start=1):
-        successors.append(
-            {
-                "type": ftype,
-                "successor_claim": template.format(claim=parent_claim_short),
-                "rationale": rationale,
-            }
-        )
-    return successors
-
-
-def _node_type_from_prompt(prompt: str) -> str:
-    """Pull node type out of '=== Node n_xxx_yyy (capability, stage=...) ==='."""
-    import re as _re
-
-    m = _re.search(r"=== Node [^\(]+\(([^,]+),", prompt)
-    if m:
-        return m.group(1).strip()
-    return "capability"
 
 
 def _professor_readiness_handler(messages, system, json_schema_hint):
@@ -300,34 +183,6 @@ def _professor_readiness_handler(messages, system, json_schema_hint):
     }
     text = json.dumps(payload, ensure_ascii=False)
     return LLMResponse(text=text, structured=payload)
-
-
-def _professor_revise_handler(messages, system, json_schema_hint):
-    prompt = messages[-1]["content"]
-    original_claim = _first_line_after(prompt, "Original root claim:") or "(unknown)"
-    blocking_block = _extract_block(prompt, "Blocking reasons:")
-    blocking_lines = [
-        line.strip(" -")
-        for line in blocking_block.splitlines()
-        if line.strip(" -")
-    ]
-    first_blocker = blocking_lines[0] if blocking_lines else "the AC's core concern"
-    new_claim = (
-        f"A scoped but ambitious version of: \"{original_claim[:160]}\" that "
-        f"directly addresses {first_blocker[:120]} via an additional "
-        f"controlled experiment — without weakening the substantive predictive "
-        f"capability the AC questioned."
-    )
-    rationale = (
-        "Refusing the lazy option of weakening the headline claim. "
-        "The AC's blocker is methodological, not substantive; we address it "
-        "via tighter experimental scope, not by demoting the contribution."
-    )
-    payload = {"new_claim": new_claim, "rationale": rationale}
-    return LLMResponse(
-        text=json.dumps(payload, ensure_ascii=False),
-        structured=payload,
-    )
 
 
 def _professor_problem_to_claim_handler(messages, system, json_schema_hint):
@@ -914,13 +769,3 @@ def _parse_json_block(text: str) -> dict[str, Any] | None:
         return json.loads(text)
     except json.JSONDecodeError:
         return None
-
-
-def _claim_focus_for(suggestion: dict[str, Any], claim_line: str) -> str:
-    t = suggestion.get("type", "validity")
-    reason = suggestion.get("reason", "")
-    return (
-        f"Drill into the {t} axis of the parent claim. Specifically: {reason[:160]}"
-        if reason
-        else f"Drill into the {t} axis of: {claim_line[:160]}"
-    )

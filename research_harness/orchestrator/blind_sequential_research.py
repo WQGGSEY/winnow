@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from copy import deepcopy
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,7 @@ from research_harness.orchestrator.attempt_evidence import (
     NeedsMoreEvidence,
     StrongCandidate,
     derive_attempt_evidence,
+    derive_falsifier_failure,
     serialize_failure_evidence_receipt,
 )
 from research_harness.orchestrator.blind_reorientation import (
@@ -66,7 +68,11 @@ from research_harness.orchestrator.direction_generation import (
     serialize_direction_draft,
     serialize_generation_request,
 )
-from research_harness.orchestrator.search_state import validate_search_state
+from research_harness.orchestrator.search_state import (
+    initialize_search_state,
+    search_policy_from_config,
+    validate_search_state,
+)
 from research_harness.orchestrator.solution_contract import (
     SolutionContract,
     compile_solution_contract,
@@ -329,12 +335,6 @@ class _MigrationBlocked(Exception):
         self.result = result
 
 
-class _MigrationDeferred(Exception):
-    def __init__(self, result: dict[str, object]) -> None:
-        super().__init__("legacy work remains active")
-        self.result = result
-
-
 class BlindSequentialResearch:
     def __init__(
         self,
@@ -406,7 +406,7 @@ class BlindSequentialResearch:
                     return previous
                 try:
                     contract, state = self._load_or_migrate_locked()
-                except (_MigrationBlocked, _MigrationDeferred) as exc:
+                except _MigrationBlocked as exc:
                     self._write_command_receipt(
                         command_id,
                         input_digest,
@@ -537,78 +537,69 @@ class BlindSequentialResearch:
         return self._migrate_legacy_locked()
 
     def _migrate_legacy_locked(self) -> tuple[SolutionContract, ReorientationState]:
-        search_state = self._read_search_state()
+        search_state_path = (
+            self._thread_dir / "production" / "tree" / "search_state.json"
+        )
+        search_state = (
+            self._read_search_state() if search_state_path.exists() else {"nodes": []}
+        )
+        handoff_path = (
+            self._thread_dir / "production" / "intake_to_claim_dialog.json"
+        )
+        handoff = _read_json(handoff_path) if handoff_path.exists() else None
+        accepted_contract = (
+            handoff.get("new_contract") if isinstance(handoff, Mapping) else None
+        )
         roots = [
             node
             for node in search_state.get("nodes") or []
             if isinstance(node, Mapping) and node.get("parent") is None
         ]
-        bars = {
-            _canonical_json(
-                {
-                    key: (node.get("claim_contract") or {}).get(key)
-                    for key in (
-                        "claim_under_test",
-                        "mandatory_baselines",
-                        "success_criteria",
-                        "disproof_conditions",
-                        "decision_rule",
-                        "deploy_grade_scope",
-                    )
-                }
-            )
-            for node in roots
-        }
+        bars = (
+            {
+                _canonical_json(
+                    {
+                        key: (node.get("claim_contract") or {}).get(key)
+                        for key in (
+                            "mandatory_baselines",
+                            "success_criteria",
+                            "disproof_conditions",
+                            "decision_rule",
+                            "deploy_grade_scope",
+                        )
+                    }
+                )
+                for node in roots
+            }
+            if not isinstance(accepted_contract, Mapping)
+            else set()
+        )
         if len(bars) > 1:
             raise self._migration_block(
                 HardExternalBlockCode.OPERATOR_SCOPE_CONFLICT,
                 "Resolve the disagreeing legacy root success bars, then retry.",
-            )
-        live_statuses = {
-            "ready",
-            "running",
-            "completed_worker_report",
-            "critic_reviewed",
-            "orchestrator_reduced",
-        }
-        live_node_ids = {
-            str(node["id"])
-            for node in search_state.get("nodes") or []
-            if isinstance(node, Mapping)
-            and node.get("id")
-            and node.get("status") in live_statuses
-        }
-        if live_node_ids:
-            bindings = self._legacy_attempt_bindings(search_state)
-            active_attempt_ids = {
-                bindings[node_id]["attempt_id"] for node_id in live_node_ids
-            }
-            if len(active_attempt_ids) != 1:
-                raise self._migration_block(
-                    HardExternalBlockCode.OPERATOR_SCOPE_CONFLICT,
-                    "Reduce legacy execution to exactly one active root, then retry.",
-                )
-            active_attempt_id = next(iter(active_attempt_ids))
-            for binding in bindings.values():
-                if binding["attempt_id"] == active_attempt_id:
-                    binding["legacy_audit_only"] = False
-            _write_json_atomic(
-                self._paths.node_attempts,
-                {"version": 1, "nodes": bindings},
-            )
-            raise _MigrationDeferred(
-                {
-                    "status": "acquisition_running",
-                    "acquisition_status": "legacy_work_pending",
-                    "attempt_id": active_attempt_id,
-                    "next_tool_to_call": "get_next_admissible_node",
-                }
             )
         try:
             thread = self._required_mapping(self._thread_dir / "thread.json")
             grilling = self._required_mapping(
                 self._thread_dir / "grilling" / "grilling_session.json"
             )
+            if isinstance(accepted_contract, Mapping):
+                grilling = deepcopy(dict(grilling))
+                extracted = dict(grilling.get("extracted") or {})
+                extracted.update(
+                    {
+                        key: accepted_contract[key]
+                        for key in (
+                            "claim_under_test",
+                            "mandatory_baselines",
+                            "success_criteria",
+                            "disproof_conditions",
+                        )
+                        if key in accepted_contract
+                    }
+                )
+                grilling["extracted"] = extracted
             market = self._required_mapping(
                 self._thread_dir / "market" / "market_research_brief.json"
             )
@@ -632,6 +623,11 @@ class BlindSequentialResearch:
                 safety_limits=safety_limits,
             )
             contract = compile_solution_contract(source)
+        except FileNotFoundError as exc:
+            raise self._migration_block(
+                HardExternalBlockCode.OPERATOR_SCOPE_CONFLICT,
+                f"Provide the missing pre-generation artifact, then retry: {exc.filename}",
+            )
         except OSError as exc:
             raise self._migration_block(
                 HardExternalBlockCode.STORAGE_UNAVAILABLE,
@@ -1155,16 +1151,41 @@ class BlindSequentialResearch:
             data_status="satisfied",
         )
         if isinstance(evidence, StrongCandidate):
-            return _Immediate(
-                {
-                    "status": "acquisition_running",
-                    "acquisition_status": "strong_candidate",
-                    "attempt_id": phase.active_attempt.attempt_id,
-                    "node_id": node_id,
-                    "evidence_digest": evidence.evidence_digest,
-                    "next_tool_to_call": "get_next_admissible_node",
-                }
+            falsifier_path = (
+                self._thread_dir
+                / "production"
+                / "rebuttal"
+                / "falsifier_result.json"
             )
+            binding = resolve_strong_result_binding(
+                state,
+                mapping,
+                node_id=node_id,
+            )
+            falsifier_failure = derive_falsifier_failure(
+                _read_json(worker_path),
+                _read_json(falsifier_path) if falsifier_path.exists() else None,
+                binding={
+                    "contract_id": binding.contract_id,
+                    "attempt_id": binding.attempt_id,
+                    "direction_id": binding.direction_id,
+                    "node_id": binding.node_id,
+                    "manifest_id": binding.manifest_id,
+                },
+            )
+            if falsifier_failure is not None:
+                evidence = falsifier_failure
+            else:
+                return _Immediate(
+                    {
+                        "status": "acquisition_running",
+                        "acquisition_status": "strong_candidate",
+                        "attempt_id": phase.active_attempt.attempt_id,
+                        "node_id": node_id,
+                        "evidence_digest": evidence.evidence_digest,
+                        "next_tool_to_call": "get_next_admissible_node",
+                    }
+                )
         if isinstance(evidence, ConclusiveFailure):
             _write_json_atomic(
                 self._paths.failure_receipt(phase.active_attempt.attempt_id),
@@ -1213,11 +1234,12 @@ class BlindSequentialResearch:
         command: AcquisitionCommand,
         manifest_id: str,
     ) -> None:
-        state = self._read_search_state()
+        state_path = self._thread_dir / "production" / "tree" / "search_state.json"
+        state = self._read_search_state() if state_path.exists() else None
         existing_node = next(
             (
                 node
-                for node in state.get("nodes") or []
+                for node in (state or {}).get("nodes") or []
                 if node.get("id") == command.node_id
             ),
             None,
@@ -1336,19 +1358,33 @@ class BlindSequentialResearch:
             },
             "strategy": strategy,
         }
-        state["nodes"].append(node)
-        state["frontier"].append(
-            {
-                "node_id": command.node_id,
-                "parent": None,
-                "depth": 0,
-                "priority": 9.0,
-                "stage": "experimentation",
-                "status": "queued",
-                "reason": "blind sequential reorientation",
-                "priority_components": strategy["priority"],
-            }
-        )
+        if state is None:
+            state = initialize_search_state(
+                search_id=f"blind_{contract.contract_id.removeprefix('contract_')[:16]}",
+                root_node=node,
+                policy=search_policy_from_config(self._repo_root),
+            )
+            state["frontier"][0].update(
+                {
+                    "priority": 9.0,
+                    "reason": "blind sequential reorientation",
+                    "priority_components": strategy["priority"],
+                }
+            )
+        else:
+            state["nodes"].append(node)
+            state["frontier"].append(
+                {
+                    "node_id": command.node_id,
+                    "parent": None,
+                    "depth": 0,
+                    "priority": 9.0,
+                    "stage": "experimentation",
+                    "status": "queued",
+                    "reason": "blind sequential reorientation",
+                    "priority_components": strategy["priority"],
+                }
+            )
         adaptive = state.get("adaptive")
         if not isinstance(adaptive, dict):
             adaptive = initialize_adaptive_state(goal)
@@ -1653,7 +1689,12 @@ class BlindSequentialResearch:
         if self._paths.node_attempts.exists():
             self._read_node_attempts()
             return
-        search_state = self._read_search_state()
+        search_state_path = (
+            self._thread_dir / "production" / "tree" / "search_state.json"
+        )
+        search_state = (
+            self._read_search_state() if search_state_path.exists() else {"nodes": []}
+        )
         bindings = self._legacy_attempt_bindings(search_state)
         command_dir = self._paths.root / "acquisition_commands"
         commands = (

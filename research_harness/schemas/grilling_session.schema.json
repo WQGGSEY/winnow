@@ -174,7 +174,7 @@
         "search_query_seed": { "type": "string", "minLength": 1 },
         "alternative_claim_formulations": {
           "type": "array",
-          "description": "Multi-root: fundamentally different ways to frame the user_goal as a testable claim. Seeded as parallel root candidates via seed_alternative_root_formulation. The primary claim_under_test should typically appear here as 'strong' so callers see the whole option space in one place.",
+          "description": "Historical intake alternatives retained as audit context. Production does not seed these as roots; it freezes the accepted handoff into one SolutionContract.",
           "items": {
             "type": "object",
             "required": ["formulation_id", "claim_under_test", "scope_kind", "scope_note"],
@@ -182,7 +182,7 @@
               "formulation_id": {
                 "type": "string",
                 "pattern": "^acf_[A-Za-z0-9_]+$",
-                "description": "Stable id used by seed_alternative_root_formulation."
+                "description": "Stable historical formulation id."
               },
               "claim_under_test": { "type": "string", "minLength": 1 },
               "scope_kind": {

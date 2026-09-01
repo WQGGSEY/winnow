@@ -3,7 +3,7 @@
 Production-track research harness inspired by Sakana AI Scientist-v2. Codex
 workers are bounded runtime tools behind provider-neutral request, result,
 usage, auth, and event types. The active new-thread flow is grilling,
-connector, then supervisor-driven forest production.
+connector, then supervisor-driven blind sequential production.
 
 References:
 
@@ -16,9 +16,10 @@ References:
 user goal
   -> grilling agent (multi-turn Codex) -> grilling_session.json
   -> domain connector (multi-call Codex generation) -> connector_session.json
-        -> diverse claim contracts
+        -> diverse intake research context
   -> MCP server (supervised Codex sessions drive production via tools)
-        -> multi-root production forest -> strongest survivor
+        -> immutable SolutionContract -> one blind direction at a time
+        -> verified strong result
         -> publication artifacts (paper.html, interactive_summary.html, slides_summary.html)
 ```
 
@@ -32,7 +33,7 @@ Codex invocations remain behind subscription-quota and execution acknowledgement
 
 - Claim-centered node schema and runtime envelope.
 - Baseline dossier structure with current-best, naive, and random/null roles.
-- Always-included one-line lesson memory.
+- Private failure lessons excluded from the next direction-generation request.
 - Deterministic critic folder routing.
 - Rebuttal packet, rebuttal critic stage, AC decision.
 - Worker-task contracts that restrict Codex worker output to source patches or

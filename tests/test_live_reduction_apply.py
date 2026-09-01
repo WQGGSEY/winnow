@@ -200,7 +200,7 @@ class LiveReductionApplyTests(unittest.TestCase):
             with self.assertRaisesRegex(LiveReductionApplyError, "changed"):
                 apply_live_reduction(bundle_path, approve=True)
 
-    def test_approved_apply_can_create_child_branch(self) -> None:
+    def test_approved_apply_closes_legacy_child_branch_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bundle_path, state_path = _make_bundle(Path(tmp), node_id="n_live_branch_001")
             bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
@@ -217,14 +217,13 @@ class LiveReductionApplyTests(unittest.TestCase):
             summary = apply_live_reduction(bundle_path, approve=True)
 
             self.assertEqual(summary["status"], "applied")
-            self.assertEqual(summary["applied_transition"], "needs_child_branch")
-            self.assertEqual(summary["created_child_ids"], ["n_live_branch_001_b01"])
+            self.assertEqual(summary["applied_transition"], "pruned")
+            self.assertEqual(summary["created_child_ids"], [])
             state = json.loads(state_path.read_text(encoding="utf-8"))
             validate_search_state(state)
-            self.assertEqual(state["status"], "blocked")
-            self.assertEqual(state["nodes"][0]["status"], "needs_child_branch")
-            self.assertEqual(state["nodes"][1]["id"], "n_live_branch_001_b01")
-            self.assertEqual(state["nodes"][1]["status"], "ready")
+            self.assertEqual(state["status"], "completed")
+            self.assertEqual(state["nodes"][0]["status"], "pruned")
+            self.assertEqual(len(state["nodes"]), 1)
 
 
 if __name__ == "__main__":

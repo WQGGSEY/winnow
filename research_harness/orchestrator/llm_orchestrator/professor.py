@@ -8,8 +8,7 @@ structured decision:
     {
       "final_verdict": ...,
       "research_status": ...,
-      "next_transition": "promoted" | "needs_child_branch" | "pruned",
-      "child_branch_suggestions": [{type, reason, source, claim_focus}],
+      "next_transition": "promoted" | "pruned",
       "response_to_grad_student": "...natural language..."
     }
 
@@ -34,7 +33,7 @@ from research_harness.orchestrator.llm_orchestrator.llm_client import LLMClient
 from research_harness.orchestrator.reduction import reduce_node as _deterministic_reduce_node
 
 
-VALID_TRANSITIONS = {"promoted", "needs_child_branch", "pruned"}
+VALID_TRANSITIONS = {"promoted", "pruned"}
 VALID_CHILD_TYPES = {
     "capability",
     "validity",
@@ -57,12 +56,12 @@ PROFESSOR_PERSONA = (
     "claim that is technically true but explains nothing is a failure of taste.\n"
     "  (2) DISHONEST STRENGTH — overclaiming beyond evidence. Equally unacceptable.\n"
     "  (3) ONE-OFF CODE — when designing experiment code for a claim, do NOT write "
-    "a throwaway script. Code you write must be REUSABLE by the next cohort of grad "
-    "students testing successor claims (mechanism, necessity, boundary, …). Factor "
+    "a throwaway script. Code you write must be reusable by later independent "
+    "directions. Factor "
     "data generation, baselines, and metric computation into named modules with "
-    "stable interfaces so the child node's experiment.py can `from <parent>.data "
+    "stable interfaces so another experiment can `from <parent>.data "
     "import generate` rather than re-implement. A claim is testable by ONE "
-    "experiment script; that one script should plug into a tree of reusable parts.\n"
+    "experiment script; that script should use reusable parts.\n"
     "Your job is to find HONEST + STRONG claims: the most ambitious claim the "
     "evidence supports. When in doubt, prefer keeping a strong claim and running "
     "one more focused experiment over weakening the claim. Refuse to weaken unless "
@@ -140,10 +139,6 @@ class ProfessorDecision:
     reduction: dict[str, Any]
     response_to_grad_student: str
     dialog_entries: list[DialogEntry] = field(default_factory=list)
-    # Follow-up claim children to spawn when the parent gets promoted.
-    # The Professor uses these to ask the next grad student cohort
-    # ("대학원생 1,2,3,4야") to test specific successor claims.
-    follow_up_children: list[dict[str, Any]] = field(default_factory=list)
     # Roadmap edits the Professor wants to apply after this decision lands.
     # Each entry: {"op": "insert"|"drop"|"rewrite", "target": "...", "milestone": {...}}
     roadmap_edits: list[dict[str, Any]] = field(default_factory=list)
@@ -197,34 +192,14 @@ class Professor:
                 metadata={
                     "final_verdict": decision["reduction"]["final_verdict"],
                     "next_transition": decision["reduction"]["next_transition"],
-                    "follow_up_count": len(decision.get("follow_up_children") or []),
                     "is_mock": is_mock,
                 },
             )
         ]
-        # If the parent promoted, log the follow-up briefs as advisor messages
-        # so dialog.json reads like an email thread launching the next cohort.
-        for follow in decision.get("follow_up_children") or []:
-            dialog_entries.append(
-                DialogEntry(
-                    speaker="professor",
-                    intent="follow_up_brief",
-                    text=(
-                        f"Next cohort: please test the {follow['type']} successor — "
-                        f"\"{follow['successor_claim']}\". "
-                        f"Rationale: {follow.get('rationale', '')}"
-                    ),
-                    metadata={
-                        "type": follow["type"],
-                        "successor_claim": follow["successor_claim"],
-                    },
-                )
-            )
         return ProfessorDecision(
             reduction=decision["reduction"],
             response_to_grad_student=decision["response_to_grad_student"],
             dialog_entries=dialog_entries,
-            follow_up_children=decision.get("follow_up_children") or [],
         )
 
     def design_experiment(
@@ -243,7 +218,7 @@ class Professor:
             duplicate logic.
           - If the shared lib doesn't yet exist (root node, first design call),
             produce the full reusable skeleton (data + baselines + eval +
-            experiment.py) so successor claims can import.
+            experiment.py) so later independent directions can import it.
           - If the shared lib is *partially* sufficient (some module needed
             but missing), produce experiment.py + the missing module only.
 
@@ -684,59 +659,6 @@ class Professor:
             ],
         )
 
-    def revise_after_ac_reject(
-        self,
-        *,
-        root_claim: str,
-        ac_decision: dict[str, Any],
-        promoted_nodes: list[dict[str, Any]],
-    ) -> tuple[str, list[DialogEntry]]:
-        """When the AC rejects the paper, produce a NEW root claim.
-
-        Strong, not safe. The advisor must keep ambition. The new claim should
-        directly answer the AC's blocking objections without retreating to a
-        trivially-true rewording.
-        """
-        blocking = ac_decision.get("blocking_reasons") or []
-        scores = ac_decision.get("score_summary", {})
-        prompt = (
-            f"Our paper was REJECTED by the area chair.\n"
-            f"Original root claim: {root_claim}\n"
-            f"Promoted claim types: {sorted({n.get('type') for n in promoted_nodes if n.get('type')})}\n"
-            f"AC scores: {scores}\n"
-            f"Blocking reasons:\n" + "\n".join(f"  - {r}" for r in blocking) + "\n\n"
-            "Propose a NEW root claim that:\n"
-            "  (1) directly addresses the AC's blocking reasons,\n"
-            "  (2) is HONEST given our actual evidence,\n"
-            "  (3) is STRONG — not a defanged restatement that nobody would cite.\n"
-            "If you find yourself writing a claim that's a tautological weakening, "
-            "reject it and find a more focused but still ambitious successor."
-        )
-        response = self.llm.chat(
-            messages=[{"role": "user", "content": prompt}],
-            system=f"[intent:professor.revise_after_reject] {PROFESSOR_PERSONA}",
-            json_schema_hint='{"new_claim": "...", "rationale": "..."}',
-        )
-        structured = response.structured or {}
-        new_claim = str(structured.get("new_claim") or "").strip()
-        rationale = str(structured.get("rationale") or "").strip()
-        if not new_claim:
-            new_claim = root_claim  # absolutely no silent rewrite
-            rationale = "AC reject without an honest stronger alternative; keeping original claim."
-        return (
-            new_claim,
-            [
-                DialogEntry(
-                    speaker="professor",
-                    intent="post_reject_revision",
-                    text=(
-                        f"AC rejected. Honest re-aim: {new_claim}\nRationale: {rationale}"
-                    ),
-                    metadata={"new_claim": new_claim, "rationale": rationale},
-                )
-            ],
-        )
-
     def respond_to_concern(
         self,
         *,
@@ -812,21 +734,10 @@ _PROFESSOR_RESPONSE_SCHEMA = """{
   "reduction": {
     "final_verdict": "supported_with_scope_narrowing | confounded_or_not_evaluable | contradicted | inconclusive | not_evaluable",
     "research_status": "<short status string>",
-    "next_transition": "promoted | needs_child_branch | pruned",
-    "child_branch_suggestions": [
-      {"type": "validity|necessity|mechanism|boundary|constraint|capability|taste|operational",
-       "reason": "...",
-       "source": "professor_decision",
-       "claim_focus": "...what the child node should test..."}
-    ],
+    "next_transition": "promoted | pruned",
     "accepted_lesson_candidates": ["..."]
   },
-  "response_to_grad_student": "<2-4 sentences advising the grad student>",
-  "follow_up_children": [
-    {"type": "mechanism|necessity|boundary|constraint|validity|capability|taste|operational",
-     "successor_claim": "<the specific NEW claim the next grad student should test>",
-     "rationale": "<why this follow-up is interesting given the parent's success>"}
-  ]
+  "response_to_grad_student": "<2-4 sentences advising the grad student>"
 }"""
 
 
@@ -1041,41 +952,15 @@ def _coerce_decision(
     node: dict[str, Any],
     deterministic: dict[str, Any],
 ) -> dict[str, Any]:
-    """Validate / repair the LLM's structured response.
-
-    Falls back to the deterministic reduction for any missing or invalid
-    field so the tree always moves forward.
-    """
     structured = structured or {}
     reduction_raw = structured.get("reduction") or {}
-    next_transition = str(reduction_raw.get("next_transition") or deterministic["next_transition"])
+    fallback_transition = deterministic["next_transition"]
+    next_transition = str(reduction_raw.get("next_transition") or fallback_transition)
     if next_transition not in VALID_TRANSITIONS:
-        next_transition = deterministic["next_transition"]
+        next_transition = fallback_transition
 
     final_verdict = str(reduction_raw.get("final_verdict") or deterministic["final_verdict"])
     research_status = str(reduction_raw.get("research_status") or deterministic["research_status"])
-
-    suggestions_raw = reduction_raw.get("child_branch_suggestions")
-    if isinstance(suggestions_raw, list) and suggestions_raw:
-        cleaned_suggestions: list[dict[str, Any]] = []
-        for s in suggestions_raw:
-            if not isinstance(s, dict):
-                continue
-            child_type = str(s.get("type") or "")
-            if child_type not in VALID_CHILD_TYPES:
-                continue
-            cleaned_suggestions.append(
-                {
-                    "type": child_type,
-                    "reason": str(s.get("reason") or "Professor-issued child branch."),
-                    "source": str(s.get("source") or "professor_decision"),
-                    "claim_focus": str(s.get("claim_focus") or ""),
-                }
-            )
-        if not cleaned_suggestions:
-            cleaned_suggestions = deterministic.get("child_branch_suggestions") or []
-    else:
-        cleaned_suggestions = deterministic.get("child_branch_suggestions") or []
 
     lessons_raw = reduction_raw.get("accepted_lesson_candidates")
     if isinstance(lessons_raw, list):
@@ -1088,7 +973,7 @@ def _coerce_decision(
         "final_verdict": final_verdict,
         "research_status": research_status,
         "next_transition": next_transition,
-        "child_branch_suggestions": cleaned_suggestions,
+        "child_branch_suggestions": [],
         "accepted_lesson_candidates": lessons,
     }
     response = str(structured.get("response_to_grad_student") or "").strip()
@@ -1097,25 +982,7 @@ def _coerce_decision(
             f"Reviewed your run on node {node['id']}. Verdict: {final_verdict}; "
             f"next step: {next_transition}."
         )
-    follow_ups_raw = structured.get("follow_up_children")
-    follow_ups: list[dict[str, Any]] = []
-    if isinstance(follow_ups_raw, list):
-        for entry in follow_ups_raw:
-            if not isinstance(entry, dict):
-                continue
-            ftype = str(entry.get("type") or "")
-            successor = str(entry.get("successor_claim") or "").strip()
-            if ftype not in VALID_CHILD_TYPES or not successor:
-                continue
-            follow_ups.append(
-                {
-                    "type": ftype,
-                    "successor_claim": successor,
-                    "rationale": str(entry.get("rationale") or ""),
-                }
-            )
     return {
         "reduction": reduction,
         "response_to_grad_student": response,
-        "follow_up_children": follow_ups,
     }

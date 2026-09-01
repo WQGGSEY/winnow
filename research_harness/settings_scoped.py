@@ -174,13 +174,10 @@ FIELD_REGISTRY: tuple[FieldSpec, ...] = (
         type="boolean",
         default=False,
         description=(
-            "When true, this thread cannot conclude 'no edge / impossibility' "
-            "until it has ruled out that its OWN bar is the binding constraint: "
-            "render_honest_failure_paper requires a bar_sanity check showing a "
-            "NO-SKILL exposure baseline (e.g. leveraged buy-and-hold) does NOT "
-            "clear the deployment predicate. A bar a zero-skill exposure clears "
-            "measures exposure, not skill. The world is ground-truth — suspect "
-            "the instrument before declaring the world impossible. Off = no gate."
+            "When true, the first research cycle requires a bar_sanity check "
+            "showing that a NO-SKILL exposure baseline does not clear the "
+            "deployment predicate. A bar that zero-skill exposure clears "
+            "measures exposure rather than skill. Off means no gate."
         ),
     ),
     # ---- Project default + operator override ----

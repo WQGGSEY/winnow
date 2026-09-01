@@ -745,9 +745,7 @@ code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-
   border: 1px solid #ddd; padding: 5px 7px; vertical-align: top; text-align: left;
 }
 
-/* Hands-free escalation: operator-prompt cards rendered when the
-   auto-resolver refuses to chain. Visually loud so the operator notices
-   immediately on returning to a long-running thread. */
+/* Operator-prompt cards for decisions that require human input. */
 .operator-prompts-card {
   border: 1px solid #d97706; border-left: 4px solid #d97706;
   border-radius: 6px; padding: 12px 16px; margin: 12px 0;

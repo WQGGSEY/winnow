@@ -24,7 +24,7 @@
         "revise_with_new_measurements",
         "reject_and_diversify"
       ],
-      "description": "accept = camera-ready ready; revise = paper-text revision; reject = root claim must be replaced via revise_root_after_reject (single-shot); revise_with_new_measurements = measurement-blocking directives must be addressed before camera-ready; reject_and_diversify = current direction hopeless, system must fan out to N>=3 alternative root angles via propose_alternative_root_directions."
+      "description": "accept = camera-ready ready; revise = paper-text revision; revise_with_new_measurements = measurement-blocking directives must be addressed before camera-ready; reject and reject_and_diversify both close the current direction, after which advance_research generates one blind direction from the frozen SolutionContract and a random perspective."
     },
     "confidence": { "type": "string", "enum": ["low", "medium", "high"] },
     "score_summary": {

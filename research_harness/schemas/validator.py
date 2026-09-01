@@ -47,7 +47,6 @@ SCHEMA_FILES = {
     "paper_section": "paper_section.schema.json",
     "paper_figure_request": "paper_figure_request.schema.json",
     "user_goal_attestation": "user_goal_attestation.schema.json",
-    "alternative_root_proposal": "alternative_root_proposal.schema.json",
     "feasibility_envelope": "feasibility_envelope.schema.json",
     "falsifier_result": "falsifier_result.schema.json",
     "frozen_question": "frozen_question.schema.json",

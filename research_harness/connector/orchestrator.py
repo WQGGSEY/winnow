@@ -1,4 +1,4 @@
-"""[[research forest + single output]] front-half — the connector orchestrator.
+"""Blind sequential research front-half: the connector orchestrator.
 
 Ties the per-step engine into the resample-to-quota loop (ADR 0012):
 
@@ -12,8 +12,9 @@ Ties the per-step engine into the resample-to-quota loop (ADR 0012):
       `max_fields_tried` is hit (a compute cap — recorded in `stopped_reason`,
       never silently swallowed).
 
-Emits a schema-validated ``connector_session.json``. The N kept claim_contracts
-are the forest seed (Slice D builds the multi-root search_state from them).
+Emits a schema-validated ``connector_session.json``. Kept claim contracts are
+intake research context. Production freezes the accepted handoff into one
+SolutionContract and does not seed parallel roots from them.
 
 Reliability is the production gate's job, not this loop's: prune-1 / reduction
 are best-effort and may pass garbage, absorbed downstream. A single field's LLM
@@ -29,7 +30,7 @@ import uuid
 from dataclasses import dataclass, field as dc_field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from research_harness.config import resolve_agent_model
 from research_harness.connector.abstraction import generate_abstraction
@@ -57,6 +58,25 @@ DEFAULT_MAX_REGEN = 2
 class DomainConnectorOutcome:
     session: dict[str, Any]
     claims: list[dict[str, Any]] = dc_field(default_factory=list)
+
+
+def _run_baseline_research(
+    repo_root: Path,
+    grilling_session: dict[str, Any],
+    *,
+    run_dir: Path,
+    http_fetcher: HttpFetcher | None,
+):
+    from research_harness.agents.market_research import run_market_research
+
+    return run_market_research(
+        repo_root,
+        grilling_session,
+        run_dir=run_dir,
+        write_dossier_to_memory=True,
+        http_fetcher=http_fetcher,
+        pdf_fetcher=http_fetcher,
+    )
 
 
 def _billing_ack_ok(billing_ack: bool | None) -> bool:
@@ -102,11 +122,12 @@ def run_domain_connector(
     field_seed: int | None = None,
     timeout_seconds: int = 180,
     event_emitter: Any = None,
+    baseline_research_runner: Callable[..., Any] | None = None,
 ) -> DomainConnectorOutcome:
     """Run the connector front-half and emit a connector_session.json.
 
     Returns a :class:`DomainConnectorOutcome` whose ``claims`` are the kept
-    P-claim_contracts (the forest seed).
+    P-claim contracts used as intake research context.
     """
     import shutil
     import subprocess
@@ -147,6 +168,7 @@ def run_domain_connector(
         "abstraction": None,
         "attempts": [],
         "claims": [],
+        "baseline_research": None,
         "usage_estimate": {
             "llm_calls": 0,
             "input_tokens": 0,
@@ -306,6 +328,46 @@ def run_domain_connector(
         else:
             stopped_reason = "namespace_exhausted"
 
+    thread_id = thread_id_from_run_dir(run_dir)
+    market_dir = (
+        repo_root / "runs" / "threads" / thread_id / "market"
+        if thread_id is not None
+        else run_dir / "baseline_market"
+    )
+    emit({"type": "baseline_research_start"})
+    try:
+        baseline_outcome = (baseline_research_runner or _run_baseline_research)(
+            repo_root,
+            grilling_session,
+            run_dir=market_dir,
+            http_fetcher=http_fetcher,
+        )
+        brief = baseline_outcome.brief
+        baseline_research = {
+            "status": brief["status"],
+            "brief_path": brief["brief_path"],
+            "baseline_dossier_id": brief["baseline_dossier_id"],
+            "papers_found": int((brief.get("usage") or {}).get("papers_found", 0)),
+        }
+        emit({"type": "baseline_research_done", **baseline_research})
+        if brief["status"] == "failed":
+            raise ValueError("baseline research retrieved no admissible papers")
+    except Exception as exc:  # noqa: BLE001
+        session = {
+            **base_session,
+            "status": "aborted",
+            "fields_tried": fields_tried,
+            "quota_met": len(claims) >= quota,
+            "stopped_reason": stopped_reason,
+            "abstraction": abstraction_record,
+            "attempts": attempts,
+            "claims": claims,
+            "usage_estimate": usage,
+            "error": f"baseline research failed: {exc}",
+        }
+        emit({"type": "baseline_research_failed", "error": str(exc)})
+        return _finish(session)
+
     status = "completed" if claims else "completed_no_claims"
     session = {
         **base_session,
@@ -316,6 +378,7 @@ def run_domain_connector(
         "abstraction": abstraction_record,
         "attempts": attempts,
         "claims": claims,
+        "baseline_research": baseline_research,
         "usage_estimate": usage,
         "error": None,
     }

@@ -6,9 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from research_harness.orchestrator.child_nodes import draft_child_nodes
 from research_harness.orchestrator.search_state import (
-    add_child_nodes,
     transition_node,
     validate_search_state,
 )
@@ -74,6 +72,12 @@ def apply_live_reduction(
         )
 
     reduction = bundle["orchestrator_reduction"]
+    if reduction["next_transition"] == "needs_child_branch":
+        reduction = {
+            **reduction,
+            "next_transition": "pruned",
+            "child_branch_suggestions": [],
+        }
     transition_node(
         search_state,
         node["id"],
@@ -112,28 +116,6 @@ def apply_live_reduction(
             "promoted",
             event="promotion",
             reason="operator applied live reduction",
-        )
-    elif next_transition == "needs_child_branch":
-        children = draft_child_nodes(
-            node,
-            reduction,
-            parent_depth=int(frontier_item["depth"]),
-            max_depth=int(search_state["max_depth"]),
-        )
-        created_child_ids = [child["id"] for child in children]
-        add_child_nodes(
-            search_state,
-            node["id"],
-            children,
-            reason="operator applied live reduction",
-        )
-        transition_node(
-            search_state,
-            node["id"],
-            "needs_child_branch",
-            event="branch",
-            reason="operator applied live reduction",
-            created_child_ids=created_child_ids,
         )
     else:
         transition_node(

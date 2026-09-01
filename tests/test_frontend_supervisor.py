@@ -332,18 +332,23 @@ class SupervisorRoutesTests(unittest.TestCase):
             self.assertEqual(r.status_code, 409)
             self.assertIn("publication", r.text.lower())
 
-    def test_start_rejects_when_honest_failure_exists(self):
+    def test_start_allows_retry_when_historical_honest_failure_exists(self):
         with TemporaryDirectory() as tmp:
             repo = _setup_repo(Path(tmp))
             pub = repo / "runs" / "threads" / "thread_t1" / "production" / "publication"
             pub.mkdir(parents=True, exist_ok=True)
             (pub / "honest_failure.html").write_text("<html/>", encoding="utf-8")
             client = self._client(repo)
-            r = client.post(
-                "/api/threads/thread_t1/supervisor/start",
-                json={"target_scope": "directional"},
-            )
-            self.assertEqual(r.status_code, 409)
+            with mock.patch.object(fserver, "subprocess") as proc_mod:
+                proc_mod.Popen.return_value = mock.MagicMock(pid=12345)
+                proc_mod.STDOUT = -2
+                proc_mod.DEVNULL = -3
+                response = client.post(
+                    "/api/threads/thread_t1/supervisor/start",
+                    json={"target_scope": "directional"},
+                )
+
+            self.assertEqual(response.status_code, 200, response.text)
 
     def test_force_kill_route_removed(self):
         """PR12b: combined Stop + escalation replaces the separate

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://local/research_harness/feasibility_envelope.schema.json",
   "title": "FeasibilityEnvelope",
-  "description": "Operator + Professor's joint declaration of what the harness ACTUALLY has access to at production-entry time, before any claim is designed. This anchors strong+safe claim construction: a 'deployment-grade' claim cannot be promised if the matching resource (real data, live LLM, compute budget) is not in the envelope. Validators reject mismatches at design_initial_claim_contract and revise_root_after_reject time.",
+  "description": "Operator + Professor's joint declaration of what the harness can access at production-entry time. This anchors strong-safe SolutionContract compilation and acquisition boundaries. Validators reject scope and resource mismatches before a direction becomes active.",
   "type": "object",
   "required": [
     "thread_id",
@@ -171,7 +171,7 @@
         },
         "require_skill_isolation": {
           "type": "boolean",
-          "description": "When true, render_honest_failure_paper refuses a 'no edge / impossibility' terminal until a bar_sanity check proves the deployment predicate is NOT clearable by a NO-SKILL exposure baseline (e.g. leveraged buy-and-hold). A bar a zero-skill exposure clears measures exposure, not skill — it cannot ground an impossibility claim. Deterministic gate (NOT an LLM critic): forces 'suspect your own instrument before declaring the world impossible'."
+          "description": "When true, research cannot dispatch its first direction until a bar_sanity check proves that a NO-SKILL exposure baseline does not clear the deployment predicate. A bar that zero-skill exposure clears measures exposure rather than skill."
         }
       },
       "additionalProperties": false

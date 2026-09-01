@@ -692,12 +692,11 @@ high.
 
 ## investigation_depth
 
-Harness-computed measure of how much genuine digging a thread did, the reward
-axis of ADR 0007. `{distinct_attempts, tree_distinct_attempts,
-narrowing_pivots, killed_hypotheses, archived_attempts}`. Gates
-`render_honest_failure_paper`: a weak/negative terminal renders only when
-`distinct_attempts >= min_distinct_attempts` AND a [[load_bearing_mechanism]]
-is stated. The mirror of the [[external_falsifier]] gate — one door each.
+Historical audit measure of how much genuine digging a legacy thread did.
+`{distinct_attempts, tree_distinct_attempts, narrowing_pivots,
+killed_hypotheses, archived_attempts}` remains readable, but it no longer gates
+a negative terminal. New research continues through blind sequential
+reorientation until a verified strong result.
 
 ## distinct_attempt
 
@@ -706,18 +705,15 @@ A genuine, non-relabel research attempt that counts toward
 **not** a scope-narrowing relabel of its parent. Crucially, a narrowing pivot
 (a `feasibility_narrowed` formulation, a `deploy_grade_scope` weaker than the
 root's, or an `acf_feasibility` node) is **excluded** and surfaced as
-`narrowing_pivots` — collapsed-branch → auto-narrow is repackaging the same
-failure smaller, not digging, so the `auto_resolver`'s narrowing
-auto-dispatch earns no depth credit (it is penalised, not rewarded).
+`narrowing_pivots`. Collapsed-branch auto-narrowing is repackaging the same
+failure smaller, not digging. The live auto-resolver path has been removed.
 
 ## load_bearing_mechanism
 
-Field on the `user_goal_attestation` (ADR 0007): for a weak/negative
-terminal, the EARNED conclusion — *why* the direction fails (or what would
-have to be true to succeed) and how that breakage constrains the future. It
-is condition (a) of the [[investigation_depth]] gate. Not a limitations-section
-flourish: it must name the specific load-bearing assumption that broke and
-what its breakage predicts. A give-up with no mechanism is refused.
+Field on the `user_goal_attestation` (ADR 0007): the earned explanation of why
+the direction fails or what would have to be true to succeed. The harness may
+retain it as a private lesson for post-generation gates. It is never a negative
+terminal or an input to the next direction generator.
 
 ## adversarial_dominant_aggregation
 

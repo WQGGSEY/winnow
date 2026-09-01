@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://local/research_harness/connector_session.schema.json",
   "title": "ConnectorSession",
-  "description": "Artifact of the domain-connector phase (ADR 0012): the de-domained abstraction, the per-field reading/prune-1/reduction attempts, and the kept P-claim_contracts that seed the production forest.",
+  "description": "Artifact of the domain-connector phase: de-domained readings, reduced intake candidates, and the P-aware baseline research required before contract freezing.",
   "type": "object",
   "required": [
     "session_id",
@@ -126,6 +126,17 @@
         },
         "additionalProperties": false
       }
+    },
+    "baseline_research": {
+      "type": ["object", "null"],
+      "required": ["status", "brief_path", "baseline_dossier_id", "papers_found"],
+      "properties": {
+        "status": { "type": "string", "enum": ["completed", "completed_with_warnings"] },
+        "brief_path": { "type": "string", "minLength": 1 },
+        "baseline_dossier_id": { "type": "string", "minLength": 1 },
+        "papers_found": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
     },
     "usage_estimate": {
       "type": "object",

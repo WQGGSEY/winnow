@@ -184,8 +184,8 @@ def _materialize_professor_template(
 
     Files prefixed with `_lib/` go to the thread-wide shared lib; everything
     else lands in `node_dir/`. Re-emitted shared files are skipped silently
-    (idempotent — successor claims that "decide" to add the same shared
-    helper don't clobber an earlier version).
+    (idempotent: later directions that emit the same shared helper do not
+    clobber an earlier version).
     """
     from research_harness.orchestrator.llm_orchestrator import (
         MockLLMClient,

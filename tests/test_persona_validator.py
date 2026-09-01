@@ -11,7 +11,6 @@ import unittest
 
 from research_harness.orchestrator.llm_orchestrator.persona_validator import (
     validate_claim_contract,
-    validate_follow_up_strength,
     validate_grad_student_review,
 )
 
@@ -190,87 +189,6 @@ class GradStudentValidatorTests(unittest.TestCase):
             config=CFG_ALL,
         )
         self.assertTrue(r.ok)
-
-
-class FollowUpStrengthTests(unittest.TestCase):
-    def test_strong_follow_ups_accepted(self) -> None:
-        r = validate_follow_up_strength(
-            parent_claim="The methodology beats baselines on AUROC.",
-            follow_ups=[
-                {
-                    "type": "mechanism",
-                    "successor_claim": "The methodology's improvement comes from the MI-audit component, not the permutation step.",
-                    "rationale": "isolate mechanism",
-                },
-                {
-                    "type": "necessity",
-                    "successor_claim": "Same-budget alternatives without the MI audit do not match the AUROC threshold.",
-                    "rationale": "necessity",
-                },
-            ],
-            config=CFG_ALL,
-        )
-        self.assertTrue(r.ok)
-
-    def test_all_restating_follow_ups_rejected(self) -> None:
-        r = validate_follow_up_strength(
-            parent_claim="The methodology beats baselines on AUROC.",
-            follow_ups=[
-                {
-                    "type": "mechanism",
-                    "successor_claim": "The methodology beats baselines on AUROC.",
-                },
-                {
-                    "type": "necessity",
-                    "successor_claim": "The methodology beats baselines on AUROC.",
-                },
-            ],
-            config=CFG_ALL,
-        )
-        self.assertFalse(r.ok)
-        self.assertIn("follow_ups_all_weaken", [v.rule for v in r.violations])
-
-
-class AntiLazinessRevisionTests(unittest.TestCase):
-    def test_narrowing_threshold_without_breadth_compensation_rejected(self):
-        from research_harness.orchestrator.llm_orchestrator.persona_validator import (
-            validate_revision_after_reject,
-        )
-        old = {"success_criteria": ["AUC >= 0.80 on held-out set"]}
-        new = {"success_criteria": ["AUC >= 0.65 on held-out set"]}
-        r = validate_revision_after_reject(
-            new_claim=new, old_claim=old,
-            new_evidence_breadth=10, old_evidence_breadth=10,
-        )
-        self.assertFalse(r.ok)
-        self.assertIn(
-            "claim_narrowing_without_breadth_compensation",
-            [v.rule for v in r.violations],
-        )
-
-    def test_narrowing_with_2x_breadth_compensation_passes(self):
-        from research_harness.orchestrator.llm_orchestrator.persona_validator import (
-            validate_revision_after_reject,
-        )
-        old = {"success_criteria": ["AUC >= 0.80"]}
-        new = {"success_criteria": ["AUC >= 0.65"]}
-        r = validate_revision_after_reject(
-            new_claim=new, old_claim=old,
-            new_evidence_breadth=25, old_evidence_breadth=10,
-        )
-        self.assertTrue(r.ok, r.reject_message())
-
-    def test_keeping_threshold_passes(self):
-        from research_harness.orchestrator.llm_orchestrator.persona_validator import (
-            validate_revision_after_reject,
-        )
-        old = {"success_criteria": ["AUC >= 0.80"]}
-        new = {"success_criteria": ["AUC >= 0.80 with stronger CI"]}
-        r = validate_revision_after_reject(
-            new_claim=new, old_claim=old,
-            new_evidence_breadth=10, old_evidence_breadth=10,
-        )
-        self.assertTrue(r.ok, r.reject_message())
 
 
 class AntiLazinessBaselineProvenanceTests(unittest.TestCase):

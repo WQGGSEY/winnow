@@ -378,96 +378,6 @@ _DECISION_RULE_MARKERS = re.compile(
 )
 
 
-def _measurement_threshold_value(success_criteria: list[str]) -> float | None:
-    """Extract the strongest numeric threshold from a list of success_criteria.
-
-    Returns the largest matched number (which we treat as the headline
-    threshold). None if no numeric threshold found.
-    """
-    best: float | None = None
-    for s in success_criteria or []:
-        for m in re.finditer(r"(\d+(?:\.\d+)?)\s*(?:%|percent)?", str(s)):
-            try:
-                v = float(m.group(1))
-            except ValueError:
-                continue
-            # Heuristic: treat percentages as the unscaled fraction-like number.
-            # We just want a comparable scalar across attempts.
-            if best is None or v > best:
-                best = v
-    return best
-
-
-def validate_revision_after_reject(
-    *,
-    new_claim: dict[str, Any],
-    old_claim: dict[str, Any] | None,
-    new_evidence_breadth: int | None = None,
-    old_evidence_breadth: int | None = None,
-    config: dict[str, Any] | None = None,
-) -> ValidationResult:
-    """Persona check on a Professor's revised claim after AC reject.
-
-    Catches the "lazy narrowing" drift: weaken success threshold without
-    proportionally widening evidence breadth, so the new (weaker) claim
-    passes on the same thin evidence the old (stronger) claim failed on.
-    """
-    cfg = config or {}
-    violations: list[PersonaViolation] = []
-    if not cfg.get("reject_claim_narrowing_without_breadth_compensation", True):
-        return ValidationResult(ok=True, violations=[])
-    if not old_claim:
-        return ValidationResult(ok=True, violations=[])
-
-    new_thr = _measurement_threshold_value(new_claim.get("success_criteria") or [])
-    old_thr = _measurement_threshold_value(old_claim.get("success_criteria") or [])
-    # If we cannot extract comparable thresholds, skip — caller should also
-    # enforce that capability-claim success_criteria contain at least one
-    # numeric via reject_missing_measurable_success.
-    if new_thr is None or old_thr is None:
-        return ValidationResult(ok=True, violations=[])
-
-    narrowed = new_thr < old_thr * 0.95  # tolerance for re-stated equivalents
-    if not narrowed:
-        return ValidationResult(ok=True, violations=[])
-
-    # Evidence breadth must grow proportionally. If the caller didn't supply
-    # breadth numbers, we still flag the narrowing for review — the LLM must
-    # justify it.
-    breadth_multiplier_required = float(
-        cfg.get("claim_narrowing_breadth_multiplier", 2.0)
-    )
-    if (
-        new_evidence_breadth is not None
-        and old_evidence_breadth not in (None, 0)
-        and new_evidence_breadth >= old_evidence_breadth * breadth_multiplier_required
-    ):
-        # Narrowing compensated by widening — accept.
-        return ValidationResult(ok=True, violations=[])
-
-    violations.append(
-        PersonaViolation(
-            rule="claim_narrowing_without_breadth_compensation",
-            message=(
-                f"Your revised claim weakens the success threshold "
-                f"(old≈{old_thr:g} → new≈{new_thr:g}) but does not compensate "
-                f"with proportionally more evidence breadth (≥{breadth_multiplier_required:g}x "
-                f"the previous attempt's test cells × seeds × n_alphas × K). "
-                f"This is the 'narrow the claim to pass on the same thin "
-                f"evidence' anti-pattern."
-            ),
-            suggested_fix=(
-                "Either (a) keep the same threshold and add evidence breadth "
-                "(more SNR points, more seeds, more alphas per class), OR "
-                "(b) if narrowing is genuinely correct, widen evidence by "
-                f">={breadth_multiplier_required:g}x so the weaker claim is "
-                "actually proved more robustly than the stronger one was disproved."
-            ),
-        )
-    )
-    return ValidationResult(ok=not violations, violations=violations)
-
-
 def validate_baseline_provenance(
     *,
     baseline_refs: list[dict[str, Any]],
@@ -633,9 +543,8 @@ def validate_camera_ready_directives(
                 "limitations rather than addressed."
             ),
             suggested_fix=(
-                "Either (a) downgrade your AC decision from 'revise' to "
-                "'reject_and_diversify' so the system fan-outs to alternate "
-                "root angles, OR (b) add a directive with requires_new_"
+                "Either (a) reject the current direction so advance_research "
+                "can generate a blind replacement, OR (b) add a directive with requires_new_"
                 "measurement=true naming the specific experiment (e.g. SNR "
                 "sweep over [X, Y, Z] at n=N seeds=K) that must precede "
                 "camera-ready."
@@ -886,51 +795,6 @@ def validate_claim_fits_envelope(
                 suggested_fix=(
                     "Pick an anchor declared in the envelope, or update the "
                     "envelope first via submit_feasibility_envelope."
-                ),
-            )
-        )
-    return ValidationResult(ok=not violations, violations=violations)
-
-
-def validate_follow_up_strength(
-    *,
-    parent_claim: str,
-    follow_ups: list[dict[str, Any]],
-    config: dict[str, Any] | None = None,
-) -> ValidationResult:
-    """Persona check on Professor-proposed follow-up successor claims.
-
-    Catches the "scope-narrowing only" drift: every follow-up just weakens
-    the parent claim rather than opening a new axis.
-    """
-    cfg = config or {}
-    violations: list[PersonaViolation] = []
-    if not follow_ups:
-        return ValidationResult(ok=True, violations=[])
-    weakening = []
-    for f in follow_ups:
-        succ = str(f.get("successor_claim") or "")
-        if not succ:
-            continue
-        # Catch "scoped version of <parent>" style restatements that don't
-        # add evidence — token overlap with parent + same length range.
-        overlap = _token_overlap(succ, parent_claim)
-        if overlap > 0.85 and len(succ) < len(parent_claim) * 1.2:
-            weakening.append(succ[:120])
-    if len(weakening) == len(follow_ups) and len(follow_ups) >= 2:
-        violations.append(
-            PersonaViolation(
-                rule="follow_ups_all_weaken",
-                message=(
-                    "All of your follow-up claims are near-restatements of "
-                    "the parent (high token overlap, similar length). The "
-                    "advisor is supposed to open NEW axes (mechanism, "
-                    "necessity, boundary), not chain weakenings."
-                ),
-                suggested_fix=(
-                    "Each follow-up should explore a different axis of the "
-                    "parent's success. Use the claim-type roadmap: at least "
-                    "one mechanism, one necessity, one boundary."
                 ),
             )
         )

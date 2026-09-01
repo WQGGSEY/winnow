@@ -1,12 +1,8 @@
 """MCP server smoke + integration tests.
 
-These exercise the JSON-RPC stdio surface end-to-end with an in-memory
-thread directory, asserting that:
-  - the tool catalog matches the spec
-  - `get_next_admissible_node` follows the claim-type weight order
-  - persona rejection paths fire as expected
-  - a full submit_professor_decision call mutates search_state (promotes
-    the node, spawns follow-ups, advances the cycle).
+These exercise the JSON-RPC stdio surface with an in-memory thread directory.
+They cover the tool catalog, persona rejection, authoritative-node selection,
+and durable Professor decisions.
 """
 
 from __future__ import annotations
@@ -15,6 +11,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import research_harness.mcp_server as srv
 
@@ -147,7 +144,6 @@ class MCPServerTests(unittest.TestCase):
             "run_critic_reviews",
             "submit_grad_student_review",
             "submit_professor_decision",
-            "revise_root_after_reject",
             "decide_publication_readiness",
         }
         # Phase C/D additions: LLM-driven rebuttal loop + paper writer.
@@ -163,12 +159,8 @@ class MCPServerTests(unittest.TestCase):
             "register_paper_figure",
             "render_final_paper",
         }
-        # Phase F additions: dual-gate + fan-out + honest-failure exit.
         dual_gate_expected = {
             "submit_professor_user_goal_attestation",
-            "propose_alternative_root_directions",
-            "select_alternative_root",
-            "render_honest_failure_paper",
             "submit_bar_sanity_result",
         }
         # PR7: feasibility envelope tool.
@@ -181,25 +173,26 @@ class MCPServerTests(unittest.TestCase):
             "pin_frozen_question",
             "submit_construct_adversary_report",
         }
-        # Multi-root tournament: alternative root formulations + the ADR 0012
-        # connector->production forest handoff + forest select-strongest +
-        # snapshot-and-reset per-root terminal storage.
-        multi_root_expected = {
+        retired = {
+            "propose_alternative_root_directions",
+            "render_honest_failure_paper",
+            "revise_root_after_reject",
             "seed_alternative_root_formulation",
             "seed_forest_from_connector",
+            "select_alternative_root",
             "select_strongest_survivor",
             "snapshot_root_terminal",
         }
-        # Hands-free: operator-prompt channel for auto-resolver escalations.
         operator_prompt_expected = {
             "enqueue_operator_prompt",
             "get_pending_operator_response",
         }
         self.assertEqual(
             core_expected | practitioner_expected | dual_gate_expected
-            | envelope_expected | multi_root_expected | operator_prompt_expected,
+            | envelope_expected | operator_prompt_expected,
             names,
         )
+        self.assertTrue(retired.isdisjoint(names))
 
     def test_selector_returns_resume_for_midstate_node(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -214,7 +207,12 @@ class MCPServerTests(unittest.TestCase):
             (tree / "search_state.json").write_text(json.dumps(state))
             orig = _patch_thread_dir(tmp_path)
             try:
-                r = srv.handle_get_next_admissible_node({"thread_id": tid})
+                with mock.patch.object(
+                    srv,
+                    "_authoritative_active_node_id",
+                    return_value=state["nodes"][0]["id"],
+                ):
+                    r = srv.handle_get_next_admissible_node({"thread_id": tid})
             finally:
                 srv._thread_dir = orig
             self.assertEqual(r["status"], "retry_evidence")
@@ -241,7 +239,7 @@ class MCPServerTests(unittest.TestCase):
             self.assertEqual(r["status"], "ok")
             self.assertEqual(r["demoted_node_ids"], [state["nodes"][0]["id"]])
 
-    def test_get_next_admissible_node_picks_lowest_type_weight(self) -> None:
+    def test_get_next_admissible_node_picks_only_authoritative_node(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             tid = "t_pick"
@@ -252,21 +250,26 @@ class MCPServerTests(unittest.TestCase):
             )
             orig = _patch_thread_dir(tmp_path)
             try:
-                r = srv.handle_get_next_admissible_node({"thread_id": tid})
+                with mock.patch.object(
+                    srv,
+                    "_authoritative_active_node_id",
+                    return_value="n_capability_2",
+                ):
+                    r = srv.handle_get_next_admissible_node({"thread_id": tid})
             finally:
                 srv._thread_dir = orig
             self.assertEqual(r["status"], "ok")
-            # validity has weight 0 → picked first
-            self.assertEqual(r["node_type"], "validity")
+            self.assertEqual(r["node_type"], "capability")
 
-    def test_get_next_admissible_node_returns_no_state_when_missing(self) -> None:
+    def test_get_next_admissible_node_bootstraps_blind_engine_when_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             orig = _patch_thread_dir(Path(tmp))
             try:
                 r = srv.handle_get_next_admissible_node({"thread_id": "missing"})
             finally:
                 srv._thread_dir = orig
-            self.assertEqual(r["status"], "no_state")
+            self.assertEqual(r["status"], "hard_external_block")
+            self.assertEqual(r["code"], "operator_scope_conflict")
 
     # --- cycle-1 skill-isolation (bar-sanity) gate -----------------------
     _PRED = {"metric": "excess_return", "op": ">=", "threshold": 0.10}
@@ -278,7 +281,12 @@ class MCPServerTests(unittest.TestCase):
             _setup_skill_iso_thread(tmp_path, "t_bs_off", flag=False, predicate=self._PRED)
             orig = _patch_thread_dir(tmp_path)
             try:
-                r = srv.handle_get_next_admissible_node({"thread_id": "t_bs_off"})
+                with mock.patch.object(
+                    srv,
+                    "_authoritative_active_node_id",
+                    return_value="n_validity_0",
+                ):
+                    r = srv.handle_get_next_admissible_node({"thread_id": "t_bs_off"})
             finally:
                 srv._thread_dir = orig
             self.assertEqual(r["status"], "ok")
@@ -291,7 +299,12 @@ class MCPServerTests(unittest.TestCase):
             _setup_skill_iso_thread(tmp_path, "t_bs_req", flag=True, predicate=self._PRED)
             orig = _patch_thread_dir(tmp_path)
             try:
-                r = srv.handle_get_next_admissible_node({"thread_id": "t_bs_req"})
+                with mock.patch.object(
+                    srv,
+                    "_authoritative_active_node_id",
+                    return_value="n_validity_0",
+                ):
+                    r = srv.handle_get_next_admissible_node({"thread_id": "t_bs_req"})
             finally:
                 srv._thread_dir = orig
             self.assertEqual(r["status"], "bar_sanity_required")
@@ -307,7 +320,12 @@ class MCPServerTests(unittest.TestCase):
             )
             orig = _patch_thread_dir(tmp_path)
             try:
-                r = srv.handle_get_next_admissible_node({"thread_id": "t_bs_broken"})
+                with mock.patch.object(
+                    srv,
+                    "_authoritative_active_node_id",
+                    return_value="n_validity_0",
+                ):
+                    r = srv.handle_get_next_admissible_node({"thread_id": "t_bs_broken"})
             finally:
                 srv._thread_dir = orig
             self.assertEqual(r["status"], "bar_broken")
@@ -322,7 +340,12 @@ class MCPServerTests(unittest.TestCase):
             )
             orig = _patch_thread_dir(tmp_path)
             try:
-                r = srv.handle_get_next_admissible_node({"thread_id": "t_bs_ok"})
+                with mock.patch.object(
+                    srv,
+                    "_authoritative_active_node_id",
+                    return_value="n_validity_0",
+                ):
+                    r = srv.handle_get_next_admissible_node({"thread_id": "t_bs_ok"})
             finally:
                 srv._thread_dir = orig
             self.assertEqual(r["status"], "ok")
@@ -363,19 +386,23 @@ class MCPServerTests(unittest.TestCase):
             try:
                 # Selector would pick "n0_validity"; try to submit for the
                 # capability node out of order — should reject.
-                r = srv.handle_submit_professor_decision(
-                    {
-                        "thread_id": tid,
-                        "node_id": "n_capability_1",
-                        "next_transition": "promoted",
-                        "follow_up_children": [],
-                    },
-                    settings={},
-                )
+                with mock.patch.object(
+                    srv,
+                    "_authoritative_active_node_id",
+                    return_value="n_validity_0",
+                ):
+                    r = srv.handle_submit_professor_decision(
+                        {
+                            "thread_id": tid,
+                            "node_id": "n_capability_1",
+                            "next_transition": "promoted",
+                        },
+                        settings={},
+                    )
             finally:
                 srv._thread_dir = orig
             self.assertEqual(r["status"], "rejected")
-            self.assertIn("n_validity_0", r["reason"])
+            self.assertIn("authoritative blind node", r["reason"])
 
 
 if __name__ == "__main__":

@@ -1,20 +1,5 @@
-"""ParallelAgent — Sakana parity in shape, claim-first inside.
-
-Sakana's ParallelAgent runs num_workers concurrent LLM agents per stage,
-each pulling a node off the journal frontier and producing improved code.
-Ours runs num_workers deterministic per-node pipeline steps concurrently
-(experiment_plan → runner → critics → reduction → child drafting), still
-respecting the harness invariants:
-
-    - workers don't own search policy (orchestrator drafts children)
-    - critics are read-only
-    - one node ≡ one claim_contract; never a metric ranking
-    - live Claude stays off-tree behind live_dispatch
-"""
-
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -28,7 +13,6 @@ from research_harness.memory.failure_memory import (
     record_runner_failure_candidate,
 )
 from research_harness.orchestrator.branch_prior import build_failure_branch_prior
-from research_harness.orchestrator.child_nodes import draft_child_nodes
 from research_harness.orchestrator.experiment_plan import (
     build_experiment_plan_for_node,
     build_job_manifest_from_experiment_plan,
@@ -36,7 +20,6 @@ from research_harness.orchestrator.experiment_plan import (
 )
 from research_harness.orchestrator.reduction import reduce_node
 from research_harness.orchestrator.search_state import (
-    add_child_nodes,
     transition_node,
     validate_search_state,
 )
@@ -44,7 +27,6 @@ from research_harness.orchestrator.llm_orchestrator import (
     DialogEntry,
     DialogLog,
     GradStudent,
-    GradStudentConcern,
     Professor,
 )
 from research_harness.orchestrator.tree_search import _attach_runner_outputs
@@ -72,9 +54,8 @@ class ParallelAgent:
         - no _draft / _debug / _improve LLM calls — the per-node pipeline is
           deterministic (LocalRunner + reduce_node), since claim verdicts come
           from runner evidence + critic blocking, not LLM scoring.
-        - debug_prob / num_drafts are honored as branch-suggestion weights at
-          reduction time (via build_failure_branch_prior), not as a separate
-          LLM sampling step.
+        - negative evidence closes the current direction; successor generation
+          belongs to the blind sequential engine.
     """
 
     def __init__(
@@ -87,8 +68,6 @@ class ParallelAgent:
         num_workers: int = 1,
         admits_node_types: set[str] | None = None,
         record_runner_failures: bool = True,
-        debug_prob: float = 0.0,
-        max_debug_depth: int = 2,
         num_seeds: int = 1,
         professor: Professor | None = None,
         grad_student: GradStudent | None = None,
@@ -101,8 +80,6 @@ class ParallelAgent:
         self.num_workers = max(1, int(num_workers))
         self.admits_node_types = admits_node_types
         self.record_runner_failures = record_runner_failures
-        self.debug_prob = max(0.0, min(1.0, float(debug_prob)))
-        self.max_debug_depth = max(0, int(max_debug_depth))
         self.num_seeds = max(1, int(num_seeds))
         self.interpreter = Interpreter(run_dir=run_dir, settings=settings)
         self.professor = professor
@@ -267,7 +244,6 @@ class ParallelAgent:
         )
 
         branch_prior = build_failure_branch_prior(self.repo_root, node, self.settings)
-        professor_follow_ups: list[dict[str, Any]] = []
         if self.professor is not None:
             grad_concerns = [
                 e.text for e in dialog.entries
@@ -283,7 +259,6 @@ class ParallelAgent:
             )
             reduction = decision.reduction
             dialog.entries.extend(decision.dialog_entries)
-            professor_follow_ups = decision.follow_up_children
             # Mark roadmap milestone satisfied when the parent's claim axis was
             # validated. The Professor can still revise the roadmap later.
             if self.roadmap is not None and reduction["next_transition"] == "promoted":
@@ -315,7 +290,6 @@ class ParallelAgent:
 
         self.journal.record_reduction(node["id"], worker_report, reduction)
 
-        created_child_ids: list[str] = []
         if reduction["next_transition"] == "promoted":
             transition_node(
                 state,
@@ -324,49 +298,13 @@ class ParallelAgent:
                 event="promotion",
                 reason="node promoted by reduction",
             )
-            if professor_follow_ups:
-                follow_up_children = _build_follow_up_children(
-                    node, professor_follow_ups, parent_depth=int(frontier_item["depth"]),
-                    max_depth=int(state["max_depth"]),
-                )
-                if follow_up_children:
-                    created_child_ids = [c["id"] for c in follow_up_children]
-                    add_child_nodes(
-                        state,
-                        node["id"],
-                        follow_up_children,
-                        reason="professor opened successor claims",
-                    )
-        elif reduction["next_transition"] == "needs_child_branch":
-            self._maybe_inject_debug_branch(node, reduction, frontier_item)
-            children = draft_child_nodes(
-                node,
-                reduction,
-                parent_depth=int(frontier_item["depth"]),
-                max_depth=int(state["max_depth"]),
-            )
-            created_child_ids = [child["id"] for child in children]
-            add_child_nodes(
-                state,
-                node["id"],
-                children,
-                reason="reduction requested child branch",
-            )
-            transition_node(
-                state,
-                node["id"],
-                "needs_child_branch",
-                event="branch",
-                reason="node requires child branch",
-                created_child_ids=created_child_ids,
-            )
         else:
             transition_node(
                 state,
                 node["id"],
                 "pruned",
                 event="prune",
-                reason=f"unhandled transition {reduction['next_transition']}",
+                reason="direction closed by reduction",
             )
 
         return {
@@ -375,7 +313,7 @@ class ParallelAgent:
             "worker_status": worker_report["status"],
             "verdict": reduction["final_verdict"],
             "next_transition": reduction["next_transition"],
-            "created_child_ids": created_child_ids,
+            "created_child_ids": [],
             "template_used": runner_summary["template_used"],
         }
 
@@ -518,14 +456,10 @@ class ParallelAgent:
         return last_runner_result, summary
 
     def _template_summary(self, node: dict[str, Any]) -> tuple[str, bool]:
-        """Inspect experiment_plan_templates/<domain>/ and summarize for the
-        grad student. Returns (summary text, template_present).
-        """
         domain = str(node.get("domain") or "").strip()
         if not domain:
             return ("No domain set on the node.", False)
         from research_harness.orchestrator.experiment_plan import (
-            DEFAULT_TEMPLATES_DIRNAME,
             PLAN_METADATA_FILENAME,
             SRC_DIRNAME,
             template_directories,
@@ -556,147 +490,6 @@ class ParallelAgent:
             if node["id"] == node_id:
                 return node
         raise KeyError(node_id)
-
-    def _maybe_inject_debug_branch(
-        self,
-        node: dict[str, Any],
-        reduction: dict[str, Any],
-        frontier_item: dict[str, Any],
-    ) -> None:
-        """Sakana _debug parity: with debug_prob, retry the parent's own claim.
-
-        The decision is deterministic on (node_id, "debug_prob") so the same
-        node always either gets a debug retry or does not. Caps at
-        max_debug_depth by counting how many `debug_retry` ancestors exist
-        along the chain (each created from this hook stamps a tag).
-        """
-        if self.debug_prob <= 0.0:
-            return
-        if self._debug_depth_for(node) >= self.max_debug_depth:
-            return
-        # Stable pseudo-random decision in [0, 100).
-        digest = hashlib.sha256(f"{node['id']}|debug_prob".encode("utf-8")).digest()
-        bucket = digest[0] % 100
-        if bucket >= int(self.debug_prob * 100):
-            return
-        suggestions = reduction.setdefault("child_branch_suggestions", [])
-        suggestions.insert(
-            0,
-            {
-                "type": node["type"],
-                "reason": f"Debug retry of parent {node['id']}: address objections before re-promotion.",
-                "source": "debug_retry",
-            },
-        )
-
-    def _debug_depth_for(self, node: dict[str, Any]) -> int:
-        depth = 0
-        current = node
-        state = self.journal.search_state
-        index = {raw["id"]: raw for raw in state["nodes"]}
-        while current is not None:
-            tags = current.get("failure_retrieval", {}).get("query_tags", []) or []
-            if "debug_retry" in tags:
-                depth += 1
-            parent_id = current.get("parent")
-            current = index.get(parent_id) if parent_id else None
-        return depth
-
-
-def _build_follow_up_children(
-    parent: dict[str, Any],
-    follow_ups: list[dict[str, Any]],
-    *,
-    parent_depth: int,
-    max_depth: int,
-    dropped_followups: list[dict[str, Any]] | None = None,
-) -> list[dict[str, Any]]:
-    """Materialize Professor-proposed successor claims as new tree nodes.
-
-    Each follow-up carries a NEW claim (not the parent's claim) so the next
-    grad-student cohort gets a different research question. The parent's
-    baseline_refs, lineage, and domain are inherited so workers stay bounded.
-
-    If the caller passes ``dropped_followups`` (a list), every follow-up
-    that is silently NOT materialized appends an entry
-    ``{successor_claim, type, reason}`` to that list so the operator and the
-    Professor see exactly why nothing came back. Callers that don't care
-    can omit the argument; we keep the legacy "return [] on overflow"
-    shape for backward compat, with the depth reason now logged in any
-    list the caller supplied.
-    """
-    from copy import deepcopy
-
-    from research_harness.schemas.validator import validate_named_schema
-
-    if parent_depth >= max_depth:
-        if dropped_followups is not None:
-            for follow in follow_ups:
-                dropped_followups.append({
-                    "successor_claim": follow.get("successor_claim", "").strip(),
-                    "type": follow.get("type", "validity"),
-                    "reason": (
-                        f"depth_limit_reached: parent_depth={parent_depth} >= "
-                        f"max_depth={max_depth} (configs/harness.yaml search.max_depth)."
-                    ),
-                })
-        return []
-
-    children: list[dict[str, Any]] = []
-    for index, follow in enumerate(follow_ups, start=1):
-        successor_claim = follow.get("successor_claim", "").strip()
-        ftype = follow.get("type", "validity")
-        if not successor_claim:
-            if dropped_followups is not None:
-                dropped_followups.append({
-                    "successor_claim": "",
-                    "type": ftype,
-                    "reason": "empty_successor_claim: professor follow-up missing or whitespace-only.",
-                })
-            continue
-        child = deepcopy(parent)
-        child["id"] = f"{parent['id']}_succ{index:02d}_{ftype}"
-        child["type"] = ftype
-        child["status"] = "ready"
-        child["stage"] = "experimentation"
-        child["parent"] = parent["id"]
-        child["lineage"]["inherited_assumptions"] = [
-            *parent["lineage"]["inherited_assumptions"],
-            *parent["lineage"]["introduced_assumptions"],
-            f"Successor derives from evidence recorded on parent {parent['id']}.",
-        ]
-        strategy = follow.get("_adaptive_strategy")
-        if isinstance(strategy, dict):
-            child["strategy"] = deepcopy(strategy)
-            child["lineage"]["introduced_assumptions"] = [
-                f"Causal mechanism: {strategy.get('mechanism', '')}",
-                f"Executable intervention: {strategy.get('intervention', '')}",
-            ]
-        else:
-            child["lineage"]["introduced_assumptions"] = [
-                f"Professor opened this successor claim: {follow.get('rationale', '')}",
-            ]
-        child["claim_contract"]["claim_under_test"] = successor_claim
-        # The successor changes the proposed mechanism, not the bar. Adaptive
-        # callers replace any connector-authored root criteria with the one
-        # problem-level frozen contract before validation.
-        frozen_bar = follow.get("_frozen_bar_contract")
-        if isinstance(frozen_bar, dict):
-            child["claim_contract"].update(deepcopy(frozen_bar))
-        child["failure_retrieval"]["query_tags"] = sorted(
-            set(
-                [
-                    *parent["failure_retrieval"]["query_tags"],
-                    ftype,
-                    "professor_follow_up",
-                ]
-            )
-        )
-        child["outputs"] = {"artifacts": [], "verdict": None}
-        validate_named_schema("node", child)
-        children.append(child)
-    return children
-
 
 def _lightweight_worker_task(node: dict[str, Any]) -> dict[str, Any]:
     """Synthesize the minimum worker_task surface the grad student needs.

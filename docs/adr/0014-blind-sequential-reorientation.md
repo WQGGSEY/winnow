@@ -32,11 +32,12 @@ an immutable `SolutionContract`, a tagged `ReorientationState`, and an
 append-only ledger of closed attempts. Exactly one `DirectionAttempt` can be
 active.
 
-`advance_research` is the public control operation. Existing queued, resumable,
-or strong-candidate nodes run before reorientation. When no such node exists,
-the operation reserves one step, performs external work outside the adaptive
-writer lock, and commits the result only if the reservation and revision still
-match.
+`advance_research` is the public control operation. A node can run only when it
+is the sole nonlegacy node bound to the active `awaiting_evidence` attempt.
+Legacy queued, resumable, or promoted nodes are audit-only and cannot outrank
+that binding. The operation reserves one step, performs external work outside
+the adaptive writer lock, and commits the result only if the reservation and
+revision still match.
 
 The operation returns one of these results:
 
@@ -140,6 +141,12 @@ lesson. Runner errors, missing data, malformed output, and timeouts do not count
 as scientific failure. `strong_candidate` continues through the existing
 strong-result verifier. Only its verified receipt permits `goal_achieved`.
 
+A clean failed `real_holdout` result also closes its bound attempt. The result
+must name the current contract, attempt, direction, node, and acquisition
+manifest. The Professor decision does not commit if the harness cannot persist
+the private failure record. The next direction generator receives neither the
+record nor the failed falsifier.
+
 ### Acquire data after a direction states its needs
 
 An accepted direction declares typed data needs. The acquisition boundary may
@@ -170,6 +177,12 @@ Robots denial, a rate limit, or one paywalled source is not a hard block while a
 lawful substitute remains. Download, request, wall-time, and cost budgets create
 a checkpoint with a resumable cursor.
 
+The connector runs two intake searches. It first searches unrelated fields for
+candidate methods without exposing the operator problem. It then runs public
+market research against the operator problem and stores the source-backed
+baseline dossier. A connector session aborts when the baseline search retrieves
+no admissible paper. Production cannot start from invented baseline provenance.
+
 ### Persist external work with reservations
 
 Model calls, HTTP requests, downloads, and schema scans do not run under
@@ -193,6 +206,12 @@ verifier re-derives the frozen goal from `SolutionContract`, checks every
 evidence artifact and runner digest, and confirms the durable node-attempt
 index. Receipt labels alone cannot complete the research.
 
+The passing falsifier result must contain the same five binding IDs. The
+referent ledger rejects a stale result before it can set the adaptive state to
+`goal_achieved`. The selector also runs the terminal verifier before it routes a
+completed state to paper rendering. A stale adaptive flag becomes an operator
+scope conflict instead of a publication result.
+
 Strong attestation first writes a prepared terminal receipt that contains the
 full attestation and strong receipt. Under the shared writer lock, it then
 rechecks the active binding, pinned manifest, runner artifacts, and evidence
@@ -208,20 +227,30 @@ creating another terminal state.
 
 ### Migrate without two live policies
 
-The migration keeps existing completed nodes as audit history. A legacy thread
-with one active root becomes one attempt. The migration stamps that attempt ID
-onto the root subtree.
+The migration keeps every legacy node as audit history. It marks every legacy
+node-attempt binding `legacy_audit_only=true`, then generates and materializes
+one new blind direction. No legacy root or subtree becomes the active attempt.
+When a validated intake handoff exists, its accepted claim, baselines, success
+criteria, and disproof conditions override provisional grilling extraction
+before the immutable contract is compiled.
 
-If legacy roots disagree on the frozen success bar, migration returns
-`operator_scope_conflict`. The harness does not choose one bar silently.
-Unexecuted observation-derived successors do not gain authority in the new
-engine.
+If frozen thread artifacts disagree on the success bar, migration returns
+`operator_scope_conflict`. Multiple legacy roots that share the same bar do not
+block migration. Unexecuted observation-derived successors do not gain
+authority in the new engine.
 
 After callers move to `advance_research`, the same implementation wave deletes
 the live paths for `prepare_strategy_expansion`, adaptive follow-up children,
-`propose_alternative_root_directions`, `select_alternative_root`,
-`seed_alternative_root_formulation`, and `revise_root_after_reject`. Historical
-artifacts remain readable.
+forest seeding and selection, alternative-root proposal and selection,
+root revision, automatic resolver pivots, root terminal snapshots, and the
+negative paper terminal. `design_initial_claim_contract` now persists only the
+validated handoff. Historical artifacts remain readable.
+
+A fresh thread does not need a pre-existing `search_state.json`. The engine
+compiles the contract and materializes one blind direction from the intake
+artifacts. A missing required intake artifact is an `operator_scope_conflict`,
+not a storage failure. A historical `honest_failure.html` remains readable but
+does not mark publication complete or disable supervisor retry.
 
 ## Implementation sequence
 
@@ -239,6 +268,10 @@ Each unit ends in a runnable state:
    `advance_research`. Make the supervisor resume checkpoints.
 5. Migrate remaining callers and delete the X-aware successor and alternative
    root paths. Run the complete regression suite and a restart replay.
+
+All five units are implemented on `main`. The restart replay covers two closed
+failures and proves that the third generation request contains only the frozen
+contract and a newly sampled perspective.
 
 ## Consequences
 

@@ -6,12 +6,14 @@ Authoritative end-to-end flow for **new threads**. Source of truth:
 `intake / refine / tree_search / rebuttal / publish` vocabulary in older docs.
 
 ```
-grilling  →  connector  →  production (forest)  →  strongest survivor
+grilling  →  connector  →  SolutionContract  →  one blind direction at a time
+                                                →  verified strong result
 ```
 
 `PHASES = ("grilling", "connector", "production")`. `market` is a **legacy**
-token (`LEGACY_PHASES`) kept only so pre-connector threads still validate —
-**the connector folds market in** (per-reading far-method research, P-blind).
+token (`LEGACY_PHASES`) kept only so pre-connector threads still validate.
+The connector now performs both P-blind far-method research and P-aware
+baseline research before production.
 `refine` / `research_refiner` is **removed** (`frontend/server.py`: "refine
 phase removed; Professor replaces placeholders at production entry").
 
@@ -27,8 +29,8 @@ modify the referent it is judged by.
 
 ## 2. connector  (ADR 0012 — vagueness-driven diverse claim generation)
 
-The creative **generation front-end** (replaces `refine`). Turns P into N
-diverse, far-framed `claim_contract`s — the forest seed. Code:
+The creative **generation front-end** (replaces `refine`). It researches
+far-framed ways to understand P and records candidate claim contracts. Code:
 `connector/orchestrator.py: run_domain_connector` → `connector_session.json`.
 
 ```
@@ -45,6 +47,8 @@ for each randomly-sampled external field
    reduction (P-AWARE):   bring P back → construct a real claim_contract; keep
 stop at quota (default 6) / max_fields_tried (default 40) / namespace exhausted
        (recorded in stopped_reason — never silently swallowed)
+P-aware baseline research: retrieve papers, download available sources, and
+                           write the baseline dossier used by SolutionContract
 ```
 
 **Why the firewall.** The borrowed method is forced from a *random* field and
@@ -57,41 +61,46 @@ separated by design (ADR 0012 thesis: *generation + gate*).
 It is a **live** step (Codex CLI calls), gated by
 `RESEARCH_HARNESS_ALLOW_CODEX_LIVE` / `RESEARCH_HARNESS_EXECUTE_CODEX_LIVE`.
 
-## 3. production  (forest)
+## 3. production (blind sequential reorientation)
 
-`seed_forest_from_connector` (MCP) turns the connector's N claims into an
-**N-root forest** (multi-root `search_state`). Each root runs the same
-per-node claim gate; `select_strongest_survivor` picks the single earned
-output once every survivor root is snapshotted (`snapshot_root_terminal`).
-Single-root threads never call select.
+Thread setup freezes the accepted intake handoff, feasibility envelope,
+success criteria, baselines, disproof conditions, safety limits, and real
+holdout into one immutable `SolutionContract`. Connector alternatives remain
+audit context and never become live roots.
 
-Thread-level setup (once): `submit_feasibility_envelope` (pre-claim,
-immutable; declares `data_sources_available`, `llm_oracles_available`,
-`compute_budget`, `operator_intent` scope, and the `external_falsifier` —
-harness stamps `max_attestable_status`, ADR 0006) and the pinned frozen
-question. Then per root:
+`advance_research` is the only direction-control operation. Exactly one
+`DirectionAttempt` may be active. A generation request contains only the
+frozen contract and one harness-sampled random perspective. It never contains
+the failed node, failure prose, private lessons, acquired resources, or prior
+directions. After generation, private novelty and safety gates compare the
+six-axis fingerprint against closed attempts.
 
 ```
-design_initial_claim_contract        claim_under_test + mandatory_baselines
-                                      + measurable success + hittable disproof
-loop (one node at a time, deterministic get_next_admissible_node), through
-     claim-typed stages scope_pinning → baseline_evidence →
-     mechanism_or_necessity → boundary_ablation:
-   design_experiment_template → submit_grad_student_review →
-   execute_node_experiment → run_critic_reviews → submit_professor_decision
-                                                   (promote / branch / prune)
-submit_construct_adversary_report     funded adversary vs the frozen question;
-                                      survives → construct_valid (ADR 0008)
-compute_falsifier_result              harness-owned predicate over held-out
-                                      evidence (the worker cannot stamp passed)
-submit_professor_user_goal_attestation  achieved=true refused unless a passing
-                                      real_holdout result exists
-snapshot_root_terminal
+advance_research
+  → direction_ready
+  → acquisition_running | checkpointed
+  → awaiting_evidence
+  → design_experiment_template
+  → submit_grad_student_review
+  → execute_node_experiment
+  → run_critic_reviews
+  → submit_professor_decision (promoted | pruned)
+  → harness evidence verdict
+       conclusive_failure → close privately → advance_research
+       needs_more_evidence → continue the same attempt
+       needs_data → acquire or checkpoint
+       strong_candidate → construct + falsifier + rebuttal gates
 ```
 
-Publication gate: `prepare_rebuttal_packet → submit_rebuttal_critic_review →
-submit_orchestrator_reduction → submit_ac_decision` → `render_final_paper`
-or `render_honest_failure_paper`.
+Public acquisition may use registered adapters, public APIs, public pages, and
+robots-compliant crawling. It records provenance and resumes bounded requests,
+downloads, wall time, and cost from checkpoints. It cannot create accounts,
+spend money, bypass access control, or bypass paywalls.
+
+Publication still requires construct-adversary evidence, a passing harness-owned
+real-holdout falsifier, rebuttal acceptance, and a verified user-goal
+attestation. Only that receipt can commit `goal_achieved` and allow
+`render_final_paper`. Negative evidence has no publication terminal.
 
 The production supervisor starts a fresh Codex JSONL session for each cycle.
 It passes the repository MCP command, arguments, and environment through

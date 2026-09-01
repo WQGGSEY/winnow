@@ -139,6 +139,7 @@ def test_ac_decision_rejects_missing_methodology_assessment():
 # --- ADR 0008 rev.2 (A3): methodology clamp to the weaker path ---------- #
 
 import json
+from types import SimpleNamespace
 
 import research_harness.mcp_server as M
 
@@ -219,6 +220,23 @@ def test_methodology_provides_allowed_only_with_verified_real_referent(tmp_path,
     # (envelope real_holdout + matching passing harness falsifier_result).
     tid = "t_a3b"
     env, fr = _verified_real_referent()
+    binding = SimpleNamespace(
+        contract_id="contract_" + "a" * 64,
+        attempt_id="attempt_current",
+        direction_id="direction_" + "b" * 64,
+        node_id="n_current",
+        manifest_id="acqmanifest_" + "c" * 64,
+    )
+    fr.update(
+        {
+            "contract_id": binding.contract_id,
+            "attempt_id": binding.attempt_id,
+            "direction_id": binding.direction_id,
+            "node_id": binding.node_id,
+            "manifest_id": binding.manifest_id,
+        }
+    )
+    monkeypatch.setattr(M, "_authoritative_strong_binding", lambda _tid: binding)
     _setup_rebuttal(tmp_path, monkeypatch, tid, falsifier=fr, envelope=env)
     d = _set_verdict(_valid_ac_decision(), "provides")
     out = M._clamp_methodology_assessment(tid, {}, d)

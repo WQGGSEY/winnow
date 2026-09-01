@@ -45,7 +45,7 @@ class BranchPriorTests(unittest.TestCase):
             all("failure_file" in control for control in prior["risk_controls"])
         )
 
-    def test_reduction_uses_failure_prior_only_for_child_branches(self) -> None:
+    def test_reduction_retains_failure_prior_without_generating_children(self) -> None:
         node = _demo_node()
         settings = load_settings(REPO_ROOT)
         prior = build_failure_branch_prior(REPO_ROOT, node, settings)
@@ -53,14 +53,9 @@ class BranchPriorTests(unittest.TestCase):
 
         reduction = reduce_node(node, _blocked_report(), reviews, branch_prior=prior)
 
-        self.assertEqual(reduction["next_transition"], "needs_child_branch")
+        self.assertEqual(reduction["next_transition"], "pruned")
         self.assertGreaterEqual(len(reduction["failure_branch_prior"]["risk_controls"]), 2)
-        self.assertTrue(
-            any(
-                suggestion["source"].startswith("failure_memory:")
-                for suggestion in reduction["child_branch_suggestions"]
-            )
-        )
+        self.assertEqual(reduction["child_branch_suggestions"], [])
 
 
 if __name__ == "__main__":

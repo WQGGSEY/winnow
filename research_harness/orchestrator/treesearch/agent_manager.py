@@ -102,9 +102,8 @@ DEFAULT_STAGES_SPEC: list[dict[str, Any]] = [
     {
         "name": "mechanism_or_necessity",
         "description": (
-            "Branch into mechanism (why) and necessity (against same-budget "
-            "baselines). Advance when at least one of each type is promoted "
-            "OR exhausted."
+            "Evaluate mechanism and necessity evidence against same-budget "
+            "baselines. Advance when either type is promoted or both are exhausted."
         ),
         "claim_types_admitted": {"mechanism", "necessity"},
         "stage_number": 3,
@@ -112,7 +111,7 @@ DEFAULT_STAGES_SPEC: list[dict[str, Any]] = [
     {
         "name": "boundary_ablation",
         "description": (
-            "Boundary and constraint children of the supported mechanism. "
+            "Evaluate boundary and constraint evidence for the supported mechanism. "
             "Advance when the frontier is empty for this stage."
         ),
         "claim_types_admitted": {"boundary", "constraint"},
@@ -289,12 +288,10 @@ class AgentManager:
     ) -> dict[str, Any]:
         """Run the 4 claim-typed stages in order, cycling until queue is empty.
 
-        Each cycle steps through scope_pinning → baseline_evidence →
-        mechanism_or_necessity → boundary_ablation. Within a stage,
-        ParallelAgent.step is called until max_iterations or the
-        exit_predicate trips. After all four, if any node remains queued
-        and admissible, the cycle repeats up to `max_cycles` times — this
-        is how children produced late in cycle N get serviced in cycle N+1.
+        Each cycle steps through scope_pinning, baseline_evidence,
+        mechanism_or_necessity, and boundary_ablation. A stage calls
+        ParallelAgent.step until max_iterations or its exit predicate. The
+        cycle repeats while admissible queued work remains.
         """
         run_dir = self.workspace_dir
         for cycle in range(max(1, int(max_cycles))):
@@ -302,7 +299,6 @@ class AgentManager:
             for stage in self.stages:
                 self.current_stage = stage
                 self.current_stage_number = stage.stage_number
-                search_cfg = (self.cfg or {}).get("search", {}) or {}
                 agent_cfg = (self.cfg or {}).get("agent", {}) or {}
                 agent = ParallelAgent(
                     journal=self.journal,
@@ -311,8 +307,6 @@ class AgentManager:
                     settings=self.settings,
                     num_workers=stage.num_workers,
                     admits_node_types=stage.claim_types_admitted,
-                    debug_prob=float(search_cfg.get("debug_prob", 0.0)),
-                    max_debug_depth=int(self.policy["max_debug_depth"]),
                     num_seeds=int(agent_cfg.get("num_seeds", 1)),
                     professor=self.professor,
                     grad_student=self.grad_student,

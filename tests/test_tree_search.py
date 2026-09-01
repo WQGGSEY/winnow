@@ -300,14 +300,10 @@ class TreeSearchTests(unittest.TestCase):
                 ).read_text(encoding="utf-8")
             )
             self.assertEqual(reduction["final_verdict"], "contradicted")
-            self.assertTrue(
-                any(
-                    suggestion["source"] == "worker_report.baseline_evidence_status"
-                    for suggestion in reduction["child_branch_suggestions"]
-                )
-            )
+            self.assertEqual(reduction["next_transition"], "pruned")
+            self.assertEqual(reduction["child_branch_suggestions"], [])
 
-    def test_inconclusive_metrics_open_child_branch_until_step_limit(self) -> None:
+    def test_inconclusive_metrics_close_direction_without_child_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = run_mock_tree_search(
                 REPO_ROOT,
@@ -323,10 +319,10 @@ class TreeSearchTests(unittest.TestCase):
                 for node in state["nodes"]
                 if node.get("parent") == "n_demo_001"
             ]
-            self.assertGreaterEqual(len(child_ids), 1)
-            self.assertEqual(state["status"], "blocked")
+            self.assertEqual(child_ids, [])
+            self.assertEqual(state["status"], "completed")
             written = json.loads((Path(tmp) / "tree" / "search_state.json").read_text())
-            self.assertEqual(written["status"], "blocked")
+            self.assertEqual(written["status"], "completed")
 
     def test_live_backend_name_is_rejected_by_tree_search(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

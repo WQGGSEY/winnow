@@ -91,7 +91,7 @@
     },
     "load_bearing_mechanism": {
       "type": "string",
-      "description": "ADR 0007: for a weak/negative terminal, the EARNED conclusion — WHY the direction fails (or what would have to be true to succeed) and how that constrains the future. This is condition (a) of the depth gate; render_honest_failure_paper refuses a shallow give-up that has no mechanism. Not a limitations-section flourish: name the specific load-bearing assumption that broke and what its breakage predicts.",
+      "description": "The earned mechanism behind the current evidence: name the load-bearing assumption, what broke, and what that predicts. On failure this becomes a private lesson for post-generation gates, never a negative terminal or input to the next generator.",
       "minLength": 80
     },
     "scope_attainment": {

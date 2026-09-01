@@ -29,7 +29,8 @@
   </div>
   <p class="muted" style="font-size:11px;">
     Live: P → de-domained abstraction → each randomly-sampled field is read,
-    triaged (prune-1), and reduced onto P. Readings that survive become forest roots.
+    triaged (prune-1), and reduced onto P. The phase also retrieves the
+    P-aware baseline dossier required by the strong-result contract.
   </p>
 {% elif thread.current_phase == "connector" and thread.phase_status in ("failed", "awaiting_input") %}
   <div class="phase-empty">
@@ -69,7 +70,7 @@
       {% endif %}
 
       {% if sess.claims %}
-        <h3>Far-framed claims ({{ sess.claims|length }}) → forest roots</h3>
+        <h3>Far-framed intake candidates ({{ sess.claims|length }})</h3>
         <table class="papers-table">
           <thead><tr><th>Field (random)</th><th>Claim on P</th><th>method papers</th></tr></thead>
           <tbody>
@@ -82,6 +83,14 @@
             {% endfor %}
           </tbody>
         </table>
+      {% endif %}
+
+      {% if sess.baseline_research %}
+        <p>
+          Baseline research: <code>{{ sess.baseline_research.status }}</code>,
+          {{ sess.baseline_research.papers_found }} paper(s), dossier
+          <code>{{ sess.baseline_research.baseline_dossier_id }}</code>.
+        </p>
       {% endif %}
 
       {% if sess.attempts %}
@@ -107,13 +116,12 @@
         <div class="market-next-step callout">
           {% if sess.claims %}
             <strong>{{ sess.claims|length }} far-framed claim(s) generated.</strong>
-            In a Codex production session, call
-            <code>seed_forest_from_connector</code> to build the multi-root forest,
-            then run the per-node gate + per-survivor terminal +
-            <code>select_strongest_survivor</code> for the single earned output.
+            A Codex production session freezes the accepted intake handoff into
+            one <code>SolutionContract</code>, then <code>advance_research</code>
+            runs one blind direction at a time until a verified strong result.
           {% else %}
-            <strong>No reducible far-framing found</strong> (0 claims) — production
-            would render honest-failure.
+            <strong>No reducible far-framing found.</strong> Production still
+            compiles the accepted intake handoff and generates a blind direction.
           {% endif %}
         </div>
       {% endif %}

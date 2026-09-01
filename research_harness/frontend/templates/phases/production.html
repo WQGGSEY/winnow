@@ -110,10 +110,9 @@
     </details>
   {% endif %}
 
-  {# Hands-free escalation: when the auto-resolver refused to chain
-     (loop / budget / non-allowlisted tool / dispatch error), the rail
-     enqueues an operator prompt. Render any pending prompts as inline
-     answer cards. The form POSTs back to /operator_input which writes
+  {# Hands-free operator decisions and missing-context requests. Render
+     pending prompts as inline answer cards. The form POSTs back to
+     /operator_input which writes
      the response into operator_prompts.jsonl; the Codex subprocess
      polls get_pending_operator_response to consume it. #}
   {% if p.pending_operator_prompts %}
@@ -423,14 +422,13 @@
         <section class="mcp-progress-card">
           <h3>MCP — recent Codex decisions</h3>
           <table>
-            <thead><tr><th>node</th><th>transition</th><th>verdict</th><th>follow-ups</th></tr></thead>
+            <thead><tr><th>node</th><th>transition</th><th>verdict</th></tr></thead>
             <tbody>
               {% for row in p.mcp_progress[:8] %}
                 <tr>
                   <td><code>{{ row.node_id|truncate_chars(36) }}</code></td>
                   <td><span class="verdict-{{ row.transition }}">{{ row.transition }}</span></td>
                   <td>{{ row.final_verdict or '—' }}</td>
-                  <td>{{ row.follow_up_count }}</td>
                 </tr>
               {% endfor %}
             </tbody>

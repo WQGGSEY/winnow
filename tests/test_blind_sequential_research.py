@@ -264,6 +264,62 @@ def _legacy_node(
     }
 
 
+def _write_legacy_migration_artifacts(thread_dir: Path) -> None:
+    (thread_dir / "thread.json").write_text(
+        json.dumps({"user_goal": "Find a safe intervention that improves utility."}),
+        encoding="utf-8",
+    )
+    grilling_dir = thread_dir / "grilling"
+    grilling_dir.mkdir(parents=True, exist_ok=True)
+    (grilling_dir / "grilling_session.json").write_text(
+        json.dumps(
+            {
+                "user_goal": "Find a safe intervention that improves utility.",
+                "rounds": [],
+                "extracted": {
+                    "claim_under_test": (
+                        "A deployable intervention beats the incumbent."
+                    ),
+                    "mandatory_baselines": ["incumbent", "naive", "random/null"],
+                    "success_criteria": ["utility improves by at least 5%"],
+                    "disproof_conditions": ["utility improvement is below 5%"],
+                    "taste_constraints": ["no access-control bypass"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    market_dir = thread_dir / "market"
+    market_dir.mkdir(parents=True, exist_ok=True)
+    (market_dir / "market_research_brief.json").write_text(
+        json.dumps({"baseline_dossier_id": "bd_agent_harness_20260523"}),
+        encoding="utf-8",
+    )
+    production_dir = thread_dir / "production"
+    production_dir.mkdir(parents=True, exist_ok=True)
+    (production_dir / "feasibility_envelope.json").write_text(
+        json.dumps(
+            {
+                "operator_intent": {
+                    "target_deploy_grade_scope": "deployment",
+                    "acceptable_alternative_scopes": ["deployment"],
+                },
+                "external_falsifier": {
+                    "kind": "real_holdout",
+                    "holdout_source_id": "operator_holdout",
+                    "predicate": {
+                        "metric": "utility",
+                        "op": ">=",
+                        "threshold": 0.05,
+                    },
+                    "registered_by": "operator",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def _engine(
     tmp_path: Path,
     generator: _Generator,
@@ -311,6 +367,78 @@ def _acquisition_command(direction_result: dict[str, object]):
             max_download_bytes=1024,
             max_wall_seconds=10,
         ),
+    )
+
+
+def _write_conclusive_failure(engine, command) -> None:
+    node_dir = engine.paths.root.parent / "tree" / "nodes" / command.node_id
+    node_dir.mkdir(parents=True, exist_ok=True)
+    worker_report = {
+        "node_id": command.node_id,
+        "status": "completed",
+        "claim_verdict_candidate": "contradicted",
+        "metrics": {"utility": 0.52},
+        "baselines": {"incumbent": 0.50},
+        "baseline_evidence_status": {
+            "overall": "failed",
+            "results": [
+                {
+                    "role": "current_best_known",
+                    "metric_key": "utility",
+                    "baseline_key": "incumbent",
+                    "operator": "greater_equal",
+                    "margin": 0.05,
+                    "required": True,
+                    "metric_value": 0.52,
+                    "baseline_value": 0.50,
+                    "status": "failed",
+                    "reason": "deterministic comparison result",
+                }
+            ],
+        },
+        "disproof_conditions_hit": [],
+        "artifacts": [],
+        "unexpected_observations": [],
+        "failure_record_candidate": None,
+    }
+    (node_dir / "worker_report.json").write_text(
+        json.dumps(worker_report), encoding="utf-8"
+    )
+
+
+def _write_strong_candidate(engine, command) -> None:
+    node_dir = engine.paths.root.parent / "tree" / "nodes" / command.node_id
+    node_dir.mkdir(parents=True, exist_ok=True)
+    worker_report = {
+        "node_id": command.node_id,
+        "status": "completed",
+        "claim_verdict_candidate": "supported",
+        "metrics": {"utility": 0.56},
+        "baselines": {"incumbent": 0.50},
+        "baseline_evidence_status": {
+            "overall": "passed",
+            "results": [
+                {
+                    "role": "current_best_known",
+                    "metric_key": "utility",
+                    "baseline_key": "incumbent",
+                    "operator": "greater_equal",
+                    "margin": 0.05,
+                    "required": True,
+                    "metric_value": 0.56,
+                    "baseline_value": 0.50,
+                    "status": "passed",
+                    "reason": "deterministic comparison result",
+                }
+            ],
+        },
+        "disproof_conditions_hit": [],
+        "artifacts": [],
+        "unexpected_observations": [],
+        "failure_record_candidate": None,
+    }
+    (node_dir / "worker_report.json").write_text(
+        json.dumps(worker_report), encoding="utf-8"
     )
 
 
@@ -594,45 +722,7 @@ def test_conclusive_failure_closes_attempt_without_leaking_into_next_request(
         command_id="cycle-2",
         acquisition_command=command,
     )
-    node_dir = (
-        engine.paths.root.parent
-        / "tree"
-        / "nodes"
-        / command.node_id
-    )
-    node_dir.mkdir(parents=True)
-    worker_report = {
-        "node_id": command.node_id,
-        "status": "completed",
-        "claim_verdict_candidate": "contradicted",
-        "metrics": {"utility": 0.52},
-        "baselines": {"incumbent": 0.50},
-        "baseline_evidence_status": {
-            "overall": "failed",
-            "results": [
-                {
-                    "role": "current_best_known",
-                    "metric_key": "utility",
-                    "baseline_key": "incumbent",
-                    "operator": "greater_equal",
-                    "margin": 0.05,
-                    "required": True,
-                    "metric_value": 0.52,
-                    "baseline_value": 0.50,
-                    "status": "failed",
-                    "reason": "deterministic comparison result",
-                }
-            ],
-        },
-        "disproof_conditions_hit": [],
-        "artifacts": [],
-        "unexpected_observations": [],
-        "failure_record_candidate": None,
-    }
-    (node_dir / "worker_report.json").write_text(
-        json.dumps(worker_report),
-        encoding="utf-8",
-    )
+    _write_conclusive_failure(engine, command)
 
     closed = engine.advance_research(command_id="cycle-3")
     next_direction = engine.advance_research(command_id="cycle-4")
@@ -642,7 +732,124 @@ def test_conclusive_failure_closes_attempt_without_leaking_into_next_request(
     assert len(engine.read_state().closed_attempts) == 1
     assert len(generator.calls) == 2
     assert set(generator.calls[1]) == {"solution_contract", "random_perspective"}
+
+
+def test_bound_real_holdout_failure_closes_direction_and_redirects(
+    tmp_path: Path,
+) -> None:
+    from research_harness.falsifier import compute_falsifier_result
+
+    acquisition = _Acquisition()
+    generator = _Generator(_draft("first"), _draft("redirected"))
+    engine = _engine(tmp_path, generator, acquisition)
+    direction_result = engine.advance_research(command_id="cycle-1")
+    command = _acquisition_command(direction_result)
+    manifest = make_manifest(
+        command_id=command.command_id,
+        node_id=command.node_id,
+        attempt_id=command.attempt_id,
+        direction_id=command.direction.direction_id,
+        acquired_needs=(),
+    )
+    acquisition.outcomes.append(AcquisitionComplete(manifest))
+    engine.advance_research(
+        command_id="cycle-2",
+        acquisition_command=command,
+    )
+    _write_strong_candidate(engine, command)
+    falsifier = compute_falsifier_result(
+        thread_id="thread_test",
+        falsifier={
+            "kind": "real_holdout",
+            "holdout_source_id": "operator_holdout",
+            "predicate": {"metric": "utility", "op": ">=", "threshold": 0.05},
+        },
+        evidence={"observed": 0.01},
+    )
+    falsifier.update(
+        {
+            "contract_id": _contract().contract_id,
+            "attempt_id": command.attempt_id,
+            "direction_id": command.direction.direction_id,
+            "node_id": command.node_id,
+            "manifest_id": manifest.manifest_id,
+        }
+    )
+    rebuttal_dir = engine.paths.root.parent / "rebuttal"
+    rebuttal_dir.mkdir()
+    (rebuttal_dir / "falsifier_result.json").write_text(
+        json.dumps(falsifier), encoding="utf-8"
+    )
+
+    closed = engine.advance_research(command_id="cycle-3")
+    redirected = engine.advance_research(command_id="cycle-4")
+
+    assert closed["status"] == "checkpointed"
+    assert redirected["status"] == "direction_ready"
+    assert redirected["direction"]["direction_id"] != command.direction.direction_id
+    receipt = json.loads(
+        engine.paths.failure_receipt(command.attempt_id).read_text(encoding="utf-8")
+    )
+    assert receipt["baseline_failure_count"] == 0
+    assert receipt["strong_gate_failure_count"] == 1
     assert generator.calls[1]["random_perspective"]["draw_index"] == 1
+
+
+def test_restart_after_two_failures_generates_from_contract_and_perspective_only(
+    tmp_path: Path,
+) -> None:
+    acquisition = _Acquisition()
+    generator = _Generator(_draft("first"), _draft("second"))
+    engine = _engine(tmp_path, generator, acquisition)
+
+    first_result = engine.advance_research(command_id="cycle-1")
+    first_command = _acquisition_command(first_result)
+    first_manifest = make_manifest(
+        command_id=first_command.command_id,
+        node_id=first_command.node_id,
+        attempt_id=first_command.attempt_id,
+        direction_id=first_command.direction.direction_id,
+        acquired_needs=(),
+    )
+    acquisition.outcomes.append(AcquisitionComplete(first_manifest))
+    engine.advance_research(command_id="cycle-2", acquisition_command=first_command)
+    _write_conclusive_failure(engine, first_command)
+    engine.advance_research(command_id="cycle-3")
+
+    second_result = engine.advance_research(command_id="cycle-4")
+    second_command = _acquisition_command(second_result)
+    second_manifest = make_manifest(
+        command_id=second_command.command_id,
+        node_id=second_command.node_id,
+        attempt_id=second_command.attempt_id,
+        direction_id=second_command.direction.direction_id,
+        acquired_needs=(),
+    )
+    acquisition.outcomes.append(AcquisitionComplete(second_manifest))
+    engine.advance_research(command_id="cycle-5", acquisition_command=second_command)
+    _write_conclusive_failure(engine, second_command)
+    engine.advance_research(command_id="cycle-6")
+
+    restarted_generator = _Generator(_draft("third"))
+    restarted = BlindSequentialResearch(
+        repo_root=REPO_ROOT,
+        thread_dir=engine.paths.root.parent.parent,
+        writer_lock=_writer_lock,
+        direction_generator=restarted_generator,
+        structural_assessor=_Assessor(),
+        acquisition=acquisition,
+        perspective_seed=73,
+    )
+    third_result = restarted.advance_research(command_id="cycle-7")
+
+    assert third_result["status"] == "direction_ready"
+    assert len(restarted.read_state().closed_attempts) == 2
+    assert len(restarted_generator.calls) == 1
+    request = restarted_generator.calls[0]
+    assert set(request) == {"solution_contract", "random_perspective"}
+    assert request["random_perspective"]["draw_index"] == 2
+    forbidden = {"failure", "lesson", "history", "resources", "closed_attempts"}
+    assert forbidden.isdisjoint(request)
 
 
 def test_checkpoint_state_is_typed_after_acquisition_budget(tmp_path: Path) -> None:
@@ -937,11 +1144,11 @@ def test_legacy_subtree_uses_one_attempt_identity() -> None:
     assert bindings["n_other"]["attempt_id"] != bindings["n_root"]["attempt_id"]
 
 
-def test_single_active_legacy_root_finishes_before_blind_migration(
+def test_active_legacy_nodes_become_audit_history_before_blind_migration(
     tmp_path: Path,
 ) -> None:
     acquisition = _Acquisition()
-    generator = _Generator(_draft("unused"))
+    generator = _Generator(_draft("migration"))
     thread_dir = tmp_path / "runs" / "threads" / "thread_active_legacy"
     tree = thread_dir / "production" / "tree"
     tree.mkdir(parents=True)
@@ -967,6 +1174,7 @@ def test_single_active_legacy_root_finishes_before_blind_migration(
         }
     ]
     (tree / "search_state.json").write_text(json.dumps(state), encoding="utf-8")
+    _write_legacy_migration_artifacts(thread_dir)
     engine = BlindSequentialResearch(
         repo_root=REPO_ROOT,
         thread_dir=thread_dir,
@@ -979,23 +1187,22 @@ def test_single_active_legacy_root_finishes_before_blind_migration(
     result = engine.advance_research(command_id="migrate")
     repeated = engine.advance_research(command_id="migrate")
 
-    assert result["status"] == "acquisition_running"
+    assert result["status"] == "direction_ready"
     assert repeated == result
-    assert result["acquisition_status"] == "legacy_work_pending"
-    assert result["next_tool_to_call"] == "get_next_admissible_node"
     attempts = json.loads(engine.paths.node_attempts.read_text(encoding="utf-8"))
     root = attempts["nodes"]["n_root"]
     child = attempts["nodes"]["n_child"]
-    assert root["attempt_id"] == result["attempt_id"]
-    assert child["attempt_id"] == result["attempt_id"]
-    assert root["legacy_audit_only"] is False
-    assert child["legacy_audit_only"] is False
-    assert engine.read_contract() is None
-    assert engine.read_state() is None
-    assert generator.calls == []
+    assert root["attempt_id"] == child["attempt_id"]
+    assert root["legacy_audit_only"] is True
+    assert child["legacy_audit_only"] is True
+    assert engine.read_contract() is not None
+    migrated_state = engine.read_state()
+    assert migrated_state is not None
+    assert isinstance(migrated_state.phase, AcquisitionReserved)
+    assert len(generator.calls) == 1
 
 
-def test_multiple_active_legacy_roots_require_operator_resolution(
+def test_same_bar_active_legacy_roots_all_become_audit_history(
     tmp_path: Path,
 ) -> None:
     thread_dir = tmp_path / "runs" / "threads" / "thread_active_conflict"
@@ -1003,8 +1210,8 @@ def test_multiple_active_legacy_roots_require_operator_resolution(
     tree.mkdir(parents=True)
     state = _empty_search_state()
     state["nodes"] = [
-        _legacy_node("n_a", "Same claim", status="ready"),
-        _legacy_node("n_b", "Same claim", status="running"),
+        _legacy_node("n_a", "First legacy claim", status="ready"),
+        _legacy_node("n_b", "Second legacy claim", status="running"),
     ]
     state["frontier"] = [
         {
@@ -1019,20 +1226,127 @@ def test_multiple_active_legacy_roots_require_operator_resolution(
         for node_id, frontier_status in (("n_a", "queued"), ("n_b", "running"))
     ]
     (tree / "search_state.json").write_text(json.dumps(state), encoding="utf-8")
+    _write_legacy_migration_artifacts(thread_dir)
+    generator = _Generator(_draft("multiple-roots"))
     engine = BlindSequentialResearch(
         repo_root=REPO_ROOT,
         thread_dir=thread_dir,
         writer_lock=_writer_lock,
-        direction_generator=_Generator(_draft("unused")),
+        direction_generator=generator,
         structural_assessor=_Assessor(),
         acquisition=_Acquisition(),
     )
 
     result = engine.advance_research(command_id="migrate")
 
-    assert result["status"] == "hard_external_block"
-    assert result["code"] == "operator_scope_conflict"
-    assert engine.read_state() is None
+    assert result["status"] == "direction_ready"
+    attempts = json.loads(engine.paths.node_attempts.read_text(encoding="utf-8"))
+    assert attempts["nodes"]["n_a"]["legacy_audit_only"] is True
+    assert attempts["nodes"]["n_b"]["legacy_audit_only"] is True
+    assert engine.read_contract() is not None
+    assert engine.read_state() is not None
+    assert len(generator.calls) == 1
+
+
+def test_migration_freezes_the_validated_intake_handoff_contract(
+    tmp_path: Path,
+) -> None:
+    thread_dir = tmp_path / "runs" / "threads" / "thread_handoff"
+    tree = thread_dir / "production" / "tree"
+    tree.mkdir(parents=True)
+    state = _empty_search_state()
+    state["nodes"] = [
+        _legacy_node(
+            "n_deployment",
+            "Conflicting legacy deployment claim",
+            status="pruned",
+            target_scope="deployment",
+        ),
+        _legacy_node(
+            "n_feasibility",
+            "Conflicting legacy feasibility claim",
+            status="pruned",
+            target_scope="feasibility",
+        ),
+    ]
+    state["pruned_node_ids"] = ["n_deployment", "n_feasibility"]
+    (tree / "search_state.json").write_text(json.dumps(state), encoding="utf-8")
+    _write_legacy_migration_artifacts(thread_dir)
+    new_contract = {
+        "claim_under_test": "A validated active intervention improves utility.",
+        "mandatory_baselines": ["incumbent", "naive", "random/null"],
+        "success_criteria": ["validated utility improves by at least 7%"],
+        "disproof_conditions": ["validated utility improvement is below 7%"],
+    }
+    (thread_dir / "production" / "intake_to_claim_dialog.json").write_text(
+        json.dumps({"new_contract": new_contract}), encoding="utf-8"
+    )
+    generator = _Generator(_draft("handoff"))
+    engine = BlindSequentialResearch(
+        repo_root=REPO_ROOT,
+        thread_dir=thread_dir,
+        writer_lock=_writer_lock,
+        direction_generator=generator,
+        structural_assessor=_Assessor(),
+        acquisition=_Acquisition(),
+    )
+
+    result = engine.advance_research(command_id="freeze-handoff")
+
+    assert result["status"] == "direction_ready"
+    contract = generator.calls[0]["solution_contract"]
+    assert contract["bar"]["claim_under_test"] == new_contract["claim_under_test"]
+    assert contract["bar"]["success_criteria"] == new_contract["success_criteria"]
+
+
+def test_fresh_thread_without_search_state_materializes_one_active_node(
+    tmp_path: Path,
+) -> None:
+    thread_dir = tmp_path / "runs" / "threads" / "thread_fresh"
+    thread_dir.mkdir(parents=True)
+    _write_legacy_migration_artifacts(thread_dir)
+    acquisition = _Acquisition()
+    engine = BlindSequentialResearch(
+        repo_root=REPO_ROOT,
+        thread_dir=thread_dir,
+        writer_lock=_writer_lock,
+        direction_generator=_Generator(_draft("fresh")),
+        structural_assessor=_Assessor(),
+        acquisition=acquisition,
+    )
+
+    direction_result = engine.advance_research(command_id="fresh-direction")
+    command = _acquisition_command(direction_result)
+    manifest = make_manifest(
+        command_id=command.command_id,
+        node_id=command.node_id,
+        attempt_id=command.attempt_id,
+        direction_id=command.direction.direction_id,
+        acquired_needs=(),
+    )
+    acquisition.outcomes.append(AcquisitionComplete(manifest))
+
+    result = engine.advance_research(
+        command_id="fresh-acquisition",
+        acquisition_command=command,
+    )
+
+    assert result["acquisition_status"] == "complete"
+    search_state = json.loads(
+        (
+            thread_dir / "production" / "tree" / "search_state.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert [node["id"] for node in search_state["nodes"]] == [command.node_id]
+    attempts = json.loads(engine.paths.node_attempts.read_text(encoding="utf-8"))
+    assert attempts["nodes"] == {
+        command.node_id: {
+            "attempt_id": command.attempt_id,
+            "direction_id": command.direction.direction_id,
+            "manifest_id": manifest.manifest_id,
+            "legacy_audit_only": False,
+        }
+    }
 
 
 def test_conflicting_legacy_success_scopes_create_operational_block(

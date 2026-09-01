@@ -119,6 +119,7 @@ class FailureEvidenceReceipt:
     node_id: str
     evidence_sha256: str
     baseline_failure_count: int
+    strong_gate_failure_count: int = 0
 
     def __post_init__(self) -> None:
         if self.version != 1:
@@ -139,9 +140,13 @@ class FailureEvidenceReceipt:
             self.baseline_failure_count,
             "baseline failure count",
         )
-        if self.baseline_failure_count < 1:
+        _nonnegative_integer(
+            self.strong_gate_failure_count,
+            "strong gate failure count",
+        )
+        if self.baseline_failure_count + self.strong_gate_failure_count < 1:
             raise AttemptEvidenceError(
-                "evidence receipt requires a baseline failure"
+                "evidence receipt requires a measured gate failure"
             )
         digest = _sha256(_receipt_payload(self))
         if (
@@ -154,12 +159,15 @@ class FailureEvidenceReceipt:
 
 
 def _receipt_payload(receipt: FailureEvidenceReceipt) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "version": receipt.version,
         "node_id": receipt.node_id,
         "evidence_sha256": receipt.evidence_sha256,
         "baseline_failure_count": receipt.baseline_failure_count,
     }
+    if receipt.strong_gate_failure_count:
+        payload["strong_gate_failure_count"] = receipt.strong_gate_failure_count
+    return payload
 
 
 def serialize_failure_evidence_receipt(
@@ -179,20 +187,26 @@ def serialize_failure_evidence_receipt(
 def parse_failure_evidence_receipt(value: object) -> FailureEvidenceReceipt:
     raw = _mapping(value, "failure evidence receipt")
     validate_named_schema("failure_evidence_receipt", dict(raw))
-    _exact_keys(
-        raw,
-        required=frozenset(
-            {
-                "version",
-                "receipt_id",
-                "receipt_sha256",
-                "node_id",
-                "evidence_sha256",
-                "baseline_failure_count",
-            }
-        ),
-        label="failure evidence receipt",
+    required = frozenset(
+        {
+            "version",
+            "receipt_id",
+            "receipt_sha256",
+            "node_id",
+            "evidence_sha256",
+            "baseline_failure_count",
+        }
     )
+    missing = sorted(required - raw.keys())
+    unexpected = sorted(raw.keys() - required - {"strong_gate_failure_count"})
+    if missing:
+        raise AttemptEvidenceError(
+            f"failure evidence receipt is missing keys {missing}"
+        )
+    if unexpected:
+        raise AttemptEvidenceError(
+            f"failure evidence receipt has unexpected keys {unexpected}"
+        )
     return FailureEvidenceReceipt(
         version=raw["version"],
         receipt_id=raw["receipt_id"],
@@ -202,6 +216,10 @@ def parse_failure_evidence_receipt(value: object) -> FailureEvidenceReceipt:
         baseline_failure_count=_nonnegative_integer(
             raw["baseline_failure_count"],
             "baseline failure count",
+        ),
+        strong_gate_failure_count=_nonnegative_integer(
+            raw.get("strong_gate_failure_count", 0),
+            "strong gate failure count",
         ),
     )
 
@@ -487,3 +505,72 @@ def derive_attempt_evidence(
     if verdict == "not_evaluable":
         return NeedsMoreEvidence(NeedsMoreEvidenceReason.NOT_EVALUABLE)
     return NeedsMoreEvidence(NeedsMoreEvidenceReason.INCONCLUSIVE)
+
+
+def derive_falsifier_failure(
+    worker_report: object,
+    falsifier_result: object,
+    *,
+    binding: Mapping[str, str],
+) -> ConclusiveFailure | None:
+    worker_evidence = derive_attempt_evidence(
+        worker_report,
+        data_status="satisfied",
+    )
+    if not isinstance(worker_evidence, StrongCandidate):
+        return None
+    if not isinstance(falsifier_result, Mapping):
+        return None
+    try:
+        validate_named_schema("falsifier_result", dict(falsifier_result))
+    except (TypeError, ValueError):
+        return None
+    expected = {
+        "contract_id": binding.get("contract_id"),
+        "attempt_id": binding.get("attempt_id"),
+        "direction_id": binding.get("direction_id"),
+        "node_id": binding.get("node_id"),
+        "manifest_id": binding.get("manifest_id"),
+    }
+    if any(falsifier_result.get(key) != value for key, value in expected.items()):
+        return None
+    if (
+        falsifier_result.get("produced_by") != "harness_falsifier_module"
+        or falsifier_result.get("kind") != "real_holdout"
+        or falsifier_result.get("verdict") != "failed"
+        or falsifier_result.get("passed") is not False
+        or falsifier_result.get("transfer_evidence_admissible") is not False
+    ):
+        return None
+    measurements = {
+        "worker_evidence_sha256": worker_evidence.evidence_digest,
+        "falsifier_result": dict(falsifier_result),
+    }
+    evidence_sha256 = f"sha256:{_sha256(measurements)}"
+    receipt_payload = {
+        "version": 1,
+        "node_id": expected["node_id"],
+        "evidence_sha256": evidence_sha256,
+        "baseline_failure_count": 0,
+        "strong_gate_failure_count": 1,
+    }
+    digest = _sha256(receipt_payload)
+    receipt = FailureEvidenceReceipt(
+        version=1,
+        receipt_id=f"failure_receipt_{digest}",
+        receipt_sha256=f"sha256:{digest}",
+        node_id=str(expected["node_id"]),
+        evidence_sha256=evidence_sha256,
+        baseline_failure_count=0,
+        strong_gate_failure_count=1,
+    )
+    lesson = {
+        "kind": "bound_real_holdout_failure",
+        "attempt_id": expected["attempt_id"],
+        "direction_id": expected["direction_id"],
+        "falsifier_result_sha256": f"sha256:{_sha256(falsifier_result)}",
+    }
+    return ConclusiveFailure(
+        receipt=receipt,
+        private_lesson_sha256=f"sha256:{_sha256(lesson)}",
+    )

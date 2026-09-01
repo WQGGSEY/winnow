@@ -26,7 +26,8 @@
       "type": "string",
       "pattern": "^sha256:[a-f0-9]{64}$"
     },
-    "baseline_failure_count": { "type": "integer", "minimum": 1 }
+    "baseline_failure_count": { "type": "integer", "minimum": 0 },
+    "strong_gate_failure_count": { "type": "integer", "minimum": 1 }
   },
   "additionalProperties": false
 }
