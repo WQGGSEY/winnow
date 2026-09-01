@@ -60,6 +60,18 @@ class UnsafeAddressError(HttpPolicyError):
     pass
 
 
+class ResponseLimitError(HttpPolicyError):
+    def __init__(self, message: str, *, consumed_bytes: int) -> None:
+        if (
+            isinstance(consumed_bytes, bool)
+            or not isinstance(consumed_bytes, int)
+            or consumed_bytes < 0
+        ):
+            raise HttpPolicyError("consumed response bytes are invalid")
+        super().__init__(message)
+        self.consumed_bytes = consumed_bytes
+
+
 Header = tuple[str, str]
 
 
@@ -76,7 +88,11 @@ def _validate_headers(headers: tuple[Header, ...]) -> None:
             raise HttpPolicyError("header name is invalid or duplicated")
         if lowered in _SENSITIVE_HEADERS:
             raise HttpPolicyError("raw secret headers are forbidden")
-        if not isinstance(value, str) or any(character in value for character in "\r\n\0"):
+        if (
+            not isinstance(value, str)
+            or len(value) > 8192
+            or any(character in value for character in "\r\n\0")
+        ):
             raise HttpPolicyError("header value is invalid")
         seen.add(lowered)
 
@@ -120,6 +136,8 @@ def _validate_query_has_no_secret(query: str) -> None:
 def canonical_http_url(value: str) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         raise UnsafeUrlError("URL must be non-empty canonical text")
+    if len(value) > 8192:
+        raise UnsafeUrlError("URL exceeds the safe length limit")
     if "\\" in value or any(ord(character) < 0x20 for character in value):
         raise UnsafeUrlError("URL contains an unsafe character")
     parts = urlsplit(value)
@@ -177,6 +195,7 @@ class HttpRequest:
     url: str
     headers: tuple[Header, ...] = ()
     credential_profile_name: str | None = None
+    approved_peer_ips: tuple[str, ...] = ()
     max_response_bytes: int = 1024 * 1024
     timeout_seconds: float = 30.0
 
@@ -189,6 +208,13 @@ class HttpRequest:
             or self.credential_profile_name != self.credential_profile_name.strip()
         ):
             raise HttpPolicyError("credential profile name is invalid")
+        if not isinstance(self.approved_peer_ips, tuple):
+            raise HttpPolicyError("approved peer IPs must be an immutable tuple")
+        normalized_peers = tuple(
+            dict.fromkeys(require_public_ip(item) for item in self.approved_peer_ips)
+        )
+        if normalized_peers != self.approved_peer_ips:
+            raise HttpPolicyError("approved peer IPs are not canonical")
         if (
             isinstance(self.max_response_bytes, bool)
             or not isinstance(self.max_response_bytes, int)
@@ -232,7 +258,12 @@ class OneHopTransport(Protocol):
 
 
 class DnsResolver(Protocol):
-    def resolve(self, hostname: str, port: int) -> tuple[str, ...]: ...
+    def resolve(
+        self,
+        hostname: str,
+        port: int,
+        timeout_seconds: float,
+    ) -> tuple[str, ...]: ...
 
 
 def require_bounded_response(
@@ -240,7 +271,10 @@ def require_bounded_response(
     response: HttpResponse,
 ) -> HttpResponse:
     if len(response.body) > request.max_response_bytes:
-        raise HttpPolicyError("transport exceeded the response byte limit")
+        raise ResponseLimitError(
+            "transport exceeded the response byte limit",
+            consumed_bytes=len(response.body),
+        )
     return response
 
 
@@ -270,7 +304,12 @@ def require_public_ip(value: str) -> str:
     return address.compressed
 
 
-def resolve_public_endpoint(url: str, resolver: DnsResolver) -> ResolvedEndpoint:
+def resolve_public_endpoint(
+    url: str,
+    resolver: DnsResolver,
+    *,
+    timeout_seconds: float = 30.0,
+) -> ResolvedEndpoint:
     canonical = canonical_http_url(url)
     parts = urlsplit(canonical)
     assert parts.hostname is not None
@@ -278,7 +317,7 @@ def resolve_public_endpoint(url: str, resolver: DnsResolver) -> ResolvedEndpoint
     try:
         literal = ipaddress.ip_address(parts.hostname)
     except ValueError:
-        raw_addresses = resolver.resolve(parts.hostname, port)
+        raw_addresses = resolver.resolve(parts.hostname, port, timeout_seconds)
     else:
         raw_addresses = (literal.compressed,)
     if not isinstance(raw_addresses, tuple) or not raw_addresses:
@@ -299,7 +338,11 @@ def resolve_redirect(current_url: str, location: str) -> str:
         character in location for character in "\r\n\0"
     ):
         raise UnsafeUrlError("redirect Location is invalid")
-    return canonical_http_url(urljoin(canonical_http_url(current_url), location))
+    current = canonical_http_url(current_url)
+    redirected = canonical_http_url(urljoin(current, location))
+    if urlsplit(current).scheme == "https" and urlsplit(redirected).scheme == "http":
+        raise UnsafeUrlError("HTTPS redirects cannot downgrade to HTTP")
+    return redirected
 
 
 @dataclass(frozen=True, slots=True)
@@ -482,6 +525,7 @@ __all__ = [
     "MAX_REDIRECTS",
     "OneHopTransport",
     "ROBOTS_PARSE_LIMIT_BYTES",
+    "ResponseLimitError",
     "ResolvedEndpoint",
     "RobotsDecision",
     "RobotsGroup",

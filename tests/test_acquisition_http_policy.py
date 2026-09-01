@@ -41,7 +41,12 @@ class ScriptedResolver:
         self.answers = answers
         self.queries: list[tuple[str, int]] = []
 
-    def resolve(self, hostname: str, port: int) -> tuple[str, ...]:
+    def resolve(
+        self,
+        hostname: str,
+        port: int,
+        timeout_seconds: float,
+    ) -> tuple[str, ...]:
         self.queries.append((hostname, port))
         return self.answers[(hostname, port)]
 
@@ -187,6 +192,19 @@ def test_one_private_dns_answer_rejects_the_whole_endpoint() -> None:
         resolve_public_endpoint("https://mixed.example/", resolver)
 
 
+def test_request_rejects_non_public_or_noncanonical_approved_peers() -> None:
+    with pytest.raises(UnsafeAddressError):
+        HttpRequest(
+            "https://example.com/",
+            approved_peer_ips=("127.0.0.1",),
+        )
+    with pytest.raises(HttpPolicyError, match="canonical"):
+        HttpRequest(
+            "https://example.com/",
+            approved_peer_ips=("8.8.8.8", "8.8.8.8"),
+        )
+
+
 def test_redirects_resolve_relative_and_cross_origin_locations() -> None:
     assert MAX_REDIRECTS == 5
     assert resolve_redirect("https://example.com/a/b", "../data?q=1") == (
@@ -209,6 +227,11 @@ def test_redirects_resolve_relative_and_cross_origin_locations() -> None:
 def test_redirects_reapply_the_full_url_policy(location: str) -> None:
     with pytest.raises(UnsafeUrlError):
         resolve_redirect("https://example.com/start", location)
+
+
+def test_https_redirect_cannot_downgrade_to_plain_http() -> None:
+    with pytest.raises(UnsafeUrlError, match="downgrade"):
+        resolve_redirect("https://example.com/start", "http://example.com/final")
 
 
 RFC_SIMPLE = b"""\

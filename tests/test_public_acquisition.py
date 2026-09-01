@@ -331,6 +331,7 @@ def test_public_cursor_cannot_promote_unissued_bytes_to_a_manifest(
         adapter_id=None,
         snapshot_id=None,
         provenance="caller asserted",
+        policy_receipt_id="httppolicy_" + "0" * 64,
         license_evidence=None,
         cache_object=seed_receipt.cache_object,
         validation=seed_receipt.validation,
@@ -452,3 +453,21 @@ def test_acquisition_budget_forbids_spending() -> None:
 def test_public_source_rejects_secret_bearing_or_non_http_uris(uri: str) -> None:
     with pytest.raises(AcquisitionContractError, match="public source URI"):
         PublicSource("public_api", uri)
+
+
+def test_credentialed_public_source_requires_https() -> None:
+    with pytest.raises(AcquisitionContractError, match="require HTTPS"):
+        PublicSource(
+            "public_api",
+            "http://example.test/data",
+            credential_profile_name="official-api",
+        )
+
+
+def test_public_source_rejects_oversized_license_evidence() -> None:
+    with pytest.raises(AcquisitionContractError, match="safe limit"):
+        PublicSource(
+            "crawl",
+            "https://example.test/data",
+            license_evidence="x" * 8193,
+        )

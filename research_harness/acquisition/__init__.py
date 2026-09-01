@@ -18,6 +18,7 @@ from .model import (
     ResponseReceipt,
     make_acquisition_command,
 )
+from .live_http import CredentialProvider
 from .service import PublicAcquisition
 
 __all__ = [
@@ -33,6 +34,7 @@ __all__ = [
     "AcquisitionOutcome",
     "AcquisitionStorageError",
     "CacheObject",
+    "CredentialProvider",
     "NeedPlan",
     "PinnedNodeManifest",
     "PublicAcquisition",

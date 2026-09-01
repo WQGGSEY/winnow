@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 from research_harness.orchestrator.blind_reorientation import HardExternalBlockCode
@@ -11,6 +10,17 @@ from .cache import (
     ContentAddressedCache,
     ManifestStore,
 )
+from .http_policy import DnsResolver, OneHopTransport, canonical_http_url
+from .http_receipt import PolicyReceiptStore
+from .http_runtime import (
+    AcquisitionClock,
+    HttpAcquirer,
+    HttpStepCheckpoint,
+    HttpStepComplete,
+    HttpStepRejected,
+    SystemAcquisitionClock,
+)
+from .live_http import CredentialProvider, SocketDnsResolver, StdlibOneHopTransport
 from .model import (
     AcquiredNeed,
     AcquisitionBlocked,
@@ -45,12 +55,58 @@ def _initial_cursor(command: AcquisitionCommand) -> AcquisitionCursor:
 
 
 class PublicAcquisition:
+    @classmethod
+    def live(
+        cls,
+        cache_root: Path,
+        *,
+        credential_provider: CredentialProvider | None = None,
+        clock: AcquisitionClock | None = None,
+        user_agent: str = "ResearchHarness",
+    ) -> PublicAcquisition:
+        return cls(
+            cache_root,
+            transport=StdlibOneHopTransport(
+                credential_provider=credential_provider
+            ),
+            resolver=SocketDnsResolver(),
+            clock=clock,
+            user_agent=user_agent,
+        )
+
     def __init__(
         self,
         cache_root: Path,
+        *,
+        transport: OneHopTransport | None = None,
+        resolver: DnsResolver | None = None,
+        clock: AcquisitionClock | None = None,
+        user_agent: str = "ResearchHarness",
     ) -> None:
-        self._cache = ContentAddressedCache(cache_root)
+        if (transport is None) != (resolver is None):
+            raise AcquisitionContractError(
+                "public acquisition requires both transport and DNS resolver"
+            )
+        self._clock = clock or SystemAcquisitionClock()
+        self._cache = ContentAddressedCache(
+            cache_root,
+            monotonic=self._clock.monotonic,
+        )
         self._manifests = ManifestStore(cache_root, self._cache)
+        self._policy_receipts = PolicyReceiptStore(cache_root)
+        self._http = (
+            HttpAcquirer(
+                transport=transport,
+                resolver=resolver,
+                cache=self._cache,
+                cache_root=cache_root,
+                policy_receipts=self._policy_receipts,
+                clock=self._clock,
+                user_agent=user_agent,
+            )
+            if transport is not None and resolver is not None
+            else None
+        )
 
     def acquire(
         self,
@@ -60,13 +116,13 @@ class PublicAcquisition:
     ) -> AcquisitionOutcome:
         if not isinstance(command, AcquisitionCommand):
             raise AcquisitionContractError("acquire requires an AcquisitionCommand")
-        started_at = time.monotonic()
+        started_at = self._clock.monotonic()
         deadline = started_at + command.budget.max_wall_seconds
         current = cursor or _initial_cursor(command)
         self._validate_cursor(command, current)
         try:
             self._manifests.record_command(command)
-            if time.monotonic() >= deadline:
+            if self._clock.monotonic() >= deadline:
                 return AcquisitionCheckpoint(reason="time_budget", cursor=current)
             existing = self._manifests.load_for_node(
                 command.node_id,
@@ -96,10 +152,13 @@ class PublicAcquisition:
         candidate_index = current.next_candidate_index
         requests_used = current.requests_used
         download_bytes_used = current.download_bytes_used
+        cycle_requests_used = 0
+        cycle_download_bytes_used = 0
+        last_rejection: HttpStepRejected | None = None
 
         while need_index < len(command.needs):
             plan = command.needs[need_index]
-            if time.monotonic() - started_at >= command.budget.max_wall_seconds:
+            if self._clock.monotonic() - started_at >= command.budget.max_wall_seconds:
                 return AcquisitionCheckpoint(
                     reason="time_budget",
                     cursor=self._cursor(
@@ -112,6 +171,21 @@ class PublicAcquisition:
                     ),
                 )
             if candidate_index >= len(plan.candidates):
+                if last_rejection is not None:
+                    return AcquisitionBlocked(
+                        code=last_rejection.code,
+                        required_external_action=(
+                            last_rejection.required_external_action
+                        ),
+                        cursor=self._cursor(
+                            command,
+                            need_index,
+                            candidate_index,
+                            requests_used,
+                            download_bytes_used,
+                            completed,
+                        ),
+                    )
                 return AcquisitionBlocked(
                     code=HardExternalBlockCode.LAWFUL_ACCESS_UNAVAILABLE,
                     required_external_action=(
@@ -129,22 +203,66 @@ class PublicAcquisition:
                 )
             source = plan.candidates[candidate_index]
             if isinstance(source, PublicSource):
-                reason = (
-                    "request_budget"
-                    if command.budget.max_requests == 0
-                    else "generation_retry"
-                )
-                return AcquisitionCheckpoint(
-                    reason=reason,
-                    cursor=self._cursor(
-                        command,
-                        need_index,
-                        candidate_index,
-                        requests_used,
-                        download_bytes_used,
-                        completed,
+                if self._http is None:
+                    reason = (
+                        "request_budget"
+                        if command.budget.max_requests == 0
+                        else "generation_retry"
+                    )
+                    return AcquisitionCheckpoint(
+                        reason=reason,
+                        cursor=self._cursor(
+                            command,
+                            need_index,
+                            candidate_index,
+                            requests_used,
+                            download_bytes_used,
+                            completed,
+                        ),
+                    )
+                result = self._http.acquire(
+                    command=command,
+                    need_index=need_index,
+                    source_candidate_index=candidate_index,
+                    source=source,
+                    deadline=deadline,
+                    request_budget=max(
+                        0,
+                        command.budget.max_requests - cycle_requests_used,
+                    ),
+                    download_budget=max(
+                        0,
+                        command.budget.max_download_bytes
+                        - cycle_download_bytes_used,
                     ),
                 )
+                requests_used += result.requests_used
+                download_bytes_used += result.download_bytes_used
+                cycle_requests_used += result.requests_used
+                cycle_download_bytes_used += result.download_bytes_used
+                if isinstance(result, HttpStepCheckpoint):
+                    return AcquisitionCheckpoint(
+                        reason=result.reason,
+                        cursor=self._cursor(
+                            command,
+                            need_index,
+                            candidate_index,
+                            requests_used,
+                            download_bytes_used,
+                            completed,
+                        ),
+                    )
+                if isinstance(result, HttpStepRejected):
+                    last_rejection = result
+                    candidate_index += 1
+                    continue
+                if not isinstance(result, HttpStepComplete):
+                    raise AssertionError("unsupported HTTP acquisition result")
+                completed.append(result.acquired)
+                need_index += 1
+                candidate_index = 0
+                last_rejection = None
+                continue
             try:
                 acquired = self._acquire_registered(
                     plan.need.description,
@@ -189,6 +307,7 @@ class PublicAcquisition:
             completed.append(acquired)
             need_index += 1
             candidate_index = 0
+            last_rejection = None
 
         manifest = make_manifest(
             command_id=command.command_id,
@@ -210,7 +329,7 @@ class PublicAcquisition:
                     completed,
                 )
             )
-        if time.monotonic() >= deadline:
+        if self._clock.monotonic() >= deadline:
             return AcquisitionCheckpoint(
                 reason="time_budget",
                 cursor=self._cursor(
@@ -288,7 +407,7 @@ class PublicAcquisition:
         ):
             if acquired.description != plan.need.description:
                 raise AcquisitionConflictError("manifest completed a different data need")
-            self._validate_acquired_source(plan, acquired)
+            self._validate_acquired_source(command, plan, acquired)
         return manifest
 
     def _acquire_registered(
@@ -325,6 +444,7 @@ class PublicAcquisition:
             adapter_id=source.adapter_id,
             snapshot_id=source.snapshot_id,
             provenance=source.provenance,
+            policy_receipt_id=None,
             license_evidence=source.license_evidence,
             cache_object=cache_object,
             validation=validation,
@@ -337,8 +457,8 @@ class PublicAcquisition:
             receipt=receipt,
         )
 
-    @staticmethod
     def _validate_cursor(
+        self,
         command: AcquisitionCommand,
         cursor: AcquisitionCursor,
     ) -> None:
@@ -364,10 +484,14 @@ class PublicAcquisition:
         ):
             if acquired.description != plan.need.description:
                 raise AcquisitionConflictError("cursor completed a different data need")
-            PublicAcquisition._validate_acquired_source(plan, acquired)
+            self._validate_acquired_source(command, plan, acquired)
 
-    @staticmethod
-    def _validate_acquired_source(plan: NeedPlan, acquired: AcquiredNeed) -> None:
+    def _validate_acquired_source(
+        self,
+        command: AcquisitionCommand,
+        plan: NeedPlan,
+        acquired: AcquiredNeed,
+    ) -> None:
         if acquired.source_candidate_index >= len(plan.candidates):
             raise AcquisitionConflictError("receipt source candidate is outside the plan")
         source = plan.candidates[acquired.source_candidate_index]
@@ -390,16 +514,33 @@ class PublicAcquisition:
                     "registered receipt does not match its planned source"
                 )
             return
-        if (
-            receipt.source_kind == source.kind
-            and receipt.adapter_id is None
-            and receipt.snapshot_id is None
-            and receipt.credential_profile_name == source.credential_profile_name
-        ):
+        if receipt.policy_receipt_id is None:
             raise AcquisitionConflictError(
                 "public receipts require a durable acquisition policy receipt"
             )
-        raise AcquisitionConflictError("public receipt does not match its planned source")
+        policy = self._policy_receipts.load(receipt.policy_receipt_id)
+        if (
+            receipt.source_kind != source.kind
+            or receipt.adapter_id is not None
+            or receipt.snapshot_id is not None
+            or receipt.credential_profile_name != source.credential_profile_name
+            or policy.command_id != command.command_id
+            or policy.need_index != acquired.need_index
+            or policy.source_candidate_index != acquired.source_candidate_index
+            or policy.source_kind != source.kind
+            or policy.requested_uri != source.uri
+            or policy.final_uri != receipt.source_uri
+            or policy.credential_profile_name != source.credential_profile_name
+            or policy.license_evidence != receipt.license_evidence
+            or policy.cache_object != receipt.cache_object
+            or policy.validation != receipt.validation
+            or policy.missingness != receipt.missingness
+        ):
+            raise AcquisitionConflictError(
+                "public receipt does not match its issued policy receipt"
+            )
+        if canonical_http_url(policy.final_uri) != policy.final_uri:
+            raise AcquisitionConflictError("public receipt final URI is not canonical")
 
     @staticmethod
     def _cursor(

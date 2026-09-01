@@ -25,6 +25,8 @@ MissingnessStatus = Literal["passed", "not_evaluated"]
 RobotsDecision = Literal["not_applicable", "allowed", "denied", "unavailable"]
 
 _SHA256_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
+_HTTP_POLICY_ID_RE = re.compile(r"^httppolicy_[a-f0-9]{64}$")
+_MAX_LICENSE_EVIDENCE_CHARS = 8192
 _ID_PATTERNS = {
     "acquisition command id": re.compile(r"^acqcmd_[a-f0-9]{64}$"),
     "cursor id": re.compile(r"^acqcursor_[a-f0-9]{64}$"),
@@ -165,13 +167,43 @@ class PublicSource:
     uri: str
     credential_profile_name: str | None = None
     license_evidence: str | None = None
+    crawl_max_pages: int = 25
+    crawl_max_depth: int = 1
+    crawl_max_total_bytes: int = 50 * 1024 * 1024
 
     def __post_init__(self) -> None:
         if self.kind not in {"public_api", "public_page", "crawl"}:
             raise AcquisitionContractError(f"unsupported public source {self.kind!r}")
-        _public_uri(self.uri)
+        uri = _public_uri(self.uri)
         _optional_text(self.credential_profile_name, "credential profile name")
         _optional_text(self.license_evidence, "license evidence")
+        if (
+            self.license_evidence is not None
+            and len(self.license_evidence) > _MAX_LICENSE_EVIDENCE_CHARS
+        ):
+            raise AcquisitionContractError("license evidence exceeds its safe limit")
+        _positive(self.crawl_max_pages, "crawl maximum pages")
+        _nonnegative(self.crawl_max_depth, "crawl maximum depth")
+        _positive(self.crawl_max_total_bytes, "crawl maximum total bytes")
+        if self.crawl_max_pages > 1000 or self.crawl_max_depth > 10:
+            raise AcquisitionContractError("crawl bounds exceed the safe maximum")
+        if self.crawl_max_total_bytes > 1024 * 1024 * 1024:
+            raise AcquisitionContractError("crawl byte bound exceeds the safe maximum")
+        if self.kind != "crawl" and (
+            self.crawl_max_pages != 25
+            or self.crawl_max_depth != 1
+            or self.crawl_max_total_bytes != 50 * 1024 * 1024
+        ):
+            raise AcquisitionContractError(
+                "crawl bounds can only configure crawl sources"
+            )
+        if (
+            self.credential_profile_name is not None
+            and urlsplit(uri).scheme != "https"
+        ):
+            raise AcquisitionContractError(
+                "credentialed public sources require HTTPS"
+            )
 
 
 SourceCandidate: TypeAlias = RegisteredSource | PublicSource
@@ -307,6 +339,7 @@ class ResponseReceipt:
     adapter_id: str | None
     snapshot_id: str | None
     provenance: str
+    policy_receipt_id: str | None
     license_evidence: str | None
     cache_object: CacheObject
     validation: ValidationReport
@@ -338,6 +371,18 @@ class ResponseReceipt:
                 "registered receipt requires adapter and snapshot identities"
             )
         _text(self.provenance, "source provenance")
+        if self.source_kind == "registered_adapter":
+            if self.policy_receipt_id is not None:
+                raise AcquisitionContractError(
+                    "registered receipt cannot contain an HTTP policy receipt"
+                )
+        elif (
+            not isinstance(self.policy_receipt_id, str)
+            or _HTTP_POLICY_ID_RE.fullmatch(self.policy_receipt_id) is None
+        ):
+            raise AcquisitionContractError(
+                "public receipt requires an HTTP policy receipt"
+            )
         _optional_text(self.license_evidence, "license evidence")
         if not isinstance(self.cache_object, CacheObject):
             raise AcquisitionContractError("receipt cache object is invalid")
@@ -489,6 +534,9 @@ def _source_payload(source: SourceCandidate) -> dict[str, object]:
         "uri": source.uri,
         "credential_profile_name": source.credential_profile_name,
         "license_evidence": source.license_evidence,
+        "crawl_max_pages": source.crawl_max_pages,
+        "crawl_max_depth": source.crawl_max_depth,
+        "crawl_max_total_bytes": source.crawl_max_total_bytes,
     }
 
 
@@ -595,7 +643,10 @@ def _parse_source(value: object) -> SourceCandidate:
             retrieved_at=value["retrieved_at"],
             license_evidence=value["license_evidence"],
         )
-    required = {"kind", "uri", "credential_profile_name", "license_evidence"}
+    required = {
+        "kind", "uri", "credential_profile_name", "license_evidence",
+        "crawl_max_pages", "crawl_max_depth", "crawl_max_total_bytes",
+    }
     if set(value) != required:
         raise AcquisitionContractError("public source has an unsupported shape")
     return PublicSource(
@@ -603,6 +654,9 @@ def _parse_source(value: object) -> SourceCandidate:
         uri=value["uri"],
         credential_profile_name=value["credential_profile_name"],
         license_evidence=value["license_evidence"],
+        crawl_max_pages=value["crawl_max_pages"],
+        crawl_max_depth=value["crawl_max_depth"],
+        crawl_max_total_bytes=value["crawl_max_total_bytes"],
     )
 
 
@@ -663,6 +717,7 @@ def _receipt_payload(value: ResponseReceipt) -> dict[str, object]:
         adapter_id=value.adapter_id,
         snapshot_id=value.snapshot_id,
         provenance=value.provenance,
+        policy_receipt_id=value.policy_receipt_id,
         license_evidence=value.license_evidence,
         cache_object=value.cache_object,
         validation=value.validation,
@@ -681,6 +736,7 @@ def _receipt_fields_payload(
     adapter_id: str | None,
     snapshot_id: str | None,
     provenance: str,
+    policy_receipt_id: str | None,
     license_evidence: str | None,
     cache_object: CacheObject,
     validation: ValidationReport,
@@ -696,6 +752,7 @@ def _receipt_fields_payload(
         "adapter_id": adapter_id,
         "snapshot_id": snapshot_id,
         "provenance": provenance,
+        "policy_receipt_id": policy_receipt_id,
         "license_evidence": license_evidence,
         "cache_object": _cache_payload(cache_object),
         "validation": _validation_payload(validation),
@@ -718,6 +775,7 @@ def make_response_receipt(
     adapter_id: str | None,
     snapshot_id: str | None,
     provenance: str,
+    policy_receipt_id: str | None,
     license_evidence: str | None,
     cache_object: CacheObject,
     validation: ValidationReport,
@@ -734,6 +792,7 @@ def make_response_receipt(
         adapter_id=adapter_id,
         snapshot_id=snapshot_id,
         provenance=provenance,
+        policy_receipt_id=policy_receipt_id,
         license_evidence=license_evidence,
         cache_object=cache_object,
         validation=validation,
@@ -750,6 +809,7 @@ def make_response_receipt(
         adapter_id=adapter_id,
         snapshot_id=snapshot_id,
         provenance=provenance,
+        policy_receipt_id=policy_receipt_id,
         license_evidence=license_evidence,
         cache_object=cache_object,
         validation=validation,
@@ -921,7 +981,8 @@ def _parse_receipt(value: object) -> ResponseReceipt:
     required = {
         "receipt_id", "source_kind", "source_uri", "retrieved_at",
         "robots_decision", "rate_limit_events", "credential_profile_name",
-        "adapter_id", "snapshot_id", "provenance", "license_evidence",
+        "adapter_id", "snapshot_id", "provenance", "policy_receipt_id",
+        "license_evidence",
         "cache_object", "validation", "missingness",
     }
     if set(value) != required:
@@ -945,6 +1006,7 @@ def _parse_receipt(value: object) -> ResponseReceipt:
         adapter_id=value["adapter_id"],
         snapshot_id=value["snapshot_id"],
         provenance=value["provenance"],
+        policy_receipt_id=value["policy_receipt_id"],
         license_evidence=value["license_evidence"],
         cache_object=CacheObject(**cache),
         validation=ValidationReport(**validation),

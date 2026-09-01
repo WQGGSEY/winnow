@@ -8,8 +8,9 @@ import re
 import shutil
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Protocol
 
 from research_harness.data_adapters import AdapterError
 
@@ -39,8 +40,20 @@ class AcquisitionDeadlineExceeded(TimeoutError):
     pass
 
 
-def _check_deadline(deadline: float | None) -> None:
-    if deadline is not None and time.monotonic() >= deadline:
+class AcquisitionDownloadExceeded(ValueError):
+    pass
+
+
+class BinaryReader(Protocol):
+    def read(self, size: int = -1, /) -> bytes: ...
+
+
+def _check_deadline(
+    deadline: float | None,
+    *,
+    monotonic: Callable[[], float],
+) -> None:
+    if deadline is not None and monotonic() >= deadline:
         raise AcquisitionDeadlineExceeded("acquisition wall-time budget exhausted")
 
 
@@ -52,18 +65,24 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def _copy_file(source: Path, target: Path, *, deadline: float | None) -> None:
+def _copy_file(
+    source: Path,
+    target: Path,
+    *,
+    deadline: float | None,
+    monotonic: Callable[[], float],
+) -> None:
     with source.open("rb") as reader, target.open("xb") as writer:
         while True:
-            _check_deadline(deadline)
+            _check_deadline(deadline, monotonic=monotonic)
             chunk = reader.read(1024 * 1024)
             if not chunk:
                 break
             writer.write(chunk)
-            _check_deadline(deadline)
+            _check_deadline(deadline, monotonic=monotonic)
         writer.flush()
         os.fsync(writer.fileno())
-        _check_deadline(deadline)
+        _check_deadline(deadline, monotonic=monotonic)
 
 
 def _copy_directory(
@@ -71,27 +90,34 @@ def _copy_directory(
     target: Path,
     *,
     deadline: float | None,
+    monotonic: Callable[[], float],
 ) -> None:
     target.mkdir()
-    for entry in _walk_files(source, deadline=deadline):
+    for entry in _walk_files(source, deadline=deadline, monotonic=monotonic):
         destination = target / entry.relative_to(source)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        _copy_file(entry, destination, deadline=deadline)
-    _fsync_directory_tree(target, deadline=deadline)
+        _copy_file(
+            entry,
+            destination,
+            deadline=deadline,
+            monotonic=monotonic,
+        )
+    _fsync_directory_tree(target, deadline=deadline, monotonic=monotonic)
 
 
 def _directory_entries(
     directory: Path,
     *,
     deadline: float | None,
+    monotonic: Callable[[], float],
 ) -> list[os.DirEntry[str]]:
     entries: list[os.DirEntry[str]] = []
     with os.scandir(directory) as scanner:
         for entry in scanner:
-            _check_deadline(deadline)
+            _check_deadline(deadline, monotonic=monotonic)
             entries.append(entry)
     entries.sort(key=lambda item: item.name)
-    _check_deadline(deadline)
+    _check_deadline(deadline, monotonic=monotonic)
     return entries
 
 
@@ -99,11 +125,16 @@ def _walk_files(
     directory: Path,
     *,
     deadline: float | None,
+    monotonic: Callable[[], float],
 ) -> Iterator[Path]:
     frontier: list[tuple[str, bool, Path]] = []
 
     def enqueue(children: Path, prefix: str) -> None:
-        for entry in _directory_entries(children, deadline=deadline):
+        for entry in _directory_entries(
+            children,
+            deadline=deadline,
+            monotonic=monotonic,
+        ):
             path = Path(entry.path)
             relative = f"{prefix}/{entry.name}" if prefix else entry.name
             if entry.is_symlink():
@@ -119,7 +150,7 @@ def _walk_files(
 
     enqueue(directory, "")
     while frontier:
-        _check_deadline(deadline)
+        _check_deadline(deadline, monotonic=monotonic)
         relative, is_directory, path = heapq.heappop(frontier)
         if is_directory:
             enqueue(path, relative)
@@ -131,31 +162,41 @@ def _fsync_directory_tree(
     directory: Path,
     *,
     deadline: float | None,
+    monotonic: Callable[[], float],
 ) -> None:
-    for entry in _directory_entries(directory, deadline=deadline):
-        _check_deadline(deadline)
+    for entry in _directory_entries(
+        directory,
+        deadline=deadline,
+        monotonic=monotonic,
+    ):
+        _check_deadline(deadline, monotonic=monotonic)
         if entry.is_dir(follow_symlinks=False):
-            _fsync_directory_tree(Path(entry.path), deadline=deadline)
+            _fsync_directory_tree(
+                Path(entry.path),
+                deadline=deadline,
+                monotonic=monotonic,
+            )
     _fsync_directory(directory)
-    _check_deadline(deadline)
+    _check_deadline(deadline, monotonic=monotonic)
 
 
 def _fingerprint_file(
     path: Path,
     *,
     deadline: float | None,
+    monotonic: Callable[[], float],
 ) -> tuple[str, int]:
     digest = hashlib.sha256()
     size = 0
     with path.open("rb") as handle:
         while True:
-            _check_deadline(deadline)
+            _check_deadline(deadline, monotonic=monotonic)
             chunk = handle.read(1024 * 1024)
             if not chunk:
                 break
             digest.update(chunk)
             size += len(chunk)
-            _check_deadline(deadline)
+            _check_deadline(deadline, monotonic=monotonic)
     return digest.hexdigest(), size
 
 
@@ -163,6 +204,7 @@ def _fingerprint_path(
     path: Path,
     *,
     deadline: float | None,
+    monotonic: Callable[[], float],
 ) -> tuple[str, int, int]:
     path = path.expanduser()
     if path.is_symlink():
@@ -171,15 +213,23 @@ def _fingerprint_path(
     if not path.exists():
         raise AdapterError(f"source does not exist or is a symlink: {path}")
     if path.is_file():
-        digest, size = _fingerprint_file(path, deadline=deadline)
+        digest, size = _fingerprint_file(
+            path,
+            deadline=deadline,
+            monotonic=monotonic,
+        )
         return digest, size, 1
     if not path.is_dir():
         raise AdapterError(f"source is not a regular file or directory: {path}")
     tree = hashlib.sha256()
     total_size = 0
     count = 0
-    for entry in _walk_files(path, deadline=deadline):
-        file_digest, size = _fingerprint_file(entry, deadline=deadline)
+    for entry in _walk_files(path, deadline=deadline, monotonic=monotonic):
+        file_digest, size = _fingerprint_file(
+            entry,
+            deadline=deadline,
+            monotonic=monotonic,
+        )
         relative = entry.relative_to(path).as_posix()
         tree.update(f"{relative}\0{size}\0{file_digest}\n".encode("utf-8"))
         total_size += size
@@ -195,14 +245,69 @@ def _remove_temporary(path: Path) -> None:
 
 
 class ContentAddressedCache:
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
         self.root = root.resolve()
         self.objects = self.root / "objects" / "sha256"
+        self._monotonic = monotonic
         self.objects.mkdir(parents=True, exist_ok=True)
 
     def object_path(self, value: CacheObject) -> Path:
         suffix = ".file" if value.object_kind == "file" else ".directory"
         return self.objects / f"{value.content_sha256[7:]}{suffix}"
+
+    def put_stream(
+        self,
+        reader: BinaryReader,
+        *,
+        max_bytes: int,
+        deadline: float | None,
+    ) -> CacheObject:
+        temporary = self.objects / f".incoming.{uuid.uuid4().hex}.tmp"
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            with temporary.open("xb") as writer:
+                while True:
+                    _check_deadline(deadline, monotonic=self._monotonic)
+                    chunk = reader.read(min(1024 * 1024, max_bytes - size + 1))
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise AcquisitionDownloadExceeded(
+                            "response exceeds the cycle download budget"
+                        )
+                    digest.update(chunk)
+                    writer.write(chunk)
+                    _check_deadline(deadline, monotonic=self._monotonic)
+                writer.flush()
+                os.fsync(writer.fileno())
+            value = CacheObject(
+                content_sha256=f"sha256:{digest.hexdigest()}",
+                size_bytes=size,
+                entry_count=1,
+                object_kind="file",
+            )
+            target = self.object_path(value)
+            try:
+                os.link(temporary, target)
+            except FileExistsError:
+                self.verify(value, deadline=deadline)
+            temporary.unlink()
+            _fsync_directory(self.objects)
+            _check_deadline(deadline, monotonic=self._monotonic)
+            return value
+        except (AcquisitionDeadlineExceeded, AcquisitionDownloadExceeded):
+            _remove_temporary(temporary)
+            raise
+        except OSError as exc:
+            _remove_temporary(temporary)
+            raise AcquisitionStorageError(str(exc)) from exc
 
     def put_registered(
         self,
@@ -215,7 +320,11 @@ class ContentAddressedCache:
     ) -> CacheObject:
         source = source.expanduser()
         try:
-            digest, size, count = _fingerprint_path(source, deadline=deadline)
+            digest, size, count = _fingerprint_path(
+                source,
+                deadline=deadline,
+                monotonic=self._monotonic,
+            )
         except AcquisitionDeadlineExceeded:
             raise
         except (AdapterError, OSError) as exc:
@@ -243,12 +352,23 @@ class ContentAddressedCache:
         temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
         try:
             if object_kind == "directory":
-                _copy_directory(source, temporary, deadline=deadline)
+                _copy_directory(
+                    source,
+                    temporary,
+                    deadline=deadline,
+                    monotonic=self._monotonic,
+                )
             else:
-                _copy_file(source, temporary, deadline=deadline)
+                _copy_file(
+                    source,
+                    temporary,
+                    deadline=deadline,
+                    monotonic=self._monotonic,
+                )
             actual, actual_size, actual_count = _fingerprint_path(
                 temporary,
                 deadline=deadline,
+                monotonic=self._monotonic,
             )
             if (actual, actual_size, actual_count) != (digest, size, count):
                 raise AcquisitionStorageError("cache copy changed the registered content")
@@ -258,7 +378,7 @@ class ContentAddressedCache:
                 _remove_temporary(temporary)
                 self.verify(value, deadline=deadline)
             _fsync_directory(self.objects)
-            _check_deadline(deadline)
+            _check_deadline(deadline, monotonic=self._monotonic)
             return value
         except AcquisitionDeadlineExceeded:
             _remove_temporary(temporary)
@@ -277,7 +397,11 @@ class ContentAddressedCache:
     ) -> Path:
         path = self.object_path(value)
         try:
-            digest, size, count = _fingerprint_path(path, deadline=deadline)
+            digest, size, count = _fingerprint_path(
+                path,
+                deadline=deadline,
+                monotonic=self._monotonic,
+            )
         except AcquisitionDeadlineExceeded:
             raise
         except (AdapterError, OSError) as exc:
