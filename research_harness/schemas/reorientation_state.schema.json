@@ -1,0 +1,327 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/reorientation_state.schema.json",
+  "title": "ReorientationState",
+  "type": "object",
+  "required": ["version", "contract_id", "revision", "closed_attempts", "phase"],
+  "properties": {
+    "version": { "type": "integer", "enum": [2] },
+    "contract_id": { "type": "string", "pattern": "^contract_[a-f0-9]{64}$" },
+    "revision": { "type": "integer", "minimum": 0 },
+    "closed_attempts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["attempt", "failure_receipt_sha256", "private_lesson_sha256"],
+        "properties": {
+          "attempt": {
+            "type": "object",
+            "required": ["attempt_id", "direction_id", "fingerprint_id", "ordinal"],
+            "properties": {
+              "attempt_id": { "type": "string", "pattern": "^attempt_[A-Za-z0-9_-]+$" },
+              "direction_id": { "type": "string", "pattern": "^direction_[a-f0-9]{64}$" },
+              "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+              "ordinal": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": false
+          },
+          "failure_receipt_sha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+          "private_lesson_sha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "phase": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind"],
+          "properties": { "kind": { "const": "seeking" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "reservation"],
+          "properties": {
+            "kind": { "const": "generation_reserved" },
+            "reservation": {
+              "type": "object",
+              "required": ["kind", "reservation_id", "expected_revision", "request_digest"],
+              "properties": {
+                "kind": { "const": "generation" },
+                "reservation_id": { "type": "string", "pattern": "^reservation_[a-f0-9]{64}$" },
+                "expected_revision": { "type": "integer", "minimum": 0 },
+                "request_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "active_attempt", "reservation"],
+          "properties": {
+            "kind": { "const": "acquisition_reserved" },
+            "active_attempt": {
+              "type": "object",
+              "required": ["attempt_id", "direction_id", "fingerprint_id", "ordinal"],
+              "properties": {
+                "attempt_id": { "type": "string", "pattern": "^attempt_[A-Za-z0-9_-]+$" },
+                "direction_id": { "type": "string", "pattern": "^direction_[a-f0-9]{64}$" },
+                "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                "ordinal": { "type": "integer", "minimum": 0 }
+              },
+              "additionalProperties": false
+            },
+            "reservation": {
+              "type": "object",
+              "required": ["kind", "reservation_id", "expected_revision", "request_digest"],
+              "properties": {
+                "kind": { "const": "acquisition" },
+                "reservation_id": { "type": "string", "pattern": "^reservation_[a-f0-9]{64}$" },
+                "expected_revision": { "type": "integer", "minimum": 0 },
+                "request_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "active_attempt"],
+          "properties": {
+            "kind": { "const": "awaiting_evidence" },
+            "active_attempt": {
+              "type": "object",
+              "required": ["attempt_id", "direction_id", "fingerprint_id", "ordinal"],
+              "properties": {
+                "attempt_id": { "type": "string", "pattern": "^attempt_[A-Za-z0-9_-]+$" },
+                "direction_id": { "type": "string", "pattern": "^direction_[a-f0-9]{64}$" },
+                "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                "ordinal": { "type": "integer", "minimum": 0 }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "checkpoint", "continuation"],
+          "properties": {
+            "kind": { "const": "checkpointed" },
+            "checkpoint": {
+              "type": "object",
+              "required": ["checkpoint_id", "reason", "continuation_digest"],
+              "properties": {
+                "checkpoint_id": { "type": "string", "pattern": "^checkpoint_[a-f0-9]{64}$" },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "time_budget",
+                    "cost_budget",
+                    "download_budget",
+                    "rate_limited",
+                    "transient_network",
+                    "generation_retry",
+                    "inconclusive_evidence"
+                  ]
+                },
+                "continuation_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+              },
+              "additionalProperties": false
+            },
+            "continuation": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["kind"],
+                  "properties": { "kind": { "const": "seeking" } },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": ["kind", "reservation"],
+                  "properties": {
+                    "kind": { "const": "generation_reserved" },
+                    "reservation": {
+                      "type": "object",
+                      "required": ["kind", "reservation_id", "expected_revision", "request_digest"],
+                      "properties": {
+                        "kind": { "const": "generation" },
+                        "reservation_id": { "type": "string", "pattern": "^reservation_[a-f0-9]{64}$" },
+                        "expected_revision": { "type": "integer", "minimum": 0 },
+                        "request_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": ["kind", "active_attempt", "reservation"],
+                  "properties": {
+                    "kind": { "const": "acquisition_reserved" },
+                    "active_attempt": {
+                      "type": "object",
+                      "required": ["attempt_id", "direction_id", "fingerprint_id", "ordinal"],
+                      "properties": {
+                        "attempt_id": { "type": "string", "pattern": "^attempt_[A-Za-z0-9_-]+$" },
+                        "direction_id": { "type": "string", "pattern": "^direction_[a-f0-9]{64}$" },
+                        "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                        "ordinal": { "type": "integer", "minimum": 0 }
+                      },
+                      "additionalProperties": false
+                    },
+                    "reservation": {
+                      "type": "object",
+                      "required": ["kind", "reservation_id", "expected_revision", "request_digest"],
+                      "properties": {
+                        "kind": { "const": "acquisition" },
+                        "reservation_id": { "type": "string", "pattern": "^reservation_[a-f0-9]{64}$" },
+                        "expected_revision": { "type": "integer", "minimum": 0 },
+                        "request_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": ["kind", "active_attempt"],
+                  "properties": {
+                    "kind": { "const": "awaiting_evidence" },
+                    "active_attempt": {
+                      "type": "object",
+                      "required": ["attempt_id", "direction_id", "fingerprint_id", "ordinal"],
+                      "properties": {
+                        "attempt_id": { "type": "string", "pattern": "^attempt_[A-Za-z0-9_-]+$" },
+                        "direction_id": { "type": "string", "pattern": "^direction_[a-f0-9]{64}$" },
+                        "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                        "ordinal": { "type": "integer", "minimum": 0 }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "strong_result_receipt_sha256"],
+          "properties": {
+            "kind": { "const": "goal_achieved" },
+            "strong_result_receipt_sha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "code", "required_external_action", "continuation"],
+          "properties": {
+            "kind": { "const": "hard_external_block" },
+            "code": {
+              "type": "string",
+              "enum": [
+                "auth_required",
+                "lawful_access_unavailable",
+                "legal_access_denied",
+                "storage_unavailable",
+                "operator_scope_conflict"
+              ]
+            },
+            "required_external_action": { "type": "string", "minLength": 1 },
+            "continuation": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["kind"],
+                  "properties": { "kind": { "const": "seeking" } },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": ["kind", "reservation"],
+                  "properties": {
+                    "kind": { "const": "generation_reserved" },
+                    "reservation": {
+                      "type": "object",
+                      "required": ["kind", "reservation_id", "expected_revision", "request_digest"],
+                      "properties": {
+                        "kind": { "const": "generation" },
+                        "reservation_id": { "type": "string", "pattern": "^reservation_[a-f0-9]{64}$" },
+                        "expected_revision": { "type": "integer", "minimum": 0 },
+                        "request_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": ["kind", "active_attempt", "reservation"],
+                  "properties": {
+                    "kind": { "const": "acquisition_reserved" },
+                    "active_attempt": {
+                      "type": "object",
+                      "required": ["attempt_id", "direction_id", "fingerprint_id", "ordinal"],
+                      "properties": {
+                        "attempt_id": { "type": "string", "pattern": "^attempt_[A-Za-z0-9_-]+$" },
+                        "direction_id": { "type": "string", "pattern": "^direction_[a-f0-9]{64}$" },
+                        "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                        "ordinal": { "type": "integer", "minimum": 0 }
+                      },
+                      "additionalProperties": false
+                    },
+                    "reservation": {
+                      "type": "object",
+                      "required": ["kind", "reservation_id", "expected_revision", "request_digest"],
+                      "properties": {
+                        "kind": { "const": "acquisition" },
+                        "reservation_id": { "type": "string", "pattern": "^reservation_[a-f0-9]{64}$" },
+                        "expected_revision": { "type": "integer", "minimum": 0 },
+                        "request_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": ["kind", "active_attempt"],
+                  "properties": {
+                    "kind": { "const": "awaiting_evidence" },
+                    "active_attempt": {
+                      "type": "object",
+                      "required": ["attempt_id", "direction_id", "fingerprint_id", "ordinal"],
+                      "properties": {
+                        "attempt_id": { "type": "string", "pattern": "^attempt_[A-Za-z0-9_-]+$" },
+                        "direction_id": { "type": "string", "pattern": "^direction_[a-f0-9]{64}$" },
+                        "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                        "ordinal": { "type": "integer", "minimum": 0 }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

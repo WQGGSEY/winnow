@@ -52,6 +52,9 @@ SCHEMA_FILES = {
     "falsifier_result": "falsifier_result.schema.json",
     "frozen_question": "frozen_question.schema.json",
     "construct_adversary_report": "construct_adversary_report.schema.json",
+    "solution_contract": "solution_contract.schema.json",
+    "research_goal": "research_goal.schema.json",
+    "reorientation_state": "reorientation_state.schema.json",
 }
 
 
@@ -113,6 +116,32 @@ def _matches_type(data: Any, expected: str) -> bool:
     return False
 
 
+def _matches_const(data: Any, expected: Any) -> bool:
+    if isinstance(data, bool) or isinstance(expected, bool):
+        return (
+            isinstance(data, bool)
+            and isinstance(expected, bool)
+            and data == expected
+        )
+    if (
+        isinstance(data, (int, float))
+        and not isinstance(data, bool)
+        and isinstance(expected, (int, float))
+        and not isinstance(expected, bool)
+    ):
+        return data == expected
+    if isinstance(data, list) and isinstance(expected, list):
+        return len(data) == len(expected) and all(
+            _matches_const(item, expected[index])
+            for index, item in enumerate(data)
+        )
+    if isinstance(data, dict) and isinstance(expected, dict):
+        return data.keys() == expected.keys() and all(
+            _matches_const(data[key], expected[key]) for key in data
+        )
+    return type(data) is type(expected) and data == expected
+
+
 def _validate(schema: dict[str, Any], data: Any, path: str) -> None:
     if not schema:
         return
@@ -125,6 +154,24 @@ def _validate(schema: dict[str, Any], data: Any, path: str) -> None:
             expected = " | ".join(expected_types)
             raise SchemaValidationError(
                 f"{path}: expected {expected}, got {_type_name(data)}"
+            )
+
+    if "const" in schema and not _matches_const(data, schema["const"]):
+        raise SchemaValidationError(
+            f"{path}: expected constant {schema['const']!r}, got {data!r}"
+        )
+
+    if "oneOf" in schema:
+        matches = 0
+        for branch in schema["oneOf"]:
+            try:
+                _validate(branch, data, path)
+            except SchemaValidationError:
+                continue
+            matches += 1
+        if matches != 1:
+            raise SchemaValidationError(
+                f"{path}: expected exactly one oneOf branch, matched {matches}"
             )
 
     if "enum" in schema and data not in schema["enum"]:

@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/research_goal.schema.json",
+  "title": "ResearchGoal",
+  "type": "object",
+  "required": [
+    "id",
+    "question",
+    "bar",
+    "bar_digest",
+    "source",
+    "strong_completion_blocked"
+  ],
+  "properties": {
+    "id": { "type": "string", "pattern": "^goal_[a-f0-9]{64}$" },
+    "question": { "type": "string", "minLength": 1 },
+    "bar": {
+      "type": "object",
+      "required": [
+        "claim_under_test",
+        "mandatory_baselines",
+        "success_criteria",
+        "disproof_conditions",
+        "operator_requirements",
+        "target_scope",
+        "external_falsifier"
+      ],
+      "properties": {
+        "claim_under_test": { "type": "string", "minLength": 1 },
+        "mandatory_baselines": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "success_criteria": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "disproof_conditions": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "operator_requirements": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "target_scope": {
+          "type": "string",
+          "enum": ["deployment", "feasibility", "directional"]
+        },
+        "external_falsifier": {
+          "type": "object",
+          "required": ["kind", "holdout_source_id", "predicate", "registered_by"],
+          "properties": {
+            "kind": { "type": "string", "enum": ["real_holdout"] },
+            "holdout_source_id": { "type": "string", "minLength": 1 },
+            "predicate": {
+              "type": "object",
+              "required": ["metric", "op", "threshold"],
+              "properties": {
+                "metric": { "type": "string", "minLength": 1 },
+                "op": { "type": "string", "enum": [">=", ">", "<=", "<", "=="] },
+                "threshold": { "type": "number" }
+              },
+              "additionalProperties": false
+            },
+            "registered_by": {
+              "type": "string",
+              "enum": ["operator", "supervisor_bootstrap"]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "bar_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "source": { "type": "string", "enum": ["pre_generation"] },
+    "strong_completion_blocked": { "type": "boolean" }
+  },
+  "additionalProperties": false
+}
