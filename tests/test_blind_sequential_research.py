@@ -18,6 +18,7 @@ from research_harness.acquisition.model import make_cursor, make_manifest
 from research_harness.orchestrator.blind_reorientation import (
     AcquisitionReserved,
     Checkpointed,
+    GoalAchieved,
     HardExternalBlockCode,
     ReorientationState,
     Seeking,
@@ -27,6 +28,8 @@ from research_harness.orchestrator.blind_reorientation import (
 from research_harness.orchestrator.blind_sequential_research import (
     BlindSequentialResearch,
     BlindSequentialResearchError,
+    VerifiedStrongResult,
+    resolve_strong_result_binding,
 )
 from research_harness.orchestrator.direction_generation import (
     DirectionFingerprint,
@@ -174,6 +177,23 @@ class _Acquisition:
         return self.last_manifest
 
 
+class _StrongVerifier:
+    def __init__(self) -> None:
+        self.bindings = []
+
+    def verify(self, binding):
+        self.bindings.append(binding)
+        return VerifiedStrongResult(
+            binding=binding,
+            receipt_sha256="sha256:" + "f" * 64,
+        )
+
+
+class _RejectStrongVerifier:
+    def verify(self, binding):
+        return None
+
+
 @contextmanager
 def _writer_lock():
     yield
@@ -251,6 +271,7 @@ def _engine(
     *,
     writer_lock=_writer_lock,
     assessor=None,
+    strong_result_verifier=None,
 ):
     thread_dir = tmp_path / "runs" / "threads" / "thread_test"
     tree = thread_dir / "production" / "tree"
@@ -272,6 +293,7 @@ def _engine(
         direction_generator=generator,
         structural_assessor=assessor or _Assessor(),
         acquisition=acquisition,
+        strong_result_verifier=strong_result_verifier,
         perspective_seed=73,
     )
 
@@ -308,6 +330,148 @@ def test_generation_is_blind_and_command_retry_is_idempotent(tmp_path: Path) -> 
     state = engine.read_state()
     assert state is not None
     assert isinstance(state.phase, AcquisitionReserved)
+
+
+def test_verified_strong_result_commits_active_binding_as_terminal(
+    tmp_path: Path,
+) -> None:
+    acquisition = _Acquisition()
+    verifier = _StrongVerifier()
+    engine = _engine(
+        tmp_path,
+        _Generator(_draft("first")),
+        acquisition,
+        strong_result_verifier=verifier,
+    )
+    direction_result = engine.advance_research(command_id="cycle-1")
+    command = _acquisition_command(direction_result)
+    manifest = make_manifest(
+        command_id=command.command_id,
+        node_id=command.node_id,
+        attempt_id=command.attempt_id,
+        direction_id=command.direction.direction_id,
+        acquired_needs=(),
+    )
+    acquisition.outcomes.append(AcquisitionComplete(manifest))
+    engine.advance_research(
+        command_id="cycle-2",
+        acquisition_command=command,
+    )
+
+    result = engine.advance_research(command_id="cycle-3")
+
+    state = engine.read_state()
+    assert state is not None
+    assert isinstance(state.phase, GoalAchieved)
+    assert result == {
+        "status": "goal_achieved",
+        "attempt_id": command.attempt_id,
+        "node_id": command.node_id,
+        "strong_result_receipt_sha256": "sha256:" + "f" * 64,
+    }
+    assert verifier.bindings[0].contract_id == _contract().contract_id
+    assert verifier.bindings[0].manifest_id == manifest.manifest_id
+
+
+def test_requested_node_cannot_hide_a_second_active_attempt_node(
+    tmp_path: Path,
+) -> None:
+    acquisition = _Acquisition()
+    engine = _engine(tmp_path, _Generator(_draft("first")), acquisition)
+    direction_result = engine.advance_research(command_id="cycle-1")
+    command = _acquisition_command(direction_result)
+    manifest = make_manifest(
+        command_id=command.command_id,
+        node_id=command.node_id,
+        attempt_id=command.attempt_id,
+        direction_id=command.direction.direction_id,
+        acquired_needs=(),
+    )
+    acquisition.outcomes.append(AcquisitionComplete(manifest))
+    engine.advance_research(
+        command_id="cycle-2",
+        acquisition_command=command,
+    )
+    state = engine.read_state()
+    assert state is not None
+    attempts = json.loads(engine.paths.node_attempts.read_text(encoding="utf-8"))
+    attempts["nodes"]["n_duplicate"] = dict(
+        attempts["nodes"][command.node_id]
+    )
+
+    with pytest.raises(
+        BlindSequentialResearchError,
+        match="exactly one materialized node",
+    ):
+        resolve_strong_result_binding(
+            state,
+            attempts,
+            node_id=command.node_id,
+        )
+
+    del attempts["nodes"]["n_duplicate"]
+    with pytest.raises(
+        BlindSequentialResearchError,
+        match="requested node is not",
+    ):
+        resolve_strong_result_binding(
+            state,
+            attempts,
+            node_id="n_other",
+        )
+
+
+def test_expected_revision_prevents_stale_supervisor_advance(tmp_path: Path) -> None:
+    generator = _Generator(_draft("unused"))
+    engine = _engine(tmp_path, generator, _Acquisition())
+
+    result = engine.advance_research(
+        command_id="stale-supervisor",
+        expected_revision=1,
+    )
+
+    assert result == {
+        "status": "state_changed",
+        "expected_revision": 1,
+        "actual_revision": 0,
+    }
+    assert generator.calls == []
+
+
+def test_terminal_only_advance_does_not_fall_through_after_evidence_race(
+    tmp_path: Path,
+) -> None:
+    acquisition = _Acquisition()
+    engine = _engine(
+        tmp_path,
+        _Generator(_draft("first")),
+        acquisition,
+        strong_result_verifier=_RejectStrongVerifier(),
+    )
+    direction_result = engine.advance_research(command_id="cycle-1")
+    command = _acquisition_command(direction_result)
+    manifest = make_manifest(
+        command_id=command.command_id,
+        node_id=command.node_id,
+        attempt_id=command.attempt_id,
+        direction_id=command.direction.direction_id,
+        acquired_needs=(),
+    )
+    acquisition.outcomes.append(AcquisitionComplete(manifest))
+    engine.advance_research(
+        command_id="cycle-2",
+        acquisition_command=command,
+    )
+    before = engine.read_state()
+
+    result = engine.advance_research(
+        command_id="terminal-race",
+        expected_revision=before.revision,
+        expected_strong_result_receipt_sha256="sha256:" + "f" * 64,
+    )
+
+    assert result == {"status": "strong_result_changed"}
+    assert engine.read_state() == before
 
 
 def test_acquisition_checkpoint_resumes_exact_cursor_and_materializes_root(
@@ -363,6 +527,44 @@ def test_acquisition_checkpoint_resumes_exact_cursor_and_materializes_root(
     assert node["strategy"]["derived_from_direction_id"] == command.direction.direction_id
     assert "derived_from_observation_id" not in node["strategy"]
     assert search_state["adaptive"]["observations"] == []
+
+
+def test_unchanged_checkpoint_id_still_advances_revision(tmp_path: Path) -> None:
+    acquisition = _Acquisition()
+    engine = _engine(tmp_path, _Generator(_draft("first")), acquisition)
+    direction_result = engine.advance_research(command_id="cycle-1")
+    command = _acquisition_command(direction_result)
+    cursor = make_cursor(
+        command_id=command.command_id,
+        next_need_index=0,
+        next_candidate_index=0,
+        requests_used=1,
+        download_bytes_used=17,
+        completed=(),
+    )
+    acquisition.outcomes.extend(
+        [
+            AcquisitionCheckpoint(reason="request_budget", cursor=cursor),
+            AcquisitionCheckpoint(reason="request_budget", cursor=cursor),
+        ]
+    )
+    engine.advance_research(
+        command_id="cycle-2",
+        acquisition_command=command,
+    )
+    checkpointed = engine.read_state()
+    assert checkpointed is not None
+    assert isinstance(checkpointed.phase, Checkpointed)
+
+    repeated = engine.advance_research(
+        command_id="cycle-3",
+        expected_revision=checkpointed.revision,
+        expected_checkpoint_id=checkpointed.phase.checkpoint.checkpoint_id,
+    )
+
+    assert repeated["checkpoint_id"] == checkpointed.phase.checkpoint.checkpoint_id
+    assert repeated["resumed_from_checkpoint_id"] == repeated["checkpoint_id"]
+    assert repeated["revision"] == checkpointed.revision + 1
 
 
 def test_conclusive_failure_closes_attempt_without_leaking_into_next_request(

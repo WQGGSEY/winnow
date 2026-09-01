@@ -6,7 +6,7 @@ import os
 import re
 import tempfile
 from collections.abc import Mapping
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -35,6 +35,8 @@ from research_harness.orchestrator.blind_reorientation import (
 )
 from research_harness.orchestrator.blind_sequential_research import (
     BlindSequentialResearch,
+    StrongResultBinding,
+    VerifiedStrongResult,
 )
 from research_harness.orchestrator.direction_generation import (
     DataNeed,
@@ -109,6 +111,20 @@ _POSITIVE_INTERVENTION = re.compile(
     r"계측|모니터링|샘플링|합성|인코딩|색인|검색|조정|제어|추정|예측)",
     re.IGNORECASE,
 )
+
+
+@contextmanager
+def adaptive_writer_lock(thread_dir: Path):
+    import fcntl
+
+    lock_path = thread_dir / "production" / "tree" / ".adaptive-writer.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _canonical_json(value: object) -> str:
@@ -241,6 +257,25 @@ class CodexStructuralEquivalenceAssessor:
         )
 
 
+class FilesystemStrongResultVerifier:
+    def __init__(self, *, repo_root: Path, thread_id: str) -> None:
+        self._repo_root = repo_root
+        self._thread_id = thread_id
+
+    def verify(
+        self,
+        binding: StrongResultBinding,
+        /,
+    ) -> VerifiedStrongResult | None:
+        from research_harness.thread_supervisor import verify_strong_result_binding
+
+        return verify_strong_result_binding(
+            self._repo_root,
+            self._thread_id,
+            binding,
+        )
+
+
 def _direction_prompt(request: Mapping[str, object]) -> AgentPrompt:
     return AgentPrompt(
         instructions=(
@@ -359,6 +394,10 @@ def build_blind_research_engine(
         acquisition=PublicAcquisition.live(
             thread_dir / "production" / "reorientation" / "acquisition_cache",
             credential_provider=SettingsCredentialProvider(settings),
+        ),
+        strong_result_verifier=FilesystemStrongResultVerifier(
+            repo_root=repo_root,
+            thread_id=thread_dir.name,
         ),
         perspective_seed=int(
             hashlib.sha256(thread_dir.name.encode("utf-8")).hexdigest()[:16],
@@ -539,9 +578,11 @@ def _acquisition_budget(raw: object) -> AcquisitionBudget:
 
 
 __all__ = [
+    "adaptive_writer_lock",
     "BlindMcpAdapterError",
     "CodexBlindDirectionGenerator",
     "CodexStructuralEquivalenceAssessor",
+    "FilesystemStrongResultVerifier",
     "SettingsCredentialProvider",
     "build_acquisition_command",
     "build_blind_research_engine",

@@ -47,7 +47,11 @@ The operation returns one of these results:
 - `hard_external_block`
 
 No result or state contains `not_found`. Budget exhaustion creates a checkpoint.
-The supervisor resumes that checkpoint in a later cycle. Only a verified strong
+The supervisor resumes download, request, wall-time, and cost checkpoints in a
+later cycle. A resume carries the expected revision and checkpoint ID. A stale
+resume cannot advance a replacement phase, and an unchanged cursor is not
+replayed in a tight loop. While a physical checkpoint remains authoritative, a
+stale legacy expansion pause cannot stop the supervisor. Only a verified strong
 result completes the scientific goal.
 
 ### Freeze success before direction generation
@@ -180,6 +184,27 @@ Model calls, HTTP requests, downloads, and schema scans do not run under
 A repeated command returns its existing command receipt. A crash before commit
 leaves a reconcilable reservation. Cache digests, acquisition cursors, node
 manifest IDs, and command receipts make retries converge on the same state.
+
+### Commit strong completion through the active attempt
+
+The adaptive strong-result receipt includes the immutable contract ID and the
+active attempt, direction, node, and acquisition manifest IDs. The terminal
+verifier re-derives the frozen goal from `SolutionContract`, checks every
+evidence artifact and runner digest, and confirms the durable node-attempt
+index. Receipt labels alone cannot complete the research.
+
+Strong attestation first writes a prepared terminal receipt that contains the
+full attestation and strong receipt. Under the shared writer lock, it then
+rechecks the active binding, pinned manifest, runner artifacts, and evidence
+digests before committing the adaptive receipt. The tagged state advances to
+`goal_achieved` only after this second verification.
+
+If the process exits between these writes, the supervisor replays the prepared
+payload with its expected strong receipt digest. The replay either converges on
+the same `goal_achieved` state or remains nonterminal. A rendered paper is
+terminal only when its reorientation state contains the same strong receipt
+digest. Replaying the same attestation returns the committed result without
+creating another terminal state.
 
 ### Migrate without two live policies
 

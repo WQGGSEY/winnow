@@ -19,6 +19,7 @@ import re
 import sys
 import tempfile
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -1216,8 +1217,24 @@ TOOL_DEFINITIONS = [
 # --- Tool handlers -------------------------------------------------------- #
 
 
+_REPO_ROOT_SCOPE: ContextVar[Path | None] = ContextVar(
+    "research_harness_mcp_repo_root",
+    default=None,
+)
+
+
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    scoped = _REPO_ROOT_SCOPE.get()
+    return scoped if scoped is not None else Path(__file__).resolve().parents[1]
+
+
+@contextmanager
+def _repo_root_scope(repo_root: Path):
+    token = _REPO_ROOT_SCOPE.set(repo_root)
+    try:
+        yield
+    finally:
+        _REPO_ROOT_SCOPE.reset(token)
 
 
 def _persona_cfg(settings: dict[str, Any]) -> dict[str, Any]:
@@ -1273,18 +1290,12 @@ def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
 
 @contextmanager
 def _exclusive_adaptive_writer(tid: str):
-    """Serialize cross-process mutations of one thread's adaptive state."""
+    from research_harness.orchestrator.blind_mcp_adapter import (
+        adaptive_writer_lock,
+    )
 
-    import fcntl
-
-    lock_path = _thread_dir(tid) / "production" / "tree" / ".adaptive-writer.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+", encoding="utf-8") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    with adaptive_writer_lock(_thread_dir(tid)):
+        yield
 
 
 def _ensure_adaptive_state(
@@ -1951,10 +1962,18 @@ def handle_advance_research(
             _write_json_atomic(receipt_path, receipt)
     if engine is None:
         engine = _build_blind_research_engine(tid)
-    result = engine.advance_research(
-        command_id=command_id,
-        acquisition_command=acquisition_command,
+    advance_kwargs: dict[str, Any] = {
+        "command_id": command_id,
+        "acquisition_command": acquisition_command,
+    }
+    expected_strong_receipt = args.get(
+        "expected_strong_result_receipt_sha256"
     )
+    if expected_strong_receipt is not None:
+        advance_kwargs["expected_strong_result_receipt_sha256"] = (
+            expected_strong_receipt
+        )
+    result = engine.advance_research(**advance_kwargs)
     with _exclusive_adaptive_writer(tid):
         current = _read_json(receipt_path)
         if (
@@ -1984,6 +2003,172 @@ def _advance_after_selector(tid: str) -> dict[str, Any]:
             "command_id": _blind_command_id(tid, "selector"),
         },
         load_settings(_repo_root()),
+    )
+
+
+def _blind_terminal_receipt_path(tid: str, receipt_digest: str) -> Path:
+    return (
+        _thread_dir(tid)
+        / "production"
+        / "reorientation"
+        / "terminal_commands"
+        / f"{receipt_digest[7:]}.json"
+    )
+
+
+def _validate_blind_terminal_receipt(
+    receipt: dict[str, Any],
+    *,
+    receipt_digest: str,
+    attestation: dict[str, Any],
+    strong_receipt: dict[str, Any],
+) -> None:
+    expected = {
+        "strong_result_receipt_sha256": receipt_digest,
+        "attestation": attestation,
+        "strong_result_receipt": strong_receipt,
+    }
+    if (
+        receipt.get("version") != 1
+        or receipt.get("status") not in {"prepared", "committed"}
+        or any(receipt.get(key) != value for key, value in expected.items())
+    ):
+        raise ValueError("strong terminal receipt conflicts with durable state")
+
+
+def _prepare_blind_strong_terminal(
+    tid: str,
+    *,
+    receipt_digest: str,
+    state_input_digest: str,
+    attestation: dict[str, Any],
+    strong_receipt: dict[str, Any],
+) -> Path:
+    path = _blind_terminal_receipt_path(tid, receipt_digest)
+    current = _read_json(path)
+    if current is None and path.exists():
+        raise ValueError("strong terminal receipt is malformed")
+    stable_payload = {
+        "strong_result_receipt_sha256": receipt_digest,
+        "attestation": attestation,
+        "strong_result_receipt": strong_receipt,
+    }
+    if current is not None:
+        _validate_blind_terminal_receipt(
+            current,
+            receipt_digest=receipt_digest,
+            attestation=attestation,
+            strong_receipt=strong_receipt,
+        )
+        return path
+    _write_json_atomic(
+        path,
+        {
+            "version": 1,
+            "status": "prepared",
+            "state_input_digest": state_input_digest,
+            **stable_payload,
+        },
+    )
+    return path
+
+
+def _commit_blind_strong_terminal(
+    tid: str,
+    *,
+    receipt_digest: str,
+    state_input_digest: str,
+    attestation: dict[str, Any],
+    strong_receipt: dict[str, Any],
+) -> dict[str, Any]:
+    from research_harness.orchestrator.blind_sequential_research import (
+        BlindSequentialResearchError,
+    )
+
+    try:
+        with _exclusive_adaptive_writer(tid):
+            receipt_path = _prepare_blind_strong_terminal(
+                tid,
+                receipt_digest=receipt_digest,
+                state_input_digest=state_input_digest,
+                attestation=attestation,
+                strong_receipt=strong_receipt,
+            )
+        result = _build_blind_research_engine(tid).advance_research(
+            command_id=_blind_command_id(
+                tid,
+                f"strong_terminal:{receipt_digest}",
+                bind_state=False,
+            ),
+            expected_strong_result_receipt_sha256=receipt_digest,
+        )
+    except (BlindSequentialResearchError, OSError, ValueError) as exc:
+        return {"status": "rejected", "reason": str(exc)}
+    if result.get("status") != "goal_achieved":
+        return result
+    try:
+        with _exclusive_adaptive_writer(tid):
+            current = _read_json(receipt_path)
+            if current is None:
+                raise ValueError("strong terminal receipt changed before commit")
+            _validate_blind_terminal_receipt(
+                current,
+                receipt_digest=receipt_digest,
+                attestation=attestation,
+                strong_receipt=strong_receipt,
+            )
+            if current.get("status") == "prepared":
+                _write_json_atomic(
+                    receipt_path,
+                    {
+                        **current,
+                        "status": "committed",
+                        "reorientation_result": result,
+                    },
+                )
+    except (OSError, ValueError) as exc:
+        return {"status": "rejected", "reason": str(exc)}
+    return result
+
+
+def recover_prepared_blind_terminal(
+    tid: str,
+    *,
+    repo_root: Path,
+) -> dict[str, Any] | None:
+    with _repo_root_scope(repo_root):
+        return _recover_prepared_blind_terminal(tid)
+
+
+def _recover_prepared_blind_terminal(tid: str) -> dict[str, Any] | None:
+    thread_dir = _thread_dir(tid)
+    directory = (
+        thread_dir / "production" / "reorientation" / "terminal_commands"
+    )
+    if not directory.exists():
+        return None
+    prepared = []
+    for path in sorted(directory.glob("*.json")):
+        receipt = _read_json(path)
+        if receipt is None:
+            return {"status": "rejected", "reason": "terminal receipt is malformed"}
+        if receipt.get("status") == "prepared":
+            prepared.append(receipt)
+    if not prepared:
+        return None
+    if len(prepared) != 1:
+        return {
+            "status": "rejected",
+            "reason": "multiple prepared strong terminal receipts exist",
+        }
+    pending = prepared[0]
+    attestation = pending.get("attestation")
+    expected_digest = pending.get("strong_result_receipt_sha256")
+    if not isinstance(attestation, dict) or not isinstance(expected_digest, str):
+        return {"status": "rejected", "reason": "terminal receipt is malformed"}
+    return handle_submit_professor_user_goal_attestation(
+        {"thread_id": tid, "attestation": attestation},
+        expected_strong_result_receipt_sha256=expected_digest,
     )
 
 
@@ -2117,15 +2302,6 @@ def _handle_get_next_admissible_node_locked(
             ),
         }
 
-    existing_pause = adaptive.get("pause") or {}
-    if (
-        adaptive.get("disposition") == "paused_needs_expansion"
-        and existing_pause.get("reason") == "needs_strategy_expansion"
-    ):
-        return _blind_reorientation_required(
-            "the legacy expansion pause requires a blind new direction"
-        )
-
     achieved_attestation = _read_json(
         _rebuttal_dir(tid) / "user_goal_attestation.json"
     ) or {}
@@ -2144,6 +2320,41 @@ def _handle_get_next_admissible_node_locked(
                 "the paper writer; do not resume search or rebuttal."
             ),
         }
+
+    strong_candidate = _strong_candidate_for_terminal(tid, state)
+    if strong_candidate is not None:
+        readiness = _read_json(
+            _thread_dir(tid) / "production" / "tree" / "mcp_readiness.json"
+        ) or {}
+        if readiness.get("submit") is not True:
+            return {
+                "status": "strong_candidate_ready",
+                **strong_candidate,
+                "next_tool_to_call": "decide_publication_readiness",
+                "reason": (
+                    "An adaptive strategy has supported runner evidence and a "
+                    "passing real holdout. Stop spending the frontier and move "
+                    "this candidate through rebuttal and the strong-result gates."
+                ),
+            }
+        return {
+            "status": "rebuttal_ready",
+            **strong_candidate,
+            "next_tool_to_call": "prepare_rebuttal_packet",
+            "reason": (
+                "Publication readiness is recorded for the verified strong "
+                "candidate; begin rebuttal rather than dispatching more search nodes."
+            ),
+        }
+
+    existing_pause = adaptive.get("pause") or {}
+    if (
+        adaptive.get("disposition") == "paused_needs_expansion"
+        and existing_pause.get("reason") == "needs_strategy_expansion"
+    ):
+        return _blind_reorientation_required(
+            "the legacy expansion pause requires a blind new direction"
+        )
 
     nodes_by_id = {n["id"]: n for n in state["nodes"]}
 
@@ -2231,32 +2442,6 @@ def _handle_get_next_admissible_node_locked(
             "_selection_policy": (
                 f"RESUME: node {nid} was left in state '{node['status']}' "
                 f"by an earlier session. Call {next_tool} next to continue."
-            ),
-        }
-
-    strong_candidate = _strong_candidate_for_terminal(tid, state)
-    if strong_candidate is not None:
-        readiness = _read_json(
-            _thread_dir(tid) / "production" / "tree" / "mcp_readiness.json"
-        ) or {}
-        if readiness.get("submit") is not True:
-            return {
-                "status": "strong_candidate_ready",
-                **strong_candidate,
-                "next_tool_to_call": "decide_publication_readiness",
-                "reason": (
-                    "An adaptive strategy has supported runner evidence and a "
-                    "passing real holdout. Stop spending the frontier and move "
-                    "this candidate through rebuttal and the strong-result gates."
-                ),
-            }
-        return {
-            "status": "rebuttal_ready",
-            **strong_candidate,
-            "next_tool_to_call": "prepare_rebuttal_packet",
-            "reason": (
-                "Publication readiness is recorded for the verified strong "
-                "candidate; begin rebuttal rather than dispatching more search nodes."
             ),
         }
 
@@ -6148,7 +6333,11 @@ def _attemptable_in_envelope(
     return (len(absent) == 0), absent
 
 
-def handle_submit_professor_user_goal_attestation(args: dict[str, Any]) -> dict[str, Any]:
+def handle_submit_professor_user_goal_attestation(
+    args: dict[str, Any],
+    *,
+    expected_strong_result_receipt_sha256: str | None = None,
+) -> dict[str, Any]:
     """Professor's final attestation that the original intake problem is
     addressable. Second half of the dual publication gate."""
     from research_harness.schemas.validator import validate_named_schema
@@ -6205,6 +6394,7 @@ def handle_submit_professor_user_goal_attestation(args: dict[str, Any]) -> dict[
     envelope = _read_json(_thread_dir(tid) / "production" / "feasibility_envelope.json")
     state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
     state = _read_json(state_path) or {}
+    state_input_digest = _json_sha256(state)
     adaptive = state.get("adaptive")
     if isinstance(adaptive, dict):
         frozen_falsifier = (
@@ -6285,6 +6475,81 @@ def handle_submit_professor_user_goal_attestation(args: dict[str, Any]) -> dict[
         # cannot verify air-gapped that the experiment TRULY needs the named
         # absent resource — surfaced for audit, not silently honored.
         attestation["attemptability_audit"] = attemptability_audit
+
+    attestation_sha256 = hashlib.sha256(
+        json.dumps(attestation, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    existing_strong_receipt = (
+        adaptive.get("strong_result_receipt")
+        if isinstance(adaptive, dict)
+        else None
+    )
+    if attestation.get("achieved") and isinstance(existing_strong_receipt, dict):
+        if (
+            existing_strong_receipt.get("attestation_sha256")
+            != attestation_sha256
+        ):
+            return {
+                "status": "rejected",
+                "reason": (
+                    "the completed strong result is bound to a different "
+                    "attestation"
+                ),
+            }
+        from research_harness.thread_supervisor import is_terminal
+
+        evidence_valid, _ = is_terminal(
+            _repo_root(),
+            tid,
+            require_rendered=False,
+        )
+        if not evidence_valid:
+            return {
+                "status": "rejected",
+                "reason": "the existing strong result receipt no longer verifies",
+            }
+        from research_harness.orchestrator.blind_sequential_research import (
+            strong_result_receipt_sha256,
+        )
+
+        replay_receipt_digest = strong_result_receipt_sha256(
+            existing_strong_receipt
+        )
+        if (
+            expected_strong_result_receipt_sha256 is not None
+            and replay_receipt_digest
+            != expected_strong_result_receipt_sha256
+        ):
+            return {
+                "status": "rejected",
+                "reason": "prepared strong result changed during recovery",
+            }
+        blind_terminal = _commit_blind_strong_terminal(
+            tid,
+            receipt_digest=replay_receipt_digest,
+            state_input_digest=state_input_digest,
+            attestation=attestation,
+            strong_receipt=existing_strong_receipt,
+        )
+        if blind_terminal.get("status") != "goal_achieved":
+            return {
+                "status": "rejected",
+                "reason": "authoritative strong terminal recovery did not commit",
+                "blind_reorientation": blind_terminal,
+            }
+        return {
+            "status": "ok",
+            "achieved": True,
+            "attested_status": "goal_achieved",
+            "verdict_strength": strength,
+            "referent_ledger": ledger,
+            "strong_result_receipt": existing_strong_receipt,
+            "blind_reorientation": blind_terminal,
+            "next_step": (
+                "transfer_valid: the verified strong result is committed; "
+                "proceed to final paper rendering."
+            ),
+        }
 
     strong_receipt: dict[str, Any] | None = None
     if attestation.get("achieved") and isinstance(adaptive, dict):
@@ -6369,6 +6634,26 @@ def handle_submit_professor_user_goal_attestation(args: dict[str, Any]) -> dict[
             None,
         )
         missing_gates: list[str] = []
+        strong_binding = None
+        try:
+            from research_harness.orchestrator.blind_sequential_research import (
+                BlindSequentialResearchError,
+                resolve_strong_result_binding,
+            )
+
+            blind_engine = _build_blind_research_engine(tid)
+            reorientation_state = blind_engine.read_state()
+            if reorientation_state is None:
+                raise BlindSequentialResearchError(
+                    "reorientation state is missing"
+                )
+            strong_binding = resolve_strong_result_binding(
+                reorientation_state,
+                _read_json(blind_engine.paths.node_attempts) or {},
+                node_id=str(promoted.get("promoted_id")),
+            )
+        except (BlindSequentialResearchError, OSError, ValueError) as exc:
+            missing_gates.append(f"active blind attempt binding: {exc}")
         execution_evidence: dict[str, Any] | None = None
         try:
             execution_evidence = verify_strong_execution_evidence(
@@ -6434,10 +6719,14 @@ def handle_submit_professor_user_goal_attestation(args: dict[str, Any]) -> dict[
                 ),
             }
         assert execution_evidence is not None
-        import hashlib
+        assert strong_binding is not None
 
         strong_receipt = {
             "verified": True,
+            "contract_id": strong_binding.contract_id,
+            "attempt_id": strong_binding.attempt_id,
+            "direction_id": strong_binding.direction_id,
+            "acquisition_manifest_id": strong_binding.manifest_id,
             "goal_id": adaptive["goal"]["id"],
             "bar_digest": adaptive["goal"]["bar_digest"],
             "strategy_id": promoted_strategy_id,
@@ -6456,9 +6745,7 @@ def handle_submit_professor_user_goal_attestation(args: dict[str, Any]) -> dict[
             "critic_resolution_sha256": hashlib.sha256(
                 json.dumps(reduction, sort_keys=True).encode("utf-8")
             ).hexdigest(),
-            "attestation_sha256": hashlib.sha256(
-                json.dumps(attestation, sort_keys=True).encode("utf-8")
-            ).hexdigest(),
+            "attestation_sha256": attestation_sha256,
             "experiment_plan_sha256": hashlib.sha256(
                 json.dumps(experiment_plan, sort_keys=True).encode("utf-8")
             ).hexdigest(),
@@ -6473,21 +6760,172 @@ def handle_submit_professor_user_goal_attestation(args: dict[str, Any]) -> dict[
         }
 
     out_path = _rebuttal_dir(tid) / "user_goal_attestation.json"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(
-        json.dumps(attestation, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    blind_terminal = None
     if strong_receipt is not None:
-        adaptive["strong_result_receipt"] = strong_receipt
-        adaptive["disposition"] = "goal_achieved"
-        adaptive["pause"] = None
-        adaptive["revision"] = int(adaptive["revision"]) + 1
-        state["status"] = "completed"
+        from research_harness.orchestrator.blind_sequential_research import (
+            strong_result_receipt_sha256,
+        )
         from research_harness.orchestrator.search_state import validate_search_state
 
-        validate_search_state(state)
-        _write_search_state_atomic(state_path, state)
+        receipt_digest = strong_result_receipt_sha256(strong_receipt)
+        if (
+            expected_strong_result_receipt_sha256 is not None
+            and receipt_digest != expected_strong_result_receipt_sha256
+        ):
+            return {
+                "status": "rejected",
+                "reason": "prepared strong result changed during recovery",
+            }
+        with _exclusive_adaptive_writer(tid):
+            current_state = _read_json(state_path) or {}
+            if _json_sha256(current_state) != state_input_digest:
+                return {
+                    "status": "rejected",
+                    "reason": (
+                        "search state changed while the strong result was being "
+                        "verified; retry attestation against the current state"
+                    ),
+                }
+            current_adaptive = current_state.get("adaptive")
+            if not isinstance(current_adaptive, dict):
+                return {
+                    "status": "rejected",
+                    "reason": "adaptive state disappeared before strong commit",
+                }
+            existing_receipt = current_adaptive.get("strong_result_receipt")
+            if (
+                existing_receipt is not None
+                and existing_receipt != strong_receipt
+            ):
+                return {
+                    "status": "rejected",
+                    "reason": (
+                        "a different strong result receipt is already committed; "
+                        "repair its bound evidence instead of replacing it"
+                    ),
+                }
+            live_artifacts = {
+                "falsifier_result_sha256": _read_json(
+                    _rebuttal_dir(tid) / "falsifier_result.json"
+                ),
+                "construct_adversary_sha256": _read_json(
+                    _rebuttal_dir(tid) / "construct_adversary_report.json"
+                ),
+                "ac_decision_sha256": _read_json(
+                    _rebuttal_dir(tid) / "ac_decision.json"
+                ),
+                "critic_resolution_sha256": _read_json(
+                    _rebuttal_dir(tid) / "orchestrator_reduction.json"
+                ),
+                "experiment_plan_sha256": _read_json(
+                    node_dir / "experiment_plan.json"
+                ),
+                "worker_report_sha256": _read_json(
+                    node_dir / "worker_report.json"
+                ),
+            }
+            stale_artifacts = [
+                key
+                for key, value in live_artifacts.items()
+                if value is None
+                or strong_receipt.get(key)
+                != hashlib.sha256(
+                    json.dumps(value, sort_keys=True).encode("utf-8")
+                ).hexdigest()
+            ]
+            if strong_receipt.get("attestation_sha256") != attestation_sha256:
+                stale_artifacts.append("attestation_sha256")
+            try:
+                live_reorientation = blind_engine.read_state()
+                if live_reorientation is None:
+                    raise BlindSequentialResearchError(
+                        "reorientation state is missing"
+                    )
+                live_binding = resolve_strong_result_binding(
+                    live_reorientation,
+                    _read_json(blind_engine.paths.node_attempts) or {},
+                    node_id=str(promoted.get("promoted_id")),
+                )
+                live_execution_evidence = verify_strong_execution_evidence(
+                    node=promoted_node,
+                    experiment_plan=experiment_plan,
+                    worker_report=worker_report,
+                    node_dir=node_dir,
+                    tree_dir=state_path.parent,
+                    settings=settings,
+                )
+                from research_harness.acquisition import PublicAcquisition
+
+                live_manifest = PublicAcquisition(
+                    blind_engine.paths.root / "acquisition_cache"
+                ).verify_manifest(
+                    live_binding.manifest_id,
+                    node_id=live_binding.node_id,
+                )
+                if (
+                    live_binding != strong_binding
+                    or live_manifest.attempt_id != live_binding.attempt_id
+                    or live_manifest.direction_id != live_binding.direction_id
+                ):
+                    stale_artifacts.append("active strong binding")
+                if any(
+                    live_execution_evidence[key] != strong_receipt[key]
+                    for key in (
+                        "job_manifest_sha256",
+                        "runner_result_sha256",
+                        "metrics_evidence_sha256",
+                    )
+                ):
+                    stale_artifacts.append("active strong execution evidence")
+            except (
+                BlindSequentialResearchError,
+                OSError,
+                StrongExecutionEvidenceError,
+                ValueError,
+            ):
+                stale_artifacts.append("active strong execution evidence")
+            if stale_artifacts:
+                return {
+                    "status": "rejected",
+                    "reason": (
+                        "strong evidence changed before commit: "
+                        + ", ".join(stale_artifacts)
+                    ),
+                }
+            _prepare_blind_strong_terminal(
+                tid,
+                receipt_digest=receipt_digest,
+                state_input_digest=state_input_digest,
+                attestation=attestation,
+                strong_receipt=strong_receipt,
+            )
+            _write_json_atomic(out_path, attestation)
+            if existing_receipt is None:
+                current_adaptive["strong_result_receipt"] = strong_receipt
+                current_adaptive["disposition"] = "goal_achieved"
+                current_adaptive["pause"] = None
+                current_adaptive["revision"] = int(current_adaptive["revision"]) + 1
+                current_state["status"] = "completed"
+                validate_search_state(current_state)
+                _write_search_state_atomic(state_path, current_state)
+        blind_terminal = _commit_blind_strong_terminal(
+            tid,
+            receipt_digest=receipt_digest,
+            state_input_digest=state_input_digest,
+            attestation=attestation,
+            strong_receipt=strong_receipt,
+        )
+        if blind_terminal.get("status") != "goal_achieved":
+            return {
+                "status": "rejected",
+                "reason": (
+                    "verified adaptive evidence did not commit the authoritative "
+                    "blind goal transition"
+                ),
+                "blind_reorientation": blind_terminal,
+            }
+    else:
+        _write_json_atomic(out_path, attestation)
 
     status = attestation["attested_status"]
     if status == "goal_achieved":
@@ -6528,6 +6966,7 @@ def handle_submit_professor_user_goal_attestation(args: dict[str, Any]) -> dict[
         "verdict_strength": strength,
         "referent_ledger": ledger,
         "strong_result_receipt": strong_receipt,
+        "blind_reorientation": blind_terminal,
         "next_step": next_step,
     }
 

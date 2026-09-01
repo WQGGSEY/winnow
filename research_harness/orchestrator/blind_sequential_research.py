@@ -95,12 +95,121 @@ class AcquisitionAdapter(Protocol):
 WriterLock = Callable[[], AbstractContextManager[None]]
 
 
+@dataclass(frozen=True, slots=True)
+class StrongResultBinding:
+    contract_id: str
+    attempt_id: str
+    direction_id: str
+    node_id: str
+    manifest_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedStrongResult:
+    binding: StrongResultBinding
+    receipt_sha256: str
+
+
+class StrongResultVerifier(Protocol):
+    def verify(
+        self,
+        binding: StrongResultBinding,
+        /,
+    ) -> VerifiedStrongResult | None: ...
+
+
+def resolve_attempt_node_binding(
+    node_attempts: Mapping[str, Any],
+    *,
+    contract_id: str,
+    attempt_id: str,
+    direction_id: str,
+    node_id: str | None = None,
+) -> StrongResultBinding:
+    if not all(
+        isinstance(value, str) and value
+        for value in (contract_id, attempt_id, direction_id)
+    ) or (node_id is not None and (not isinstance(node_id, str) or not node_id)):
+        raise BlindSequentialResearchError(
+            "strong result binding identity is malformed"
+        )
+    if not isinstance(node_attempts, Mapping):
+        raise BlindSequentialResearchError("node attempt index is malformed")
+    nodes = node_attempts.get("nodes")
+    if not isinstance(nodes, Mapping):
+        raise BlindSequentialResearchError("node attempt index is malformed")
+    if any(
+        not isinstance(candidate_id, str) or not isinstance(binding, Mapping)
+        for candidate_id, binding in nodes.items()
+    ):
+        raise BlindSequentialResearchError("node attempt index is malformed")
+    matches = [
+        (candidate_id, binding)
+        for candidate_id, binding in nodes.items()
+        if binding.get("attempt_id") == attempt_id
+    ]
+    if len(matches) != 1:
+        raise BlindSequentialResearchError(
+            "active attempt must have exactly one materialized node"
+        )
+    resolved_node_id, raw_binding = matches[0]
+    if node_id is not None and resolved_node_id != node_id:
+        raise BlindSequentialResearchError(
+            "requested node is not the active attempt materialized node"
+        )
+    manifest_id = raw_binding.get("manifest_id")
+    if (
+        raw_binding.get("legacy_audit_only") is not False
+        or raw_binding.get("direction_id") != direction_id
+        or not isinstance(manifest_id, str)
+        or not manifest_id
+    ):
+        raise BlindSequentialResearchError(
+            "strong result is not bound to the active blind direction"
+        )
+    return StrongResultBinding(
+        contract_id=contract_id,
+        attempt_id=attempt_id,
+        direction_id=direction_id,
+        node_id=resolved_node_id,
+        manifest_id=manifest_id,
+    )
+
+
+def resolve_strong_result_binding(
+    state: ReorientationState,
+    node_attempts: Mapping[str, Any],
+    *,
+    node_id: str | None = None,
+) -> StrongResultBinding:
+    phase = state.phase
+    if isinstance(phase, Checkpointed):
+        phase = phase.continuation
+    if not isinstance(phase, AwaitingEvidence):
+        raise BlindSequentialResearchError(
+            "strong result requires an active evidence attempt"
+        )
+    return resolve_attempt_node_binding(
+        node_attempts,
+        contract_id=state.contract_id,
+        attempt_id=phase.active_attempt.attempt_id,
+        direction_id=phase.active_attempt.direction_id,
+        node_id=node_id,
+    )
+
+
 def _canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
 def _digest(value: object) -> str:
     return f"sha256:{hashlib.sha256(_canonical_json(value).encode('utf-8')).hexdigest()}"
+
+
+def strong_result_receipt_sha256(receipt: Mapping[str, Any]) -> str:
+    if not isinstance(receipt, Mapping):
+        raise BlindSequentialResearchError("strong result receipt must be an object")
+    return _digest(receipt)
 
 
 def _read_json(path: Path) -> object:
@@ -236,6 +345,7 @@ class BlindSequentialResearch:
         direction_generator: DirectionGenerationTransport,
         structural_assessor: StructuralEquivalenceAssessor,
         acquisition: AcquisitionAdapter,
+        strong_result_verifier: StrongResultVerifier | None = None,
         perspective_seed: int = 0,
     ) -> None:
         self._repo_root = repo_root
@@ -245,6 +355,7 @@ class BlindSequentialResearch:
         self._direction_generator = direction_generator
         self._structural_assessor = structural_assessor
         self._acquisition = acquisition
+        self._strong_result_verifier = strong_result_verifier
         self._perspective_seed = perspective_seed
 
     @property
@@ -266,6 +377,9 @@ class BlindSequentialResearch:
         *,
         command_id: str,
         acquisition_command: AcquisitionCommand | None = None,
+        expected_revision: int | None = None,
+        expected_checkpoint_id: str | None = None,
+        expected_strong_result_receipt_sha256: str | None = None,
     ) -> dict[str, object]:
         command_id = command_id.strip()
         if not command_id:
@@ -276,7 +390,12 @@ class BlindSequentialResearch:
                     serialize_command(acquisition_command)
                     if acquisition_command is not None
                     else None
-                )
+                ),
+                "expected_revision": expected_revision,
+                "expected_checkpoint_id": expected_checkpoint_id,
+                "expected_strong_result_receipt_sha256": (
+                    expected_strong_result_receipt_sha256
+                ),
             }
         )
         for _ in range(3):
@@ -294,10 +413,32 @@ class BlindSequentialResearch:
                         exc.result,
                     )
                     return exc.result
+                if expected_revision is not None and state.revision != expected_revision:
+                    result = {
+                        "status": "state_changed",
+                        "expected_revision": expected_revision,
+                        "actual_revision": state.revision,
+                    }
+                    self._write_command_receipt(command_id, input_digest, result)
+                    return result
+                if expected_checkpoint_id is not None and (
+                    not isinstance(state.phase, Checkpointed)
+                    or state.phase.checkpoint.checkpoint_id
+                    != expected_checkpoint_id
+                ):
+                    result = {
+                        "status": "state_changed",
+                        "expected_checkpoint_id": expected_checkpoint_id,
+                    }
+                    self._write_command_receipt(command_id, input_digest, result)
+                    return result
                 plan = self._plan_locked(
                     contract,
                     state,
                     acquisition_command=acquisition_command,
+                    expected_strong_result_receipt_sha256=(
+                        expected_strong_result_receipt_sha256
+                    ),
                 )
                 if isinstance(plan, _Immediate):
                     self._write_command_receipt(command_id, input_digest, plan.result)
@@ -364,6 +505,10 @@ class BlindSequentialResearch:
                     committed = self._commit_acquisition_locked(plan, outcome)
                     if committed is None:
                         continue
+                    if expected_checkpoint_id is not None:
+                        committed.result["resumed_from_checkpoint_id"] = (
+                            expected_checkpoint_id
+                        )
                     self._commit_transition(
                         command_id,
                         input_digest,
@@ -531,15 +676,33 @@ class BlindSequentialResearch:
         state: ReorientationState,
         *,
         acquisition_command: AcquisitionCommand | None,
+        expected_strong_result_receipt_sha256: str | None = None,
     ) -> _Plan:
         phase = state.phase
         if isinstance(phase, GoalAchieved):
+            if (
+                expected_strong_result_receipt_sha256 is not None
+                and phase.strong_result_receipt_sha256
+                != expected_strong_result_receipt_sha256
+            ):
+                return _Immediate({"status": "strong_result_changed"})
             return _Immediate(
                 {
                     "status": "goal_achieved",
                     "strong_result_receipt_sha256": phase.strong_result_receipt_sha256,
                 }
             )
+        verified_goal = self._verified_goal_transition_locked(state)
+        if expected_strong_result_receipt_sha256 is not None:
+            if (
+                verified_goal is None
+                or verified_goal.result["strong_result_receipt_sha256"]
+                != expected_strong_result_receipt_sha256
+            ):
+                return _Immediate({"status": "strong_result_changed"})
+            return verified_goal
+        if verified_goal is not None:
+            return verified_goal
         if isinstance(phase, HardExternalBlock):
             if isinstance(phase.continuation, AcquisitionReserved):
                 return self._plan_acquisition_locked(
@@ -584,6 +747,48 @@ class BlindSequentialResearch:
         if isinstance(phase, AwaitingEvidence):
             return self._evaluate_evidence_locked(state, phase)
         raise BlindSequentialResearchError("unsupported reorientation phase")
+
+    def _verified_goal_transition_locked(
+        self,
+        state: ReorientationState,
+    ) -> _Transition | None:
+        if self._strong_result_verifier is None:
+            return None
+        phase = state.phase
+        if isinstance(phase, Checkpointed):
+            phase = phase.continuation
+        if not isinstance(phase, AwaitingEvidence):
+            return None
+        binding = resolve_strong_result_binding(
+            state,
+            self._read_node_attempts(),
+        )
+        verified = self._strong_result_verifier.verify(binding)
+        if verified is None:
+            return None
+        if verified.binding != binding:
+            raise BlindSequentialResearchError(
+                "strong result verifier returned a different active binding"
+            )
+        next_state = ReorientationState(
+            version=2,
+            contract_id=state.contract_id,
+            revision=state.revision + 1,
+            closed_attempts=state.closed_attempts,
+            phase=GoalAchieved(
+                strong_result_receipt_sha256=verified.receipt_sha256,
+            ),
+        )
+        return _Transition(
+            before=state,
+            after=next_state,
+            result={
+                "status": "goal_achieved",
+                "attempt_id": binding.attempt_id,
+                "node_id": binding.node_id,
+                "strong_result_receipt_sha256": verified.receipt_sha256,
+            },
+        )
 
     def _reserve_generation_locked(
         self,

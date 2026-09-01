@@ -483,6 +483,8 @@ def test_supported_adaptive_promotion_preempts_remaining_frontier_for_rebuttal(
     monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: tmp_path / _tid)
     adaptive = mcp._ensure_adaptive_state(tid, state)
     adaptive["strategies"] = [{"id": "strategy_verified"}]
+    adaptive["disposition"] = "paused_needs_expansion"
+    adaptive["pause"] = {"reason": "needs_strategy_expansion"}
     (thread_dir / "production" / "tree" / "search_state.json").write_text(
         json.dumps(state), encoding="utf-8"
     )

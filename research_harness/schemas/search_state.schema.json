@@ -113,6 +113,10 @@
               "type": "object",
               "required": [
                 "verified",
+                "contract_id",
+                "attempt_id",
+                "direction_id",
+                "acquisition_manifest_id",
                 "goal_id",
                 "bar_digest",
                 "strategy_id",
@@ -132,6 +136,10 @@
               ],
               "properties": {
                 "verified": { "const": true },
+                "contract_id": { "type": "string", "pattern": "^contract_[a-f0-9]{64}$" },
+                "attempt_id": { "type": "string", "pattern": "^attempt_[A-Za-z0-9_-]+$" },
+                "direction_id": { "type": "string", "pattern": "^direction_[a-f0-9]{64}$" },
+                "acquisition_manifest_id": { "type": "string", "pattern": "^acqmanifest_[a-f0-9]{64}$" },
                 "goal_id": { "type": "string", "pattern": "^goal_[a-f0-9]{64}$" },
                 "bar_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
                 "strategy_id": { "type": "string", "pattern": "^strategy_[a-f0-9]{64}$" },

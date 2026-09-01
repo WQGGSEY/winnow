@@ -32,11 +32,20 @@ import signal
 import sys
 import threading
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 from research_harness.agent_runtime import AgentPrompt, ResearchHarnessMcp
 from research_harness.adapters.codex_cli import CodexCliAdapter
 from research_harness.config import load_settings
+from research_harness.orchestrator.blind_sequential_research import (
+    BlindSequentialResearchError,
+    StrongResultBinding,
+    VerifiedStrongResult,
+    resolve_attempt_node_binding,
+    resolve_strong_result_binding,
+    strong_result_receipt_sha256,
+)
 
 LOG = sys.stderr
 
@@ -334,7 +343,14 @@ def resolve_supervisor_model(repo: Path, tid: str) -> str:
     return DEFAULT_CODEX_MODEL
 
 
-def is_terminal(repo: Path, tid: str) -> tuple[bool, str | None]:
+def is_terminal(
+    repo: Path,
+    tid: str,
+    *,
+    require_rendered: bool = True,
+    expected_binding: StrongResultBinding | None = None,
+    expected_search_state_sha256: str | None = None,
+) -> tuple[bool, str | None]:
     """Return true only for a rendered, verified strong result.
 
     Negative papers, bounded results, construct-valid screens, and unverified
@@ -343,39 +359,35 @@ def is_terminal(repo: Path, tid: str) -> tuple[bool, str | None]:
     canonical search state.
     """
     pdir = _thread_dir(repo, tid) / "production"
-    summary_path = pdir / "production_run_summary.json"
-    if not summary_path.exists():
-        return False, None
-    try:
-        s = json.loads(summary_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False, None
+    if require_rendered:
+        summary_path = pdir / "production_run_summary.json"
+        if not summary_path.exists():
+            return False, None
+        try:
+            s = json.loads(summary_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False, None
 
-    rebuttal = s.get("rebuttal_summary") or {}
-    rendered = (s.get("publication_dispatch") or {}).get("rendered_artifacts")
-
-    # Resolve the attestation once (summary may embed it or it's on disk).
-    attestation = rebuttal.get("user_goal_attestation")
-    if not attestation:
-        attestation_path = pdir / "rebuttal" / "user_goal_attestation.json"
-        if attestation_path.exists():
-            try:
-                attestation = json.loads(attestation_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                attestation = None
-    attestation = attestation or {}
-
-    if s.get("outcome") in {"honest_failure", "bounded_result"}:
-        return False, None
-
-    ac_decision = (rebuttal.get("ac_decision") or {}).get("decision")
-    if ac_decision not in {"accept", "revise"} or not rendered:
-        return False, None
-
-    # Second half of the dual-gate: achieved=true (ADR 0006 ensures this was
-    # only attestable with a passing external falsifier).
-    if not attestation.get("achieved"):
-        return False, None
+        rebuttal = s.get("rebuttal_summary") or {}
+        rendered = (s.get("publication_dispatch") or {}).get("rendered_artifacts")
+        attestation = rebuttal.get("user_goal_attestation")
+        if not attestation:
+            attestation_path = pdir / "rebuttal" / "user_goal_attestation.json"
+            if attestation_path.exists():
+                try:
+                    attestation = json.loads(
+                        attestation_path.read_text(encoding="utf-8")
+                    )
+                except (OSError, json.JSONDecodeError):
+                    attestation = None
+        attestation = attestation or {}
+        if s.get("outcome") in {"honest_failure", "bounded_result"}:
+            return False, None
+        ac_decision = (rebuttal.get("ac_decision") or {}).get("decision")
+        if ac_decision not in {"accept", "revise"} or not rendered:
+            return False, None
+        if not attestation.get("achieved"):
+            return False, None
 
     state_path = pdir / "tree" / "search_state.json"
     if not state_path.exists():
@@ -385,32 +397,34 @@ def is_terminal(repo: Path, tid: str) -> tuple[bool, str | None]:
         adaptive = state.get("adaptive") or {}
     except (OSError, json.JSONDecodeError):
         return False, None
+    if (
+        expected_search_state_sha256 is not None
+        and _canonical_json_sha256(state) != expected_search_state_sha256
+    ):
+        return False, None
     if not adaptive:
         return False, None
     try:
-        from research_harness.orchestrator.adaptive_search import build_research_goal
-
-        rebuilt_goal = build_research_goal(
-            thread=json.loads(
-                (_thread_dir(repo, tid) / "thread.json").read_text(encoding="utf-8")
-            ),
-            grilling=json.loads(
-                (_thread_dir(repo, tid) / "grilling" / "grilling_session.json").read_text(
-                    encoding="utf-8"
-                )
-            ),
-            envelope=json.loads(
-                (pdir / "feasibility_envelope.json").read_text(encoding="utf-8")
-            ),
+        from research_harness.orchestrator.solution_contract import (
+            parse_solution_contract,
+            project_research_goal,
         )
+
+        contract = parse_solution_contract(
+            json.loads(
+                (
+                    pdir / "reorientation" / "solution_contract.json"
+                ).read_text(encoding="utf-8")
+            )
+        )
+        rebuilt_goal = project_research_goal(contract)
     except (OSError, json.JSONDecodeError, ValueError):
         return False, None
     frozen_goal = adaptive.get("goal") or {}
     if (
         frozen_goal.get("source") != "pre_generation"
         or frozen_goal.get("strong_completion_blocked") is True
-        or rebuilt_goal.get("id") != frozen_goal.get("id")
-        or rebuilt_goal.get("bar_digest") != frozen_goal.get("bar_digest")
+        or rebuilt_goal != frozen_goal
     ):
         return False, None
     receipt = adaptive.get("strong_result_receipt") or {}
@@ -494,6 +508,69 @@ def is_terminal(repo: Path, tid: str) -> tuple[bool, str | None]:
         or not hashes_match
     ):
         return False, None
+    if receipt.get("contract_id") != contract.contract_id:
+        return False, None
+    try:
+        node_attempts = json.loads(
+            (
+                pdir / "reorientation" / "node_attempts.json"
+            ).read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        return False, None
+    if not isinstance(node_attempts, Mapping):
+        return False, None
+    promoted_node_id = receipt.get("promoted_node_id")
+    if not isinstance(promoted_node_id, str):
+        return False, None
+    try:
+        resolved_binding = resolve_attempt_node_binding(
+            node_attempts,
+            contract_id=contract.contract_id,
+            attempt_id=receipt.get("attempt_id"),
+            direction_id=receipt.get("direction_id"),
+            node_id=promoted_node_id,
+        )
+    except BlindSequentialResearchError:
+        return False, None
+    if (
+        resolved_binding.manifest_id != receipt.get("acquisition_manifest_id")
+        or (expected_binding is not None and resolved_binding != expected_binding)
+    ):
+        return False, None
+    promoted_strategy = promoted_node.get("strategy") or {}
+    node_artifacts = (promoted_node.get("outputs") or {}).get("artifacts") or []
+    manifest_refs = [
+        value.split(":", 1)[1]
+        for value in node_artifacts
+        if isinstance(value, str) and value.startswith("acquisition_manifest:")
+    ]
+    expected_manifest_id = receipt.get("acquisition_manifest_id")
+    if (
+        promoted_strategy.get("derived_from_direction_id")
+        != receipt.get("direction_id")
+        or manifest_refs != [expected_manifest_id]
+        or (promoted_node.get("claim_contract") or {}).get("data_source_anchor")
+        != f"acquisition_manifest:{expected_manifest_id}"
+    ):
+        return False, None
+    try:
+        from research_harness.acquisition import PublicAcquisition
+
+        pinned_manifest = PublicAcquisition(
+            pdir / "reorientation" / "acquisition_cache"
+        ).verify_manifest(
+            str(expected_manifest_id),
+            node_id=str(receipt.get("promoted_node_id")),
+        )
+    except (OSError, ValueError):
+        return False, None
+    if (
+        pinned_manifest.attempt_id != receipt.get("attempt_id")
+        or pinned_manifest.direction_id != receipt.get("direction_id")
+        or pinned_manifest.manifest_id != expected_manifest_id
+    ):
+        return False, None
     if not _terminal_evidence_is_strong(
         repo=repo,
         tid=tid,
@@ -507,7 +584,184 @@ def is_terminal(repo: Path, tid: str) -> tuple[bool, str | None]:
     ):
         return False, None
 
+    receipt_digest = strong_result_receipt_sha256(receipt)
+    if require_rendered:
+        try:
+            from research_harness.orchestrator.blind_reorientation import (
+                GoalAchieved,
+                parse_reorientation_state,
+            )
+
+            reorientation = parse_reorientation_state(
+                json.loads(
+                    (
+                        pdir / "reorientation" / "state.json"
+                    ).read_text(encoding="utf-8")
+                )
+            )
+        except (OSError, json.JSONDecodeError, ValueError):
+            return False, None
+        if (
+            not isinstance(reorientation.phase, GoalAchieved)
+            or reorientation.contract_id != contract.contract_id
+            or reorientation.phase.strong_result_receipt_sha256 != receipt_digest
+        ):
+            return False, None
+
     return True, "accept_with_goal_achieved"
+
+
+def verify_strong_result_binding(
+    repo: Path,
+    tid: str,
+    binding: StrongResultBinding,
+) -> VerifiedStrongResult | None:
+    try:
+        state = json.loads(
+            (
+                _thread_dir(repo, tid)
+                / "production"
+                / "tree"
+                / "search_state.json"
+            ).read_text(encoding="utf-8")
+        )
+        receipt = (state.get("adaptive") or {})["strong_result_receipt"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        return None
+    verified, _ = is_terminal(
+        repo,
+        tid,
+        require_rendered=False,
+        expected_binding=binding,
+        expected_search_state_sha256=_canonical_json_sha256(state),
+    )
+    if not verified:
+        return None
+    return VerifiedStrongResult(
+        binding=binding,
+        receipt_sha256=strong_result_receipt_sha256(receipt),
+    )
+
+
+def advance_resumable_reorientation(
+    repo: Path,
+    tid: str,
+) -> dict[str, object] | None:
+    from research_harness.mcp_server import recover_prepared_blind_terminal
+    from research_harness.orchestrator.blind_mcp_adapter import (
+        adaptive_writer_lock,
+        build_blind_research_engine,
+    )
+    from research_harness.orchestrator.blind_reorientation import (
+        AcquisitionReserved,
+        Checkpointed,
+        GoalAchieved,
+    )
+    from research_harness.settings_scoped import resolve_for_thread
+
+    thread_dir = _thread_dir(repo, tid)
+    recovered_terminal = recover_prepared_blind_terminal(
+        tid,
+        repo_root=repo,
+    )
+    if recovered_terminal is not None:
+        resume_kind = (
+            "strong_terminal_recovery"
+            if recovered_terminal.get("status") == "ok"
+            else "strong_terminal_recovery_failed"
+        )
+        return {
+            **recovered_terminal,
+            "supervisor_resume_kind": resume_kind,
+        }
+    state_path = thread_dir / "production" / "reorientation" / "state.json"
+    if not state_path.exists():
+        return None
+    engine = build_blind_research_engine(
+        repo_root=repo,
+        thread_dir=thread_dir,
+        writer_lock=lambda: adaptive_writer_lock(thread_dir),
+        settings=resolve_for_thread(repo, tid),
+    )
+    state = engine.read_state()
+    if state is None or isinstance(state.phase, GoalAchieved):
+        return None
+    if isinstance(state.phase, Checkpointed):
+        if (
+            state.phase.checkpoint.reason not in {
+                "time_budget",
+                "cost_budget",
+                "download_budget",
+                "request_budget",
+            }
+            or not isinstance(state.phase.continuation, AcquisitionReserved)
+        ):
+            return None
+        trigger = (
+            f"checkpoint:{state.phase.checkpoint.checkpoint_id}:"
+            f"revision:{state.revision}"
+        )
+        resume_kind = "physical_checkpoint"
+        expected_checkpoint_id = state.phase.checkpoint.checkpoint_id
+        expected_strong_result_receipt_sha256 = None
+    else:
+        try:
+            search_state = json.loads(
+                (
+                    thread_dir
+                    / "production"
+                    / "tree"
+                    / "search_state.json"
+                ).read_text(encoding="utf-8")
+            )
+            strong_receipt = (search_state.get("adaptive") or {}).get(
+                "strong_result_receipt"
+            )
+        except (OSError, json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(strong_receipt, dict):
+            return None
+        try:
+            binding = resolve_strong_result_binding(
+                state,
+                json.loads(engine.paths.node_attempts.read_text(encoding="utf-8")),
+                node_id=str(strong_receipt.get("promoted_node_id")),
+            )
+        except (
+            BlindSequentialResearchError,
+            OSError,
+            json.JSONDecodeError,
+            ValueError,
+        ):
+            return None
+        verified_strong_result = verify_strong_result_binding(repo, tid, binding)
+        if verified_strong_result is None:
+            return None
+        trigger = "strong:" + verified_strong_result.receipt_sha256
+        resume_kind = "strong_terminal"
+        expected_checkpoint_id = None
+        expected_strong_result_receipt_sha256 = (
+            verified_strong_result.receipt_sha256
+        )
+    command_id = "supervisor_reorientation_" + hashlib.sha256(
+        f"{tid}:{trigger}".encode("utf-8")
+    ).hexdigest()
+    result = engine.advance_research(
+        command_id=command_id,
+        expected_revision=state.revision,
+        expected_checkpoint_id=expected_checkpoint_id,
+        expected_strong_result_receipt_sha256=(
+            expected_strong_result_receipt_sha256
+        ),
+    )
+    if (
+        resume_kind == "physical_checkpoint"
+        and result.get("status") == "checkpointed"
+        and result.get("checkpoint_id") == expected_checkpoint_id
+        and result.get("resumed_from_checkpoint_id") == expected_checkpoint_id
+    ):
+        resume_kind = "physical_checkpoint_no_progress"
+    return {**result, "supervisor_resume_kind": resume_kind}
 
 
 def read_search_pause(repo: Path, tid: str) -> dict[str, object] | None:
@@ -1448,7 +1702,44 @@ def watch_thread(
             _log(log_path, f"DUAL-GATE PASS: outcome={outcome!r} after {cycle} cycle(s). exiting cleanly.")
             return {"status": "terminal", "outcome": outcome, "cycles": cycle}
 
-        pause = read_search_pause(repo, tid)
+        if interrupted["flag"]:
+            _log(log_path, "interrupted by signal — exiting.")
+            return {"status": "interrupted", "cycles": cycle}
+
+        if max_cycles is not None and cycle >= max_cycles:
+            _log(log_path, f"explicit max_cycles override ({max_cycles}) hit. exiting.")
+            return {"status": "max_cycles_exceeded", "cycles": cycle}
+
+        skip_legacy_pause = False
+        try:
+            resumed = advance_resumable_reorientation(repo, tid)
+        except (BlindSequentialResearchError, OSError, ValueError) as exc:
+            _log(
+                log_path,
+                "deterministic reorientation resume failed; "
+                f"falling back to the next Codex cycle: {type(exc).__name__}: {exc}",
+            )
+        else:
+            if resumed is not None:
+                resume_kind = resumed.get("supervisor_resume_kind")
+                if resume_kind == "physical_checkpoint":
+                    cycle += 1
+                _log(
+                    log_path,
+                    "deterministic reorientation advance: "
+                    f"status={resumed.get('status')!r}",
+                )
+                physical_checkpoint_no_progress = (
+                    resume_kind == "physical_checkpoint_no_progress"
+                )
+                recovery_failed = (
+                    resume_kind == "strong_terminal_recovery_failed"
+                )
+                skip_legacy_pause = physical_checkpoint_no_progress or recovery_failed
+                if not skip_legacy_pause:
+                    continue
+
+        pause = None if skip_legacy_pause else read_search_pause(repo, tid)
         if pause is not None:
             _sync_paused_thread_index(repo, tid)
             _log(
@@ -1461,14 +1752,6 @@ def watch_thread(
                 "pause": pause,
                 "cycles": cycle,
             }
-
-        if interrupted["flag"]:
-            _log(log_path, "interrupted by signal — exiting.")
-            return {"status": "interrupted", "cycles": cycle}
-
-        if max_cycles is not None and cycle >= max_cycles:
-            _log(log_path, f"explicit max_cycles override ({max_cycles}) hit. exiting.")
-            return {"status": "max_cycles_exceeded", "cycles": cycle}
 
         # PR8 milestone-not-termination logging.
         if cycle > 0 and cycle % milestone_cycle == 0:
