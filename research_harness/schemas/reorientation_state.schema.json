@@ -162,6 +162,7 @@
                     "time_budget",
                     "cost_budget",
                     "download_budget",
+                    "request_budget",
                     "rate_limited",
                     "transient_network",
                     "generation_retry",

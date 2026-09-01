@@ -369,6 +369,7 @@ def test_state_round_trips_every_allowed_phase() -> None:
         acquisition,
         AwaitingEvidence(active_attempt=active),
         make_checkpoint(suspended_acquisition, reason="download_budget"),
+        make_checkpoint(suspended_acquisition, reason="request_budget"),
         GoalAchieved(strong_result_receipt_sha256="sha256:" + "9" * 64),
         HardExternalBlock(
             code=HardExternalBlockCode.AUTH_REQUIRED,
