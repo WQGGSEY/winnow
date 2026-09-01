@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -413,6 +415,47 @@ def test_checkpoint_rejects_a_changed_or_second_active_attempt() -> None:
     }
     with pytest.raises(ValueError, match="oneOf"):
         parse_reorientation_state(second)
+
+
+def test_version_two_state_reads_checkpoint_and_block_without_payload_digest() -> None:
+    continuation = AcquisitionReserved(
+        active_attempt=_attempt(1),
+        reservation=_acquisition_reservation(),
+    )
+    checkpoint = serialize_reorientation_state(
+        _state(make_checkpoint(continuation, reason="download_budget"))
+    )
+    checkpoint_data = checkpoint["phase"]["checkpoint"]
+    checkpoint_data.pop("payload_digest")
+    legacy_identity = {
+        "reason": checkpoint_data["reason"],
+        "continuation_digest": checkpoint_data["continuation_digest"],
+    }
+    canonical = json.dumps(
+        legacy_identity,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    checkpoint_data["checkpoint_id"] = (
+        "checkpoint_" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    )
+    parsed_checkpoint = parse_reorientation_state(checkpoint)
+
+    blocked = serialize_reorientation_state(
+        _state(
+            HardExternalBlock(
+                code=HardExternalBlockCode.AUTH_REQUIRED,
+                required_external_action="Configure the registered credential.",
+                continuation=continuation,
+            )
+        )
+    )
+    blocked["phase"].pop("payload_digest")
+    parsed_block = parse_reorientation_state(blocked)
+
+    assert parsed_checkpoint.phase.checkpoint.payload_digest is None
+    assert parsed_block.phase.payload_digest is None
 
 
 def test_hard_external_block_code_is_closed() -> None:

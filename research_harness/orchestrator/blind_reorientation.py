@@ -96,9 +96,10 @@ def _exact_keys(
     *,
     required: frozenset[str],
     label: str,
+    optional: frozenset[str] = frozenset(),
 ) -> None:
     missing = sorted(required - value.keys())
-    unexpected = sorted(value.keys() - required)
+    unexpected = sorted(value.keys() - required - optional)
     if missing:
         raise ReorientationStateError(f"{label} is missing keys {missing}")
     if unexpected:
@@ -293,6 +294,7 @@ class Checkpoint:
     checkpoint_id: str
     reason: CheckpointReason
     continuation_digest: str
+    payload_digest: str | None = None
 
     def __post_init__(self) -> None:
         _matching_text(self.checkpoint_id, _CHECKPOINT_ID_RE, "checkpoint id")
@@ -303,6 +305,12 @@ class Checkpoint:
             _SHA256_RE,
             "checkpoint continuation digest",
         )
+        if self.payload_digest is not None:
+            _matching_text(
+                self.payload_digest,
+                _SHA256_RE,
+                "checkpoint payload digest",
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,13 +328,27 @@ class Checkpointed:
             raise ReorientationStateError(
                 "checkpoint continuation digest does not match its payload"
             )
-        checkpoint_digest = _sha256(
-            {
-                "reason": self.checkpoint.reason,
-                "continuation_digest": expected,
-            }
-        )
-        if self.checkpoint.checkpoint_id != f"checkpoint_{checkpoint_digest}":
+        checkpoint_ids = {
+            "checkpoint_"
+            + _sha256(
+                {
+                    "reason": self.checkpoint.reason,
+                    "continuation_digest": expected,
+                    "payload_digest": self.checkpoint.payload_digest,
+                }
+            )
+        }
+        if self.checkpoint.payload_digest is None:
+            checkpoint_ids.add(
+                "checkpoint_"
+                + _sha256(
+                    {
+                        "reason": self.checkpoint.reason,
+                        "continuation_digest": expected,
+                    }
+                )
+            )
+        if self.checkpoint.checkpoint_id not in checkpoint_ids:
             raise ReorientationStateError(
                 "checkpoint identity does not match its reason and continuation"
             )
@@ -350,6 +372,7 @@ class HardExternalBlock:
     code: HardExternalBlockCode
     required_external_action: str
     continuation: Continuation
+    payload_digest: str | None = None
     kind: Literal["hard_external_block"] = field(
         default="hard_external_block", init=False
     )
@@ -359,6 +382,12 @@ class HardExternalBlock:
             raise ReorientationStateError("hard external block code is invalid")
         _text(self.required_external_action, "required external action")
         _require_continuation(self.continuation)
+        if self.payload_digest is not None:
+            _matching_text(
+                self.payload_digest,
+                _SHA256_RE,
+                "hard block payload digest",
+            )
 
 
 ReorientationPhase: TypeAlias = (
@@ -495,19 +524,27 @@ def make_checkpoint(
     continuation: Continuation,
     *,
     reason: CheckpointReason,
+    payload_digest: str | None = None,
 ) -> Checkpointed:
     _require_continuation(continuation)
     if reason not in _CHECKPOINT_REASONS:
         raise ReorientationStateError(f"unsupported checkpoint reason {reason!r}")
+    if payload_digest is not None:
+        _matching_text(payload_digest, _SHA256_RE, "checkpoint payload digest")
     continuation_digest = _continuation_digest(continuation)
     checkpoint_digest = _sha256(
-        {"reason": reason, "continuation_digest": continuation_digest}
+        {
+            "reason": reason,
+            "continuation_digest": continuation_digest,
+            "payload_digest": payload_digest,
+        }
     )
     return Checkpointed(
         checkpoint=Checkpoint(
             checkpoint_id=f"checkpoint_{checkpoint_digest}",
             reason=reason,
             continuation_digest=continuation_digest,
+            payload_digest=payload_digest,
         ),
         continuation=continuation,
     )
@@ -540,6 +577,7 @@ def _phase_to_dict(value: ReorientationPhase) -> dict[str, object]:
                 "checkpoint_id": value.checkpoint.checkpoint_id,
                 "reason": value.checkpoint.reason,
                 "continuation_digest": value.checkpoint.continuation_digest,
+                "payload_digest": value.checkpoint.payload_digest,
             },
             "continuation": _continuation_to_dict(value.continuation),
         }
@@ -554,6 +592,7 @@ def _phase_to_dict(value: ReorientationPhase) -> dict[str, object]:
             "code": value.code.value,
             "required_external_action": value.required_external_action,
             "continuation": _continuation_to_dict(value.continuation),
+            "payload_digest": value.payload_digest,
         }
     raise ReorientationStateError("reorientation phase is invalid")
 
@@ -694,9 +733,14 @@ def _parse_phase(value: object) -> ReorientationPhase:
         _exact_keys(
             checkpoint_raw,
             required=frozenset(
-                {"checkpoint_id", "reason", "continuation_digest"}
+                {
+                    "checkpoint_id",
+                    "reason",
+                    "continuation_digest",
+                }
             ),
             label="checkpoint",
+            optional=frozenset({"payload_digest"}),
         )
         reason = checkpoint_raw["reason"]
         if reason not in _CHECKPOINT_REASONS:
@@ -715,6 +759,15 @@ def _parse_phase(value: object) -> ReorientationPhase:
                     checkpoint_raw["continuation_digest"],
                     _SHA256_RE,
                     "checkpoint continuation digest",
+                ),
+                payload_digest=(
+                    None
+                    if checkpoint_raw.get("payload_digest") is None
+                    else _matching_text(
+                        checkpoint_raw["payload_digest"],
+                        _SHA256_RE,
+                        "checkpoint payload digest",
+                    )
                 ),
             ),
             continuation=_parse_continuation(raw["continuation"]),
@@ -736,9 +789,15 @@ def _parse_phase(value: object) -> ReorientationPhase:
         _exact_keys(
             raw,
             required=frozenset(
-                {"kind", "code", "required_external_action", "continuation"}
+                {
+                    "kind",
+                    "code",
+                    "required_external_action",
+                    "continuation",
+                }
             ),
             label="hard external block phase",
+            optional=frozenset({"payload_digest"}),
         )
         try:
             code = HardExternalBlockCode(raw["code"])
@@ -750,6 +809,15 @@ def _parse_phase(value: object) -> ReorientationPhase:
                 raw["required_external_action"], "required external action"
             ),
             continuation=_parse_continuation(raw["continuation"]),
+            payload_digest=(
+                None
+                if raw.get("payload_digest") is None
+                else _matching_text(
+                    raw["payload_digest"],
+                    _SHA256_RE,
+                    "hard block payload digest",
+                )
+            ),
         )
     raise ReorientationStateError(f"unsupported reorientation phase {kind!r}")
 

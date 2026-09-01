@@ -42,7 +42,10 @@
         "normalized_cost": { "type": "number", "minimum": 0, "maximum": 1 },
         "evidence_basis": {
           "type": "array",
-          "items": { "type": "string", "pattern": "^observation_[a-f0-9]{64}$" },
+          "items": {
+            "type": "string",
+            "pattern": "^(observation|direction)_[a-f0-9]{64}$"
+          },
           "minItems": 1
         },
         "score": { "type": "number" }

@@ -17,6 +17,10 @@ from .model import (
     RegisteredSource,
     ResponseReceipt,
     make_acquisition_command,
+    parse_command,
+    parse_cursor,
+    serialize_command,
+    serialize_cursor,
 )
 from .live_http import CredentialProvider
 from .service import PublicAcquisition
@@ -42,4 +46,8 @@ __all__ = [
     "RegisteredSource",
     "ResponseReceipt",
     "make_acquisition_command",
+    "parse_command",
+    "parse_cursor",
+    "serialize_command",
+    "serialize_cursor",
 ]

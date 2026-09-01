@@ -204,9 +204,12 @@
         "tests_bar_gaps",
         "required_capabilities",
         "estimated_cost",
-        "derived_from_observation_id",
         "status",
         "priority"
+      ],
+      "oneOf": [
+        { "required": ["derived_from_observation_id"] },
+        { "required": ["derived_from_direction_id"] }
       ],
       "properties": {
         "id": { "type": "string", "pattern": "^strategy_[a-f0-9]{64}$" },
@@ -233,6 +236,10 @@
         "derived_from_observation_id": {
           "type": "string",
           "pattern": "^observation_[a-f0-9]{64}$"
+        },
+        "derived_from_direction_id": {
+          "type": "string",
+          "pattern": "^direction_[a-f0-9]{64}$"
         },
         "status": {
           "type": "string",

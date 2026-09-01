@@ -885,6 +885,37 @@ def make_cursor(
     )
 
 
+def serialize_cursor(value: AcquisitionCursor) -> dict[str, object]:
+    if not isinstance(value, AcquisitionCursor):
+        raise AcquisitionContractError("value is not an AcquisitionCursor")
+    return {"cursor_id": value.cursor_id, **_cursor_payload(value)}
+
+
+def parse_cursor(value: object) -> AcquisitionCursor:
+    if not isinstance(value, Mapping):
+        raise AcquisitionContractError("acquisition cursor must be an object")
+    required = {
+        "cursor_id",
+        "command_id",
+        "next_need_index",
+        "next_candidate_index",
+        "requests_used",
+        "download_bytes_used",
+        "completed",
+    }
+    if set(value) != required or not isinstance(value["completed"], list):
+        raise AcquisitionContractError("acquisition cursor has an unsupported shape")
+    return AcquisitionCursor(
+        cursor_id=value["cursor_id"],
+        command_id=value["command_id"],
+        next_need_index=value["next_need_index"],
+        next_candidate_index=value["next_candidate_index"],
+        requests_used=value["requests_used"],
+        download_bytes_used=value["download_bytes_used"],
+        completed=tuple(_parse_acquired_need(item) for item in value["completed"]),
+    )
+
+
 def _manifest_payload(value: PinnedNodeManifest) -> dict[str, object]:
     return _manifest_fields_payload(
         command_id=value.command_id,
