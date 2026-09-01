@@ -88,6 +88,35 @@ def test_one_shot_command_order_prompt_and_schema(tmp_path: Path) -> None:
     assert kwargs["input"] == "System instructions:\nfollow rules\n\nUser input:\ndo work"
 
 
+def test_one_shot_can_disable_every_local_inspection_tool(tmp_path: Path) -> None:
+    runner = RecordingRunner(_jsonl())
+    adapter = CodexCliAdapter(codex_path="/bin/codex", runner=runner)
+
+    adapter.complete(
+        CompletionRequest(
+            prompt=AgentPrompt(instructions="use only input", input="{}"),
+            model="gpt-5.6-sol",
+            cwd=tmp_path,
+            allow_local_tools=False,
+        )
+    )
+
+    command, _ = runner.calls[0]
+    disabled = {
+        command[index + 1]
+        for index, value in enumerate(command)
+        if value == "--disable"
+    }
+    assert disabled == {
+        "shell_tool",
+        "unified_exec",
+        "js_repl",
+        "code_mode",
+        "code_mode_host",
+        "view_image",
+    }
+
+
 def test_final_message_and_all_usage_fields_are_normalized() -> None:
     adapter = CodexCliAdapter(runner=RecordingRunner(_jsonl("final answer")))
     result = adapter.complete(

@@ -3,9 +3,22 @@ from __future__ import annotations
 import json
 
 import research_harness.mcp_server as mcp
+from research_harness.acquisition import (
+    AcquisitionBudget,
+    AcquisitionComplete,
+    NeedPlan,
+    PublicAcquisition,
+    RegisteredSource,
+    make_acquisition_command,
+)
 from research_harness.data_adapters import ensure_thread_adapter_snapshots
 from research_harness.orchestrator import experiment_plan as plans
 from research_harness.orchestrator.demo import _demo_node
+from research_harness.orchestrator.direction_generation import (
+    DataNeed,
+    make_direction_draft,
+    make_direction_fingerprint,
+)
 from research_harness.orchestrator.search_state import initialize_search_state
 
 
@@ -97,7 +110,8 @@ def _setup(tmp_path, monkeypatch):
             "_manifest = json.loads(_manifest_path.read_text())\n"
             "_dataset_path = _manifest_path.parent / "
             "_manifest['primary_dataset']['relative_path']\n"
-            "_dataset_path.read_text()\n"
+            "(_dataset_path / 'index.json').read_text() "
+            "if _dataset_path.is_dir() else _dataset_path.read_text()\n"
         )
         return plan, used
 
@@ -124,6 +138,76 @@ def test_execute_binds_before_running_and_propagates_identity(tmp_path, monkeypa
     assert worker["input_evidence"] == runner["input_evidence"]
 
 
+def test_execute_binds_verified_acquisition_manifest(tmp_path, monkeypatch):
+    thread_dir, state_path, source, snapshot, node = _setup(tmp_path, monkeypatch)
+    need = DataNeed(kind="registered_adapter", description="Evaluation dataset")
+    direction = make_direction_draft(
+        claim="The intervention improves the target metric.",
+        fingerprint=make_direction_fingerprint(
+            mechanism="closed-loop feedback",
+            intervention="adaptive control",
+            observables_and_data="held-out measurements",
+            analysis_unit="evaluation cohort",
+            timescale="one evaluation cycle",
+            system_boundary="deployed service",
+        ),
+        experiment_objective="Compare against every mandatory baseline.",
+        data_needs=(need,),
+        predicted_outcomes=("the margin clears", "the margin misses"),
+    )
+    registered = RegisteredSource(
+        adapter_id=snapshot["adapter_id"],
+        snapshot_id=snapshot["snapshot_id"],
+        path=str(source),
+        content_sha256="sha256:" + snapshot["content_sha256"],
+        size_bytes=snapshot["size_bytes"],
+        entry_count=snapshot["entry_count"],
+        provenance=snapshot["provenance"],
+        retrieved_at="thread snapshot",
+    )
+    command = make_acquisition_command(
+        reservation_id="reservation_" + "1" * 64,
+        node_id=node["id"],
+        attempt_id="attempt_execution",
+        direction=direction,
+        needs=(NeedPlan(0, need, (registered,)),),
+        budget=AcquisitionBudget(0, 0, 30),
+    )
+    cache_root = (
+        thread_dir / "production" / "reorientation" / "acquisition_cache"
+    )
+    outcome = PublicAcquisition(cache_root).acquire(command)
+    assert isinstance(outcome, AcquisitionComplete)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    persisted_node = next(item for item in state["nodes"] if item["id"] == node["id"])
+    manifest_id = outcome.manifest.manifest_id
+    persisted_node["claim_contract"].update(
+        {
+            "data_source_anchor": f"acquisition_manifest:{manifest_id}",
+            "data_source_snapshot_id": "as_" + manifest_id.removeprefix(
+                "acqmanifest_"
+            ),
+        }
+    )
+    persisted_node["outputs"]["artifacts"] = [
+        f"acquisition_manifest:{manifest_id}"
+    ]
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    result = mcp.handle_execute_node_experiment(
+        {"thread_id": "thread_bound", "node_id": node["id"]}
+    )
+
+    assert result["status"] == "ok"
+    node_dir = thread_dir / "production" / "tree" / "nodes" / node["id"]
+    job = json.loads((node_dir / "job_manifest.json").read_text())
+    runner = json.loads((node_dir / "workspace" / "runner_result.json").read_text())
+    assert job["inputs"]["snapshot_id"] == "as_" + manifest_id.removeprefix(
+        "acqmanifest_"
+    )
+    assert runner["input_evidence"]["adapter_id"] == "acquisition"
+
+
 def test_binding_failure_leaves_node_ready(tmp_path, monkeypatch):
     _, state_path, source, _, node = _setup(tmp_path, monkeypatch)
     source.write_text("changed after snapshot", encoding="utf-8")
@@ -136,6 +220,36 @@ def test_binding_failure_leaves_node_ready(tmp_path, monkeypatch):
     state = json.loads(state_path.read_text())
     persisted = next(item for item in state["nodes"] if item["id"] == node["id"])
     assert persisted["status"] == "ready"
+
+
+def test_execute_rejects_runtime_input_modified_by_experiment(tmp_path, monkeypatch):
+    thread_dir, state_path, _, _, node = _setup(tmp_path, monkeypatch)
+    original_builder = plans.build_experiment_plan_for_node
+
+    def mutating_builder(*args, **kwargs):
+        plan, used = original_builder(*args, **kwargs)
+        plan["source_files"][0]["content"] += (
+            "\n_manifest_path = Path(os.environ['RESEARCH_HARNESS_INPUT_MANIFEST'])\n"
+            "_manifest = json.loads(_manifest_path.read_text())\n"
+            "_dataset_path = _manifest_path.parent / "
+            "_manifest['primary_dataset']['relative_path']\n"
+            "_dataset_path.write_text('tampered')\n"
+        )
+        return plan, used
+
+    monkeypatch.setattr(plans, "build_experiment_plan_for_node", mutating_builder)
+
+    result = mcp.handle_execute_node_experiment(
+        {"thread_id": "thread_bound", "node_id": node["id"]}
+    )
+
+    assert result["status"] == "rejected"
+    assert "runtime input changed" in result["reason"]
+    state = json.loads(state_path.read_text())
+    persisted = next(item for item in state["nodes"] if item["id"] == node["id"])
+    assert persisted["status"] == "ready"
+    node_dir = thread_dir / "production" / "tree" / "nodes" / node["id"]
+    assert not (node_dir / "worker_report.json").exists()
 
 
 def test_invalid_baseline_evidence_contract_requeues_node(tmp_path, monkeypatch):

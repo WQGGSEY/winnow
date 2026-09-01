@@ -1,12 +1,41 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
 import research_harness.mcp_server as mcp
+from research_harness.acquisition import (
+    AcquisitionBudget,
+    make_acquisition_command,
+    serialize_command,
+)
 from research_harness.orchestrator.adaptive_search import experiment_fingerprint
+from research_harness.orchestrator.direction_generation import (
+    make_direction_draft,
+    make_direction_fingerprint,
+)
+
+
+class _BlindEngine:
+    def __init__(
+        self,
+        result: dict[str, object],
+        *,
+        before_advance: Callable[[], None] | None = None,
+    ) -> None:
+        self.result = result
+        self.before_advance = before_advance
+        self.calls: list[tuple[str, object]] = []
+
+    def advance_research(self, *, command_id, acquisition_command=None):
+        if self.before_advance is not None:
+            self.before_advance()
+        self.calls.append((command_id, acquisition_command))
+        return dict(self.result)
 
 
 def _node(*, status: str = "critic_reviewed") -> dict:
@@ -88,13 +117,32 @@ def _write_thread(tmp_path: Path, tid: str, state: dict) -> Path:
     (node_dir / "worker_report.json").write_text(
         json.dumps(
             {
+                "node_id": "n_parent",
                 "status": "completed",
                 "claim_verdict_candidate": "contradicted",
                 "metrics": {"accuracy": 0.4, "macro_f1": 0.3},
                 "baselines": {"word_accuracy": 0.4, "word_macro_f1": 0.4},
-                "baseline_evidence_status": {"overall": "failed", "results": []},
+                "baseline_evidence_status": {
+                    "overall": "failed",
+                    "results": [
+                        {
+                            "role": "current_best_known",
+                            "metric_key": "accuracy",
+                            "baseline_key": "word_accuracy",
+                            "operator": "greater_than",
+                            "margin": 0.0,
+                            "required": True,
+                            "metric_value": 0.4,
+                            "baseline_value": 0.4,
+                            "status": "failed",
+                            "reason": "deterministic comparison result",
+                        }
+                    ],
+                },
                 "disproof_conditions_hit": ["accuracy did not improve"],
-                "input_evidence": {"adapter_id": "taxonomy"},
+                "artifacts": [],
+                "unexpected_observations": [],
+                "failure_record_candidate": None,
             }
         ),
         encoding="utf-8",
@@ -163,6 +211,30 @@ def _candidate(
     }
 
 
+def _prepared_acquisition_command():
+    direction = make_direction_draft(
+        claim="Adaptive scheduling improves utility.",
+        fingerprint=make_direction_fingerprint(
+            mechanism="load feedback",
+            intervention="adaptive scheduling",
+            observables_and_data="daily utility",
+            analysis_unit="daily cohort",
+            timescale="four weeks",
+            system_boundary="regional service",
+        ),
+        experiment_objective="Compare utility against baselines.",
+        predicted_outcomes=("margin clears", "margin misses"),
+    )
+    return make_acquisition_command(
+        reservation_id="reservation_" + "1" * 64,
+        node_id="n_blind_test",
+        attempt_id="attempt_test",
+        direction=direction,
+        needs=(),
+        budget=AcquisitionBudget(0, 0, 30),
+    )
+
+
 def _negative_args(tid: str) -> dict:
     return {
         "thread_id": tid,
@@ -190,7 +262,7 @@ def _negative_args(tid: str) -> dict:
     }
 
 
-def test_negative_decision_atomically_materializes_distinct_strategies(
+def test_negative_decision_rejects_observation_derived_successors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     tid = "t_negative"
@@ -198,62 +270,68 @@ def test_negative_decision_atomically_materializes_distinct_strategies(
     monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: tmp_path / _tid)
 
     response = mcp.handle_submit_professor_decision(_negative_args(tid), settings={})
-    retry = mcp.handle_submit_professor_decision(_negative_args(tid), settings={})
-    stale_args = _negative_args(tid)
-    stale_args["command_id"] = "decision:n_parent:stale"
-    stale = mcp.handle_submit_professor_decision(stale_args, settings={})
-
-    assert response == retry
-    assert stale["reason"] == "stale_adaptive_revision"
-    assert stale["expected_revision"] == 1
-    assert response["status"] == "accepted"
-    assert len(response["created_child_ids"]) == 2
-    assert response["search_disposition"] == "continue"
-
-    persisted = json.loads(
-        (thread_dir / "production" / "tree" / "search_state.json").read_text()
-    )
-    children = [node for node in persisted["nodes"] if node.get("parent") == "n_parent"]
-    assert len(children) == 2
-    assert len({node["strategy"]["id"] for node in children}) == 2
-    frozen_bar = persisted["adaptive"]["goal"]["bar"]
-    assert all(
-        node["claim_contract"]["success_criteria"]
-        == frozen_bar["success_criteria"]
-        for node in children
-    )
-    assert all(
-        node["claim_contract"]["disproof_conditions"]
-        == frozen_bar["disproof_conditions"]
-        for node in children
-    )
-    assert len(persisted["adaptive"]["observations"]) == 1
-    assert persisted["adaptive"]["revision"] == 1
-
-    selected = mcp.handle_get_next_admissible_node({"thread_id": tid})
-    assert selected["status"] == "ok"
-    assert selected["node_id"] == response["created_child_ids"][0]
-    assert selected["priority_components"]["evidence_basis"]
-    assert "evidence-derived" in selected["_selection_policy"]
-
-
-def test_negative_decision_rejects_duplicate_strategy_before_state_change(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    tid = "t_duplicate"
-    thread_dir = _write_thread(tmp_path, tid, _state())
-    monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: tmp_path / _tid)
-    args = _negative_args(tid)
-    args["follow_up_children"][1] = dict(args["follow_up_children"][0])
-
-    response = mcp.handle_submit_professor_decision(args, settings={})
 
     assert response["status"] == "rejected"
-    assert "distinct" in response["reason"]
+    assert "observation-derived successors" in response["reason"]
+
     persisted = json.loads(
         (thread_dir / "production" / "tree" / "search_state.json").read_text()
     )
     assert persisted["nodes"] == _state()["nodes"]
+
+
+def test_pruned_decision_closes_direction_and_advances_blind_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = "t_pruned"
+    thread_dir = _write_thread(tmp_path, tid, _state())
+    monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: tmp_path / _tid)
+    lock_depth = 0
+
+    @contextmanager
+    def writer_lock():
+        nonlocal lock_depth
+        lock_depth += 1
+        try:
+            yield
+        finally:
+            lock_depth -= 1
+
+    def assert_unlocked() -> None:
+        assert lock_depth == 0
+
+    monkeypatch.setattr(mcp, "_exclusive_adaptive_writer", lambda _tid: writer_lock())
+    engine = _BlindEngine(
+        {
+            "status": "checkpointed",
+            "reason": "generation_retry",
+            "next_tool_to_call": "advance_research",
+        },
+        before_advance=assert_unlocked,
+    )
+    monkeypatch.setattr(
+        mcp,
+        "_build_blind_research_engine",
+        lambda _tid: engine,
+    )
+    args = _negative_args(tid)
+    args["next_transition"] = "pruned"
+    args["follow_up_children"] = []
+
+    response = mcp.handle_submit_professor_decision(args, settings={})
+    retry = mcp.handle_submit_professor_decision(args, settings={})
+
+    assert response == retry
+    assert response["status"] == "accepted"
+    assert response["created_child_ids"] == []
+    assert response["research_advance"]["status"] == "checkpointed"
+    persisted = json.loads(
+        (thread_dir / "production" / "tree" / "search_state.json").read_text()
+    )
+    assert persisted["nodes"][0]["status"] == "pruned"
+    assert len(persisted["nodes"]) == 1
+    assert persisted["adaptive"]["observations"] == []
+    assert len(engine.calls) == 1
 
 
 def test_promotion_rejects_worker_report_without_supported_evidence(
@@ -278,6 +356,120 @@ def test_promotion_rejects_worker_report_without_supported_evidence(
     assert response["reason"].startswith(
         "promotion_requires_supported_execution_evidence"
     )
+
+
+def test_prune_rejects_worker_report_without_conclusive_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = "t_inconclusive_prune"
+    thread_dir = _write_thread(tmp_path, tid, _state())
+    monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: tmp_path / _tid)
+    worker_path = (
+        thread_dir
+        / "production"
+        / "tree"
+        / "nodes"
+        / "n_parent"
+        / "worker_report.json"
+    )
+    worker = json.loads(worker_path.read_text())
+    worker["status"] = "failed"
+    worker_path.write_text(json.dumps(worker), encoding="utf-8")
+
+    response = mcp.handle_submit_professor_decision(
+        {
+            "thread_id": tid,
+            "node_id": "n_parent",
+            "next_transition": "pruned",
+            "final_verdict": "execution failed before a conclusion",
+            "follow_up_children": [],
+        },
+        settings={},
+    )
+
+    assert response["status"] == "rejected"
+    assert response["reason"].startswith("prune_requires_conclusive_failure")
+    state = json.loads(
+        (thread_dir / "production" / "tree" / "search_state.json").read_text()
+    )
+    assert state["nodes"][0]["status"] == "critic_reviewed"
+
+
+def test_selector_requires_experiment_revision_for_inconclusive_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = "t_inconclusive_retry"
+    initial_state = _state()
+    initial_state["nodes"][0]["claim_contract"].pop("data_source_anchor")
+    thread_dir = _write_thread(tmp_path, tid, initial_state)
+    monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: tmp_path / _tid)
+    node_dir = thread_dir / "production" / "tree" / "nodes" / "n_parent"
+    worker_path = node_dir / "worker_report.json"
+    worker = json.loads(worker_path.read_text())
+    worker["status"] = "failed"
+    worker_path.write_text(json.dumps(worker), encoding="utf-8")
+    plan = {
+        "node_id": "n_parent",
+        "plan_id": "plan_retry",
+        "objective": "Run the retryable experiment",
+        "task_class": "eval",
+        "entrypoint": {"command": ["python3"], "args": ["src/experiment.py"]},
+        "source_files": [
+            {
+                "path": "src/experiment.py",
+                "content": "print(1)",
+                "purpose": "test",
+            }
+        ],
+        "inputs": {},
+        "expected_outputs": {},
+        "baseline_evidence_requirements": [],
+        "resources": {"timeout_sec": 10},
+        "reproducibility": {"seed": 7},
+    }
+    (node_dir / "experiment_plan.json").write_text(
+        json.dumps(plan),
+        encoding="utf-8",
+    )
+    template_dir = (
+        thread_dir / "production" / "professor_templates" / "n_parent"
+    )
+    (template_dir / "src").mkdir(parents=True)
+    (template_dir / "src" / "experiment.py").write_text(
+        "print(1)",
+        encoding="utf-8",
+    )
+    (template_dir / "plan.json").write_text(
+        json.dumps({"description": "original"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "research_harness.orchestrator.experiment_plan.build_experiment_plan_for_node",
+        lambda *_args, **_kwargs: (dict(plan), True),
+    )
+    monkeypatch.setattr(
+        "research_harness.orchestrator.experiment_plan.validate_experiment_plan",
+        lambda *_args, **_kwargs: None,
+    )
+
+    selected = mcp.handle_get_next_admissible_node({"thread_id": tid})
+    (template_dir / "plan.json").write_text(
+        json.dumps({"description": "prose changed only"}),
+        encoding="utf-8",
+    )
+    premature_run = mcp.handle_execute_node_experiment(
+        {"thread_id": tid, "node_id": "n_parent"}
+    )
+
+    assert selected["status"] == "retry_evidence"
+    assert selected["evidence_reason"] == "runner_did_not_complete"
+    assert selected["next_tool_to_call"] == "design_experiment_template"
+    assert premature_run["status"] == "rejected"
+    assert "prose-only edits do not qualify" in premature_run["reason"]
+    state = json.loads(
+        (thread_dir / "production" / "tree" / "search_state.json").read_text()
+    )
+    assert state["nodes"][0]["status"] == "ready"
 
 
 def test_supported_adaptive_promotion_preempts_remaining_frontier_for_rebuttal(
@@ -337,28 +529,7 @@ def test_supported_adaptive_promotion_preempts_remaining_frontier_for_rebuttal(
     assert selected["next_tool_to_call"] == "prepare_paper_writing_context"
 
 
-def test_negative_without_strategies_persists_resumable_pause(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    tid = "t_negative_pause"
-    thread_dir = _write_thread(tmp_path, tid, _state())
-    monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: tmp_path / _tid)
-    args = _negative_args(tid)
-    args["follow_up_children"] = []
-
-    response = mcp.handle_submit_professor_decision(args, settings={})
-    selected = mcp.handle_get_next_admissible_node({"thread_id": tid})
-
-    assert response["status"] == "paused_needs_expansion"
-    assert selected["status"] == "paused_needs_expansion"
-    persisted = json.loads(
-        (thread_dir / "production" / "tree" / "search_state.json").read_text()
-    )
-    assert persisted["adaptive"]["observations"]
-    assert persisted["adaptive"]["pause"]["reason"] == "needs_strategy_expansion"
-
-
-def test_empty_frontier_persists_resumable_pause(
+def test_empty_frontier_advances_blind_engine_outside_writer_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     tid = "t_pause"
@@ -367,59 +538,358 @@ def test_empty_frontier_persists_resumable_pause(
     state["pruned_node_ids"] = ["n_parent"]
     thread_dir = _write_thread(tmp_path, tid, state)
     monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: tmp_path / _tid)
+    lock_depth = 0
+
+    @contextmanager
+    def writer_lock():
+        nonlocal lock_depth
+        lock_depth += 1
+        try:
+            yield
+        finally:
+            lock_depth -= 1
+
+    def assert_unlocked() -> None:
+        assert lock_depth == 0
+
+    engine = _BlindEngine(
+        {
+            "status": "direction_ready",
+            "direction": {"data_needs": []},
+            "next_tool_to_call": "advance_research",
+        },
+        before_advance=assert_unlocked,
+    )
+    monkeypatch.setattr(mcp, "_exclusive_adaptive_writer", lambda _tid: writer_lock())
+    monkeypatch.setattr(
+        mcp,
+        "_build_blind_research_engine",
+        lambda _tid: engine,
+    )
 
     response = mcp.handle_get_next_admissible_node({"thread_id": tid})
 
-    assert response["status"] == "paused_needs_expansion"
-    assert response["search_disposition"] == "paused_needs_expansion"
-    assert response["next_tool_to_call"] == "propose_alternative_root_directions"
+    assert response["status"] == "direction_ready"
+    assert len(engine.calls) == 1
     persisted = json.loads(
         (thread_dir / "production" / "tree" / "search_state.json").read_text()
     )
-    assert persisted["status"] == "blocked"
-    assert persisted["adaptive"]["pause"]["reason"] == "needs_strategy_expansion"
+    assert persisted["status"] == "completed"
 
 
-def test_unavailable_strategy_capability_pauses_without_dispatch(
+def test_advance_research_forwards_stable_command_to_blind_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = _BlindEngine(
+        {
+            "status": "direction_ready",
+            "direction": {"data_needs": []},
+            "next_tool_to_call": "advance_research",
+        }
+    )
+    monkeypatch.setattr(mcp, "_thread_dir", lambda tid: tmp_path / tid)
+    monkeypatch.setattr(
+        mcp,
+        "_build_blind_research_engine",
+        lambda _tid: engine,
+    )
+
+    response = mcp.handle_advance_research(
+        {"thread_id": "t_direct", "command_id": "step_1"},
+        settings={},
+    )
+
+    assert response["status"] == "direction_ready"
+    assert engine.calls == [("step_1", None)]
+
+    def fail_engine_construction(*_args, **_kwargs):
+        raise AssertionError("committed receipt replay constructed an engine")
+
+    monkeypatch.setattr(
+        mcp,
+        "_build_blind_research_engine",
+        fail_engine_construction,
+    )
+
+    retry = mcp.handle_advance_research(
+        {"thread_id": "t_direct", "command_id": "step_1"},
+        settings={},
+    )
+
+    assert retry == response
+    assert engine.calls == [("step_1", None)]
+
+
+def test_blind_engine_uses_thread_scoped_agent_models(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from research_harness.config import resolve_agent_model
+    from research_harness.orchestrator import blind_mcp_adapter
+
+    tid = "t_scoped_models"
+    thread_dir = tmp_path / "runs" / "threads" / tid
+    thread_dir.mkdir(parents=True)
+    (tmp_path / "settings.json").write_text(
+        json.dumps(
+            {
+                "runtime": {
+                    "agent_models": {
+                        "direction_generator": "project-direction",
+                        "structural_assessor": "project-assessor",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (thread_dir / "thread_settings.json").write_text(
+        json.dumps(
+            {
+                "runtime.agent_models.direction_generator": "thread-direction",
+                "runtime.agent_models.structural_assessor": "thread-assessor",
+            }
+        ),
+        encoding="utf-8",
+    )
+    captured = {}
+
+    def capture_engine(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(mcp, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: thread_dir)
+    monkeypatch.setattr(
+        blind_mcp_adapter,
+        "build_blind_research_engine",
+        capture_engine,
+    )
+
+    mcp._build_blind_research_engine(tid)
+
+    assert resolve_agent_model(captured["settings"], "direction_generator") == (
+        "thread-direction"
+    )
+    assert resolve_agent_model(captured["settings"], "structural_assessor") == (
+        "thread-assessor"
+    )
+
+
+def test_advance_research_rejects_command_id_reuse_with_different_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = _BlindEngine({"status": "direction_ready"})
+    monkeypatch.setattr(mcp, "_thread_dir", lambda tid: tmp_path / tid)
+    monkeypatch.setattr(
+        mcp,
+        "_build_blind_research_engine",
+        lambda _tid: engine,
+    )
+    first = {"thread_id": "t_collision", "command_id": "same"}
+
+    assert mcp.handle_advance_research(first, settings={})["status"] == "direction_ready"
+    collision = mcp.handle_advance_research(
+        {**first, "acquisition": {"needs": []}},
+        settings={},
+    )
+
+    assert collision["status"] == "rejected"
+    assert "different advance request" in collision["reason"]
+    assert len(engine.calls) == 1
+
+
+def test_advance_research_recovers_prepared_acquisition_without_replanning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = "t_prepared"
+    monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: tmp_path / _tid)
+    args = {
+        "thread_id": tid,
+        "command_id": "acquire_once",
+        "acquisition": {"needs": []},
+    }
+    command = _prepared_acquisition_command()
+    receipt_path = mcp._advance_command_receipt_path(tid, args["command_id"])
+    receipt_path.parent.mkdir(parents=True)
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "command_id": args["command_id"],
+                "input_digest": mcp._json_sha256(args),
+                "status": "prepared",
+                "acquisition_command": serialize_command(command),
+            }
+        ),
+        encoding="utf-8",
+    )
+    engine = _BlindEngine({"status": "acquisition_running"})
+    monkeypatch.setattr(
+        mcp,
+        "_build_blind_research_engine",
+        lambda _tid: engine,
+    )
+
+    response = mcp.handle_advance_research(args, settings={})
+
+    assert response["status"] == "acquisition_running"
+    assert engine.calls == [("acquire_once", command)]
+
+
+def test_advance_research_does_not_overwrite_malformed_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = "t_malformed_receipt"
+    monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: tmp_path / _tid)
+    receipt_path = mcp._advance_command_receipt_path(tid, "same")
+    receipt_path.parent.mkdir(parents=True)
+    receipt_path.write_text("not json", encoding="utf-8")
+    engine = _BlindEngine({"status": "direction_ready"})
+    monkeypatch.setattr(
+        mcp,
+        "_build_blind_research_engine",
+        lambda _tid: engine,
+    )
+
+    response = mcp.handle_advance_research(
+        {"thread_id": tid, "command_id": "same"},
+        settings={},
+    )
+
+    assert response == {
+        "status": "rejected",
+        "reason": "advance command receipt is malformed",
+    }
+    assert receipt_path.read_text() == "not json"
+    assert engine.calls == []
+
+
+def test_professor_command_id_reuse_with_changed_payload_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = "t_professor_collision"
+    _write_thread(tmp_path, tid, _state())
+    monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: tmp_path / _tid)
+    monkeypatch.setattr(
+        mcp,
+        "_build_blind_research_engine",
+        lambda _tid: _BlindEngine({"status": "checkpointed"}),
+    )
+    args = _negative_args(tid)
+    args["next_transition"] = "pruned"
+    args["follow_up_children"] = []
+
+    assert mcp.handle_submit_professor_decision(args, settings={})["status"] == "accepted"
+    collision = mcp.handle_submit_professor_decision(
+        {**args, "final_verdict": "a different decision payload"},
+        settings={},
+    )
+
+    assert collision["status"] == "rejected"
+    assert "different professor decision" in collision["reason"]
+
+
+@pytest.mark.parametrize("legacy_command_id", ["legacy-explicit", "implicit:forged"])
+def test_legacy_explicit_professor_receipt_requires_new_command_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    legacy_command_id: str,
+) -> None:
+    tid = "t_legacy_professor_receipt"
+    state = _state()
+    thread_dir = _write_thread(tmp_path, tid, state)
+    monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: tmp_path / _tid)
+    adaptive = mcp._ensure_adaptive_state(tid, state)
+    adaptive["command_receipts"][legacy_command_id] = {
+        "status": "accepted",
+        "applied_transition": "pruned",
+    }
+    (thread_dir / "production" / "tree" / "search_state.json").write_text(
+        json.dumps(state),
+        encoding="utf-8",
+    )
+
+    response = mcp.handle_submit_professor_decision(
+        {
+            "thread_id": tid,
+            "node_id": "n_parent",
+            "next_transition": "pruned",
+            "command_id": legacy_command_id,
+        },
+        settings={},
+    )
+
+    assert response["status"] == "rejected"
+    assert "legacy professor receipt" in response["reason"]
+
+
+def test_unavailable_legacy_strategy_routes_to_blind_reorientation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     tid = "t_missing_capability"
-    thread_dir = _write_thread(tmp_path, tid, _state())
+    state = _state(status="ready")
+    thread_dir = _write_thread(tmp_path, tid, state)
     monkeypatch.setattr(mcp, "_thread_dir", lambda _tid: tmp_path / _tid)
-    args = _negative_args(tid)
-    for candidate in args["follow_up_children"]:
-        candidate["required_capabilities"] = ["data:private_holdout"]
+    adaptive = mcp._ensure_adaptive_state(tid, state)
+    strategy = {
+        "id": "strategy_" + "d" * 64,
+        "goal_id": "goal_" + "b" * 64,
+        "family": "private holdout strategy",
+        "mechanism": "private signal feedback",
+        "intervention": "private holdout calibration",
+        "information_target": "whether private holdout calibration clears the bar",
+        "predicted_outcomes": ["the bar clears", "the bar misses"],
+        "tests_bar_gaps": ["accuracy improves"],
+        "required_capabilities": ["data:private_holdout"],
+        "estimated_cost": 0.5,
+        "derived_from_direction_id": "direction_" + "c" * 64,
+        "status": "candidate",
+        "priority": {
+            "bar_gap_closure": 1.0,
+            "information_gain": 1.0,
+            "mechanism_novelty": 1.0,
+            "score": 9.0,
+            "capability_fit": 0.0,
+            "normalized_cost": 0.0,
+            "evidence_basis": ["direction_" + "c" * 64],
+        },
+    }
+    state["nodes"][0]["strategy"] = strategy
+    state["frontier"][0]["priority_components"] = {
+        "bar_gap_closure": 1.0,
+        "information_gain": 1.0,
+        "mechanism_novelty": 1.0,
+        "score": 9.0,
+        "capability_fit": 0.0,
+        "normalized_cost": 0.0,
+        "evidence_basis": ["observation_" + "a" * 64],
+    }
+    adaptive["strategies"] = [strategy]
+    (thread_dir / "production" / "tree" / "search_state.json").write_text(
+        json.dumps(state), encoding="utf-8"
+    )
+    engine = _BlindEngine(
+        {
+            "status": "checkpointed",
+            "reason": "generation_retry",
+            "next_tool_to_call": "advance_research",
+        }
+    )
+    monkeypatch.setattr(
+        mcp,
+        "_build_blind_research_engine",
+        lambda _tid: engine,
+    )
 
-    decision = mcp.handle_submit_professor_decision(args, settings={})
     selected = mcp.handle_get_next_admissible_node({"thread_id": tid})
 
-    assert decision["status"] == "accepted"
-    assert selected["status"] == "paused_needs_expansion"
-    assert selected["pause"]["reason"] == "missing_capability"
-    assert selected["pause"]["missing_capabilities"] == [
-        "data:private_holdout"
-    ]
+    assert selected["status"] == "checkpointed"
+    assert len(engine.calls) == 1
     persisted = json.loads(
         (thread_dir / "production" / "tree" / "search_state.json").read_text()
     )
-    assert persisted["status"] == "blocked"
-    assert all(item["status"] == "queued" for item in persisted["frontier"][1:])
-
-    envelope_path = thread_dir / "production" / "feasibility_envelope.json"
-    envelope = json.loads(envelope_path.read_text())
-    envelope["data_sources_available"].append(
-        {"kind": "real_adapter", "id": "private_holdout"}
-    )
-    envelope_path.write_text(json.dumps(envelope), encoding="utf-8")
-
-    resumed = mcp.handle_get_next_admissible_node({"thread_id": tid})
-    assert resumed["status"] == "ok"
-    resumed_state = json.loads(
-        (thread_dir / "production" / "tree" / "search_state.json").read_text()
-    )
-    assert resumed_state["status"] == "running"
-    assert resumed_state["adaptive"]["pause"] is None
-    assert resumed_state["adaptive"]["disposition"] == "continue"
+    assert persisted["nodes"][0]["status"] == "blocked"
+    assert persisted["frontier"][0]["status"] == "done"
 
 
 def test_first_selection_persists_adaptive_state_before_execution(

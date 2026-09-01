@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/blind_direction_proposal.schema.json",
+  "title": "BlindDirectionProposal",
+  "type": "object",
+  "required": [
+    "claim",
+    "fingerprint",
+    "experiment_objective",
+    "data_needs",
+    "predicted_outcomes"
+  ],
+  "properties": {
+    "claim": { "type": "string", "minLength": 1 },
+    "fingerprint": {
+      "type": "object",
+      "required": [
+        "mechanism",
+        "intervention",
+        "observables_and_data",
+        "analysis_unit",
+        "timescale",
+        "system_boundary"
+      ],
+      "properties": {
+        "mechanism": { "type": "string", "minLength": 1 },
+        "intervention": { "type": "string", "minLength": 1 },
+        "observables_and_data": { "type": "string", "minLength": 1 },
+        "analysis_unit": { "type": "string", "minLength": 1 },
+        "timescale": { "type": "string", "minLength": 1 },
+        "system_boundary": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "experiment_objective": { "type": "string", "minLength": 1 },
+    "data_needs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "description"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "registered_adapter",
+              "public_api",
+              "public_page",
+              "crawl"
+            ]
+          },
+          "description": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "predicted_outcomes": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 2
+    }
+  },
+  "additionalProperties": false
+}

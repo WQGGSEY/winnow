@@ -17,7 +17,7 @@ ALLOWED_TRANSITIONS = {
     "ready": {"running", "pruned", "blocked"},
     "running": {"ready", "completed_worker_report", "blocked", "failed"},
     "completed_worker_report": {"critic_reviewed", "blocked", "failed"},
-    "critic_reviewed": {"orchestrator_reduced", "blocked", "failed"},
+    "critic_reviewed": {"ready", "orchestrator_reduced", "blocked", "failed"},
     "orchestrator_reduced": {"promoted", "needs_child_branch", "pruned", "blocked", "failed"},
     "needs_child_branch": {"pruned"},
 }

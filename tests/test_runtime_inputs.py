@@ -6,14 +6,28 @@ from pathlib import Path
 
 import pytest
 
+from research_harness.acquisition import (
+    AcquisitionBudget,
+    AcquisitionComplete,
+    NeedPlan,
+    PublicAcquisition,
+    RegisteredSource,
+    make_acquisition_command,
+)
 from research_harness.data_adapters import probe_registered_adapters
 from research_harness.orchestrator.demo import _demo_node
+from research_harness.orchestrator.direction_generation import (
+    DataNeed,
+    make_direction_draft,
+    make_direction_fingerprint,
+)
 from research_harness.runner.evidence import build_worker_report_from_runner_evidence
 from research_harness.runner.job_manifest import build_demo_job_manifest
 from research_harness.runner.local_runner import LocalRunner
 from research_harness.runtime_inputs import (
     RUNTIME_INPUT_ENV,
     RuntimeInputError,
+    bind_acquisition_manifest,
     bind_runtime_input,
     runtime_input_environment,
     validate_runtime_input_reference,
@@ -84,6 +98,53 @@ def test_runner_validation_rejects_tampered_staged_bytes(tmp_path):
         validate_runtime_input_reference(reference, workspace=workspace)
 
 
+def test_binding_repairs_tampered_staged_bytes_for_retry(tmp_path):
+    snapshot, _ = _snapshot(tmp_path)
+    workspace = tmp_path / "workspace"
+    reference = bind_runtime_input(
+        snapshot=snapshot,
+        workspace=workspace,
+        repo_root=tmp_path,
+    )
+    manifest = json.loads((workspace / "runtime_inputs.json").read_text())
+    staged = workspace / manifest["primary_dataset"]["relative_path"]
+    staged.write_text("tampered", encoding="utf-8")
+
+    rebound = bind_runtime_input(
+        snapshot=snapshot,
+        workspace=workspace,
+        repo_root=tmp_path,
+    )
+
+    assert rebound == reference
+    assert validate_runtime_input_reference(rebound, workspace=workspace)
+
+
+def test_binding_repairs_staged_symlink_without_writing_outside(tmp_path):
+    snapshot, _ = _snapshot(tmp_path)
+    workspace = tmp_path / "workspace"
+    reference = bind_runtime_input(
+        snapshot=snapshot,
+        workspace=workspace,
+        repo_root=tmp_path,
+    )
+    manifest = json.loads((workspace / "runtime_inputs.json").read_text())
+    staged = workspace / manifest["primary_dataset"]["relative_path"]
+    outside = tmp_path / "outside"
+    staged.unlink()
+    staged.symlink_to(outside)
+
+    rebound = bind_runtime_input(
+        snapshot=snapshot,
+        workspace=workspace,
+        repo_root=tmp_path,
+    )
+
+    assert rebound == reference
+    assert not outside.exists()
+    assert validate_runtime_input_reference(rebound, workspace=workspace)
+
+
 def test_manifest_digest_covers_persisted_bytes(tmp_path):
     snapshot, _ = _snapshot(tmp_path)
     workspace = tmp_path / "workspace"
@@ -94,6 +155,148 @@ def test_manifest_digest_covers_persisted_bytes(tmp_path):
     assert evidence["manifest_sha256"] == hashlib.sha256(
         (workspace / "runtime_inputs.json").read_bytes()
     ).hexdigest()
+
+
+def _acquisition_fixture(tmp_path):
+    source = tmp_path / "public.csv"
+    source.write_text("day,value\n1,7\n", encoding="utf-8")
+    content = source.read_bytes()
+    digest = hashlib.sha256(content).hexdigest()
+    need = DataNeed(kind="registered_adapter", description="Daily values")
+    direction = make_direction_draft(
+        claim="Adaptive scheduling improves utility.",
+        fingerprint=make_direction_fingerprint(
+            mechanism="load feedback",
+            intervention="adaptive scheduling",
+            observables_and_data="daily utility",
+            analysis_unit="daily cohort",
+            timescale="four weeks",
+            system_boundary="regional service",
+        ),
+        experiment_objective="Compare utility against baselines.",
+        data_needs=(need,),
+        predicted_outcomes=("margin clears", "margin misses"),
+    )
+    registered = RegisteredSource(
+        adapter_id="events",
+        snapshot_id="as_" + "1" * 64,
+        path=str(source),
+        content_sha256="sha256:" + digest,
+        size_bytes=len(content),
+        entry_count=1,
+        provenance="operator fixture",
+        retrieved_at="thread snapshot",
+    )
+    command = make_acquisition_command(
+        reservation_id="reservation_" + "2" * 64,
+        node_id="n_blind_runtime",
+        attempt_id="attempt_runtime",
+        direction=direction,
+        needs=(NeedPlan(0, need, (registered,)),),
+        budget=AcquisitionBudget(0, 0, 30),
+    )
+    cache_root = tmp_path / "cache"
+    outcome = PublicAcquisition(cache_root).acquire(command)
+    assert isinstance(outcome, AcquisitionComplete)
+    return outcome.manifest, cache_root
+
+
+def test_pinned_acquisition_manifest_binds_as_one_runtime_dataset(tmp_path):
+    manifest, cache_root = _acquisition_fixture(tmp_path)
+    workspace = tmp_path / "workspace"
+
+    first = bind_acquisition_manifest(
+        manifest=manifest,
+        cache_root=cache_root,
+        workspace=workspace,
+    )
+    second = bind_acquisition_manifest(
+        manifest=manifest,
+        cache_root=cache_root,
+        workspace=workspace,
+    )
+    evidence = validate_runtime_input_reference(first, workspace=workspace)
+    runtime_manifest = json.loads(
+        (workspace / "runtime_inputs.json").read_text(encoding="utf-8")
+    )
+    aggregate = workspace / runtime_manifest["primary_dataset"]["relative_path"]
+    index = json.loads((aggregate / "index.json").read_text(encoding="utf-8"))
+
+    assert second == first
+    assert evidence["adapter_id"] == "acquisition"
+    assert evidence["snapshot_id"] == "as_" + manifest.manifest_id[12:]
+    assert index["manifest_id"] == manifest.manifest_id
+    assert index["needs"][0]["description"] == "Daily values"
+
+
+def test_acquisition_binding_repairs_derived_documents(tmp_path):
+    manifest, cache_root = _acquisition_fixture(tmp_path)
+    workspace = tmp_path / "workspace"
+    reference = bind_acquisition_manifest(
+        manifest=manifest,
+        cache_root=cache_root,
+        workspace=workspace,
+    )
+    runtime_manifest = json.loads(
+        (workspace / "runtime_inputs.json").read_text(encoding="utf-8")
+    )
+    aggregate = workspace / runtime_manifest["primary_dataset"]["relative_path"]
+    index_path = aggregate / "index.json"
+    manifest_path = workspace / "runtime_inputs.json"
+    index_path.write_text("tampered", encoding="utf-8")
+    manifest_path.write_text("tampered", encoding="utf-8")
+
+    repaired = bind_acquisition_manifest(
+        manifest=manifest,
+        cache_root=cache_root,
+        workspace=workspace,
+    )
+
+    assert repaired == reference
+    assert validate_runtime_input_reference(repaired, workspace=workspace)
+
+
+def test_acquisition_binding_ignores_predictable_legacy_temporaries(tmp_path):
+    manifest, cache_root = _acquisition_fixture(tmp_path)
+    hostile_workspace = tmp_path / "hostile_workspace"
+    hostile_aggregate = (
+        hostile_workspace
+        / "inputs"
+        / ("as_" + manifest.manifest_id.removeprefix("acqmanifest_"))
+    )
+    hostile_aggregate.mkdir(parents=True)
+    outside_staged = tmp_path / "outside_staged"
+    outside_index = tmp_path / "outside_index"
+    outside_manifest = tmp_path / "outside_manifest"
+    (hostile_aggregate / "need_000.csv.staging").symlink_to(outside_staged)
+    (hostile_aggregate / "index.json.tmp").symlink_to(outside_index)
+    (hostile_workspace / "runtime_inputs.json.tmp").symlink_to(outside_manifest)
+
+    bind_acquisition_manifest(
+        manifest=manifest,
+        cache_root=cache_root,
+        workspace=hostile_workspace,
+    )
+
+    assert not outside_staged.exists()
+    assert not outside_index.exists()
+    assert not outside_manifest.exists()
+
+
+def test_acquisition_binding_rejects_parent_symlink_escape(tmp_path):
+    manifest, cache_root = _acquisition_fixture(tmp_path)
+    escaped_workspace = tmp_path / "escaped_workspace"
+    escaped_workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (escaped_workspace / "inputs").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(RuntimeInputError, match="must stay under"):
+        bind_acquisition_manifest(
+            manifest=manifest,
+            cache_root=cache_root,
+            workspace=escaped_workspace,
+        )
+    assert list(outside.iterdir()) == []
 
 
 def test_local_runner_sets_environment_and_propagates_input_evidence(tmp_path):

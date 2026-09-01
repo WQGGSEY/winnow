@@ -136,10 +136,10 @@ class MCPServerTests(unittest.TestCase):
         self.assertIn("EVIDENCE OUTPUT CONTRACT", design_tool["description"])
         self.assertIn("top-level `baselines`", design_tool["description"])
         self.assertIn("primary_dataset.relative_path", design_tool["description"])
-        # Pre-Phase-A baseline tools (deterministic pipeline).
-        baseline_expected = {
+        core_expected = {
             "get_research_state",
             "get_next_admissible_node",
+            "advance_research",
             "resume_production_state",
             "design_initial_claim_contract",
             "design_experiment_template",
@@ -196,7 +196,7 @@ class MCPServerTests(unittest.TestCase):
             "get_pending_operator_response",
         }
         self.assertEqual(
-            baseline_expected | practitioner_expected | dual_gate_expected
+            core_expected | practitioner_expected | dual_gate_expected
             | envelope_expected | multi_root_expected | operator_prompt_expected,
             names,
         )
@@ -217,9 +217,9 @@ class MCPServerTests(unittest.TestCase):
                 r = srv.handle_get_next_admissible_node({"thread_id": tid})
             finally:
                 srv._thread_dir = orig
-            self.assertEqual(r["status"], "resume")
-            self.assertEqual(r["current_status"], "critic_reviewed")
-            self.assertEqual(r["next_tool_to_call"], "submit_professor_decision")
+            self.assertEqual(r["status"], "retry_evidence")
+            self.assertEqual(r["node_id"], state["nodes"][0]["id"])
+            self.assertEqual(r["next_tool_to_call"], "design_experiment_template")
 
     def test_resume_production_state_demotes_stuck_running(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

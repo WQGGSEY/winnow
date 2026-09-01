@@ -183,6 +183,18 @@ class CodexCliAdapter:
         approval = ["--approve-for-me"] if mcp is not None else ["--ask-for-approval", "never"]
         command = [
             self._codex_path,
+        ]
+        if request is not None and not request.allow_local_tools:
+            for feature in (
+                "shell_tool",
+                "unified_exec",
+                "js_repl",
+                "code_mode",
+                "code_mode_host",
+                "view_image",
+            ):
+                command.extend(["--disable", feature])
+        command.extend([
             *approval,
             "exec",
             "--ephemeral",
@@ -191,7 +203,7 @@ class CodexCliAdapter:
             "--json",
             "--model",
             model,
-        ]
+        ])
         if mcp is None:
             command.extend(["--sandbox", "read-only"])
         if cwd is not None:

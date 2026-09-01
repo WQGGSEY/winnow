@@ -11,6 +11,16 @@ import pytest
 import research_harness.mcp_server as M
 
 
+class _BlindEngine:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    def advance_research(self, *, command_id, acquisition_command=None):
+        self.calls.append((command_id, acquisition_command))
+        return dict(self.result)
+
+
 # --- Rail 2: deterministic-dump dossier detection ------------------------ #
 
 
@@ -373,7 +383,7 @@ def test_seed_drafts_from_root_accepts_explicit_root_id():
     assert draft_ids_b and all(d.startswith("n_b") for d in draft_ids_b)
 
 
-def test_get_next_admissible_node_returns_must_revise_sentinel(tmp_path, monkeypatch):
+def test_empty_legacy_frontier_routes_to_blind_reorientation(tmp_path, monkeypatch):
     monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
     tid = "t_revise"
     tree_dir = tmp_path / "runs" / "threads" / tid / "production" / "tree"
@@ -387,16 +397,20 @@ def test_get_next_admissible_node_returns_must_revise_sentinel(tmp_path, monkeyp
     state["frontier"] = []
     state["promoted_node_ids"] = ["n_promoted"]
     (tree_dir / "search_state.json").write_text(json.dumps(state), encoding="utf-8")
+    engine = _BlindEngine({"status": "direction_ready", "direction": {}})
+    monkeypatch.setattr(
+        M,
+        "_build_blind_research_engine",
+        lambda _tid: engine,
+    )
     out = M.handle_get_next_admissible_node({"thread_id": tid})
-    assert out["status"] == "must_revise_root"
-    assert out["promoted_node_id"] == "n_promoted"
-    assert "revise_root_after_reject" in out["next_tool_choices"]
+    assert out["status"] == "direction_ready"
+    assert len(engine.calls) == 1
 
 
-def test_must_revise_root_surfaces_unseeded_formulations(tmp_path, monkeypatch):
-    """Rail 5 + multi-root: when sentinel fires AND grilling has unseeded
-    formulations, surface them so the operator can call
-    seed_alternative_root_formulation rather than hand-roll a new claim."""
+def test_blind_reorientation_does_not_surface_legacy_formulations(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
     tid = "t_revise"
     tree_dir = tmp_path / "runs" / "threads" / tid / "production" / "tree"
@@ -419,12 +433,22 @@ def test_must_revise_root_surfaces_unseeded_formulations(tmp_path, monkeypatch):
              "scope_note": "feasibility", "ranked_priority": 2, "claim_under_test": "x narrow"},
         ]}
     }), encoding="utf-8")
+    engine = _BlindEngine(
+        {
+            "status": "checkpointed",
+            "reason": "generation_retry",
+            "next_tool_to_call": "advance_research",
+        }
+    )
+    monkeypatch.setattr(
+        M,
+        "_build_blind_research_engine",
+        lambda _tid: engine,
+    )
     out = M.handle_get_next_admissible_node({"thread_id": tid})
-    assert out["status"] == "must_revise_root"
-    assert "seed_alternative_root_formulation" in out["next_tool_choices"]
-    assert out["next_tool_choices"][0] == "seed_alternative_root_formulation"
-    assert len(out["unseeded_alternative_formulations"]) == 2
-    assert out["unseeded_alternative_formulations"][0]["scope_kind"] == "strong"
+    assert out["status"] == "checkpointed"
+    assert "unseeded_alternative_formulations" not in out
+    assert len(engine.calls) == 1
 
 
 def test_seed_alternative_root_formulation_adds_parallel_root(tmp_path, monkeypatch):
@@ -530,9 +554,6 @@ def test_seed_alternative_root_formulation_requires_grilling(tmp_path, monkeypat
     assert "grilling_session" in out["reason"]
 
 
-# --- Hands-free auto-resolver: inline dispatch from Rail 5 -------------- #
-
-
 def _grilling_with_two_formulations(tmp_path, tid):
     gdir = tmp_path / "runs" / "threads" / tid / "grilling"
     gdir.mkdir(parents=True, exist_ok=True)
@@ -585,7 +606,6 @@ def _seeded_primary_state(tmp_path, tid, primary_root_id="n_synth_test_root"):
     policy = {"max_depth": 3, "max_debug_depth": 1, "sunk_cost_policy": "default",
               "scaleup_policy": "default", "num_drafts": 2}
     state = initialize_search_state(search_id="s_x", root_node=primary_root, policy=policy)
-    # Three pruned children → Rail 5 fires.
     for i in range(1, 4):
         cid = f"{primary_root_id}_c{i}"
         state["nodes"].append({**primary_root, "id": cid, "parent": primary_root_id, "status": "pruned"})
@@ -593,79 +613,49 @@ def _seeded_primary_state(tmp_path, tid, primary_root_id="n_synth_test_root"):
                                    "priority": 0.5, "stage": "promotion", "status": "pruned",
                                    "reason": "test"})
     state["promoted_node_ids"] = [primary_root_id]
-    # Empty frontier so get_next_admissible_node falls through to the
-    # no-admissible-node branch where Rail 5 fires.
     state["frontier"] = []
     (tree_dir / "search_state.json").write_text(json.dumps(state), encoding="utf-8")
     return state
 
 
-def test_rail5_auto_dispatches_seed_alternative_root(tmp_path, monkeypatch):
-    """Hands-free: must_revise_root with unseeded formulation → server inline
-    calls seed_alternative_root_formulation; response carries auto_resolved."""
+def test_empty_frontier_does_not_auto_dispatch_legacy_alternative_root(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
     monkeypatch.setattr(M, "_repo_root", lambda: Path(__file__).resolve().parents[1])
     tid = "t_handsfree"
     _seeded_primary_state(tmp_path, tid)
     _grilling_with_two_formulations(tmp_path, tid)
+    engine = _BlindEngine({"status": "direction_ready", "direction": {}})
+    monkeypatch.setattr(
+        M,
+        "_build_blind_research_engine",
+        lambda _tid: engine,
+    )
+
     out = M.handle_get_next_admissible_node({"thread_id": tid})
-    assert out["status"] == "must_revise_root"
-    assert "auto_action_suggestion" in out
-    assert out["auto_action_suggestion"]["tool"] == "seed_alternative_root_formulation"
-    assert out["auto_action_suggestion"]["args"]["formulation_id"] == "acf_strong_primary"  # priority 1
-    # Server auto-dispatched the suggestion inline.
-    assert "auto_resolved" in out
-    assert out["auto_resolved"]["dispatched"] is True
-    assert out["auto_resolved"]["result"]["status"] == "ok"
-    # The new root is now in search_state.
+
+    assert out["status"] == "direction_ready"
+    assert "auto_action_suggestion" not in out
+    assert "auto_resolved" not in out
     state_after = json.loads(
         (tmp_path / "runs" / "threads" / tid / "production" / "tree" / "search_state.json").read_text(encoding="utf-8")
     )
     parent_null = [n for n in state_after["nodes"] if n.get("parent") is None]
-    assert len(parent_null) == 2
-    # Auto-action persisted to history.
+    assert len(parent_null) == 1
     history_path = tmp_path / "runs" / "threads" / tid / "production" / "auto_actions.jsonl"
-    assert history_path.exists()
-    history = [json.loads(line) for line in history_path.read_text(encoding="utf-8").splitlines() if line]
-    assert history[-1]["outcome"] == "ok"
+    assert not history_path.exists()
 
 
-def test_rail5_no_auto_dispatch_when_no_unseeded_formulations(tmp_path, monkeypatch):
-    """Rail 5 fires but grilling has no alternatives → no auto_action_suggestion."""
+def test_blind_migration_hard_blocks_when_contract_inputs_are_missing(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
     tid = "t_no_alt"
     _seeded_primary_state(tmp_path, tid)
-    # No grilling file → no formulations.
+
     out = M.handle_get_next_admissible_node({"thread_id": tid})
-    assert out["status"] == "must_revise_root"
+
+    assert out["status"] == "hard_external_block"
     assert "auto_action_suggestion" not in out
     assert "auto_resolved" not in out
-
-
-def test_auto_dispatch_refuses_loop_on_repeated_failure(tmp_path, monkeypatch):
-    """Safety: if the same auto-action already failed, server records the
-    refusal and does NOT dispatch again — chain breaks, operator escalates."""
-    from research_harness.orchestrator.auto_resolver import (
-        pick_auto_action, record_auto_action,
-    )
-
-    monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
-    monkeypatch.setattr(M, "_repo_root", lambda: Path(__file__).resolve().parents[1])
-    tid = "t_loop"
-    _seeded_primary_state(tmp_path, tid)
-    _grilling_with_two_formulations(tmp_path, tid)
-    # Pre-poison history with a failed attempt for the priority-1 formulation.
-    poisoned_action = pick_auto_action({"auto_action_suggestion": {
-        "tool": "seed_alternative_root_formulation",
-        "args": {"thread_id": tid, "formulation_id": "acf_strong_primary"},
-        "source_rail": "rail_5_must_revise_root",
-        "rationale": "earlier attempt", "confidence": "high",
-    }})
-    record_auto_action(
-        tmp_path / "runs" / "threads" / tid, poisoned_action,
-        outcome="rejected", dispatch_result={"status": "rejected"},
-    )
-    out = M.handle_get_next_admissible_node({"thread_id": tid})
-    assert out["status"] == "must_revise_root"
-    assert out["auto_resolved"]["dispatched"] is False
-    assert "identical" in out["auto_resolved"]["reason"]

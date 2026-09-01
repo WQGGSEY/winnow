@@ -1107,6 +1107,10 @@ class BlindSequentialResearch:
                 "success_criteria": list(contract.success_criteria),
                 "disproof_conditions": list(contract.disproof_conditions),
                 "deploy_grade_scope": contract.target_scope,
+                "data_source_anchor": f"acquisition_manifest:{manifest_id}",
+                "data_source_snapshot_id": (
+                    "as_" + manifest_id.removeprefix("acqmanifest_")
+                ),
             },
             "baseline_refs": [
                 {

@@ -58,6 +58,8 @@ SCHEMA_FILES = {
     "direction_fingerprint": "direction_fingerprint.schema.json",
     "generation_request": "generation_request.schema.json",
     "direction_draft": "direction_draft.schema.json",
+    "blind_direction_proposal": "blind_direction_proposal.schema.json",
+    "structural_axis_relations": "structural_axis_relations.schema.json",
     "failure_evidence_receipt": "failure_evidence_receipt.schema.json",
 }
 

@@ -6,37 +6,18 @@ command, arguments, and environment configured for that invocation. The model
 acts as Professor and GradStudent by reading state through these tools and
 committing decisions back.
 
-Persona is enforced at the boundary: every tool call goes through
-persona_validator before being persisted. Violations are returned as
-explicit retry instructions so the calling model rewrites and retries.
-
-Tools exposed
--------------
-- get_research_state(thread_id)          : full current snapshot
-- get_next_admissible_node(thread_id)    : next claim to work on
-- design_initial_claim_contract(...)     : convert problem → strong claim
-- design_experiment_template(...)        : write per-claim experiment code
-- submit_grad_student_review(...)        : pre-run skeptical review
-- submit_grad_student_commentary(...)    : post-run skeptical commentary
-- submit_professor_decision(...)         : verdict + follow-up children
-- decide_publication_readiness(...)      : submit-or-keep-working
-- finalize_paper(...)                    : trigger rebuttal + AC + publish
-
-The MCP server is intentionally THIN — it does not run experiments or
-LLMs, it only reads/writes the harness's existing schemas and applies the
-persona validator. The work loop (cycle through stages, dispatch to
-worker, etc.) is replaced by the model's own multi-step reasoning.
-
 Implementation note: this file uses a minimal stdio JSON-RPC subset of the
 MCP spec, so no external `mcp` package is required.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import sys
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -48,7 +29,6 @@ from research_harness.orchestrator.llm_orchestrator.persona_validator import (
     validate_claim_contract,
     validate_claim_fits_envelope,
     validate_decision_rule_for_capability_claim,
-    validate_follow_up_strength,
     validate_grad_student_review,
     validate_revision_after_reject,
     validate_synthetic_data_bridging,
@@ -69,8 +49,10 @@ PROFESSOR_CONTRACT = (
     "  • Never use placeholder baselines (\"TBD\", \"various\", etc.).\n"
     "  • Success criteria MUST commit to a specific numeric threshold.\n"
     "  • Disproof conditions MUST be reachable (not 'should be impossible').\n"
-    "  • When promoting a node, the follow-up children must open NEW axes "
-    "(mechanism / necessity / boundary), not chain weakenings of the parent.\n"
+    "  • Keep exactly one active direction; never attach follow-up children to "
+    "a promoted or pruned direction.\n"
+    "  • A pruned direction is closed from evidence. Its replacement is generated "
+    "independently from the frozen solution contract.\n"
     "  • When designing experiment code, REUSE the thread's existing _lib/ "
     "modules; only add new shared modules when truly missing."
 )
@@ -179,6 +161,55 @@ TOOL_DEFINITIONS = [
             "type": "object",
             "required": ["thread_id"],
             "properties": {"thread_id": {"type": "string"}},
+        },
+    },
+    {
+        "name": "advance_research",
+        "description": (
+            f"{PROFESSOR_CONTRACT}\n\n"
+            "Advance the blind sequential research engine by one durable step. "
+            "Use a fresh command_id for each intended step. When the result is "
+            "direction_ready, inspect direction.data_needs and call this tool "
+            "again with a new command_id plus one ordered acquisition entry per "
+            "need. Registered candidates reference a pinned adapter_id. Public "
+            "candidates may use public_api, public_page, or robots-compliant "
+            "crawl. A checkpoint is resumable and is not a scientific result."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["thread_id", "command_id"],
+            "properties": {
+                "thread_id": {"type": "string"},
+                "command_id": {"type": "string", "minLength": 1},
+                "acquisition": {
+                    "type": "object",
+                    "required": ["needs"],
+                    "properties": {
+                        "needs": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["need_index", "candidates"],
+                                "properties": {
+                                    "need_index": {"type": "integer", "minimum": 0},
+                                    "candidates": {
+                                        "type": "array",
+                                        "items": {"type": "object"},
+                                    },
+                                },
+                            },
+                        },
+                        "budget": {
+                            "type": "object",
+                            "properties": {
+                                "max_requests": {"type": "integer", "minimum": 0, "maximum": 100},
+                                "max_download_bytes": {"type": "integer", "minimum": 0, "maximum": 1073741824},
+                                "max_wall_seconds": {"type": "integer", "minimum": 0, "maximum": 300},
+                            },
+                        },
+                    },
+                },
+            },
         },
     },
     {
@@ -524,17 +555,12 @@ TOOL_DEFINITIONS = [
         "name": "submit_professor_decision",
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
-            "Promote / branch / prune a node after seeing the worker report "
-            "and critic reviews. A negative result is not a terminal: provide "
-            "at least two follow_up_children with distinct causal mechanisms "
-            "and executable interventions. Each child must name which exact "
-            "frozen success criterion it tests, two discriminating predicted "
-            "outcomes, required capabilities, and normalized estimated cost. "
-            "Capabilities use stable IDs only: `local_runner`, `cpu`, "
-            "`accelerator:<name>`, `module:<name>`, `data:<adapter_id>`, or "
-            "`oracle:<kind>`. Implementation techniques are not capabilities. "
-            "The harness content-addresses these fields, rejects duplicates, "
-            "preserves the frozen bar, and computes priority itself."
+            "Promote or prune a node after seeing the worker report and critic "
+            "reviews. For a negative result submit pruned with no "
+            "follow_up_children. The harness closes that direction from persisted "
+            "evidence, keeps its lesson private, and independently generates the "
+            "next direction from the frozen contract. Observation-derived child "
+            "claims and needs_child_branch are rejected."
         ),
         "inputSchema": {
             "type": "object",
@@ -544,7 +570,7 @@ TOOL_DEFINITIONS = [
                 "node_id": {"type": "string"},
                 "next_transition": {
                     "type": "string",
-                    "enum": ["promoted", "needs_child_branch", "pruned"],
+                    "enum": ["promoted", "pruned"],
                 },
                 "final_verdict": {"type": "string"},
                 "response_to_grad_student": {"type": "string"},
@@ -558,6 +584,7 @@ TOOL_DEFINITIONS = [
                 },
                 "follow_up_children": {
                     "type": "array",
+                    "maxItems": 0,
                     "items": {
                         "type": "object",
                         "required": [
@@ -1218,14 +1245,30 @@ def _read_json(p: Path) -> dict[str, Any] | None:
 def _write_search_state_atomic(path: Path, state: dict[str, Any]) -> None:
     """Commit the single-writer search snapshot without exposing partial JSON."""
 
-    temporary = path.with_name(f".{path.name}.adaptive.tmp")
+    _write_json_atomic(path, state)
+
+
+def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with temporary.open("w", encoding="utf-8") as handle:
-        json.dump(state, handle, indent=2, sort_keys=True)
-        handle.write("\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary, path)
+    descriptor, raw_temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", dir=path.parent
+    )
+    temporary = Path(raw_temporary)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        if temporary.exists():
+            temporary.unlink()
+        raise
 
 
 @contextmanager
@@ -1340,6 +1383,16 @@ def _adaptive_command_id(args: dict[str, Any]) -> str:
         json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
     return f"implicit:{digest}"
+
+
+def _json_sha256(value: object) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _adaptive_capabilities(tid: str) -> set[str]:
@@ -1754,13 +1807,226 @@ def _bar_sanity_gate_status(tid: str) -> dict[str, Any] | None:
     return {"state": "ok", "no_skill_exposure_metric": null_val}
 
 
+_BLIND_REORIENTATION_REQUIRED = "_blind_reorientation_required"
+
+
+def _blind_reorientation_required(reason: str) -> dict[str, Any]:
+    return {"status": _BLIND_REORIENTATION_REQUIRED, "reason": reason}
+
+
+def _blind_command_id(
+    tid: str,
+    trigger: str,
+    *,
+    bind_state: bool = True,
+) -> str:
+    identity: dict[str, Any] = {"thread_id": tid, "trigger": trigger}
+    if bind_state:
+        identity["search"] = _read_json(
+            _thread_dir(tid) / "production" / "tree" / "search_state.json"
+        )
+    payload = json.dumps(
+        identity,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return "mcp_blind_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _advance_command_receipt_path(tid: str, command_id: str) -> Path:
+    digest = hashlib.sha256(command_id.encode("utf-8")).hexdigest()
+    return (
+        _thread_dir(tid)
+        / "production"
+        / "reorientation"
+        / "mcp_commands"
+        / f"{digest}.json"
+    )
+
+
+def _build_blind_research_engine(tid: str):
+    from research_harness.orchestrator.blind_mcp_adapter import (
+        build_blind_research_engine,
+    )
+    from research_harness.settings_scoped import resolve_for_thread
+
+    return build_blind_research_engine(
+        repo_root=_repo_root(),
+        thread_dir=_thread_dir(tid),
+        writer_lock=lambda: _exclusive_adaptive_writer(tid),
+        settings=resolve_for_thread(_repo_root(), tid),
+    )
+
+
+def handle_advance_research(
+    args: dict[str, Any],
+    settings: dict[str, Any],
+) -> dict[str, Any]:
+    from research_harness.orchestrator.blind_mcp_adapter import (
+        BlindMcpAdapterError,
+        build_acquisition_command,
+    )
+    from research_harness.acquisition import (
+        AcquisitionContractError,
+        parse_command,
+        serialize_command,
+    )
+
+    tid = args["thread_id"]
+    command_id = args.get("command_id")
+    if not isinstance(command_id, str) or not command_id.strip():
+        return {"status": "rejected", "reason": "command_id must be non-empty"}
+    receipt_path = _advance_command_receipt_path(tid, command_id)
+    input_digest = _json_sha256(args)
+    engine = None
+    with _exclusive_adaptive_writer(tid):
+        receipt = _read_json(receipt_path)
+        if receipt is None and receipt_path.exists():
+            return {
+                "status": "rejected",
+                "reason": "advance command receipt is malformed",
+            }
+        if receipt is not None:
+            if (
+                receipt.get("version") != 1
+                or receipt.get("command_id") != command_id
+                or receipt.get("input_digest") != input_digest
+            ):
+                return {
+                    "status": "rejected",
+                    "reason": "command_id was already used for a different advance request",
+                }
+            if receipt.get("status") == "committed":
+                result = receipt.get("result")
+                if not isinstance(result, dict):
+                    return {
+                        "status": "rejected",
+                        "reason": "advance command receipt is malformed",
+                    }
+                return result
+            if receipt.get("status") != "prepared":
+                return {
+                    "status": "rejected",
+                    "reason": "advance command receipt is malformed",
+                }
+            command_document = receipt.get("acquisition_command")
+            try:
+                acquisition_command = (
+                    parse_command(command_document)
+                    if command_document is not None
+                    else None
+                )
+            except AcquisitionContractError as exc:
+                return {
+                    "status": "rejected",
+                    "reason": f"advance command receipt is malformed: {exc}",
+                }
+        else:
+            engine = _build_blind_research_engine(tid)
+            try:
+                acquisition_command = (
+                    build_acquisition_command(
+                        engine,
+                        args["acquisition"],
+                        thread_dir=_thread_dir(tid),
+                    )
+                    if "acquisition" in args
+                    else None
+                )
+            except BlindMcpAdapterError as exc:
+                return {"status": "rejected", "reason": str(exc)}
+            command_document = (
+                serialize_command(acquisition_command)
+                if acquisition_command is not None
+                else None
+            )
+            receipt = {
+                "version": 1,
+                "command_id": command_id,
+                "input_digest": input_digest,
+                "status": "prepared",
+                "acquisition_command": command_document,
+            }
+            _write_json_atomic(receipt_path, receipt)
+    if engine is None:
+        engine = _build_blind_research_engine(tid)
+    result = engine.advance_research(
+        command_id=command_id,
+        acquisition_command=acquisition_command,
+    )
+    with _exclusive_adaptive_writer(tid):
+        current = _read_json(receipt_path)
+        if (
+            current is None
+            or current.get("status") not in {"prepared", "committed"}
+            or current.get("command_id") != command_id
+            or current.get("input_digest") != input_digest
+        ):
+            return {
+                "status": "rejected",
+                "reason": "advance command receipt changed before commit",
+            }
+        if current.get("status") == "committed":
+            committed = current.get("result")
+            return committed if isinstance(committed, dict) else result
+        _write_json_atomic(
+            receipt_path,
+            {**current, "status": "committed", "result": result},
+        )
+    return result
+
+
+def _advance_after_selector(tid: str) -> dict[str, Any]:
+    return handle_advance_research(
+        {
+            "thread_id": tid,
+            "command_id": _blind_command_id(tid, "selector"),
+        },
+        load_settings(_repo_root()),
+    )
+
+
+def _professor_source_digest(tid: str, node_id: str) -> str | None:
+    from research_harness.data_adapters import AdapterError, fingerprint_path
+
+    source = (
+        _thread_dir(tid)
+        / "production"
+        / "professor_templates"
+        / node_id
+        / "src"
+    )
+    if not source.exists():
+        return None
+    try:
+        digest, _, _ = fingerprint_path(source)
+    except (AdapterError, OSError):
+        return None
+    return "sha256:" + digest
+
+
+def _persisted_experiment_id(state_path: Path, node_id: str) -> str | None:
+    from research_harness.orchestrator.adaptive_search import (
+        experiment_fingerprint,
+    )
+
+    plan = _read_json(
+        state_path.parent / "nodes" / node_id / "experiment_plan.json"
+    )
+    return experiment_fingerprint(plan) if isinstance(plan, dict) else None
+
+
 def handle_get_next_admissible_node(args: dict[str, Any]) -> dict[str, Any]:
     tid = args["thread_id"]
     state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
     if not state_path.exists():
         return _handle_get_next_admissible_node_locked(args)
     with _exclusive_adaptive_writer(tid):
-        return _handle_get_next_admissible_node_locked(args)
+        result = _handle_get_next_admissible_node_locked(args)
+    if result.get("status") == _BLIND_REORIENTATION_REQUIRED:
+        return _advance_after_selector(tid)
+    return result
 
 
 def _handle_get_next_admissible_node_locked(
@@ -1776,7 +2042,10 @@ def _handle_get_next_admissible_node_locked(
          pick up exactly where the prior session stopped.
       2. New queued admissible nodes per the 4-stage claim-typed policy.
     """
-    from research_harness.orchestrator.search_state import validate_search_state
+    from research_harness.orchestrator.search_state import (
+        transition_node,
+        validate_search_state,
+    )
 
     tid = args["thread_id"]
     state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
@@ -1853,18 +2122,9 @@ def _handle_get_next_admissible_node_locked(
         adaptive.get("disposition") == "paused_needs_expansion"
         and existing_pause.get("reason") == "needs_strategy_expansion"
     ):
-        return {
-            "status": "paused_needs_expansion",
-            "search_disposition": "paused_needs_expansion",
-            "active_stage": "adaptive_search",
-            "pause": existing_pause,
-            "next_tool_to_call": "submit_professor_decision",
-            "reason": (
-                "The last negative observation still needs at least two "
-                "mechanism-distinct strategies. Resubmit that decision with a "
-                "new command_id and the frozen adaptive revision."
-            ),
-        }
+        return _blind_reorientation_required(
+            "the legacy expansion pause requires a blind new direction"
+        )
 
     achieved_attestation = _read_json(
         _rebuttal_dir(tid) / "user_goal_attestation.json"
@@ -1886,6 +2146,61 @@ def _handle_get_next_admissible_node_locked(
         }
 
     nodes_by_id = {n["id"]: n for n in state["nodes"]}
+
+    for node in state["nodes"]:
+        if node.get("status") != "critic_reviewed":
+            continue
+        if args.get("_allow_evidence_retry", True) is not True:
+            break
+        from research_harness.orchestrator.attempt_evidence import (
+            ConclusiveFailure,
+            StrongCandidate,
+            derive_attempt_evidence,
+        )
+
+        worker_report = _read_json(
+            state_path.parent / "nodes" / node["id"] / "worker_report.json"
+        )
+        evidence = derive_attempt_evidence(
+            worker_report,
+            data_status="satisfied",
+        )
+        if isinstance(evidence, (ConclusiveFailure, StrongCandidate)):
+            continue
+        transition_node(
+            state,
+            node["id"],
+            "ready",
+            event="inconclusive_evidence_retry",
+            reason=evidence.reason.value,
+        )
+        node["outputs"]["evidence_retry"] = {
+            "reason": evidence.reason.value,
+            "prior_experiment_id": _persisted_experiment_id(
+                state_path,
+                node["id"],
+            ),
+            "prior_source_digest": _professor_source_digest(
+                tid,
+                node["id"],
+            ),
+        }
+        state["status"] = "running"
+        adaptive["revision"] = int(adaptive["revision"]) + 1
+        validate_search_state(state)
+        _write_search_state_atomic(state_path, state)
+        return {
+            "status": "retry_evidence",
+            "node_id": node["id"],
+            "node_type": node.get("type"),
+            "evidence_reason": evidence.reason.value,
+            "next_tool_to_call": "design_experiment_template",
+            "reason": (
+                "The persisted run is not a scientific failure. Revise this "
+                "direction's experiment template to produce evaluable evidence "
+                "before promotion or pruning."
+            ),
+        }
 
     # --- Resume path: pick up where the previous session stopped. -----
     incomplete = []
@@ -1952,7 +2267,7 @@ def _handle_get_next_admissible_node_locked(
     candidates: list[
         tuple[float, int, str, dict[str, Any], dict[str, Any]]
     ] = []
-    capability_blocked: list[dict[str, Any]] = []
+    unavailable_nodes: list[tuple[str, list[str]]] = []
     available_capabilities = _adaptive_capabilities(tid)
     from research_harness.orchestrator.adaptive_search import (
         normalize_required_capabilities,
@@ -1973,15 +2288,7 @@ def _handle_get_next_admissible_node_locked(
             )
             missing = sorted(required_capabilities - available_capabilities)
             if strategy and missing:
-                capability_blocked.append(
-                    {
-                        "node_id": item["node_id"],
-                        "strategy_id": strategy.get("id"),
-                        "strategy_family": strategy.get("family"),
-                        "missing_capabilities": missing,
-                        "priority_components": components,
-                    }
-                )
+                unavailable_nodes.append((item["node_id"], missing))
                 continue
             if strategy and float(components.get("capability_fit", 0.0)) <= 0.0:
                 components = dict(components)
@@ -2000,156 +2307,27 @@ def _handle_get_next_admissible_node_locked(
             (sort_key, int(item.get("depth", 0)), item["node_id"], node, item)
         )
     if not candidates:
-        if capability_blocked:
-            capability_blocked.sort(
-                key=lambda entry: (
-                    -float((entry.get("priority_components") or {}).get("score", 0.0)),
-                    str(entry.get("node_id") or ""),
-                )
+        for unavailable_node_id, missing in unavailable_nodes:
+            unavailable_node = nodes_by_id[unavailable_node_id]
+            if unavailable_node.get("status") != "ready":
+                continue
+            transition_node(
+                state,
+                unavailable_node_id,
+                "blocked",
+                event="capability_unavailable_for_blind_reorientation",
+                reason="missing capabilities: " + ", ".join(missing),
             )
-            best_blocked = capability_blocked[0]
-            missing_capabilities = sorted(
-                {
-                    capability
-                    for entry in capability_blocked
-                    for capability in entry["missing_capabilities"]
-                }
-            )
-            adaptive["pause"] = {
-                "reason": "missing_capability",
-                "caused_by_observation_ids": list(
-                    (best_blocked.get("priority_components") or {}).get(
-                        "evidence_basis", []
-                    )
-                ),
-                "missing_capabilities": missing_capabilities,
-                "best_next_experiment": {
-                    "node_id": best_blocked["node_id"],
-                    "strategy_id": best_blocked.get("strategy_id"),
-                    "strategy_family": best_blocked.get("strategy_family"),
-                },
-                "resume_condition": "provide the missing declared capability",
-            }
-            adaptive["disposition"] = "paused_needs_expansion"
+        if unavailable_nodes:
             state["status"] = "blocked"
+            adaptive["pause"] = None
+            adaptive["disposition"] = "continue"
+            adaptive["revision"] = int(adaptive["revision"]) + 1
             validate_search_state(state)
             _write_search_state_atomic(state_path, state)
-            return {
-                "status": "paused_needs_expansion",
-                "search_disposition": "paused_needs_expansion",
-                "active_stage": "adaptive_search",
-                "pause": adaptive["pause"],
-                "blocked_candidates": capability_blocked,
-                "reason": (
-                    "The remaining strategies require capabilities that are not "
-                    "declared in the feasibility envelope. The candidates are "
-                    "preserved and can be resumed when those capabilities exist."
-                ),
-            }
-        # Rail 5: surface MUST_REVISE_ROOT when the deepest promoted node's
-        # successor branches have collapsed (>=3 negative, 0 promoted children).
-        # Without this, operators silently fall through to decide_publication_readiness
-        # while the underlying root claim is dead in the water — exactly the
-        # pattern that let thread_e5b277f9 ship with 3/3 negative successors.
-        revise_signal = _detect_must_revise_root_signal(state)
-        if revise_signal:
-            # Surface any unseeded alternative_claim_formulations from
-            # grilling — operator can call seed_alternative_root_formulation
-            # to drop one in without doing fresh research.
-            grilling = _read_json(_thread_dir(tid) / "grilling" / "grilling_session.json") or {}
-            formulations = (grilling.get("extracted") or {}).get("alternative_claim_formulations") or []
-            existing_root_ids = {n["id"] for n in state.get("nodes", []) if n.get("parent") is None}
-            unseeded = [
-                {
-                    "formulation_id": f.get("formulation_id"),
-                    "scope_kind": f.get("scope_kind"),
-                    "scope_note": f.get("scope_note"),
-                    "ranked_priority": f.get("ranked_priority"),
-                }
-                for f in formulations
-                if isinstance(f, dict)
-                and not any(rid.endswith(f"_root_{f.get('formulation_id')}") for rid in existing_root_ids)
-            ]
-            next_choices = ["revise_root_after_reject", "propose_alternative_root_directions"]
-            if unseeded:
-                next_choices.insert(0, "seed_alternative_root_formulation")
-            # Hands-free: when an unseeded formulation exists, attach an
-            # auto_action_suggestion so the auto-resolver can dispatch
-            # seed_alternative_root_formulation without operator decision.
-            # Pick the lowest ranked_priority (1 = try first).
-            auto_action: dict[str, Any] | None = None
-            if unseeded:
-                ranked = sorted(
-                    unseeded,
-                    key=lambda f: (f.get("ranked_priority") or 99, f.get("formulation_id") or ""),
-                )
-                top = ranked[0]
-                auto_action = {
-                    "tool": "seed_alternative_root_formulation",
-                    "args": {"thread_id": tid, "formulation_id": top["formulation_id"]},
-                    "source_rail": "rail_5_must_revise_root",
-                    "rationale": (
-                        f"Promoted node {revise_signal['promoted_node_id']} collapsed "
-                        f"({len(revise_signal['negative_children'])} pruned, 0 promoted children); "
-                        f"unseeded formulation {top['formulation_id']!r} "
-                        f"({top.get('scope_kind')}) is the next-priority alternative."
-                    ),
-                    "confidence": "high",
-                }
-            response = {
-                "status": "must_revise_root",
-                "active_stage": stage["name"],
-                "promoted_node_id": revise_signal["promoted_node_id"],
-                "negative_children": revise_signal["negative_children"],
-                "alternative_root_candidates": revise_signal["alternative_root_candidates"],
-                "unseeded_alternative_formulations": unseeded,
-                "reason": (
-                    f"Promoted node {revise_signal['promoted_node_id']} has "
-                    f"{len(revise_signal['negative_children'])} negative direct successor(s) "
-                    f"and 0 promoted children. The current root claim cannot be saved by more children — "
-                    + (
-                        f"call seed_alternative_root_formulation with one of {[f['formulation_id'] for f in unseeded]} "
-                        f"to spin up a pre-vetted alternative root in parallel, or "
-                        if unseeded else ""
-                    )
-                    + "call revise_root_after_reject (single-shot) / propose_alternative_root_directions (fan-out)."
-                ),
-                "next_tool_choices": next_choices,
-            }
-            if auto_action is not None:
-                response["auto_action_suggestion"] = auto_action
-                response = _maybe_auto_dispatch(tid, response)
-            return response
-        adaptive["pause"] = {
-            "reason": "needs_strategy_expansion",
-            "caused_by_observation_ids": [
-                observation.get("id")
-                for observation in adaptive.get("observations") or []
-                if isinstance(observation, dict) and observation.get("id")
-            ][-3:],
-            "missing_capabilities": [],
-            "best_next_experiment": None,
-            "resume_condition": (
-                "materialize a mechanism-distinct strategy linked to the latest "
-                "negative observation"
-            ),
-        }
-        adaptive["disposition"] = "paused_needs_expansion"
-        state["status"] = "blocked"
-        validate_search_state(state)
-        _write_search_state_atomic(state_path, state)
-        return {
-            "status": "paused_needs_expansion",
-            "search_disposition": "paused_needs_expansion",
-            "active_stage": "adaptive_search",
-            "pause": adaptive["pause"],
-            "next_tool_to_call": "propose_alternative_root_directions",
-            "reason": (
-                "No useful queued experiment remains and no verified strong "
-                "result exists. The search is paused at an explicit expansion "
-                "point; publication readiness is not scientific completion."
-            ),
-        }
+        return _blind_reorientation_required(
+            "no runnable legacy node or verified strong result remains"
+        )
     candidates.sort(key=lambda c: (c[0], c[1], c[2]))
     _, depth, nid, node, frontier_item = candidates[0]
     if adaptive.get("pause") is not None:
@@ -3065,6 +3243,7 @@ def _handle_execute_node_experiment_locked(args: dict[str, Any]) -> dict[str, An
     node = next((n for n in state["nodes"] if n["id"] == node_id), None)
     if not node:
         return {"status": "rejected", "reason": f"node {node_id} not in search_state"}
+    evidence_retry = (node.get("outputs") or {}).get("evidence_retry")
 
     run_dir = state_path.parent
     node_run_dir = run_dir / "nodes" / node_id
@@ -3074,7 +3253,59 @@ def _handle_execute_node_experiment_locked(args: dict[str, Any]) -> dict[str, An
     adapter_id = contract.get("data_source_anchor")
     snapshot_id = contract.get("data_source_snapshot_id")
     runtime_inputs = None
-    if adapter_id or snapshot_id:
+    if isinstance(adapter_id, str) and adapter_id.startswith(
+        "acquisition_manifest:"
+    ):
+        from research_harness.acquisition import (
+            AcquisitionContractError,
+            AcquisitionStorageError,
+            PublicAcquisition,
+        )
+        from research_harness.runtime_inputs import (
+            RuntimeInputError,
+            bind_acquisition_manifest,
+        )
+
+        manifest_id = adapter_id.split(":", 1)[1]
+        expected_snapshot_id = "as_" + manifest_id.removeprefix(
+            "acqmanifest_"
+        )
+        artifacts = (node.get("outputs") or {}).get("artifacts") or []
+        if (
+            snapshot_id != expected_snapshot_id
+            or artifacts.count(f"acquisition_manifest:{manifest_id}") != 1
+        ):
+            return {
+                "status": "rejected",
+                "reason": "claim acquisition manifest binding is inconsistent",
+            }
+        cache_root = (
+            _thread_dir(tid)
+            / "production"
+            / "reorientation"
+            / "acquisition_cache"
+        )
+        try:
+            manifest = PublicAcquisition(cache_root).verify_manifest(
+                manifest_id,
+                node_id=node_id,
+            )
+            runtime_inputs = bind_acquisition_manifest(
+                manifest=manifest,
+                cache_root=cache_root,
+                workspace=node_run_dir / "workspace",
+            )
+        except (
+            AcquisitionContractError,
+            AcquisitionStorageError,
+            RuntimeInputError,
+            OSError,
+        ) as exc:
+            return {
+                "status": "rejected",
+                "reason": f"acquisition runtime input binding failed: {exc}",
+            }
+    elif adapter_id or snapshot_id:
         if not adapter_id or not snapshot_id:
             return {
                 "status": "rejected",
@@ -3098,7 +3329,7 @@ def _handle_execute_node_experiment_locked(args: dict[str, Any]) -> dict[str, An
     if contract.get("deploy_grade_scope") == "deployment" and runtime_inputs is None:
         return {
             "status": "rejected",
-            "reason": "deployment experiment requires a bound registered adapter",
+            "reason": "deployment experiment requires a bound runtime input",
         }
 
     plan, template_used = build_experiment_plan_for_node(
@@ -3107,14 +3338,34 @@ def _handle_execute_node_experiment_locked(args: dict[str, Any]) -> dict[str, An
     if runtime_inputs is not None:
         plan["inputs"] = runtime_inputs
     validate_experiment_plan(node, plan, run_dir)
+    from research_harness.orchestrator.adaptive_search import (
+        experiment_fingerprint,
+    )
+
+    experiment_id = experiment_fingerprint(plan)
+    if isinstance(evidence_retry, dict):
+        prior_experiment_id = evidence_retry.get("prior_experiment_id")
+        prior_source_digest = evidence_retry.get("prior_source_digest")
+        current_source_digest = _professor_source_digest(tid, node_id)
+        unchanged = (
+            experiment_id == prior_experiment_id
+            if isinstance(prior_experiment_id, str)
+            else current_source_digest is None
+            or current_source_digest == prior_source_digest
+        )
+        if unchanged:
+            return {
+                "status": "rejected",
+                "reason": (
+                    "inconclusive evidence requires a materially changed executable "
+                    "plan or source code; prose-only edits do not qualify"
+                ),
+                "evidence_reason": evidence_retry.get("reason"),
+                "next_tool_to_call": "design_experiment_template",
+            }
     adaptive = state.get("adaptive")
     experiment_record: dict[str, Any] | None = None
     if isinstance(adaptive, dict):
-        from research_harness.orchestrator.adaptive_search import (
-            experiment_fingerprint,
-        )
-
-        experiment_id = experiment_fingerprint(plan)
         duplicate = next(
             (
                 record
@@ -3179,6 +3430,47 @@ def _handle_execute_node_experiment_locked(args: dict[str, Any]) -> dict[str, An
     runner = LocalRunner(run_dir, settings=settings_local)
     runner_result = runner.execute(manifest)
     validate_named_schema("runner_result", runner_result)
+    if runtime_inputs is not None:
+        from research_harness.runtime_inputs import (
+            RuntimeInputError,
+            validate_runtime_input_reference,
+        )
+
+        try:
+            post_run_input = validate_runtime_input_reference(
+                manifest["inputs"],
+                workspace=Path(runner_result["workspace"]),
+            )
+        except (RuntimeInputError, OSError) as exc:
+            transition_node(
+                state,
+                node_id,
+                "ready",
+                event="runtime_input_integrity_rejected",
+                reason=str(exc),
+            )
+            if experiment_record is not None:
+                experiment_record["status"] = "evidence_rejected"
+            _write_search_state_atomic(state_path, state)
+            return {
+                "status": "rejected",
+                "reason": f"runtime input changed during experiment execution: {exc}",
+            }
+        if post_run_input != runner_result.get("input_evidence"):
+            transition_node(
+                state,
+                node_id,
+                "ready",
+                event="runtime_input_integrity_rejected",
+                reason="runner input evidence changed after execution",
+            )
+            if experiment_record is not None:
+                experiment_record["status"] = "evidence_rejected"
+            _write_search_state_atomic(state_path, state)
+            return {
+                "status": "rejected",
+                "reason": "runner input evidence changed after execution",
+            }
     evidence = build_worker_report_from_runner_evidence(
         node, manifest, runner_result, run_dir
     )
@@ -3449,16 +3741,33 @@ def handle_revise_root_after_reject(
 def handle_submit_professor_decision(
     args: dict[str, Any], settings: dict[str, Any]
 ) -> dict[str, Any]:
+    tid = args["thread_id"]
     with _exclusive_adaptive_writer(args["thread_id"]):
-        return _handle_submit_professor_decision_locked(args, settings)
+        response = _handle_submit_professor_decision_locked(args, settings)
+    if response.get("status") == "accepted" and args["next_transition"] == "pruned":
+        command_id = _adaptive_command_id(args)
+        advanced = handle_advance_research(
+            {
+                "thread_id": tid,
+                "command_id": _blind_command_id(
+                    tid,
+                    f"professor:{command_id}",
+                    bind_state=False,
+                ),
+            },
+            settings,
+        )
+        response = dict(response)
+        response["research_advance"] = advanced
+        response["next_tool_to_call"] = advanced.get("next_tool_to_call")
+    return response
 
 
 def _handle_submit_professor_decision_locked(
-    args: dict[str, Any], settings: dict[str, Any]
+    args: dict[str, Any], _settings: dict[str, Any]
 ) -> dict[str, Any]:
     """Apply one idempotent Professor resolution to the active search state."""
     from research_harness.orchestrator.search_state import (
-        add_child_nodes,
         transition_node,
         validate_search_state,
     )
@@ -3482,7 +3791,29 @@ def _handle_submit_professor_decision_locked(
     command_id = _adaptive_command_id(args)
     prior_receipt = adaptive["command_receipts"].get(command_id)
     if isinstance(prior_receipt, dict):
-        return prior_receipt
+        if set(prior_receipt) == {"input_digest", "result"}:
+            if prior_receipt["input_digest"] != _json_sha256(args):
+                return {
+                    "status": "rejected",
+                    "reason": "command_id was already used for a different professor decision",
+                }
+            result = prior_receipt["result"]
+            if isinstance(result, dict):
+                return result
+            return {
+                "status": "rejected",
+                "reason": "professor decision receipt is malformed",
+            }
+        explicit_command_id = str(args.get("command_id") or "").strip()
+        if not explicit_command_id and command_id.startswith("implicit:"):
+            return prior_receipt
+        return {
+            "status": "rejected",
+            "reason": (
+                "legacy professor receipt cannot verify this explicit command_id; "
+                "retry with a new command_id"
+            ),
+        }
     expected_revision = args.get("expected_revision")
     if (
         expected_revision is not None
@@ -3497,7 +3828,9 @@ def _handle_submit_professor_decision_locked(
 
     # The selector owns ordering. A decision for another fresh node is stale,
     # even when the submitted node happens to be otherwise runnable.
-    expected = _handle_get_next_admissible_node_locked({"thread_id": tid})
+    expected = _handle_get_next_admissible_node_locked(
+        {"thread_id": tid, "_allow_evidence_retry": False}
+    )
     if expected.get("status") == "ok" and expected.get("node_id") != node_id:
         return {
             "status": "rejected",
@@ -3511,7 +3844,15 @@ def _handle_submit_professor_decision_locked(
     node = next((n for n in state["nodes"] if n["id"] == node_id), None)
     if not node:
         return {"status": "rejected", "reason": f"node {node_id} not in search_state"}
-    parent_claim = node["claim_contract"]["claim_under_test"]
+    if transition == "needs_child_branch" or follow_ups:
+        return {
+            "status": "rejected",
+            "reason": (
+                "blind sequential directions do not accept observation-derived "
+                "successors or other follow-up children; submit promoted or "
+                "pruned with no follow_up_children"
+            ),
+        }
     if transition == "promoted":
         worker_report = _read_json(
             state_path.parent / "nodes" / node_id / "worker_report.json"
@@ -3531,111 +3872,27 @@ def _handle_submit_professor_decision_locked(
                     "baseline requirement, and hit no disproof condition"
                 ),
             }
-        check = validate_follow_up_strength(
-            parent_claim=parent_claim, follow_ups=follow_ups,
-            config=_persona_cfg(settings),
-        )
-        if not check.ok:
-            return {"status": "rejected", "reason": check.reject_message()}
-
-    prepared_strategies: list[dict[str, Any]] = []
-    observation: dict[str, Any] | None = None
-    prepared_follow_ups = list(follow_ups)
-    if transition in {"needs_child_branch", "pruned"}:
-        from research_harness.orchestrator.adaptive_search import (
-            AdaptiveSearchError,
-            make_negative_observation,
-            prepare_strategy_expansion,
+    elif transition == "pruned":
+        from research_harness.orchestrator.attempt_evidence import (
+            ConclusiveFailure,
+            derive_attempt_evidence,
         )
 
         worker_report = _read_json(
             state_path.parent / "nodes" / node_id / "worker_report.json"
         ) or {}
-        observation = make_negative_observation(
-            node_id=node_id,
-            worker_report=worker_report,
-            final_verdict=str(args.get("final_verdict") or ""),
+        evidence = derive_attempt_evidence(
+            worker_report,
+            data_status="satisfied",
         )
-        frontier_item = next(
-            (item for item in state["frontier"] if item["node_id"] == node_id),
-            None,
-        )
-        parent_depth = int(frontier_item["depth"]) if frontier_item else 0
-        if len(follow_ups) < 2:
-            if not any(
-                existing.get("id") == observation["id"]
-                for existing in adaptive["observations"]
-                if isinstance(existing, dict)
-            ):
-                adaptive["observations"].append(observation)
-            adaptive["pause"] = {
-                "reason": "needs_strategy_expansion",
-                "caused_by_observation_ids": [observation["id"]],
-                "missing_capabilities": [],
-                "best_next_experiment": None,
-                "resume_condition": (
-                    "submit at least two mechanism-distinct causal strategies "
-                    "under the frozen bar"
+        if not isinstance(evidence, ConclusiveFailure):
+            return {
+                "status": "rejected",
+                "reason": (
+                    "prune_requires_conclusive_failure: the completed worker "
+                    "evidence must conclusively contradict the direction"
                 ),
             }
-            adaptive["disposition"] = "paused_needs_expansion"
-            adaptive["revision"] = int(adaptive["revision"]) + 1
-            state["status"] = "blocked"
-            response = {
-                "status": "paused_needs_expansion",
-                "applied_transition": None,
-                "created_child_ids": [],
-                "search_state_status": "blocked",
-                "search_disposition": "paused_needs_expansion",
-                "adaptive_revision": adaptive["revision"],
-                "pause": adaptive["pause"],
-            }
-            adaptive["command_receipts"][command_id] = response
-            validate_search_state(state)
-            _write_search_state_atomic(state_path, state)
-            return response
-        try:
-            prepared_strategies = prepare_strategy_expansion(
-                goal=adaptive["goal"],
-                observation=observation,
-                candidates=follow_ups,
-                known_strategy_ids={
-                    str(strategy.get("id"))
-                    for strategy in adaptive["strategies"]
-                    if isinstance(strategy, dict) and strategy.get("id")
-                },
-                available_capabilities=_adaptive_capabilities(tid),
-                depth=parent_depth + 1,
-                max_depth=int(state["max_depth"]),
-                known_strategies=adaptive["strategies"],
-            )
-        except AdaptiveSearchError as exc:
-            return {"status": "rejected", "reason": str(exc)}
-        prepared_follow_ups = []
-        frozen_bar = adaptive["goal"]["bar"]
-        frozen_contract = {
-            "mandatory_baselines": list(
-                frozen_bar.get("mandatory_baselines")
-                or node["claim_contract"]["mandatory_baselines"]
-            ),
-            "success_criteria": list(frozen_bar["success_criteria"]),
-            "disproof_conditions": list(frozen_bar["disproof_conditions"]),
-        }
-        if frozen_bar.get("target_scope"):
-            frozen_contract["deploy_grade_scope"] = frozen_bar["target_scope"]
-        if frozen_bar.get("data_source_anchor"):
-            frozen_contract["data_source_anchor"] = frozen_bar[
-                "data_source_anchor"
-            ]
-        if frozen_bar.get("data_source_snapshot_id"):
-            frozen_contract["data_source_snapshot_id"] = frozen_bar[
-                "data_source_snapshot_id"
-            ]
-        for follow_up, strategy in zip(follow_ups, prepared_strategies, strict=True):
-            prepared = dict(follow_up)
-            prepared["_adaptive_strategy"] = strategy
-            prepared["_frozen_bar_contract"] = frozen_contract
-            prepared_follow_ups.append(prepared)
 
     # Record the reduction JSON for audit / frontend.
     decision_path = (
@@ -3691,32 +3948,6 @@ def _handle_submit_professor_decision_locked(
                 "command_id": command_id,
             },
         })
-    for f in prepared_follow_ups:
-        if command_already_logged:
-            break
-        successor = _strip_tool_envelope_leak(
-            (f.get("successor_claim") or "").strip()
-        )
-        if not successor:
-            continue
-        ftype = f.get("type") or "?"
-        rationale = _strip_tool_envelope_leak(
-            (f.get("rationale") or "").strip()
-        )
-        existing["entries"].append({
-            "speaker": "professor",
-            "intent": "follow_up_brief",
-            "text": (
-                f"Next cohort: please test the {ftype} successor — "
-                f"\"{successor}\". Rationale: {rationale}"
-            ),
-            "metadata": {
-                "type": ftype,
-                "successor_claim": successor,
-                "source": "mcp_server",
-                "command_id": command_id,
-            },
-        })
     dialog_path.write_text(
         json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
@@ -3756,96 +3987,19 @@ def _handle_submit_professor_decision_locked(
         )
 
     # Final transition.
-    created_child_ids: list[str] = []
-    dropped_followups: list[dict[str, Any]] = []
     if transition == "promoted":
         transition_node(
             state, node_id, "promoted",
             event="mcp_promotion", reason="mcp accepted promotion",
         )
-        if follow_ups:
-            from research_harness.orchestrator.treesearch.parallel_agent import (
-                _build_follow_up_children,
-            )
-            from research_harness.orchestrator.search_state import (
-                search_policy_from_config,
-            )
-            frontier_item = next(
-                (it for it in state["frontier"] if it["node_id"] == node_id), None
-            )
-            parent_depth = int(frontier_item["depth"]) if frontier_item else 0
-            # state.max_depth is the canonical authority; if state is missing
-            # it (legacy thread), fall back to the config rather than a
-            # hardcoded magic number — operators who tune harness.yaml
-            # should see the same cap in fresh and resumed threads.
-            effective_max_depth = int(
-                state.get("max_depth")
-                or search_policy_from_config(_repo_root()).get("max_depth")
-            )
-            children = _build_follow_up_children(
-                node, follow_ups,
-                parent_depth=parent_depth,
-                max_depth=effective_max_depth,
-                dropped_followups=dropped_followups,
-            )
-            created_child_ids = [c["id"] for c in children]
-            if children:
-                add_child_nodes(
-                    state, node_id, children,
-                    reason="mcp professor follow-ups",
-                )
-    elif transition in {"needs_child_branch", "pruned"}:
-        from research_harness.orchestrator.treesearch.parallel_agent import (
-            _build_follow_up_children,
-        )
-
-        frontier_item = next(
-            (item for item in state["frontier"] if item["node_id"] == node_id),
-            None,
-        )
-        parent_depth = int(frontier_item["depth"]) if frontier_item else 0
-        children = _build_follow_up_children(
-            node,
-            prepared_follow_ups,
-            parent_depth=parent_depth,
-            max_depth=int(state["max_depth"]),
-            dropped_followups=dropped_followups,
-        )
-        if len(children) != len(prepared_strategies):
-            return {
-                "status": "rejected",
-                "reason": "strategy expansion could not materialize every validated child",
-                "dropped_followups": dropped_followups,
-            }
-        created_child_ids = [child["id"] for child in children]
+    elif transition == "pruned":
         transition_node(
             state,
             node_id,
-            transition,
-            event="mcp_negative_observation",
-            reason="negative evidence produced distinct causal successors",
-            created_child_ids=created_child_ids,
+            "pruned",
+            event="mcp_direction_closed",
+            reason="direction evidence reduced without a successor child",
         )
-        add_child_nodes(
-            state,
-            node_id,
-            children,
-            reason="adaptive expansion from negative observation",
-        )
-        strategy_by_child = dict(zip(created_child_ids, prepared_strategies, strict=True))
-        for item in state["frontier"]:
-            strategy = strategy_by_child.get(item["node_id"])
-            if strategy is None:
-                continue
-            item["priority"] = float(strategy["priority"]["score"])
-            item["priority_components"] = dict(strategy["priority"])
-        adaptive["strategies"].extend(prepared_strategies)
-        if observation is not None and not any(
-            existing.get("id") == observation["id"]
-            for existing in adaptive["observations"]
-            if isinstance(existing, dict)
-        ):
-            adaptive["observations"].append(observation)
 
     # PR4: Failure memory auto-generation. When a node ends in a state the
     # rest of the harness considers a learnable failure (pruned, with an
@@ -3853,7 +4007,7 @@ def _handle_submit_professor_decision_locked(
     # threads can retrieve it. Categories follow the existing memory/failures/
     # taxonomy.
     final_verdict = args.get("final_verdict") or ""
-    if transition in {"pruned", "needs_child_branch"} and final_verdict:
+    if transition == "pruned" and final_verdict:
         try:
             _write_failure_record(
                 tid=tid,
@@ -3878,9 +4032,7 @@ def _handle_submit_professor_decision_locked(
     if not has_queued_work and adaptive.get("pause") is None:
         adaptive["pause"] = {
             "reason": "needs_strategy_expansion",
-            "caused_by_observation_ids": (
-                [observation["id"]] if observation is not None else []
-            ),
+            "caused_by_observation_ids": [],
             "missing_capabilities": [],
             "best_next_experiment": None,
             "resume_condition": "materialize a distinct diagnostic strategy",
@@ -3894,23 +4046,15 @@ def _handle_submit_professor_decision_locked(
     response: dict[str, Any] = {
         "status": "accepted",
         "applied_transition": transition,
-        "created_child_ids": created_child_ids,
+        "created_child_ids": [],
         "search_state_status": state["status"],
         "search_disposition": adaptive["disposition"],
         "adaptive_revision": adaptive["revision"],
     }
-    if dropped_followups:
-        # Surface why some Professor follow-ups did NOT become tree nodes —
-        # depth_limit_reached, empty_successor_claim, etc. This makes
-        # the previously-silent drop visible to the agent and to the
-        # operator inspecting the response.
-        response["dropped_followups"] = dropped_followups
-        response["dropped_followups_summary"] = (
-            f"{len(dropped_followups)} follow-up(s) not materialized — see dropped_followups[].reason. "
-            "If reason starts with 'depth_limit_reached', adjust configs/harness.yaml `search.max_depth` "
-            "and resume; the cap is configurable, not a code constant."
-        )
-    adaptive["command_receipts"][command_id] = response
+    adaptive["command_receipts"][command_id] = {
+        "input_digest": _json_sha256(args),
+        "result": response,
+    }
     validate_search_state(state)
     _write_search_state_atomic(state_path, state)
     return response
@@ -6969,6 +7113,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_get_research_state(args, settings)
             elif name == "get_next_admissible_node":
                 result = handle_get_next_admissible_node(args)
+            elif name == "advance_research":
+                result = handle_advance_research(args, settings)
             elif name == "submit_bar_sanity_result":
                 result = handle_submit_bar_sanity_result(args)
             elif name == "resume_production_state":

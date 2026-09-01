@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/structural_axis_relations.schema.json",
+  "title": "StructuralAxisRelations",
+  "type": "object",
+  "required": [
+    "mechanism",
+    "intervention",
+    "observables_and_data",
+    "analysis_unit",
+    "timescale",
+    "system_boundary"
+  ],
+  "properties": {
+    "mechanism": { "type": "string", "enum": ["changed", "equivalent"] },
+    "intervention": { "type": "string", "enum": ["changed", "equivalent"] },
+    "observables_and_data": { "type": "string", "enum": ["changed", "equivalent"] },
+    "analysis_unit": { "type": "string", "enum": ["changed", "equivalent"] },
+    "timescale": { "type": "string", "enum": ["changed", "equivalent"] },
+    "system_boundary": { "type": "string", "enum": ["changed", "equivalent"] }
+  },
+  "additionalProperties": false
+}

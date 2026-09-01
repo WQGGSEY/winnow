@@ -37,6 +37,7 @@ class CompletionRequest:
     output_schema: Path | None = None
     cwd: Path | None = None
     label: str = "agent"
+    allow_local_tools: bool = True
 
 
 @dataclass(frozen=True)
