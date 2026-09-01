@@ -16,11 +16,24 @@
         "properties": {
           "attempt": {
             "type": "object",
-            "required": ["attempt_id", "direction_id", "fingerprint_id", "ordinal"],
+            "required": ["attempt_id", "direction_id", "fingerprint", "ordinal"],
             "properties": {
               "attempt_id": { "type": "string", "pattern": "^attempt_[A-Za-z0-9_-]+$" },
               "direction_id": { "type": "string", "pattern": "^direction_[a-f0-9]{64}$" },
-              "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+              "fingerprint": {
+                "type": "object",
+                "required": ["fingerprint_id", "mechanism", "intervention", "observables_and_data", "analysis_unit", "timescale", "system_boundary"],
+                "properties": {
+                  "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                  "mechanism": { "type": "string", "minLength": 1 },
+                  "intervention": { "type": "string", "minLength": 1 },
+                  "observables_and_data": { "type": "string", "minLength": 1 },
+                  "analysis_unit": { "type": "string", "minLength": 1 },
+                  "timescale": { "type": "string", "minLength": 1 },
+                  "system_boundary": { "type": "string", "minLength": 1 }
+                },
+                "additionalProperties": false
+              },
               "ordinal": { "type": "integer", "minimum": 0 }
             },
             "additionalProperties": false
@@ -65,11 +78,24 @@
             "kind": { "const": "acquisition_reserved" },
             "active_attempt": {
               "type": "object",
-              "required": ["attempt_id", "direction_id", "fingerprint_id", "ordinal"],
+              "required": ["attempt_id", "direction_id", "fingerprint", "ordinal"],
               "properties": {
                 "attempt_id": { "type": "string", "pattern": "^attempt_[A-Za-z0-9_-]+$" },
                 "direction_id": { "type": "string", "pattern": "^direction_[a-f0-9]{64}$" },
-                "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                "fingerprint": {
+                  "type": "object",
+                  "required": ["fingerprint_id", "mechanism", "intervention", "observables_and_data", "analysis_unit", "timescale", "system_boundary"],
+                  "properties": {
+                    "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                    "mechanism": { "type": "string", "minLength": 1 },
+                    "intervention": { "type": "string", "minLength": 1 },
+                    "observables_and_data": { "type": "string", "minLength": 1 },
+                    "analysis_unit": { "type": "string", "minLength": 1 },
+                    "timescale": { "type": "string", "minLength": 1 },
+                    "system_boundary": { "type": "string", "minLength": 1 }
+                  },
+                  "additionalProperties": false
+                },
                 "ordinal": { "type": "integer", "minimum": 0 }
               },
               "additionalProperties": false
@@ -95,11 +121,24 @@
             "kind": { "const": "awaiting_evidence" },
             "active_attempt": {
               "type": "object",
-              "required": ["attempt_id", "direction_id", "fingerprint_id", "ordinal"],
+              "required": ["attempt_id", "direction_id", "fingerprint", "ordinal"],
               "properties": {
                 "attempt_id": { "type": "string", "pattern": "^attempt_[A-Za-z0-9_-]+$" },
                 "direction_id": { "type": "string", "pattern": "^direction_[a-f0-9]{64}$" },
-                "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                "fingerprint": {
+                  "type": "object",
+                  "required": ["fingerprint_id", "mechanism", "intervention", "observables_and_data", "analysis_unit", "timescale", "system_boundary"],
+                  "properties": {
+                    "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                    "mechanism": { "type": "string", "minLength": 1 },
+                    "intervention": { "type": "string", "minLength": 1 },
+                    "observables_and_data": { "type": "string", "minLength": 1 },
+                    "analysis_unit": { "type": "string", "minLength": 1 },
+                    "timescale": { "type": "string", "minLength": 1 },
+                    "system_boundary": { "type": "string", "minLength": 1 }
+                  },
+                  "additionalProperties": false
+                },
                 "ordinal": { "type": "integer", "minimum": 0 }
               },
               "additionalProperties": false
@@ -167,11 +206,24 @@
                     "kind": { "const": "acquisition_reserved" },
                     "active_attempt": {
                       "type": "object",
-                      "required": ["attempt_id", "direction_id", "fingerprint_id", "ordinal"],
+                      "required": ["attempt_id", "direction_id", "fingerprint", "ordinal"],
                       "properties": {
                         "attempt_id": { "type": "string", "pattern": "^attempt_[A-Za-z0-9_-]+$" },
                         "direction_id": { "type": "string", "pattern": "^direction_[a-f0-9]{64}$" },
-                        "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                        "fingerprint": {
+                          "type": "object",
+                          "required": ["fingerprint_id", "mechanism", "intervention", "observables_and_data", "analysis_unit", "timescale", "system_boundary"],
+                          "properties": {
+                            "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                            "mechanism": { "type": "string", "minLength": 1 },
+                            "intervention": { "type": "string", "minLength": 1 },
+                            "observables_and_data": { "type": "string", "minLength": 1 },
+                            "analysis_unit": { "type": "string", "minLength": 1 },
+                            "timescale": { "type": "string", "minLength": 1 },
+                            "system_boundary": { "type": "string", "minLength": 1 }
+                          },
+                          "additionalProperties": false
+                        },
                         "ordinal": { "type": "integer", "minimum": 0 }
                       },
                       "additionalProperties": false
@@ -197,11 +249,24 @@
                     "kind": { "const": "awaiting_evidence" },
                     "active_attempt": {
                       "type": "object",
-                      "required": ["attempt_id", "direction_id", "fingerprint_id", "ordinal"],
+                      "required": ["attempt_id", "direction_id", "fingerprint", "ordinal"],
                       "properties": {
                         "attempt_id": { "type": "string", "pattern": "^attempt_[A-Za-z0-9_-]+$" },
                         "direction_id": { "type": "string", "pattern": "^direction_[a-f0-9]{64}$" },
-                        "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                        "fingerprint": {
+                          "type": "object",
+                          "required": ["fingerprint_id", "mechanism", "intervention", "observables_and_data", "analysis_unit", "timescale", "system_boundary"],
+                          "properties": {
+                            "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                            "mechanism": { "type": "string", "minLength": 1 },
+                            "intervention": { "type": "string", "minLength": 1 },
+                            "observables_and_data": { "type": "string", "minLength": 1 },
+                            "analysis_unit": { "type": "string", "minLength": 1 },
+                            "timescale": { "type": "string", "minLength": 1 },
+                            "system_boundary": { "type": "string", "minLength": 1 }
+                          },
+                          "additionalProperties": false
+                        },
                         "ordinal": { "type": "integer", "minimum": 0 }
                       },
                       "additionalProperties": false
@@ -273,11 +338,24 @@
                     "kind": { "const": "acquisition_reserved" },
                     "active_attempt": {
                       "type": "object",
-                      "required": ["attempt_id", "direction_id", "fingerprint_id", "ordinal"],
+                      "required": ["attempt_id", "direction_id", "fingerprint", "ordinal"],
                       "properties": {
                         "attempt_id": { "type": "string", "pattern": "^attempt_[A-Za-z0-9_-]+$" },
                         "direction_id": { "type": "string", "pattern": "^direction_[a-f0-9]{64}$" },
-                        "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                        "fingerprint": {
+                          "type": "object",
+                          "required": ["fingerprint_id", "mechanism", "intervention", "observables_and_data", "analysis_unit", "timescale", "system_boundary"],
+                          "properties": {
+                            "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                            "mechanism": { "type": "string", "minLength": 1 },
+                            "intervention": { "type": "string", "minLength": 1 },
+                            "observables_and_data": { "type": "string", "minLength": 1 },
+                            "analysis_unit": { "type": "string", "minLength": 1 },
+                            "timescale": { "type": "string", "minLength": 1 },
+                            "system_boundary": { "type": "string", "minLength": 1 }
+                          },
+                          "additionalProperties": false
+                        },
                         "ordinal": { "type": "integer", "minimum": 0 }
                       },
                       "additionalProperties": false
@@ -303,11 +381,24 @@
                     "kind": { "const": "awaiting_evidence" },
                     "active_attempt": {
                       "type": "object",
-                      "required": ["attempt_id", "direction_id", "fingerprint_id", "ordinal"],
+                      "required": ["attempt_id", "direction_id", "fingerprint", "ordinal"],
                       "properties": {
                         "attempt_id": { "type": "string", "pattern": "^attempt_[A-Za-z0-9_-]+$" },
                         "direction_id": { "type": "string", "pattern": "^direction_[a-f0-9]{64}$" },
-                        "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                        "fingerprint": {
+                          "type": "object",
+                          "required": ["fingerprint_id", "mechanism", "intervention", "observables_and_data", "analysis_unit", "timescale", "system_boundary"],
+                          "properties": {
+                            "fingerprint_id": { "type": "string", "pattern": "^fingerprint_[a-f0-9]{64}$" },
+                            "mechanism": { "type": "string", "minLength": 1 },
+                            "intervention": { "type": "string", "minLength": 1 },
+                            "observables_and_data": { "type": "string", "minLength": 1 },
+                            "analysis_unit": { "type": "string", "minLength": 1 },
+                            "timescale": { "type": "string", "minLength": 1 },
+                            "system_boundary": { "type": "string", "minLength": 1 }
+                          },
+                          "additionalProperties": false
+                        },
                         "ordinal": { "type": "integer", "minimum": 0 }
                       },
                       "additionalProperties": false

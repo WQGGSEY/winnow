@@ -28,6 +28,10 @@ from research_harness.orchestrator.blind_reorientation import (
     parse_reorientation_state,
     serialize_reorientation_state,
 )
+from research_harness.orchestrator.direction_generation import (
+    make_direction_fingerprint,
+    serialize_direction_fingerprint,
+)
 from research_harness.schemas.validator import (
     SchemaValidationError,
     validate_named_schema,
@@ -303,8 +307,20 @@ def _attempt(ordinal: int) -> DirectionAttemptRef:
     return DirectionAttemptRef(
         attempt_id=f"attempt_{ordinal}",
         direction_id="direction_" + digit * 64,
-        fingerprint_id="fingerprint_" + digit * 64,
+        fingerprint=_fingerprint(ordinal),
         ordinal=ordinal,
+    )
+
+
+def _fingerprint(ordinal: int):
+    suffix = str(ordinal + 1)
+    return make_direction_fingerprint(
+        mechanism=f"mechanism {suffix}",
+        intervention=f"intervention {suffix}",
+        observables_and_data=f"observables {suffix}",
+        analysis_unit=f"analysis unit {suffix}",
+        timescale=f"timescale {suffix}",
+        system_boundary=f"system boundary {suffix}",
     )
 
 
@@ -391,7 +407,7 @@ def test_checkpoint_rejects_a_changed_or_second_active_attempt() -> None:
     second["phase"]["active_attempt"] = {
         "attempt_id": "attempt_2",
         "direction_id": "direction_" + "3" * 64,
-        "fingerprint_id": "fingerprint_" + "3" * 64,
+        "fingerprint": serialize_direction_fingerprint(_fingerprint(2)),
         "ordinal": 2,
     }
     with pytest.raises(ValueError, match="oneOf"):
@@ -455,7 +471,7 @@ def test_schema_validator_enforces_const_and_tagged_one_of() -> None:
     document["phase"]["active_attempt"] = {
         "attempt_id": "attempt_1",
         "direction_id": "direction_" + "2" * 64,
-        "fingerprint_id": "fingerprint_" + "2" * 64,
+        "fingerprint": serialize_direction_fingerprint(_fingerprint(1)),
         "ordinal": 1,
     }
     with pytest.raises(SchemaValidationError, match="oneOf"):
@@ -472,7 +488,7 @@ def test_schema_validator_enforces_const_and_tagged_one_of() -> None:
     checkpointed["phase"]["continuation"]["active_attempt"] = {
         "attempt_id": "attempt_1",
         "direction_id": "direction_" + "2" * 64,
-        "fingerprint_id": "fingerprint_" + "2" * 64,
+        "fingerprint": serialize_direction_fingerprint(_fingerprint(1)),
         "ordinal": 1,
     }
     with pytest.raises(SchemaValidationError, match="oneOf"):

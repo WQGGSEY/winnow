@@ -55,6 +55,10 @@ SCHEMA_FILES = {
     "solution_contract": "solution_contract.schema.json",
     "research_goal": "research_goal.schema.json",
     "reorientation_state": "reorientation_state.schema.json",
+    "direction_fingerprint": "direction_fingerprint.schema.json",
+    "generation_request": "generation_request.schema.json",
+    "direction_draft": "direction_draft.schema.json",
+    "failure_evidence_receipt": "failure_evidence_receipt.schema.json",
 }
 
 

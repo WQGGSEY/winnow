@@ -7,6 +7,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal, Mapping, TypeAlias
 
+from research_harness.orchestrator.direction_generation import (
+    DirectionFingerprint,
+    parse_direction_fingerprint,
+    serialize_direction_fingerprint,
+)
 from research_harness.orchestrator.solution_contract import SolutionContract
 from research_harness.schemas.validator import validate_named_schema
 
@@ -36,7 +41,6 @@ _SHA256_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
 _CONTRACT_ID_RE = re.compile(r"^contract_[a-f0-9]{64}$")
 _ATTEMPT_ID_RE = re.compile(r"^attempt_[A-Za-z0-9_-]+$")
 _DIRECTION_ID_RE = re.compile(r"^direction_[a-f0-9]{64}$")
-_FINGERPRINT_ID_RE = re.compile(r"^fingerprint_[a-f0-9]{64}$")
 _RESERVATION_ID_RE = re.compile(r"^reservation_[a-f0-9]{64}$")
 _CHECKPOINT_ID_RE = re.compile(r"^checkpoint_[a-f0-9]{64}$")
 
@@ -127,13 +131,14 @@ def _reservation_id(
 class DirectionAttemptRef:
     attempt_id: str
     direction_id: str
-    fingerprint_id: str
+    fingerprint: DirectionFingerprint
     ordinal: int
 
     def __post_init__(self) -> None:
         _matching_text(self.attempt_id, _ATTEMPT_ID_RE, "attempt id")
         _matching_text(self.direction_id, _DIRECTION_ID_RE, "direction id")
-        _matching_text(self.fingerprint_id, _FINGERPRINT_ID_RE, "fingerprint id")
+        if not isinstance(self.fingerprint, DirectionFingerprint):
+            raise ReorientationStateError("direction fingerprint is invalid")
         _nonnegative_integer(self.ordinal, "attempt ordinal")
 
 
@@ -441,7 +446,7 @@ def _attempt_to_dict(value: DirectionAttemptRef) -> dict[str, object]:
     return {
         "attempt_id": value.attempt_id,
         "direction_id": value.direction_id,
-        "fingerprint_id": value.fingerprint_id,
+        "fingerprint": serialize_direction_fingerprint(value.fingerprint),
         "ordinal": value.ordinal,
     }
 
@@ -577,7 +582,7 @@ def _parse_attempt(value: object, label: str) -> DirectionAttemptRef:
     _exact_keys(
         raw,
         required=frozenset(
-            {"attempt_id", "direction_id", "fingerprint_id", "ordinal"}
+            {"attempt_id", "direction_id", "fingerprint", "ordinal"}
         ),
         label=label,
     )
@@ -586,9 +591,7 @@ def _parse_attempt(value: object, label: str) -> DirectionAttemptRef:
         direction_id=_matching_text(
             raw["direction_id"], _DIRECTION_ID_RE, "direction id"
         ),
-        fingerprint_id=_matching_text(
-            raw["fingerprint_id"], _FINGERPRINT_ID_RE, "fingerprint id"
-        ),
+        fingerprint=parse_direction_fingerprint(raw["fingerprint"]),
         ordinal=_nonnegative_integer(raw["ordinal"], "attempt ordinal"),
     )
 

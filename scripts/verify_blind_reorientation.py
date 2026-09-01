@@ -25,6 +25,22 @@ from research_harness.orchestrator.blind_reorientation import (
     parse_reorientation_state,
     serialize_reorientation_state,
 )
+from research_harness.connector.field_sampler import load_categories
+from research_harness.orchestrator.attempt_evidence import (
+    ConclusiveFailure,
+    StrongCandidate,
+    derive_attempt_evidence,
+)
+from research_harness.orchestrator.direction_generation import (
+    GenerationRequest,
+    gate_direction_novelty,
+    invoke_direction_generator,
+    make_direction_draft,
+    make_direction_fingerprint,
+    make_structural_equivalence_assessment,
+    sample_random_perspective,
+    serialize_direction_draft,
+)
 from research_harness.orchestrator.solution_contract import (
     compile_solution_contract,
     parse_solution_contract,
@@ -35,6 +51,68 @@ from research_harness.orchestrator.solution_contract import (
 
 BASELINE_DOSSIER_ID = "bd_agent_harness_20260523"
 BASELINE_PROVENANCE_PREFIX = f"baseline_dossier:{BASELINE_DOSSIER_ID}#"
+
+
+class _GenerationSpy:
+    def __init__(self, response: dict[str, object]) -> None:
+        self.response = response
+        self.calls: list[dict[str, object]] = []
+
+    def generate(self, request):
+        self.calls.append(deepcopy(request))
+        return deepcopy(self.response)
+
+
+class _ChangedAssessor:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def assess(self, candidate, reference):
+        self.calls += 1
+        return make_structural_equivalence_assessment(
+            candidate=candidate,
+            reference=reference,
+            mechanism="changed",
+            intervention="changed",
+            observables_and_data="changed",
+            analysis_unit="changed",
+            timescale="changed",
+            system_boundary="changed",
+            evidence_source_digest="sha256:" + "7" * 64,
+        )
+
+
+def _worker_report(*, supported: bool = False) -> dict[str, object]:
+    metric_value = 0.57 if supported else 0.52
+    comparison_status = "passed" if supported else "failed"
+    return {
+        "node_id": "node_verifier",
+        "status": "completed",
+        "claim_verdict_candidate": "supported" if supported else "contradicted",
+        "metrics": {"utility": metric_value},
+        "baselines": {"incumbent": 0.50},
+        "baseline_evidence_status": {
+            "overall": comparison_status,
+            "results": [
+                {
+                    "role": "current_best_known",
+                    "metric_key": "utility",
+                    "baseline_key": "incumbent",
+                    "operator": "greater_equal",
+                    "margin": 0.05,
+                    "required": True,
+                    "metric_value": metric_value,
+                    "baseline_value": 0.50,
+                    "status": comparison_status,
+                    "reason": "deterministic comparison result",
+                }
+            ],
+        },
+        "disproof_conditions_hit": [],
+        "artifacts": ["artifacts/metrics.json"],
+        "unexpected_observations": [],
+        "failure_record_candidate": None,
+    }
 
 
 def _artifacts() -> tuple[dict, dict]:
@@ -107,10 +185,83 @@ def verify() -> dict[str, object]:
     if not expected_provenance <= provenance:
         raise RuntimeError("baseline evidence is missing resolvable provenance")
 
+    fingerprint = make_direction_fingerprint(
+        mechanism="bounded causal mechanism",
+        intervention="bounded intervention",
+        observables_and_data="measured aggregate outcomes",
+        analysis_unit="deployment unit",
+        timescale="thirty days",
+        system_boundary="production service",
+    )
+    draft = make_direction_draft(
+        claim="The intervention improves utility.",
+        fingerprint=fingerprint,
+        experiment_objective="Compare measured utility with the incumbent.",
+        predicted_outcomes=(
+            "The intervention clears the threshold.",
+            "The intervention fails the threshold.",
+        ),
+    )
+    spy = _GenerationSpy(serialize_direction_draft(draft))
+    for draw_index in (0, 1):
+        request = GenerationRequest(
+            solution_contract=first,
+            random_perspective=sample_random_perspective(
+                seed=41,
+                draw_index=draw_index,
+            ),
+        )
+        if invoke_direction_generator(request, spy) != draft:
+            raise RuntimeError("blind generator draft round-trip failed")
+    if any(
+        set(call) != {"solution_contract", "random_perspective"}
+        for call in spy.calls
+    ):
+        raise RuntimeError("generator request leaked private state")
+    beyond_namespace = len(load_categories()) * 3 + 2
+    if sample_random_perspective(
+        seed=41,
+        draw_index=beyond_namespace,
+    ) != sample_random_perspective(seed=41, draw_index=beyond_namespace):
+        raise RuntimeError("unbounded perspective sampling is not deterministic")
+
+    closed_fingerprints = tuple(
+        make_direction_fingerprint(
+            mechanism=f"mechanism {index}",
+            intervention=f"intervention {index}",
+            observables_and_data=f"observables {index}",
+            analysis_unit=f"unit {index}",
+            timescale=f"timescale {index}",
+            system_boundary=f"boundary {index}",
+        )
+        for index in range(3)
+    )
+    assessor = _ChangedAssessor()
+    novelty = gate_direction_novelty(
+        fingerprint,
+        closed_fingerprints,
+        assessor,
+    )
+    if novelty.decision != "accepted" or assessor.calls != 3:
+        raise RuntimeError("six-axis novelty escalation failed")
+
+    failure = derive_attempt_evidence(
+        _worker_report(),
+        data_status="satisfied",
+    )
+    candidate = derive_attempt_evidence(
+        _worker_report(supported=True),
+        data_status="satisfied",
+    )
+    if not isinstance(failure, ConclusiveFailure):
+        raise RuntimeError("deterministic baseline failure did not close")
+    if not isinstance(candidate, StrongCandidate):
+        raise RuntimeError("supported evidence did not remain a candidate")
+
     attempt = DirectionAttemptRef(
         attempt_id="attempt_0",
         direction_id="direction_" + "a" * 64,
-        fingerprint_id="fingerprint_" + "b" * 64,
+        fingerprint=fingerprint,
         ordinal=0,
     )
     continuation = AcquisitionReserved(
@@ -190,6 +341,10 @@ def verify() -> dict[str, object]:
             "resource_independent_digest",
             "strict_contract_round_trip",
             "resolvable_baseline_provenance",
+            "blind_generation_request",
+            "unbounded_random_perspective",
+            "six_axis_novelty_gate",
+            "harness_derived_evidence",
             "checkpoint_correlation",
             "content_addressed_reservation",
             "closed_hard_block_code",

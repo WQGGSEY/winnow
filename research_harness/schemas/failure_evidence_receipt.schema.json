@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/failure_evidence_receipt.schema.json",
+  "title": "FailureEvidenceReceipt",
+  "type": "object",
+  "required": [
+    "version",
+    "receipt_id",
+    "receipt_sha256",
+    "node_id",
+    "evidence_sha256",
+    "baseline_failure_count"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "receipt_id": {
+      "type": "string",
+      "pattern": "^failure_receipt_[a-f0-9]{64}$"
+    },
+    "receipt_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "node_id": { "type": "string", "minLength": 1 },
+    "evidence_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "baseline_failure_count": { "type": "integer", "minimum": 1 }
+  },
+  "additionalProperties": false
+}

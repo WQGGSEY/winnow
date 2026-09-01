@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/generation_request.schema.json",
+  "title": "GenerationRequest",
+  "type": "object",
+  "required": ["solution_contract", "random_perspective"],
+  "properties": {
+    "solution_contract": { "type": "object" },
+    "random_perspective": {
+      "type": "object",
+      "required": [
+        "draw_index",
+        "epoch",
+        "category_code",
+        "category_name",
+        "archive"
+      ],
+      "properties": {
+        "draw_index": { "type": "integer", "minimum": 0 },
+        "epoch": { "type": "integer", "minimum": 0 },
+        "category_code": { "type": "string", "minLength": 1 },
+        "category_name": { "type": "string", "minLength": 1 },
+        "archive": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

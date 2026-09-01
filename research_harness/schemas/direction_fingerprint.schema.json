@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/direction_fingerprint.schema.json",
+  "title": "DirectionFingerprint",
+  "type": "object",
+  "required": [
+    "fingerprint_id",
+    "mechanism",
+    "intervention",
+    "observables_and_data",
+    "analysis_unit",
+    "timescale",
+    "system_boundary"
+  ],
+  "properties": {
+    "fingerprint_id": {
+      "type": "string",
+      "pattern": "^fingerprint_[a-f0-9]{64}$"
+    },
+    "mechanism": { "type": "string", "minLength": 1 },
+    "intervention": { "type": "string", "minLength": 1 },
+    "observables_and_data": { "type": "string", "minLength": 1 },
+    "analysis_unit": { "type": "string", "minLength": 1 },
+    "timescale": { "type": "string", "minLength": 1 },
+    "system_boundary": { "type": "string", "minLength": 1 }
+  },
+  "additionalProperties": false
+}
