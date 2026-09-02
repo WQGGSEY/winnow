@@ -411,15 +411,15 @@ def is_terminal(
     if not adaptive:
         return False, None
     try:
-        from research_harness.orchestrator.solution_contract import (
-            parse_solution_contract,
+        from research_harness.orchestrator.goal_contract import (
+            parse_goal_contract,
             project_research_goal,
         )
 
-        contract = parse_solution_contract(
+        contract = parse_goal_contract(
             json.loads(
                 (
-                    pdir / "reorientation" / "solution_contract.json"
+                    pdir / "reorientation" / "goal_contract.json"
                 ).read_text(encoding="utf-8")
             )
         )
@@ -1240,7 +1240,7 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "       falsifier가 fail하면 achieved=true 불가 — 파이프라인 개선 후 재측정.",
         "  6. 음성 결정은 submit_professor_decision에 pruned로 제출하고",
         "     follow-up claim을 생성하지 마. 하네스가 실패 lesson을 비공개로 저장한 뒤",
-        "     SolutionContract + random perspective만으로 다음 방향을 독립 생성한다.",
+        "     GoalContract + random perspective만으로 다음 방향을 독립 생성한다.",
         "",
         "Anti-laziness 룰 작동 중 (PR1):",
         "  - claim narrowing-without-breadth → reject",

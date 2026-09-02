@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://local/research_harness/feasibility_envelope.schema.json",
   "title": "FeasibilityEnvelope",
-  "description": "Operator + Professor's joint declaration of what the harness can access at production-entry time. This anchors strong-safe SolutionContract compilation and acquisition boundaries. Validators reject scope and resource mismatches before a direction becomes active.",
+  "description": "Operator + Professor's joint declaration of what the harness can access at production-entry time. This anchors strong-safe GoalContract compilation and acquisition boundaries. Validators reject scope and resource mismatches before a direction becomes active.",
   "type": "object",
   "required": [
     "thread_id",

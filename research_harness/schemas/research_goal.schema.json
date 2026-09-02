@@ -17,7 +17,6 @@
     "bar": {
       "type": "object",
       "required": [
-        "claim_under_test",
         "mandatory_baselines",
         "success_criteria",
         "disproof_conditions",
@@ -26,7 +25,6 @@
         "external_falsifier"
       ],
       "properties": {
-        "claim_under_test": { "type": "string", "minLength": 1 },
         "mandatory_baselines": { "type": "array", "minItems": 1, "items": { "type": "string" } },
         "success_criteria": { "type": "array", "minItems": 1, "items": { "type": "string" } },
         "disproof_conditions": { "type": "array", "minItems": 1, "items": { "type": "string" } },

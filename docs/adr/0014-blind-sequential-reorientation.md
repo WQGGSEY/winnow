@@ -28,7 +28,7 @@ scientific result.
 ## Decision
 
 The harness will use one blind sequential reorientation engine. The engine owns
-an immutable `SolutionContract`, a tagged `ReorientationState`, and an
+an immutable `GoalContract`, a tagged `ReorientationState`, and an
 append-only ledger of closed attempts. Exactly one `DirectionAttempt` can be
 active.
 
@@ -57,20 +57,23 @@ result completes the scientific goal.
 
 ### Freeze success before direction generation
 
-The candidate-blind compiler creates `SolutionContract` before the first
+The candidate-blind compiler creates `GoalContract` before the first
 direction. Its input contains the operator problem, grilling record, feasibility
 scope, baseline dossier, safety limits, and holdout requirements. Its signature
 does not accept a direction, strategy, node, failure, lesson, or resource
 snapshot.
 
-The contract contains the success criteria and evidence requirements. It does
-not contain a concrete adapter snapshot or acquired file. A derived
+The contract contains the question, success criteria, and evidence requirements.
+It has no accepted intake-claim field, connector alternative, prior direction,
+failure, lesson, concrete adapter snapshot, or acquired file. A derived
 `ResearchGoal` projection keeps the existing strong-result checks compatible.
-The contract digest is the only source of truth for the success bar.
+The contract digest is the only source of truth for the success bar. This
+structural boundary does not prove that retained free text is semantically
+strategy-free. A separate goal-only intake projection must enforce that property.
 
 The compiler accepts only a `real_holdout` registered by the operator or
 supervisor bootstrap. A `cross_generator_transfer` result remains readable as a
-legacy screen, but it cannot author a `SolutionContract` or permit
+legacy screen, but it cannot author a `GoalContract` or permit
 `goal_achieved`. The compiler does not add a `none` falsifier kind.
 
 ### Make blindness a data-flow property
@@ -80,7 +83,7 @@ exactly two fields:
 
 ```text
 GenerationRequest
-  solution_contract
+  goal_contract
   random_perspective
 ```
 
@@ -202,7 +205,7 @@ manifest IDs, and command receipts make retries converge on the same state.
 
 The adaptive strong-result receipt includes the immutable contract ID and the
 active attempt, direction, node, and acquisition manifest IDs. The terminal
-verifier re-derives the frozen goal from `SolutionContract`, checks every
+verifier re-derives the frozen goal from `GoalContract`, checks every
 evidence artifact and runner digest, and confirms the durable node-attempt
 index. Receipt labels alone cannot complete the research.
 
@@ -230,9 +233,9 @@ creating another terminal state.
 The migration keeps every legacy node as audit history. It marks every legacy
 node-attempt binding `legacy_audit_only=true`, then generates and materializes
 one new blind direction. No legacy root or subtree becomes the active attempt.
-When a validated intake handoff exists, its accepted claim, baselines, success
-criteria, and disproof conditions override provisional grilling extraction
-before the immutable contract is compiled.
+When a validated intake handoff exists, its accepted baselines, success criteria,
+and disproof conditions override provisional grilling extraction before the
+immutable contract is compiled. Its proposed claim does not enter the contract.
 
 If frozen thread artifacts disagree on the success bar, migration returns
 `operator_scope_conflict`. Multiple legacy roots that share the same bar do not
@@ -256,7 +259,7 @@ does not mark publication complete or disable supervisor retry.
 
 Each unit ends in a runnable state:
 
-1. Add `SolutionContract`, the tagged state, durable schemas, and a verification
+1. Add `GoalContract`, the tagged state, durable schemas, and a verification
    command. Do not change live selection yet.
 2. Add the blind generator boundary, the six-axis gate, and harness-derived
    evidence verdicts. Verify that recorded generator requests contain only the

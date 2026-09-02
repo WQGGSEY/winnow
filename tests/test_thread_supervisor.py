@@ -40,14 +40,14 @@ def _write_verified_terminal_state(tdir: Path) -> None:
         ReorientationState,
         serialize_reorientation_state,
     )
-    from research_harness.orchestrator.solution_contract import (
+    from research_harness.orchestrator.goal_contract import (
         BaselineEvidence,
         FalsifierPredicate,
+        GoalContractCompilerInput,
         HoldoutRequirement,
-        SolutionContractCompilerInput,
-        compile_solution_contract,
+        compile_goal_contract,
         project_research_goal,
-        serialize_solution_contract,
+        serialize_goal_contract,
     )
     from research_harness.orchestrator.blind_sequential_research import (
         strong_result_receipt_sha256,
@@ -94,10 +94,9 @@ def _write_verified_terminal_state(tdir: Path) -> None:
     (tdir / "production" / "feasibility_envelope.json").write_text(
         json.dumps(envelope), encoding="utf-8"
     )
-    contract = compile_solution_contract(
-        SolutionContractCompilerInput(
+    contract = compile_goal_contract(
+        GoalContractCompilerInput(
             question=thread["user_goal"],
-            claim_under_test=thread["user_goal"],
             mandatory_baselines=("baseline B",),
             success_criteria=("beat baseline B",),
             disproof_conditions=("does not beat baseline B",),
@@ -140,8 +139,8 @@ def _write_verified_terminal_state(tdir: Path) -> None:
     goal = project_research_goal(contract)
     reorientation = tdir / "production" / "reorientation"
     reorientation.mkdir(parents=True, exist_ok=True)
-    (reorientation / "solution_contract.json").write_text(
-        json.dumps(serialize_solution_contract(contract)),
+    (reorientation / "goal_contract.json").write_text(
+        json.dumps(serialize_goal_contract(contract)),
         encoding="utf-8",
     )
     from research_harness.orchestrator.adaptive_search import (

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://local/research_harness/solution_contract.schema.json",
-  "title": "SolutionContract",
+  "$id": "https://local/research_harness/goal_contract.schema.json",
+  "title": "GoalContract",
   "type": "object",
   "required": [
     "version",
@@ -22,7 +22,6 @@
     "bar": {
       "type": "object",
       "required": [
-        "claim_under_test",
         "mandatory_baselines",
         "success_criteria",
         "disproof_conditions",
@@ -31,7 +30,6 @@
         "acceptable_scopes"
       ],
       "properties": {
-        "claim_under_test": { "type": "string", "minLength": 1 },
         "mandatory_baselines": {
           "type": "array",
           "minItems": 1,

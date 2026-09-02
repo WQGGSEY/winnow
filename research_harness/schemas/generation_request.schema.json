@@ -3,9 +3,9 @@
   "$id": "https://local/research_harness/generation_request.schema.json",
   "title": "GenerationRequest",
   "type": "object",
-  "required": ["solution_contract", "random_perspective"],
+  "required": ["goal_contract", "random_perspective"],
   "properties": {
-    "solution_contract": { "type": "object" },
+    "goal_contract": { "type": "object" },
     "random_perspective": {
       "type": "object",
       "required": [

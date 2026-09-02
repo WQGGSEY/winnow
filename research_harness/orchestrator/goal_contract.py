@@ -30,7 +30,7 @@ _DOSSIER_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 _COMPILER_VERSION = 1
 
 
-class SolutionContractError(ValueError):
+class GoalContractError(ValueError):
     pass
 
 
@@ -49,7 +49,7 @@ def _sha256(value: object) -> str:
 
 def _text(value: object, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise SolutionContractError(f"{label} must be a non-empty string")
+        raise GoalContractError(f"{label} must be a non-empty string")
     return re.sub(r"\s+", " ", value.strip())
 
 
@@ -60,35 +60,35 @@ def _text_tuple(
     allow_empty: bool = False,
 ) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
-        raise SolutionContractError(f"{label} must be a string array")
+        raise GoalContractError(f"{label} must be a string array")
     items = tuple(dict.fromkeys(_text(item, f"{label} item") for item in value))
     if not items and not allow_empty:
-        raise SolutionContractError(f"{label} must not be empty")
+        raise GoalContractError(f"{label} must not be empty")
     return items
 
 
 def _provenance_tuple(value: object, label: str) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
-        raise SolutionContractError(f"{label} must be a string array")
+        raise GoalContractError(f"{label} must be a string array")
     normalized: list[str] = []
     for item in value:
         if not isinstance(item, str) or not item.strip():
-            raise SolutionContractError(f"{label} must contain non-empty strings")
+            raise GoalContractError(f"{label} must contain non-empty strings")
         normalized.append(item.strip())
     items = tuple(dict.fromkeys(normalized))
     if not items:
-        raise SolutionContractError(f"{label} must not be empty")
+        raise GoalContractError(f"{label} must not be empty")
     return items
 
 
 def _require_tuple(value: object, label: str) -> None:
     if not isinstance(value, tuple):
-        raise SolutionContractError(f"{label} must be an immutable tuple")
+        raise GoalContractError(f"{label} must be an immutable tuple")
 
 
 def _mapping(value: object, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
-        raise SolutionContractError(f"{label} must be an object")
+        raise GoalContractError(f"{label} must be an object")
     return value
 
 
@@ -102,9 +102,9 @@ def _exact_keys(
     missing = sorted(required - value.keys())
     unexpected = sorted(value.keys() - required - optional)
     if missing:
-        raise SolutionContractError(f"{label} is missing keys {missing}")
+        raise GoalContractError(f"{label} is missing keys {missing}")
     if unexpected:
-        raise SolutionContractError(f"{label} has unexpected keys {unexpected}")
+        raise GoalContractError(f"{label} has unexpected keys {unexpected}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,15 +116,15 @@ class FalsifierPredicate:
     def __post_init__(self) -> None:
         _text(self.metric, "falsifier metric")
         if self.operator not in _PREDICATE_OPERATORS:
-            raise SolutionContractError(
+            raise GoalContractError(
                 f"unsupported falsifier operator {self.operator!r}"
             )
         if isinstance(self.threshold, bool) or not isinstance(
             self.threshold, (int, float)
         ):
-            raise SolutionContractError("falsifier threshold must be numeric")
+            raise GoalContractError("falsifier threshold must be numeric")
         if not math.isfinite(float(self.threshold)):
-            raise SolutionContractError("falsifier threshold must be finite")
+            raise GoalContractError("falsifier threshold must be finite")
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,12 +136,12 @@ class HoldoutRequirement:
 
     def __post_init__(self) -> None:
         if self.kind not in _FALSIFIER_KINDS:
-            raise SolutionContractError("holdout kind must be real_holdout")
+            raise GoalContractError("holdout kind must be real_holdout")
         _text(self.holdout_source_id, "holdout source id")
         if not isinstance(self.predicate, FalsifierPredicate):
-            raise SolutionContractError("holdout predicate is invalid")
+            raise GoalContractError("holdout predicate is invalid")
         if self.registered_by not in _REGISTERED_BY:
-            raise SolutionContractError(
+            raise GoalContractError(
                 f"unsupported holdout registrant {self.registered_by!r}"
             )
 
@@ -158,15 +158,14 @@ class BaselineEvidence:
         _text(self.method, "baseline method")
         _text(self.role, "baseline role")
         if self.role not in _BASELINE_ROLE_VALUES:
-            raise SolutionContractError(f"unsupported baseline role {self.role!r}")
+            raise GoalContractError(f"unsupported baseline role {self.role!r}")
         _require_tuple(self.provenance, "baseline provenance")
         _provenance_tuple(self.provenance, "baseline provenance")
 
 
 @dataclass(frozen=True, slots=True)
-class SolutionContractCompilerInput:
+class GoalContractCompilerInput:
     question: str
-    claim_under_test: str
     mandatory_baselines: tuple[str, ...]
     success_criteria: tuple[str, ...]
     disproof_conditions: tuple[str, ...]
@@ -179,7 +178,6 @@ class SolutionContractCompilerInput:
 
     def __post_init__(self) -> None:
         _text(self.question, "question")
-        _text(self.claim_under_test, "claim under test")
         for value, label in (
             (self.mandatory_baselines, "mandatory baselines"),
             (self.success_criteria, "success criteria"),
@@ -195,37 +193,36 @@ class SolutionContractCompilerInput:
         _text_tuple(self.disproof_conditions, "disproof conditions")
         _text_tuple(self.operator_requirements, "operator requirements")
         if self.target_scope not in _TARGET_SCOPES:
-            raise SolutionContractError(
+            raise GoalContractError(
                 f"unsupported target scope {self.target_scope!r}"
             )
         if not self.acceptable_scopes or any(
             scope not in _TARGET_SCOPES for scope in self.acceptable_scopes
         ):
-            raise SolutionContractError("acceptable scopes are invalid")
+            raise GoalContractError("acceptable scopes are invalid")
         if not self.baseline_evidence or any(
             not isinstance(item, BaselineEvidence) for item in self.baseline_evidence
         ):
-            raise SolutionContractError("baseline evidence must not be empty")
+            raise GoalContractError("baseline evidence must not be empty")
         missing_baseline_roles = _BASELINE_ROLE_VALUES - {
             item.role for item in self.baseline_evidence
         }
         if missing_baseline_roles:
-            raise SolutionContractError(
+            raise GoalContractError(
                 "baseline evidence is missing required roles "
                 f"{sorted(missing_baseline_roles)}"
             )
         _text_tuple(self.safety_limits, "safety limits")
         if not isinstance(self.holdout_requirement, HoldoutRequirement):
-            raise SolutionContractError("holdout requirement is invalid")
+            raise GoalContractError("holdout requirement is invalid")
 
 
 @dataclass(frozen=True, slots=True)
-class SolutionContract:
+class GoalContract:
     version: Literal[1]
     contract_id: str
     digest: str
     question: str
-    claim_under_test: str
     mandatory_baselines: tuple[str, ...]
     success_criteria: tuple[str, ...]
     disproof_conditions: tuple[str, ...]
@@ -239,11 +236,11 @@ class SolutionContract:
 
     def __post_init__(self) -> None:
         if self.version != 1 or self.compiler_version != _COMPILER_VERSION:
-            raise SolutionContractError("unsupported solution contract version")
+            raise GoalContractError("unsupported goal contract version")
         if _CONTRACT_ID_RE.fullmatch(self.contract_id) is None:
-            raise SolutionContractError("solution contract id is invalid")
+            raise GoalContractError("goal contract id is invalid")
         if _SHA256_RE.fullmatch(self.digest) is None:
-            raise SolutionContractError("solution contract digest is invalid")
+            raise GoalContractError("goal contract digest is invalid")
         for value, label in (
             (self.mandatory_baselines, "mandatory baselines"),
             (self.success_criteria, "success criteria"),
@@ -257,15 +254,15 @@ class SolutionContract:
         source = _compiler_input_from_contract(self)
         canonical_source = _canonicalize_source(source)
         if source != canonical_source:
-            raise SolutionContractError("solution contract content is not canonical")
+            raise GoalContractError("goal contract content is not canonical")
         payload = _contract_payload(canonical_source)
         digest = _sha256(payload)
         if (
             self.digest != f"sha256:{digest}"
             or self.contract_id != f"contract_{digest}"
         ):
-            raise SolutionContractError(
-                "solution contract identity does not match its content"
+            raise GoalContractError(
+                "goal contract identity does not match its content"
             )
 
 
@@ -291,12 +288,11 @@ def _holdout_to_dict(value: HoldoutRequirement) -> dict[str, object]:
     }
 
 
-def _contract_payload(source: SolutionContractCompilerInput) -> dict[str, object]:
+def _contract_payload(source: GoalContractCompilerInput) -> dict[str, object]:
     return {
         "version": 1,
         "question": source.question,
         "bar": {
-            "claim_under_test": source.claim_under_test,
             "mandatory_baselines": list(source.mandatory_baselines),
             "success_criteria": list(source.success_criteria),
             "disproof_conditions": list(source.disproof_conditions),
@@ -314,11 +310,10 @@ def _contract_payload(source: SolutionContractCompilerInput) -> dict[str, object
 
 
 def _compiler_input_from_contract(
-    contract: SolutionContract,
-) -> SolutionContractCompilerInput:
-    return SolutionContractCompilerInput(
+    contract: GoalContract,
+) -> GoalContractCompilerInput:
+    return GoalContractCompilerInput(
         question=contract.question,
-        claim_under_test=contract.claim_under_test,
         mandatory_baselines=contract.mandatory_baselines,
         success_criteria=contract.success_criteria,
         disproof_conditions=contract.disproof_conditions,
@@ -356,8 +351,8 @@ def _canonicalize_holdout(value: HoldoutRequirement) -> HoldoutRequirement:
 
 
 def _canonicalize_source(
-    source: SolutionContractCompilerInput,
-) -> SolutionContractCompilerInput:
+    source: GoalContractCompilerInput,
+) -> GoalContractCompilerInput:
     baseline_by_value = {
         (
             baseline.candidate_id,
@@ -373,9 +368,8 @@ def _canonicalize_source(
         baseline_by_value[key]
         for key in sorted(baseline_by_value)
     )
-    return SolutionContractCompilerInput(
+    return GoalContractCompilerInput(
         question=_text(source.question, "question"),
-        claim_under_test=_text(source.claim_under_test, "claim under test"),
         mandatory_baselines=_text_tuple(
             source.mandatory_baselines, "mandatory baselines"
         ),
@@ -396,22 +390,21 @@ def _canonicalize_source(
     )
 
 
-def compile_solution_contract(
-    source: SolutionContractCompilerInput,
-) -> SolutionContract:
-    if not isinstance(source, SolutionContractCompilerInput):
-        raise SolutionContractError(
-            "compile_solution_contract requires SolutionContractCompilerInput"
+def compile_goal_contract(
+    source: GoalContractCompilerInput,
+) -> GoalContract:
+    if not isinstance(source, GoalContractCompilerInput):
+        raise GoalContractError(
+            "compile_goal_contract requires GoalContractCompilerInput"
         )
     source = _canonicalize_source(source)
     payload = _contract_payload(source)
     digest = _sha256(payload)
-    return SolutionContract(
+    return GoalContract(
         version=1,
         contract_id=f"contract_{digest}",
         digest=f"sha256:{digest}",
         question=source.question,
-        claim_under_test=source.claim_under_test,
         mandatory_baselines=source.mandatory_baselines,
         success_criteria=source.success_criteria,
         disproof_conditions=source.disproof_conditions,
@@ -425,15 +418,15 @@ def compile_solution_contract(
     )
 
 
-def serialize_solution_contract(contract: SolutionContract) -> dict[str, object]:
-    if not isinstance(contract, SolutionContract):
-        raise SolutionContractError("value is not a SolutionContract")
+def serialize_goal_contract(contract: GoalContract) -> dict[str, object]:
+    if not isinstance(contract, GoalContract):
+        raise GoalContractError("value is not a GoalContract")
     document = {
         **_contract_payload(_compiler_input_from_contract(contract)),
         "contract_id": contract.contract_id,
         "digest": contract.digest,
     }
-    validate_named_schema("solution_contract", document)
+    validate_named_schema("goal_contract", document)
     return document
 
 
@@ -456,7 +449,7 @@ def _parse_holdout(value: object) -> HoldoutRequirement:
     raw = _mapping(value, "holdout_requirement")
     kind = raw.get("kind")
     if kind not in _FALSIFIER_KINDS:
-        raise SolutionContractError("holdout kind must be real_holdout")
+        raise GoalContractError("holdout kind must be real_holdout")
     _exact_keys(
         raw,
         required=frozenset(
@@ -473,14 +466,14 @@ def _parse_holdout(value: object) -> HoldoutRequirement:
     operator = predicate_raw["op"]
     registered_by = raw["registered_by"]
     if operator not in _PREDICATE_OPERATORS:
-        raise SolutionContractError(f"unsupported falsifier operator {operator!r}")
+        raise GoalContractError(f"unsupported falsifier operator {operator!r}")
     if registered_by not in _REGISTERED_BY:
-        raise SolutionContractError(
+        raise GoalContractError(
             f"unsupported holdout registrant {registered_by!r}"
         )
     threshold = predicate_raw["threshold"]
     if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
-        raise SolutionContractError("falsifier threshold must be numeric")
+        raise GoalContractError("falsifier threshold must be numeric")
     return HoldoutRequirement(
         kind=kind,
         holdout_source_id=_text(raw["holdout_source_id"], "holdout source id"),
@@ -493,9 +486,9 @@ def _parse_holdout(value: object) -> HoldoutRequirement:
     )
 
 
-def parse_solution_contract(value: object) -> SolutionContract:
-    raw = _mapping(value, "solution contract")
-    validate_named_schema("solution_contract", dict(raw))
+def parse_goal_contract(value: object) -> GoalContract:
+    raw = _mapping(value, "goal contract")
+    validate_named_schema("goal_contract", dict(raw))
     _exact_keys(
         raw,
         required=frozenset(
@@ -511,14 +504,13 @@ def parse_solution_contract(value: object) -> SolutionContract:
                 "compiler_version",
             }
         ),
-        label="solution contract",
+        label="goal contract",
     )
-    bar = _mapping(raw["bar"], "solution contract bar")
+    bar = _mapping(raw["bar"], "goal contract bar")
     _exact_keys(
         bar,
         required=frozenset(
             {
-                "claim_under_test",
                 "mandatory_baselines",
                 "success_criteria",
                 "disproof_conditions",
@@ -527,25 +519,24 @@ def parse_solution_contract(value: object) -> SolutionContract:
                 "acceptable_scopes",
             }
         ),
-        label="solution contract bar",
+        label="goal contract bar",
     )
     target_scope = bar["target_scope"]
     if target_scope not in _TARGET_SCOPES:
-        raise SolutionContractError(f"unsupported target scope {target_scope!r}")
+        raise GoalContractError(f"unsupported target scope {target_scope!r}")
     acceptable_scopes = _text_tuple(
         bar["acceptable_scopes"], "acceptable scopes"
     )
     if any(scope not in _TARGET_SCOPES for scope in acceptable_scopes):
-        raise SolutionContractError("acceptable scopes are invalid")
+        raise GoalContractError("acceptable scopes are invalid")
     baseline_raw = raw["baseline_evidence"]
     if not isinstance(baseline_raw, list):
-        raise SolutionContractError("baseline evidence must be an array")
-    contract = SolutionContract(
+        raise GoalContractError("baseline evidence must be an array")
+    contract = GoalContract(
         version=raw["version"],
         contract_id=raw["contract_id"],
         digest=raw["digest"],
         question=_text(raw["question"], "question"),
-        claim_under_test=_text(bar["claim_under_test"], "claim under test"),
         mandatory_baselines=_text_tuple(
             bar["mandatory_baselines"], "mandatory baselines"
         ),
@@ -584,7 +575,7 @@ def _baseline_evidence_from_dossier(
     candidates = baseline_dossier.get("candidates_index")
     sources = baseline_dossier.get("source_index")
     if not isinstance(candidates, list) or not isinstance(sources, list):
-        raise SolutionContractError(
+        raise GoalContractError(
             "baseline dossier requires candidates_index and source_index arrays"
         )
     provenance_by_candidate: dict[str, set[str]] = {}
@@ -632,13 +623,13 @@ def _baseline_evidence_from_dossier(
         present_roles.add(role)
     missing_roles = sorted(_BASELINE_ROLE_VALUES - present_roles)
     if missing_roles:
-        raise SolutionContractError(
+        raise GoalContractError(
             f"baseline dossier is missing required roles {missing_roles}"
         )
     return tuple(sorted(evidence, key=lambda item: (item.role, item.candidate_id)))
 
 
-def solution_contract_input_from_artifacts(
+def goal_contract_input_from_artifacts(
     *,
     repo_root: Path,
     baseline_dossier_id: str,
@@ -646,15 +637,15 @@ def solution_contract_input_from_artifacts(
     grilling_record: Mapping[str, Any],
     feasibility_envelope: Mapping[str, Any],
     safety_limits: Iterable[str] = (),
-) -> SolutionContractCompilerInput:
+) -> GoalContractCompilerInput:
     if not isinstance(repo_root, Path):
-        raise SolutionContractError("repo root must be a Path")
+        raise GoalContractError("repo root must be a Path")
     dossier_id = _text(baseline_dossier_id, "baseline dossier id")
     if _DOSSIER_ID_RE.fullmatch(dossier_id) is None:
-        raise SolutionContractError("baseline dossier id is invalid")
+        raise GoalContractError("baseline dossier id is invalid")
     baseline_dossier = load_baseline_dossier(repo_root, dossier_id)
     if baseline_dossier.get("id") != dossier_id:
-        raise SolutionContractError(
+        raise GoalContractError(
             "loaded baseline dossier id does not match the requested id"
         )
     question = _text(operator_problem, "operator problem")
@@ -664,28 +655,22 @@ def solution_contract_input_from_artifacts(
     )
     target_scope = intent.get("target_deploy_grade_scope")
     if target_scope not in _TARGET_SCOPES:
-        raise SolutionContractError(f"unsupported target scope {target_scope!r}")
+        raise GoalContractError(f"unsupported target scope {target_scope!r}")
     acceptable_raw = intent.get("acceptable_alternative_scopes") or [target_scope]
     acceptable_scopes = _text_tuple(acceptable_raw, "acceptable scopes")
     if any(scope not in _TARGET_SCOPES for scope in acceptable_scopes):
-        raise SolutionContractError("acceptable scopes are invalid")
+        raise GoalContractError("acceptable scopes are invalid")
 
-    round_requirements = []
-    for round_record in grilling_record.get("rounds") or []:
-        if isinstance(round_record, Mapping):
-            response = round_record.get("user_response")
-            if isinstance(response, str) and response.strip():
-                round_requirements.append(_text(response, "operator requirement"))
     taste_constraints = _text_tuple(
         extracted.get("taste_constraints") or (),
         "taste constraints",
         allow_empty=True,
     )
     operator_requirements = tuple(
-        dict.fromkeys((question, *round_requirements, *taste_constraints))
+        dict.fromkeys((question, *taste_constraints))
     )
     if isinstance(safety_limits, str):
-        raise SolutionContractError("safety limits must be an iterable of strings")
+        raise GoalContractError("safety limits must be an iterable of strings")
     normalized_safety = tuple(
         dict.fromkeys(
             (
@@ -695,14 +680,10 @@ def solution_contract_input_from_artifacts(
         )
     )
     if not normalized_safety:
-        raise SolutionContractError("safety limits must not be empty")
+        raise GoalContractError("safety limits must not be empty")
 
-    return SolutionContractCompilerInput(
+    return GoalContractCompilerInput(
         question=question,
-        claim_under_test=_text(
-            extracted.get("claim_under_test") or question,
-            "claim under test",
-        ),
         mandatory_baselines=_text_tuple(
             extracted.get("mandatory_baselines"), "mandatory baselines"
         ),
@@ -726,15 +707,14 @@ def solution_contract_input_from_artifacts(
     )
 
 
-def project_research_goal(contract: SolutionContract) -> dict[str, object]:
-    if not isinstance(contract, SolutionContract):
-        raise SolutionContractError("value is not a SolutionContract")
+def project_research_goal(contract: GoalContract) -> dict[str, object]:
+    if not isinstance(contract, GoalContract):
+        raise GoalContractError("value is not a GoalContract")
     identity = {"question": contract.question, "bar_digest": contract.digest}
     document = {
         "id": f"goal_{_sha256(identity)}",
         "question": contract.question,
         "bar": {
-            "claim_under_test": contract.claim_under_test,
             "mandatory_baselines": list(contract.mandatory_baselines),
             "success_criteria": list(contract.success_criteria),
             "disproof_conditions": list(contract.disproof_conditions),

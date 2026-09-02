@@ -41,11 +41,11 @@ from research_harness.orchestrator.direction_generation import (
     sample_random_perspective,
     serialize_direction_draft,
 )
-from research_harness.orchestrator.solution_contract import (
-    compile_solution_contract,
-    parse_solution_contract,
-    serialize_solution_contract,
-    solution_contract_input_from_artifacts,
+from research_harness.orchestrator.goal_contract import (
+    compile_goal_contract,
+    goal_contract_input_from_artifacts,
+    parse_goal_contract,
+    serialize_goal_contract,
 )
 
 
@@ -147,14 +147,14 @@ def _artifacts() -> tuple[dict, dict]:
 
 def _compile(envelope: dict):
     grilling, _ = _artifacts()
-    source = solution_contract_input_from_artifacts(
+    source = goal_contract_input_from_artifacts(
         repo_root=REPO_ROOT,
         baseline_dossier_id=BASELINE_DOSSIER_ID,
         operator_problem="Find a safe intervention that improves utility.",
         grilling_record=grilling,
         feasibility_envelope=envelope,
     )
-    return compile_solution_contract(source)
+    return compile_goal_contract(source)
 
 
 def verify() -> dict[str, object]:
@@ -167,9 +167,9 @@ def verify() -> dict[str, object]:
     ]
     second = _compile(changed)
     if second != first:
-        raise RuntimeError("resource changes altered the solution contract")
-    if parse_solution_contract(serialize_solution_contract(first)) != first:
-        raise RuntimeError("solution contract round-trip failed")
+        raise RuntimeError("resource changes altered the goal contract")
+    if parse_goal_contract(serialize_goal_contract(first)) != first:
+        raise RuntimeError("goal contract round-trip failed")
     provenance = {
         item
         for baseline in first.baseline_evidence
@@ -205,7 +205,7 @@ def verify() -> dict[str, object]:
     spy = _GenerationSpy(serialize_direction_draft(draft))
     for draw_index in (0, 1):
         request = GenerationRequest(
-            solution_contract=first,
+            goal_contract=first,
             random_perspective=sample_random_perspective(
                 seed=41,
                 draw_index=draw_index,
@@ -214,7 +214,7 @@ def verify() -> dict[str, object]:
         if invoke_direction_generator(request, spy) != draft:
             raise RuntimeError("blind generator draft round-trip failed")
     if any(
-        set(call) != {"solution_contract", "random_perspective"}
+        set(call) != {"goal_contract", "random_perspective"}
         for call in spy.calls
     ):
         raise RuntimeError("generator request leaked private state")

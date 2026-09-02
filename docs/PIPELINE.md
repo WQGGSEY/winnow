@@ -6,7 +6,7 @@ Authoritative end-to-end flow for **new threads**. Source of truth:
 `intake / refine / tree_search / rebuttal / publish` vocabulary in older docs.
 
 ```
-grilling  →  connector  →  SolutionContract  →  one blind direction at a time
+grilling  →  connector  →  GoalContract  →  one blind direction at a time
                                                 →  verified strong result
 ```
 
@@ -48,7 +48,7 @@ for each randomly-sampled external field
 stop at quota (default 6) / max_fields_tried (default 40) / namespace exhausted
        (recorded in stopped_reason — never silently swallowed)
 P-aware baseline research: retrieve papers, download available sources, and
-                           write the baseline dossier used by SolutionContract
+                           write the baseline dossier used by GoalContract
 ```
 
 **Why the firewall.** The borrowed method is forced from a *random* field and
@@ -63,10 +63,13 @@ It is a **live** step (Codex CLI calls), gated by
 
 ## 3. production (blind sequential reorientation)
 
-Thread setup freezes the accepted intake handoff, feasibility envelope,
-success criteria, baselines, disproof conditions, safety limits, and real
-holdout into one immutable `SolutionContract`. Connector alternatives remain
-audit context and never become live roots.
+Thread setup freezes the problem, accepted success bar, feasibility envelope,
+safety limits, and real holdout into one immutable `GoalContract`. The contract
+fixes the question and success bar. It has no accepted intake-claim field,
+connector alternative, prior direction, failure, or lesson. Connector alternatives
+remain audit context and
+never become live roots. This structural boundary does not prove that retained
+free text is semantically strategy-free.
 
 `advance_research` is the only direction-control operation. Exactly one
 `DirectionAttempt` may be active. A generation request contains only the

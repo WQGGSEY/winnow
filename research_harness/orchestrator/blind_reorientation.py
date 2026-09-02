@@ -12,7 +12,7 @@ from research_harness.orchestrator.direction_generation import (
     parse_direction_fingerprint,
     serialize_direction_fingerprint,
 )
-from research_harness.orchestrator.solution_contract import SolutionContract
+from research_harness.orchestrator.goal_contract import GoalContract
 from research_harness.schemas.validator import validate_named_schema
 
 
@@ -551,10 +551,10 @@ def make_checkpoint(
 
 
 def initialize_reorientation_state(
-    contract: SolutionContract,
+    contract: GoalContract,
 ) -> ReorientationState:
-    if not isinstance(contract, SolutionContract):
-        raise ReorientationStateError("state initialization requires a SolutionContract")
+    if not isinstance(contract, GoalContract):
+        raise ReorientationStateError("state initialization requires a GoalContract")
     return ReorientationState(
         version=2,
         contract_id=contract.contract_id,

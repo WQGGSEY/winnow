@@ -1,8 +1,8 @@
 """Domain-connector: the vagueness-driven diverse claim-generation front-end.
 
 Turns one problem P (from grilling) into diverse intake candidates and a
-P-aware baseline dossier. Production freezes one accepted handoff before any
-direction is generated. See ADR 0012 and CONTEXT.md
+P-aware baseline dossier. Production freezes the problem and accepted success
+bar before any direction is generated. See ADR 0012 and CONTEXT.md
 ([[creativity]], [[abstraction (de-domained)]], [[reading (field-forced)]],
 [[prune-1]], [[reduction]],
 [[firewall (P-withholding)]]).

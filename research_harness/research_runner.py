@@ -74,7 +74,8 @@ def cmd_connector(
 ) -> dict[str, Any]:
     """Turn a grilled problem into connector research inputs.
 
-    Production freezes the accepted intake handoff into one SolutionContract;
+    Production freezes the problem and accepted success bar into one
+    GoalContract;
     connector alternatives remain audit context and never become live roots.
     """
     grilling_session = _load_grilling_session(grilling_session_path)

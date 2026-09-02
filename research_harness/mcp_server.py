@@ -50,7 +50,7 @@ PROFESSOR_CONTRACT = (
     "  • Keep exactly one active direction; never attach follow-up children to "
     "a promoted or pruned direction.\n"
     "  • A pruned direction is closed from evidence. Its replacement is generated "
-    "independently from the frozen solution contract.\n"
+    "independently from the frozen goal contract.\n"
     "  • When designing experiment code, REUSE the thread's existing _lib/ "
     "modules; only add new shared modules when truly missing."
 )

@@ -51,7 +51,7 @@ SCHEMA_FILES = {
     "falsifier_result": "falsifier_result.schema.json",
     "frozen_question": "frozen_question.schema.json",
     "construct_adversary_report": "construct_adversary_report.schema.json",
-    "solution_contract": "solution_contract.schema.json",
+    "goal_contract": "goal_contract.schema.json",
     "research_goal": "research_goal.schema.json",
     "reorientation_state": "reorientation_state.schema.json",
     "direction_fingerprint": "direction_fingerprint.schema.json",

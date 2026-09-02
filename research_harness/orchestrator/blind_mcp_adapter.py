@@ -165,9 +165,9 @@ class CodexBlindDirectionGenerator:
         self._timeout_seconds = timeout_seconds
 
     def generate(self, request: Mapping[str, object], /) -> Mapping[str, object]:
-        if set(request) != {"solution_contract", "random_perspective"}:
+        if set(request) != {"goal_contract", "random_perspective"}:
             raise BlindMcpAdapterError(
-                "blind generation request must contain only contract and perspective"
+                "blind generation request must contain only goal contract and perspective"
             )
         with tempfile.TemporaryDirectory(prefix="research-harness-direction-") as raw:
             result = self._transport.complete(

@@ -90,7 +90,7 @@ def test_codex_direction_generator_receives_only_blind_request() -> None:
         transport=completion,
     )
     request = {
-        "solution_contract": {"contract_id": "contract_test"},
+        "goal_contract": {"contract_id": "contract_test"},
         "random_perspective": {"category_code": "cs.AI"},
     }
 
@@ -102,7 +102,7 @@ def test_codex_direction_generator_receives_only_blind_request() -> None:
     sent = completion.requests[0]
     assert json.loads(sent.prompt.input) == request
     assert set(json.loads(sent.prompt.input)) == {
-        "solution_contract",
+        "goal_contract",
         "random_perspective",
     }
     assert sent.cwd != REPO_ROOT
@@ -177,7 +177,7 @@ def test_codex_direction_generator_rejects_prohibition_as_direction(
     with pytest.raises(BlindMcpAdapterError, match="positive intervention"):
         generator.generate(
             {
-                "solution_contract": {"contract_id": "contract_test"},
+                "goal_contract": {"contract_id": "contract_test"},
                 "random_perspective": {"category_code": "cs.AI"},
             }
         )

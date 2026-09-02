@@ -73,13 +73,13 @@ from research_harness.orchestrator.search_state import (
     search_policy_from_config,
     validate_search_state,
 )
-from research_harness.orchestrator.solution_contract import (
-    SolutionContract,
-    compile_solution_contract,
-    parse_solution_contract,
+from research_harness.orchestrator.goal_contract import (
+    GoalContract,
+    compile_goal_contract,
+    goal_contract_input_from_artifacts,
+    parse_goal_contract,
     project_research_goal,
-    serialize_solution_contract,
-    solution_contract_input_from_artifacts,
+    serialize_goal_contract,
 )
 
 
@@ -259,7 +259,11 @@ class ReorientationPaths:
         return cls(root=thread_dir / "production" / "reorientation")
 
     @property
-    def contract(self) -> Path:
+    def goal_contract(self) -> Path:
+        return self.root / "goal_contract.json"
+
+    @property
+    def legacy_solution_contract(self) -> Path:
         return self.root / "solution_contract.json"
 
     @property
@@ -362,10 +366,10 @@ class BlindSequentialResearch:
     def paths(self) -> ReorientationPaths:
         return self._paths
 
-    def read_contract(self) -> SolutionContract | None:
-        if not self._paths.contract.exists():
+    def read_goal_contract(self) -> GoalContract | None:
+        if not self._paths.goal_contract.exists():
             return None
-        return parse_solution_contract(_read_json(self._paths.contract))
+        return parse_goal_contract(_read_json(self._paths.goal_contract))
 
     def read_state(self) -> ReorientationState | None:
         if not self._paths.state.exists():
@@ -519,13 +523,19 @@ class BlindSequentialResearch:
             "advance could not commit after concurrent state changes"
         )
 
-    def _load_or_migrate_locked(self) -> tuple[SolutionContract, ReorientationState]:
-        contract = self.read_contract()
+    def _load_or_migrate_locked(self) -> tuple[GoalContract, ReorientationState]:
+        if self._paths.legacy_solution_contract.exists():
+            raise self._migration_block(
+                HardExternalBlockCode.OPERATOR_SCOPE_CONFLICT,
+                "Migrate the legacy solution_contract.json into a strategy-free "
+                "GoalContract explicitly, then retry.",
+            )
+        contract = self.read_goal_contract()
         state = self.read_state()
         if contract is not None and state is not None:
             if state.contract_id != contract.contract_id:
                 raise BlindSequentialResearchError(
-                    "reorientation state does not match the solution contract"
+                    "reorientation state does not match the goal contract"
                 )
             self._ensure_node_attempt_index_locked()
             return contract, state
@@ -536,7 +546,7 @@ class BlindSequentialResearch:
             return contract, state
         return self._migrate_legacy_locked()
 
-    def _migrate_legacy_locked(self) -> tuple[SolutionContract, ReorientationState]:
+    def _migrate_legacy_locked(self) -> tuple[GoalContract, ReorientationState]:
         search_state_path = (
             self._thread_dir / "production" / "tree" / "search_state.json"
         )
@@ -591,7 +601,6 @@ class BlindSequentialResearch:
                     {
                         key: accepted_contract[key]
                         for key in (
-                            "claim_under_test",
                             "mandatory_baselines",
                             "success_criteria",
                             "disproof_conditions",
@@ -612,7 +621,7 @@ class BlindSequentialResearch:
             safety_limits = tuple(extracted.get("taste_constraints") or ()) or (
                 "Do not exceed the operator-registered feasibility and access boundaries.",
             )
-            source = solution_contract_input_from_artifacts(
+            source = goal_contract_input_from_artifacts(
                 repo_root=self._repo_root,
                 baseline_dossier_id=str(market.get("baseline_dossier_id") or ""),
                 operator_problem=str(
@@ -622,7 +631,7 @@ class BlindSequentialResearch:
                 feasibility_envelope=envelope,
                 safety_limits=safety_limits,
             )
-            contract = compile_solution_contract(source)
+            contract = compile_goal_contract(source)
         except FileNotFoundError as exc:
             raise self._migration_block(
                 HardExternalBlockCode.OPERATOR_SCOPE_CONFLICT,
@@ -645,7 +654,10 @@ class BlindSequentialResearch:
             "nodes": self._legacy_attempt_bindings(search_state),
         }
         _write_json_atomic(self._paths.node_attempts, node_attempts)
-        _write_json_atomic(self._paths.contract, serialize_solution_contract(contract))
+        _write_json_atomic(
+            self._paths.goal_contract,
+            serialize_goal_contract(contract),
+        )
         self._write_state(state)
         try:
             self._paths.migration_block.unlink()
@@ -668,7 +680,7 @@ class BlindSequentialResearch:
 
     def _plan_locked(
         self,
-        contract: SolutionContract,
+        contract: GoalContract,
         state: ReorientationState,
         *,
         acquisition_command: AcquisitionCommand | None,
@@ -788,12 +800,12 @@ class BlindSequentialResearch:
 
     def _reserve_generation_locked(
         self,
-        contract: SolutionContract,
+        contract: GoalContract,
         state: ReorientationState,
     ) -> _GenerationPlan:
         draw_index = self._next_draw_index()
         request = GenerationRequest(
-            solution_contract=contract,
+            goal_contract=contract,
             random_perspective=sample_random_perspective(
                 seed=self._perspective_seed,
                 draw_index=draw_index,
@@ -1275,9 +1287,9 @@ class BlindSequentialResearch:
             }
             _write_json_atomic(self._paths.node_attempts, attempts)
             return
-        contract = self.read_contract()
+        contract = self.read_goal_contract()
         if contract is None:
-            raise BlindSequentialResearchError("solution contract is missing")
+            raise BlindSequentialResearchError("goal contract is missing")
         goal = project_research_goal(contract)
         strategy_id = strategy_fingerprint(
             mechanism=command.direction.fingerprint.mechanism,

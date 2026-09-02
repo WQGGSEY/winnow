@@ -18,7 +18,7 @@ user goal
   -> domain connector (multi-call Codex generation) -> connector_session.json
         -> diverse intake research context
   -> MCP server (supervised Codex sessions drive production via tools)
-        -> immutable SolutionContract -> one blind direction at a time
+        -> immutable GoalContract -> one blind direction at a time
         -> verified strong result
         -> publication artifacts (paper.html, interactive_summary.html, slides_summary.html)
 ```

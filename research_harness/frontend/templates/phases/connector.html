@@ -116,12 +116,12 @@
         <div class="market-next-step callout">
           {% if sess.claims %}
             <strong>{{ sess.claims|length }} far-framed claim(s) generated.</strong>
-            A Codex production session freezes the accepted intake handoff into
-            one <code>SolutionContract</code>, then <code>advance_research</code>
+            A Codex production session freezes the problem and accepted success
+            bar into one <code>GoalContract</code>, then <code>advance_research</code>
             runs one blind direction at a time until a verified strong result.
           {% else %}
             <strong>No reducible far-framing found.</strong> Production still
-            compiles the accepted intake handoff and generates a blind direction.
+            compiles the problem and success bar, then generates a blind direction.
           {% endif %}
         </div>
       {% endif %}

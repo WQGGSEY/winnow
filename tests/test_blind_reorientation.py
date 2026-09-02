@@ -39,14 +39,14 @@ from research_harness.schemas.validator import (
     validate_named_schema,
     validate_schema,
 )
-from research_harness.orchestrator.solution_contract import (
+from research_harness.orchestrator.goal_contract import (
     FalsifierPredicate,
-    SolutionContractError,
-    compile_solution_contract,
-    parse_solution_contract,
+    GoalContractError,
+    compile_goal_contract,
+    goal_contract_input_from_artifacts,
+    parse_goal_contract,
     project_research_goal,
-    serialize_solution_contract,
-    solution_contract_input_from_artifacts,
+    serialize_goal_contract,
 )
 
 
@@ -100,7 +100,7 @@ def _compiler_input(
     *,
     repo_root: Path = REPO_ROOT,
 ):
-    return solution_contract_input_from_artifacts(
+    return goal_contract_input_from_artifacts(
         repo_root=repo_root,
         baseline_dossier_id=BASELINE_DOSSIER_ID,
         operator_problem="Find a safe intervention that improves utility.",
@@ -111,12 +111,12 @@ def _compiler_input(
 
 def _contract():
     grilling, envelope = _artifacts()
-    return compile_solution_contract(_compiler_input(grilling, envelope))
+    return compile_goal_contract(_compiler_input(grilling, envelope))
 
 
 def test_contract_is_deterministic_and_resource_snapshots_do_not_author_it() -> None:
     grilling, envelope = _artifacts()
-    first = compile_solution_contract(_compiler_input(grilling, envelope))
+    first = compile_goal_contract(_compiler_input(grilling, envelope))
     changed = deepcopy(envelope)
     changed["operator_intent"]["data_source_anchor"] = "replacement_adapter"
     changed["operator_intent"]["data_source_snapshot_id"] = "as_" + "2" * 64
@@ -134,10 +134,10 @@ def test_contract_is_deterministic_and_resource_snapshots_do_not_author_it() -> 
     ]
     changed_grilling["failure"] = "A prior direction failed."
     changed_grilling["lesson"] = "Do not anchor the next direction here."
-    second = compile_solution_contract(_compiler_input(changed_grilling, changed))
+    second = compile_goal_contract(_compiler_input(changed_grilling, changed))
 
     assert second == first
-    assert parse_solution_contract(serialize_solution_contract(first)) == first
+    assert parse_goal_contract(serialize_goal_contract(first)) == first
     assert {
         provenance
         for baseline in first.baseline_evidence
@@ -154,7 +154,7 @@ def test_contract_is_deterministic_and_resource_snapshots_do_not_author_it() -> 
 def test_contract_canonicalization_is_closed_under_round_trip() -> None:
     grilling, envelope = _artifacts()
     clean_source = _compiler_input(grilling, envelope)
-    expected = compile_solution_contract(clean_source)
+    expected = compile_goal_contract(clean_source)
     dirty_grilling = deepcopy(grilling)
     dirty_grilling["rounds"] = [
         {"user_response": "  Keep the false-positive rate below 1%.  "},
@@ -210,7 +210,7 @@ def test_contract_canonicalization_is_closed_under_round_trip() -> None:
         ),
         holdout_requirement=dirty_holdout,
     )
-    actual = compile_solution_contract(
+    actual = compile_goal_contract(
         replace(
             dirty_source,
             question="  Find a safe intervention   that improves utility. ",
@@ -218,9 +218,9 @@ def test_contract_canonicalization_is_closed_under_round_trip() -> None:
     )
 
     assert actual == expected
-    serialized = serialize_solution_contract(actual)
+    serialized = serialize_goal_contract(actual)
     assert (
-        serialize_solution_contract(parse_solution_contract(serialized))
+        serialize_goal_contract(parse_goal_contract(serialized))
         == serialized
     )
 
@@ -228,7 +228,7 @@ def test_contract_canonicalization_is_closed_under_round_trip() -> None:
 def test_contract_rejects_no_falsifier_and_leaking_serialized_fields() -> None:
     grilling, envelope = _artifacts()
     envelope["external_falsifier"] = {"kind": "none"}
-    with pytest.raises(SolutionContractError, match="real_holdout"):
+    with pytest.raises(GoalContractError, match="real_holdout"):
         _compiler_input(grilling, envelope)
 
     envelope["external_falsifier"] = {
@@ -237,7 +237,7 @@ def test_contract_rejects_no_falsifier_and_leaking_serialized_fields() -> None:
         "predicate": {"metric": "rho", "op": ">=", "threshold": 0.8},
         "registered_by": "operator",
     }
-    with pytest.raises(SolutionContractError, match="real_holdout"):
+    with pytest.raises(GoalContractError, match="real_holdout"):
         _compiler_input(grilling, envelope)
 
     envelope["external_falsifier"] = {
@@ -246,19 +246,19 @@ def test_contract_rejects_no_falsifier_and_leaking_serialized_fields() -> None:
         "predicate": {"metric": "utility", "op": ">=", "threshold": 0.05},
         "registered_by": "adversary_pass",
     }
-    with pytest.raises(SolutionContractError, match="registrant"):
+    with pytest.raises(GoalContractError, match="registrant"):
         _compiler_input(grilling, envelope)
 
-    legacy_screen = serialize_solution_contract(_contract())
+    legacy_screen = serialize_goal_contract(_contract())
     legacy_screen["holdout_requirement"]["kind"] = "cross_generator_transfer"
     with pytest.raises(ValueError, match="enum|real_holdout"):
-        parse_solution_contract(legacy_screen)
+        parse_goal_contract(legacy_screen)
 
-    leaked = serialize_solution_contract(_contract())
+    leaked = serialize_goal_contract(_contract())
     leaked["failure"] = "prior direction failed"
     leaked["data_source_snapshot_id"] = "as_" + "3" * 64
     with pytest.raises(ValueError, match="unexpected"):
-        parse_solution_contract(leaked)
+        parse_goal_contract(leaked)
 
 
 @pytest.mark.parametrize(

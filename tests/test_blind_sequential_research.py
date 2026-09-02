@@ -22,6 +22,7 @@ from research_harness.orchestrator.blind_reorientation import (
     HardExternalBlockCode,
     ReorientationState,
     Seeking,
+    initialize_reorientation_state,
     make_checkpoint,
     serialize_reorientation_state,
 )
@@ -39,10 +40,11 @@ from research_harness.orchestrator.direction_generation import (
     parse_direction_draft,
     serialize_direction_draft,
 )
-from research_harness.orchestrator.solution_contract import (
-    compile_solution_contract,
-    serialize_solution_contract,
-    solution_contract_input_from_artifacts,
+from research_harness.orchestrator.goal_contract import (
+    compile_goal_contract,
+    goal_contract_input_from_artifacts,
+    project_research_goal,
+    serialize_goal_contract,
 )
 
 
@@ -50,7 +52,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _contract():
-    source = solution_contract_input_from_artifacts(
+    source = goal_contract_input_from_artifacts(
         repo_root=REPO_ROOT,
         baseline_dossier_id="bd_agent_harness_20260523",
         operator_problem="Find a safe intervention that improves utility.",
@@ -81,7 +83,7 @@ def _contract():
             },
         },
     )
-    return compile_solution_contract(source)
+    return compile_goal_contract(source)
 
 
 def _fingerprint(label: str) -> DirectionFingerprint:
@@ -328,6 +330,7 @@ def _engine(
     writer_lock=_writer_lock,
     assessor=None,
     strong_result_verifier=None,
+    goal_contract=None,
 ):
     thread_dir = tmp_path / "runs" / "threads" / "thread_test"
     tree = thread_dir / "production" / "tree"
@@ -338,8 +341,8 @@ def _engine(
     )
     paths = thread_dir / "production" / "reorientation"
     paths.mkdir(parents=True)
-    (paths / "solution_contract.json").write_text(
-        json.dumps(serialize_solution_contract(_contract())),
+    (paths / "goal_contract.json").write_text(
+        json.dumps(serialize_goal_contract(goal_contract or _contract())),
         encoding="utf-8",
     )
     return BlindSequentialResearch(
@@ -452,12 +455,108 @@ def test_generation_is_blind_and_command_retry_is_idempotent(tmp_path: Path) -> 
     assert first == repeated
     assert first["status"] == "direction_ready"
     assert len(generator.calls) == 1
-    assert set(generator.calls[0]) == {"solution_contract", "random_perspective"}
+    assert set(generator.calls[0]) == {"goal_contract", "random_perspective"}
     forbidden = {"failure", "lesson", "history", "resources", "closed_attempts"}
     assert forbidden.isdisjoint(generator.calls[0])
     state = engine.read_state()
     assert state is not None
     assert isinstance(state.phase, AcquisitionReserved)
+
+
+def test_intake_claim_is_absent_until_generated_direction_owns_node_claim(
+    tmp_path: Path,
+) -> None:
+    intake_claim = "INTAKE_B_MUST_NOT_ENTER_GOAL_STATE"
+    source = goal_contract_input_from_artifacts(
+        repo_root=REPO_ROOT,
+        baseline_dossier_id="bd_agent_harness_20260523",
+        operator_problem="Find a safe intervention that improves utility.",
+        grilling_record={
+            "rounds": [
+                {"user_response": f"Try {intake_claim} before other directions."}
+            ],
+            "extracted": {
+                "claim_under_test": intake_claim,
+                "mandatory_baselines": ["incumbent", "naive", "random/null"],
+                "success_criteria": ["utility improves by at least 5%"],
+                "disproof_conditions": ["utility improvement is below 5%"],
+                "taste_constraints": ["no access-control bypass"],
+            },
+        },
+        feasibility_envelope={
+            "operator_intent": {
+                "target_deploy_grade_scope": "deployment",
+                "acceptable_alternative_scopes": ["deployment"],
+            },
+            "external_falsifier": {
+                "kind": "real_holdout",
+                "holdout_source_id": "operator_holdout",
+                "predicate": {"metric": "utility", "op": ">=", "threshold": 0.05},
+                "registered_by": "operator",
+            },
+        },
+    )
+    contract = compile_goal_contract(source)
+    projected_goal = project_research_goal(contract)
+    acquisition = _Acquisition()
+    generator = _Generator(_draft("generated-owned"))
+    engine = _engine(
+        tmp_path,
+        generator,
+        acquisition,
+        goal_contract=contract,
+    )
+
+    direction_result = engine.advance_research(command_id="claim-ownership-generate")
+    generation_request = generator.calls[0]
+    generation_reservation = next(
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (engine.paths.root / "reservations").glob("*.json")
+        if json.loads(path.read_text(encoding="utf-8"))["kind"] == "generation"
+    )
+
+    def assert_intake_claim_absent(value) -> None:
+        if isinstance(value, dict):
+            assert "claim_under_test" not in value
+            for child in value.values():
+                assert_intake_claim_absent(child)
+        elif isinstance(value, list):
+            for child in value:
+                assert_intake_claim_absent(child)
+        elif isinstance(value, str):
+            assert intake_claim not in value
+
+    for artifact in (
+        serialize_goal_contract(contract),
+        projected_goal,
+        generation_request,
+        generation_reservation,
+    ):
+        assert_intake_claim_absent(artifact)
+
+    command = _acquisition_command(direction_result)
+    manifest = make_manifest(
+        command_id=command.command_id,
+        node_id=command.node_id,
+        attempt_id=command.attempt_id,
+        direction_id=command.direction.direction_id,
+        acquired_needs=(),
+    )
+    acquisition.outcomes.append(AcquisitionComplete(manifest))
+    engine.advance_research(
+        command_id="claim-ownership-acquire",
+        acquisition_command=command,
+    )
+    search_state = json.loads(
+        (engine.paths.root.parent / "tree" / "search_state.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    node = next(item for item in search_state["nodes"] if item["id"] == command.node_id)
+    assert node["claim_contract"]["claim_under_test"] == command.direction.claim
+    assert command.direction.claim == "The generated-owned intervention improves utility."
+    assert_intake_claim_absent(search_state["adaptive"]["goal"])
 
 
 def test_verified_strong_result_commits_active_binding_as_terminal(
@@ -731,7 +830,7 @@ def test_conclusive_failure_closes_attempt_without_leaking_into_next_request(
     assert next_direction["status"] == "direction_ready"
     assert len(engine.read_state().closed_attempts) == 1
     assert len(generator.calls) == 2
-    assert set(generator.calls[1]) == {"solution_contract", "random_perspective"}
+    assert set(generator.calls[1]) == {"goal_contract", "random_perspective"}
 
 
 def test_bound_real_holdout_failure_closes_direction_and_redirects(
@@ -846,7 +945,7 @@ def test_restart_after_two_failures_generates_from_contract_and_perspective_only
     assert len(restarted.read_state().closed_attempts) == 2
     assert len(restarted_generator.calls) == 1
     request = restarted_generator.calls[0]
-    assert set(request) == {"solution_contract", "random_perspective"}
+    assert set(request) == {"goal_contract", "random_perspective"}
     assert request["random_perspective"]["draw_index"] == 2
     forbidden = {"failure", "lesson", "history", "resources", "closed_attempts"}
     assert forbidden.isdisjoint(request)
@@ -1144,6 +1243,49 @@ def test_legacy_subtree_uses_one_attempt_identity() -> None:
     assert bindings["n_other"]["attempt_id"] != bindings["n_root"]["attempt_id"]
 
 
+@pytest.mark.parametrize("keep_goal_contract", [False, True])
+def test_legacy_solution_contract_cannot_silently_start_a_new_lineage(
+    tmp_path: Path,
+    keep_goal_contract: bool,
+) -> None:
+    generator = _Generator(_draft("replacement"))
+    engine = _engine(tmp_path, generator, _Acquisition())
+    contract = _contract()
+    if not keep_goal_contract:
+        engine.paths.goal_contract.unlink()
+    engine.paths.legacy_solution_contract.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "contract_id": contract.contract_id,
+                "bar": {"claim_under_test": "A legacy proposed solution."},
+            }
+        ),
+        encoding="utf-8",
+    )
+    state = initialize_reorientation_state(contract)
+    engine.paths.state.write_text(
+        json.dumps(serialize_reorientation_state(state)),
+        encoding="utf-8",
+    )
+    state_before = engine.paths.state.read_bytes()
+
+    result = engine.advance_research(command_id="legacy-contract")
+
+    assert result == {
+        "status": "hard_external_block",
+        "code": "operator_scope_conflict",
+        "required_external_action": (
+            "Migrate the legacy solution_contract.json into a strategy-free "
+            "GoalContract explicitly, then retry."
+        ),
+    }
+    assert engine.paths.legacy_solution_contract.exists()
+    assert engine.paths.goal_contract.exists() is keep_goal_contract
+    assert engine.paths.state.read_bytes() == state_before
+    assert generator.calls == []
+
+
 def test_active_legacy_nodes_become_audit_history_before_blind_migration(
     tmp_path: Path,
 ) -> None:
@@ -1195,7 +1337,7 @@ def test_active_legacy_nodes_become_audit_history_before_blind_migration(
     assert root["attempt_id"] == child["attempt_id"]
     assert root["legacy_audit_only"] is True
     assert child["legacy_audit_only"] is True
-    assert engine.read_contract() is not None
+    assert engine.read_goal_contract() is not None
     migrated_state = engine.read_state()
     assert migrated_state is not None
     assert isinstance(migrated_state.phase, AcquisitionReserved)
@@ -1243,7 +1385,7 @@ def test_same_bar_active_legacy_roots_all_become_audit_history(
     attempts = json.loads(engine.paths.node_attempts.read_text(encoding="utf-8"))
     assert attempts["nodes"]["n_a"]["legacy_audit_only"] is True
     assert attempts["nodes"]["n_b"]["legacy_audit_only"] is True
-    assert engine.read_contract() is not None
+    assert engine.read_goal_contract() is not None
     assert engine.read_state() is not None
     assert len(generator.calls) == 1
 
@@ -1294,8 +1436,8 @@ def test_migration_freezes_the_validated_intake_handoff_contract(
     result = engine.advance_research(command_id="freeze-handoff")
 
     assert result["status"] == "direction_ready"
-    contract = generator.calls[0]["solution_contract"]
-    assert contract["bar"]["claim_under_test"] == new_contract["claim_under_test"]
+    contract = generator.calls[0]["goal_contract"]
+    assert "claim_under_test" not in contract["bar"]
     assert contract["bar"]["success_criteria"] == new_contract["success_criteria"]
 
 

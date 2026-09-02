@@ -174,7 +174,7 @@
         "search_query_seed": { "type": "string", "minLength": 1 },
         "alternative_claim_formulations": {
           "type": "array",
-          "description": "Historical intake alternatives retained as audit context. Production does not seed these as roots; it freezes the accepted handoff into one SolutionContract.",
+          "description": "Historical intake alternatives retained as audit context. Production does not seed these as roots; it freezes the question and success bar into one GoalContract.",
           "items": {
             "type": "object",
             "required": ["formulation_id", "claim_under_test", "scope_kind", "scope_note"],

@@ -48,9 +48,9 @@ from research_harness.orchestrator.direction_generation import (
     serialize_direction_draft,
     serialize_generation_request,
 )
-from research_harness.orchestrator.solution_contract import (
-    compile_solution_contract,
-    solution_contract_input_from_artifacts,
+from research_harness.orchestrator.goal_contract import (
+    compile_goal_contract,
+    goal_contract_input_from_artifacts,
 )
 
 
@@ -85,14 +85,14 @@ def _contract():
             "registered_by": "operator",
         },
     }
-    source = solution_contract_input_from_artifacts(
+    source = goal_contract_input_from_artifacts(
         repo_root=REPO_ROOT,
         baseline_dossier_id=BASELINE_DOSSIER_ID,
         operator_problem="Find a safe intervention that improves utility.",
         grilling_record=grilling,
         feasibility_envelope=envelope,
     )
-    return compile_solution_contract(source)
+    return compile_goal_contract(source)
 
 
 def _fingerprint(label: str) -> DirectionFingerprint:
@@ -180,7 +180,7 @@ def test_generator_receives_only_contract_and_perspective_after_failure() -> Non
         ]
     )
     first_request = GenerationRequest(
-        solution_contract=contract,
+        goal_contract=contract,
         random_perspective=sample_random_perspective(seed=17, draw_index=0),
     )
     invoke_direction_generator(first_request, transport)
@@ -190,14 +190,14 @@ def test_generator_receives_only_contract_and_perspective_after_failure() -> Non
     )
     assert isinstance(failure, ConclusiveFailure)
     second_request = GenerationRequest(
-        solution_contract=contract,
+        goal_contract=contract,
         random_perspective=sample_random_perspective(seed=17, draw_index=1),
     )
     invoke_direction_generator(second_request, transport)
 
     assert [set(call) for call in transport.calls] == [
-        {"solution_contract", "random_perspective"},
-        {"solution_contract", "random_perspective"},
+        {"goal_contract", "random_perspective"},
+        {"goal_contract", "random_perspective"},
     ]
     serialized = serialize_generation_request(second_request)
     assert parse_generation_request(serialized) == second_request

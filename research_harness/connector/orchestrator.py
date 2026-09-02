@@ -13,8 +13,8 @@ Ties the per-step engine into the resample-to-quota loop (ADR 0012):
       never silently swallowed).
 
 Emits a schema-validated ``connector_session.json``. Kept claim contracts are
-intake research context. Production freezes the accepted handoff into one
-SolutionContract and does not seed parallel roots from them.
+intake research context. Production freezes the problem and accepted success
+bar into one GoalContract and does not seed parallel roots from them.
 
 Reliability is the production gate's job, not this loop's: prune-1 / reduction
 are best-effort and may pass garbage, absorbed downstream. A single field's LLM

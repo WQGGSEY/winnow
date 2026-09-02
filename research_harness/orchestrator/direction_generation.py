@@ -8,10 +8,10 @@ from enum import Enum
 from typing import Any, Literal, Mapping, Protocol, Sequence
 
 from research_harness.connector.field_sampler import field_permutation
-from research_harness.orchestrator.solution_contract import (
-    SolutionContract,
-    parse_solution_contract,
-    serialize_solution_contract,
+from research_harness.orchestrator.goal_contract import (
+    GoalContract,
+    parse_goal_contract,
+    serialize_goal_contract,
 )
 from research_harness.schemas.validator import validate_named_schema
 
@@ -316,12 +316,12 @@ def _parse_random_perspective(value: object) -> RandomPerspective:
 
 @dataclass(frozen=True, slots=True)
 class GenerationRequest:
-    solution_contract: SolutionContract
+    goal_contract: GoalContract
     random_perspective: RandomPerspective
 
     def __post_init__(self) -> None:
-        if not isinstance(self.solution_contract, SolutionContract):
-            raise DirectionGenerationError("solution contract is invalid")
+        if not isinstance(self.goal_contract, GoalContract):
+            raise DirectionGenerationError("goal contract is invalid")
         if not isinstance(self.random_perspective, RandomPerspective):
             raise DirectionGenerationError("random perspective is invalid")
 
@@ -330,7 +330,7 @@ def serialize_generation_request(request: GenerationRequest) -> dict[str, object
     if not isinstance(request, GenerationRequest):
         raise DirectionGenerationError("value is not a GenerationRequest")
     document = {
-        "solution_contract": serialize_solution_contract(request.solution_contract),
+        "goal_contract": serialize_goal_contract(request.goal_contract),
         "random_perspective": _serialize_random_perspective(
             request.random_perspective
         ),
@@ -344,11 +344,11 @@ def parse_generation_request(value: object) -> GenerationRequest:
     validate_named_schema("generation_request", dict(raw))
     _exact_keys(
         raw,
-        required=frozenset({"solution_contract", "random_perspective"}),
+        required=frozenset({"goal_contract", "random_perspective"}),
         label="generation request",
     )
     return GenerationRequest(
-        solution_contract=parse_solution_contract(raw["solution_contract"]),
+        goal_contract=parse_goal_contract(raw["goal_contract"]),
         random_perspective=_parse_random_perspective(raw["random_perspective"]),
     )
 
