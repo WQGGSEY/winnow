@@ -39,6 +39,10 @@ class GoalContractError(ValueError):
     pass
 
 
+class BaselinePreflightRequired(GoalContractError):
+    """Research preparation work remains; this is not an external outage."""
+
+
 def _canonical_json(value: object) -> str:
     return json.dumps(
         value,
@@ -712,7 +716,7 @@ def goal_contract_input_from_artifacts(
             "loaded baseline dossier id does not match the requested id"
         )
     if baseline_dossier.get("selected") is None and baseline_qualification is None:
-        raise GoalContractError(
+        raise BaselinePreflightRequired(
             "baseline dossier candidates are unqualified; run baseline preflight "
             "and submit baseline_qualification before compiling the goal contract"
         )

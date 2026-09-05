@@ -48,3 +48,28 @@ Sol low로 유지한다. 연구자의 개입은 별도로 기록한다.
 - 자연어 방향의 나머지 어휘 검사는 의미적 판단을 완전히 대체하지 못한다.
 - 실패 실행의 반복을 놓친 운영 공백도 있었다. 이번 재검증에서는 질문과
   실행 실패를 확인하며 진행해야 한다.
+
+## 새 실행의 첫 production cycle에서 추가로 확인한 실패
+
+`thread_07b175cc`는 grilling과 connector를 정상 완료했다. 첫 production
+cycle은 문헌 메타데이터와 사전 실행 구조를 읽은 뒤 구현을 시작하지 않고
+종료했다. 이때 하네스가 구현 부재를 `hard_external_block`으로 반환했다.
+실제로 접근할 수 없는 외부 자원이 확인된 것은 아니었다.
+
+이를 `preflight_required`로 분리하고 `execute_baseline_preflight` 도구를
+추가했다. 에이전트가 node와 experiment_plan, 한 baseline role을 제출하면
+하네스가 workspace와 입력 snapshot을 결합하고 LocalRunner로 실행한다.
+알고리즘과 source_files의 코드는 에이전트가 작성한다. 역할·방법의 과학적
+적합성 승인은 이 도구가 하지 않는다.
+
+일반 연구 실험의 validator가 항상 세 baseline 역할을 요구하는 것도
+사전 실행과 충돌했다. 사전 실행 전용 호출에서만 한 역할을 허용한다.
+일반 연구 실험은 세 역할을 계속 요구한다. 한 사전 실행의 보고서에 다른
+baseline 키까지 복제하면 거부하며, 같은 계획의 재요청은 기존 실행
+영수증을 검증해 반환한다. 실제 코드 실행과 재요청 시 재실행하지 않는
+동작은 통합 테스트로 확인했다.
+
+새 실행 복사본의 `runs/audits/pacman-preflight-routing/result.json`에서
+외부 차단 대신 사전 실행 작업으로 안내하는 것을 확인했다. 원본은
+supervisor를 중지한 상태에서 수정한 뒤 재개한다. 이 추가 개입 역시
+무개입 연구 성공으로 간주하지 않는다.

@@ -628,6 +628,8 @@ def validate_experiment_plan(
     node: dict[str, Any],
     experiment_plan: dict[str, Any],
     run_dir: Path,
+    *,
+    preflight_role: str | None = None,
 ) -> None:
     validate_named_schema("experiment_plan", experiment_plan)
     if experiment_plan["node_id"] != node["id"]:
@@ -685,6 +687,10 @@ def validate_experiment_plan(
         raise ExperimentPlanError("experiment plan must restrict writes to workspace")
 
     required_roles = {"current_best_known", "naive", "random_or_null"}
+    if preflight_role is not None:
+        if preflight_role not in required_roles:
+            raise ExperimentPlanError("invalid baseline preflight role")
+        required_roles = {preflight_role}
     planned_roles = {
         requirement["role"]
         for requirement in experiment_plan["baseline_evidence_requirements"]
@@ -702,8 +708,10 @@ def materialize_experiment_plan(
     node: dict[str, Any],
     experiment_plan: dict[str, Any],
     run_dir: Path,
+    *,
+    preflight_role: str | None = None,
 ) -> list[str]:
-    validate_experiment_plan(node, experiment_plan, run_dir)
+    validate_experiment_plan(node, experiment_plan, run_dir, preflight_role=preflight_role)
     workspace = Path(experiment_plan["workspace"]).resolve()
     workspace.mkdir(parents=True, exist_ok=True)
 
@@ -722,8 +730,10 @@ def build_job_manifest_from_experiment_plan(
     node: dict[str, Any],
     experiment_plan: dict[str, Any],
     run_dir: Path,
+    *,
+    preflight_role: str | None = None,
 ) -> dict[str, Any]:
-    source_files = materialize_experiment_plan(node, experiment_plan, run_dir)
+    source_files = materialize_experiment_plan(node, experiment_plan, run_dir, preflight_role=preflight_role)
     return derive_job_manifest_from_experiment_plan(
         node,
         experiment_plan,

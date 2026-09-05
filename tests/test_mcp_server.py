@@ -254,6 +254,7 @@ class MCPServerTests(unittest.TestCase):
         self.assertIn("primary_dataset.relative_path", design_tool["description"])
         core_expected = {
             "submit_baseline_qualification",
+            "execute_baseline_preflight",
             "get_research_state",
             "get_next_admissible_node",
             "advance_research",

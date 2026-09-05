@@ -74,6 +74,7 @@ from research_harness.orchestrator.search_state import (
     validate_search_state,
 )
 from research_harness.orchestrator.goal_contract import (
+    BaselinePreflightRequired,
     GoalContract,
     compile_goal_contract,
     goal_contract_input_from_artifacts,
@@ -657,6 +658,14 @@ class BlindSequentialResearch:
                 ),
             )
             contract = compile_goal_contract(source)
+        except BaselinePreflightRequired:
+            result = {
+                "status": "preflight_required",
+                "next_tool_to_call": "execute_baseline_preflight",
+                "required_work": "Retrieve method sources, implement candidate baselines, execute matched preflight runs, then submit_baseline_qualification for scientific review. Missing implementations are work to perform, not an external blocker.",
+            }
+            _write_json_atomic(self._paths.migration_block, result)
+            raise _MigrationBlocked(result)
         except FileNotFoundError as exc:
             raise self._migration_block(
                 HardExternalBlockCode.OPERATOR_SCOPE_CONFLICT,

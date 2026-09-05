@@ -17,6 +17,36 @@ from research_harness.schemas.validator import validate_named_schema
 
 
 class ExperimentPlanTests(unittest.TestCase):
+    def test_single_baseline_preflight_executes_without_weakening_research_plan(self) -> None:
+        import json
+        from research_harness.runner.baseline_preflight import execute_baseline_preflight
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            tdir = repo / "thread"
+            tree = tdir / "production/tree"
+            tree.mkdir(parents=True)
+            (tdir / "production/feasibility_envelope.json").write_text(json.dumps({"compute_budget": {"max_runner_seconds_per_node": 30, "max_total_node_hours": 1}}))
+            node = _demo_node()
+            plan = build_demo_experiment_plan(node, tree)
+            requirement = plan["baseline_evidence_requirements"][2]
+            plan["baseline_evidence_requirements"] = [requirement]
+            plan["resources"]["timeout_sec"] = 10
+            payload = {"metrics": {requirement["metric_key"]: 0.5}, "baselines": {requirement["baseline_key"]: 0.5}, "claim_verdict_candidate": "supported"}
+            plan["source_files"] = [{"path": "experiment.py", "purpose": "receipt integration fixture", "content": "from pathlib import Path\nPath('artifacts').mkdir(exist_ok=True)\nPath('artifacts/metrics.json').write_text(" + repr(json.dumps(payload)) + ")\n"}]
+            plan["expected_outputs"]["metrics_files"] = ["artifacts/metrics.json"]
+            with self.assertRaisesRegex(ExperimentPlanError, "missing required baseline"):
+                validate_experiment_plan(node, plan, tree)
+            first = execute_baseline_preflight(repo, tdir, node=node, plan=plan, role=requirement["role"], settings={})
+            self.assertEqual(first["status"], "executed")
+            self.assertFalse(first["scientific_approval"])
+            self.assertEqual(set(first["worker_report"]["baselines"]), {requirement["baseline_key"]})
+            receipt_file = tree / first["reproducibility_receipt"]["node_dir"] / "workspace/runner_result.json"
+            stamp = receipt_file.stat().st_mtime_ns
+            second = execute_baseline_preflight(repo, tdir, node=node, plan=plan, role=requirement["role"], settings={})
+            self.assertEqual(first, second)
+            self.assertEqual(receipt_file.stat().st_mtime_ns, stamp)
+
     def test_demo_experiment_plan_is_schema_valid_and_materializes_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "run"

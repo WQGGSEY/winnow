@@ -118,6 +118,17 @@ AC_CONTRACT = (
 
 TOOL_DEFINITIONS = [
     {
+        "name": "execute_baseline_preflight",
+        "description": "Before a goal contract exists, write and execute ONE baseline implementation using an experiment_plan and node object. The harness assigns workspace, binds the operator input snapshot, enforces compute limits, runs LocalRunner, and returns replayable evidence. Use exactly one baseline_evidence_requirement and report only that baseline key. This is execution evidence, not scientific approval. Implement methods yourself after retrieving primary sources; lack of existing implementation is work to do.",
+        "inputSchema": {
+            "type": "object", "required": ["thread_id", "node", "experiment_plan", "role"],
+            "properties": {
+                "thread_id": {"type": "string"}, "node": {"type": "object"}, "experiment_plan": {"type": "object"},
+                "role": {"type": "string", "enum": ["current_best_known", "naive", "random_or_null"]},
+            },
+        },
+    },
+    {
         "name": "submit_baseline_qualification",
         "description": "Before freezing the goal, qualify sourced baseline candidates using replayable preflight execution artifacts under production/tree. Research ranking alone does not assign baseline roles.",
         "inputSchema": {
@@ -3800,6 +3811,23 @@ def handle_submit_baseline_qualification(args: dict[str, Any]) -> dict[str, Any]
             return {"status": "rejected", "reason": f"baseline qualification failed: {exc}"}
 
 
+def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.runner.baseline_preflight import execute_baseline_preflight
+    from research_harness.settings_scoped import resolve_for_thread
+
+    tid = args["thread_id"]
+    with _exclusive_adaptive_writer(tid):
+        if (_thread_dir(tid) / "production/reorientation/goal_contract.json").exists():
+            return {"status": "rejected", "reason": "baseline preparation is closed for the frozen goal"}
+        try:
+            return execute_baseline_preflight(
+                _repo_root(), _thread_dir(tid), node=args["node"], plan=args["experiment_plan"],
+                role=args["role"], settings=resolve_for_thread(_repo_root(), tid),
+            )
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return {"status": "rejected", "reason": f"baseline preflight failed: {exc}"}
+
+
 # --- LLM-driven rebuttal + paper writer (Phase C / D) -------------------- #
 
 
@@ -6020,6 +6048,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_submit_paper_outline(args)
             elif name == "submit_baseline_qualification":
                 result = handle_submit_baseline_qualification(args)
+            elif name == "execute_baseline_preflight":
+                result = handle_execute_baseline_preflight(args)
             elif name == "register_paper_figure":
                 result = handle_register_paper_figure(args)
             elif name == "submit_paper_section":
