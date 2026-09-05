@@ -628,6 +628,14 @@ class BlindSequentialResearch:
             safety_limits = tuple(extracted.get("taste_constraints") or ()) or (
                 "Do not exceed the operator-registered feasibility and access boundaries.",
             )
+            qualification_path = (
+                self._thread_dir / "market" / "baseline_qualification.json"
+            )
+            baseline_qualification = (
+                self._required_mapping(qualification_path)
+                if qualification_path.exists()
+                else None
+            )
             source = goal_contract_input_from_artifacts(
                 repo_root=self._repo_root,
                 baseline_dossier_id=str(market.get("baseline_dossier_id") or ""),
@@ -637,6 +645,12 @@ class BlindSequentialResearch:
                 grilling_record=grilling,
                 feasibility_envelope=envelope,
                 safety_limits=safety_limits,
+                baseline_qualification=baseline_qualification,
+                baseline_artifact_root=(
+                    self._thread_dir / "production" / "tree"
+                    if baseline_qualification is not None
+                    else None
+                ),
             )
             contract = compile_goal_contract(source)
         except FileNotFoundError as exc:

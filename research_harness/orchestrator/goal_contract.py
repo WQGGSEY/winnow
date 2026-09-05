@@ -8,7 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Literal, Mapping
 
-from research_harness.memory.baseline_dossier import load_baseline_dossier
+from research_harness.memory.baseline_dossier import (
+    BaselineDossierError,
+    dossier_path,
+    load_baseline_dossier,
+    validate_baseline_selection,
+)
 from research_harness.schemas.validator import validate_named_schema
 
 
@@ -629,6 +634,60 @@ def _baseline_evidence_from_dossier(
     return tuple(sorted(evidence, key=lambda item: (item.role, item.candidate_id)))
 
 
+def _baseline_evidence_from_qualification(
+    baseline_dossier: Mapping[str, Any],
+    qualification: Mapping[str, Any],
+    *,
+    repo_root: Path,
+    dossier_id: str,
+    artifact_root: Path,
+) -> tuple[BaselineEvidence, ...]:
+    try:
+        validated = validate_baseline_selection(
+            repo_root,
+            dict(baseline_dossier),
+            dict(qualification),
+            artifact_root=artifact_root,
+            dossier_base_dir=dossier_path(repo_root, dossier_id).parent,
+        )
+    except (BaselineDossierError, ValueError) as exc:
+        raise GoalContractError(f"baseline qualification is invalid: {exc}") from exc
+
+    candidates = {
+        candidate["id"]: candidate
+        for candidate in baseline_dossier["candidates_index"]
+    }
+    sources = {
+        source["id"]: source for source in baseline_dossier["source_index"]
+    }
+    assignments_by_role = {
+        assignment["role"]: assignment
+        for assignment in qualification["assignments"]
+    }
+    evidence: list[BaselineEvidence] = []
+    for role, candidate_id in validated["assignments"].items():
+        assignment = assignments_by_role[role]
+        candidate = candidates[candidate_id]
+        binding = validated["execution_bindings"][role]
+        provenance = {
+            *(sources[source_id]["url"] for source_id in assignment["source_ids"]),
+            f"baseline_dossier:{dossier_id}#{candidate['detail_file']}",
+            f"baseline_execution:job_manifest_sha256:{binding['job_manifest_sha256']}",
+            f"baseline_execution:runner_result_sha256:{binding['runner_result_sha256']}",
+            f"baseline_execution:source_sha256:{binding['source_sha256']}",
+            f"baseline_execution:baseline_key:{binding['baseline_key']}",
+        }
+        evidence.append(
+            BaselineEvidence(
+                candidate_id=candidate_id,
+                method=_text(candidate["method"], "baseline method"),
+                role=role,
+                provenance=tuple(sorted(provenance)),
+            )
+        )
+    return tuple(sorted(evidence, key=lambda item: (item.role, item.candidate_id)))
+
+
 def goal_contract_input_from_artifacts(
     *,
     repo_root: Path,
@@ -637,6 +696,8 @@ def goal_contract_input_from_artifacts(
     grilling_record: Mapping[str, Any],
     feasibility_envelope: Mapping[str, Any],
     safety_limits: Iterable[str] = (),
+    baseline_qualification: Mapping[str, Any] | None = None,
+    baseline_artifact_root: Path | None = None,
 ) -> GoalContractCompilerInput:
     if not isinstance(repo_root, Path):
         raise GoalContractError("repo root must be a Path")
@@ -647,6 +708,15 @@ def goal_contract_input_from_artifacts(
     if baseline_dossier.get("id") != dossier_id:
         raise GoalContractError(
             "loaded baseline dossier id does not match the requested id"
+        )
+    if baseline_dossier.get("selected") is None and baseline_qualification is None:
+        raise GoalContractError(
+            "baseline dossier candidates are unqualified; run baseline preflight "
+            "and submit baseline_qualification before compiling the goal contract"
+        )
+    if baseline_qualification is not None and not isinstance(baseline_artifact_root, Path):
+        raise GoalContractError(
+            "baseline_artifact_root must be a Path when qualification is supplied"
         )
     question = _text(operator_problem, "operator problem")
     extracted = _mapping(grilling_record.get("extracted"), "grilling extracted")
@@ -696,9 +766,19 @@ def goal_contract_input_from_artifacts(
         operator_requirements=operator_requirements,
         target_scope=target_scope,
         acceptable_scopes=acceptable_scopes,
-        baseline_evidence=_baseline_evidence_from_dossier(
-            baseline_dossier,
-            dossier_id=dossier_id,
+        baseline_evidence=(
+            _baseline_evidence_from_qualification(
+                baseline_dossier,
+                baseline_qualification,
+                repo_root=repo_root,
+                dossier_id=dossier_id,
+                artifact_root=baseline_artifact_root,
+            )
+            if baseline_qualification is not None
+            else _baseline_evidence_from_dossier(
+                baseline_dossier,
+                dossier_id=dossier_id,
+            )
         ),
         safety_limits=normalized_safety,
         holdout_requirement=_parse_holdout(

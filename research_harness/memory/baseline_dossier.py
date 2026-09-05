@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import date
 from pathlib import Path
@@ -152,6 +153,14 @@ def validate_baseline_selection(
     This proves that all required roles use the same declared comparison and
     that the canonical runner verifier can rebuild each result. It does not
     prove that a method is scientifically suitable for the role.
+
+    Baseline preflight does not need an active research direction. Create one
+    node directory per baseline under ``production/tree/baseline_preflight``,
+    derive its job manifest with ``derive_job_manifest_from_experiment_plan``,
+    execute it with ``LocalRunner.execute``, and build ``worker_report.json``
+    with ``build_worker_report_from_runner_evidence``. The qualification then
+    names those files relative to ``production/tree``. This function runs
+    ``verify_strong_execution_evidence`` again before contract compilation.
     """
     validate_baseline_dossier(repo_root, dossier, base_dir=dossier_base_dir)
     validate_named_schema("baseline_qualification", qualification)
@@ -183,6 +192,7 @@ def validate_baseline_selection(
     artifact_root = artifact_root.resolve()
     selected: dict[str, str] = {}
     execution_bindings: dict[str, dict[str, str]] = {}
+    used_measurements: set[tuple[str, str]] = set()
 
     def execution_path(raw: str, label: str) -> Path:
         path = Path(raw)
@@ -236,15 +246,44 @@ def validate_baseline_selection(
             raise BaselineDossierError(
                 f"runner evidence is invalid for candidate {candidate_id}: {exc}"
             ) from exc
-        metrics = worker_report.get("metrics") if isinstance(worker_report, dict) else None
-        if not isinstance(metrics, dict) or metrics.get(receipt["metric_id"]) != receipt["metric_value"]:
+        implementation = assignment["implementation"]
+        matching_sources = [
+            source
+            for source in experiment_plan.get("source_files", [])
+            if source.get("path") == implementation["identifier"]
+        ]
+        if len(matching_sources) != 1:
+            raise BaselineDossierError(
+                f"implementation source is not unique in plan for candidate {candidate_id}"
+            )
+        source_content = matching_sources[0].get("content")
+        if not isinstance(source_content, str):
+            raise BaselineDossierError(
+                f"implementation source content is missing for candidate {candidate_id}"
+            )
+        source_sha256 = hashlib.sha256(source_content.encode("utf-8")).hexdigest()
+        if implementation["version"] != source_sha256:
+            raise BaselineDossierError(
+                f"implementation version does not match executed source for candidate {candidate_id}"
+            )
+        baselines = worker_report.get("baselines") if isinstance(worker_report, dict) else None
+        baseline_key = receipt["baseline_key"]
+        if not isinstance(baselines, dict) or baselines.get(baseline_key) != receipt["metric_value"]:
             raise BaselineDossierError(
                 f"execution artifact does not contain the receipted metric for candidate {candidate_id}"
             )
+        measurement_identity = (execution_evidence["runner_result_sha256"], baseline_key)
+        if measurement_identity in used_measurements:
+            raise BaselineDossierError(
+                "the same executed baseline measurement cannot qualify multiple roles"
+            )
+        used_measurements.add(measurement_identity)
         selected[assignment["role"]] = candidate_id
         execution_bindings[assignment["role"]] = {
             "job_manifest_sha256": execution_evidence["job_manifest_sha256"],
             "runner_result_sha256": execution_evidence["runner_result_sha256"],
+            "source_sha256": source_sha256,
+            "baseline_key": baseline_key,
         }
 
     return {

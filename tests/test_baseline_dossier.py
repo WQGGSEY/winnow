@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import shutil
 import tempfile
 import unittest
@@ -61,9 +62,11 @@ class BaselineDossierTests(unittest.TestCase):
         workspace = node_dir / "workspace"
         workspace.mkdir(parents=True, exist_ok=True)
         (node_dir / "node.json").write_text('{"id": "n_baseline"}')
-        (node_dir / "experiment_plan.json").write_text('{"plan_id": "p_baseline"}')
+        (node_dir / "experiment_plan.json").write_text(
+            '{"plan_id": "p_baseline", "source_files": [{"path": "src/run.py", "content": "print(1)\\n"}]}'
+        )
         (node_dir / "worker_report.json").write_text(
-            '{"metrics": {"accuracy": 0.5}}'
+            '{"baselines": {"best": 0.5, "naive": 0.5, "null": 0.5}}'
         )
         roles = ["current_best_known", "naive", "random_or_null"]
         candidates = ["c_best", "c_naive", "c_null"]
@@ -82,9 +85,9 @@ class BaselineDossierTests(unittest.TestCase):
                         "metric_id": "accuracy",
                     },
                     "implementation": {
-                        "kind": "repository",
-                        "identifier": f"https://example.com/{candidate}",
-                        "version": "commit-123",
+                        "kind": "local_source",
+                        "identifier": "src/run.py",
+                        "version": hashlib.sha256(b"print(1)\n").hexdigest(),
                     },
                     "reproducibility_receipt": {
                         "node_path": "tree/nodes/n_baseline/node.json",
@@ -93,6 +96,7 @@ class BaselineDossierTests(unittest.TestCase):
                         "node_dir": "tree/nodes/n_baseline",
                         "tree_dir": "tree",
                         "metric_id": "accuracy",
+                        "baseline_key": {"current_best_known": "best", "naive": "naive", "random_or_null": "null"}[role],
                         "metric_value": 0.5,
                     },
                 }
@@ -219,7 +223,7 @@ class BaselineDossierTests(unittest.TestCase):
             self.assertIn("scientific role suitability", result["qualification_limit"])
             self.assertEqual(verify.call_count, 3)
 
-    def test_selection_rejects_mismatched_comparison_and_artifact_digest(self) -> None:
+    def test_selection_rejects_mismatched_comparison_and_runner_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             dossier = self._unqualified_dossier(root)
@@ -239,6 +243,29 @@ class BaselineDossierTests(unittest.TestCase):
                     validate_baseline_selection(
                         root, dossier, qualification, artifact_root=root, dossier_base_dir=root
                     )
+
+    def test_selection_rejects_one_measurement_reused_for_two_roles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dossier = self._unqualified_dossier(root)
+            qualification = self._qualification(root)
+            qualification["assignments"][1]["reproducibility_receipt"][
+                "baseline_key"
+            ] = "best"
+            with mock.patch(
+                "research_harness.orchestrator.strong_result.verify_strong_execution_evidence",
+                return_value={
+                    "job_manifest_sha256": "1" * 64,
+                    "runner_result_sha256": "2" * 64,
+                },
+            ), self.assertRaisesRegex(BaselineDossierError, "multiple roles"):
+                validate_baseline_selection(
+                    root,
+                    dossier,
+                    qualification,
+                    artifact_root=root,
+                    dossier_base_dir=root,
+                )
 
 
 if __name__ == "__main__":

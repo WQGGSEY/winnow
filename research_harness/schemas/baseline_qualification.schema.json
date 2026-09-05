@@ -34,13 +34,13 @@
             "properties": {
               "kind": { "type": "string", "enum": ["repository", "package", "local_source"] },
               "identifier": { "type": "string", "minLength": 1 },
-              "version": { "type": "string", "minLength": 1 }
+              "version": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
             },
             "additionalProperties": false
           },
           "reproducibility_receipt": {
             "type": "object",
-            "required": ["node_path", "experiment_plan_path", "worker_report_path", "node_dir", "tree_dir", "metric_id", "metric_value"],
+            "required": ["node_path", "experiment_plan_path", "worker_report_path", "node_dir", "tree_dir", "metric_id", "baseline_key", "metric_value"],
             "properties": {
               "node_path": { "type": "string", "minLength": 1 },
               "experiment_plan_path": { "type": "string", "minLength": 1 },
@@ -48,6 +48,7 @@
               "node_dir": { "type": "string", "minLength": 1 },
               "tree_dir": { "type": "string", "minLength": 1 },
               "metric_id": { "type": "string", "minLength": 1 },
+              "baseline_key": { "type": "string", "minLength": 1 },
               "metric_value": { "type": "number" }
             },
             "additionalProperties": false

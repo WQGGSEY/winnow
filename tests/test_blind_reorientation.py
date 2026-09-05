@@ -6,6 +6,7 @@ from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 import shutil
+from unittest import mock
 
 import pytest
 
@@ -53,6 +54,70 @@ from research_harness.orchestrator.goal_contract import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BASELINE_DOSSIER_ID = "bd_agent_harness_20260523"
 BASELINE_PROVENANCE_PREFIX = f"baseline_dossier:{BASELINE_DOSSIER_ID}#"
+
+
+def _write_unqualified_baselines(repo: Path) -> tuple[dict, Path]:
+    dossier_dir = repo / "memory" / "baseline_dossiers"
+    candidates_dir = dossier_dir / "candidates"
+    candidates_dir.mkdir(parents=True)
+    candidate_ids = ["c_first", "c_second", "c_null"]
+    for candidate_id in candidate_ids:
+        (candidates_dir / f"{candidate_id}.md").write_text(candidate_id)
+    dossier = {
+        "id": "bd_qualified_test",
+        "created_at": "2026-09-05",
+        "query": "qualified baselines",
+        "problem_scope": {"task": "test"},
+        "selected": None,
+        "candidates_index": [
+            {"id": candidate_id, "method": candidate_id, "decision": "unqualified",
+             "reason_tags": ["retrieved"], "detail_file": f"candidates/{candidate_id}.md"}
+            for candidate_id in candidate_ids
+        ],
+        "source_index": [
+            {"id": f"s{index}", "url": f"https://example.com/{candidate_id}",
+             "accessed_at": "2026-09-05", "supports": [candidate_id]}
+            for index, candidate_id in enumerate(candidate_ids, 1)
+        ],
+        "refresh_policy": {"required_before": ["goal_contract"]},
+    }
+    from research_harness.agents.market_research import _render_dossier_yaml
+    (dossier_dir / "bd_qualified_test.yaml").write_text(_render_dossier_yaml(dossier))
+    tree = repo / "runs" / "threads" / "thread_test" / "production" / "tree"
+    node_dir = tree / "baseline_preflight" / "n_baseline"
+    node_dir.mkdir(parents=True)
+    (node_dir / "node.json").write_text('{"id": "n_baseline"}')
+    plan = {"plan_id": "p_baseline", "source_files": [{"path": "src/run.py", "content": "print(1)\n"}]}
+    (node_dir / "experiment_plan.json").write_text(json.dumps(plan))
+    (node_dir / "worker_report.json").write_text(
+        '{"baselines": {"best": 0.5, "naive": 0.5, "null": 0.5}}'
+    )
+    roles = ["current_best_known", "naive", "random_or_null"]
+    selected_ids = ["c_second", "c_first", "c_null"]
+    source_ids = ["s2", "s1", "s3"]
+    qualification = {
+        "dossier_id": "bd_qualified_test",
+        "assignments": [
+            {
+                "role": role, "candidate_id": candidate_id, "source_ids": [source_id],
+                "comparison": {"task_id": "task-v1", "dataset_id": "data-v1",
+                               "split_id": "split-v1", "budget_id": "budget-v1",
+                               "metric_id": "utility"},
+                "implementation": {"kind": "local_source", "identifier": "src/run.py",
+                                   "version": hashlib.sha256(b"print(1)\n").hexdigest()},
+                "reproducibility_receipt": {
+                    "node_path": "baseline_preflight/n_baseline/node.json",
+                    "experiment_plan_path": "baseline_preflight/n_baseline/experiment_plan.json",
+                    "worker_report_path": "baseline_preflight/n_baseline/worker_report.json",
+                    "node_dir": "baseline_preflight/n_baseline", "tree_dir": ".",
+                    "metric_id": "utility", "baseline_key": {"current_best_known": "best", "naive": "naive", "random_or_null": "null"}[role],
+                    "metric_value": 0.5,
+                },
+            }
+            for role, candidate_id, source_id in zip(roles, selected_ids, source_ids)
+        ],
+    }
+    return qualification, tree
 
 
 def _artifacts() -> tuple[dict, dict]:
@@ -302,6 +367,67 @@ def test_research_goal_is_a_contract_digest_projection() -> None:
     assert goal["bar"]["external_falsifier"]["kind"] == "real_holdout"
     assert "data_source_snapshot_id" not in goal["bar"]
     assert "data_sources_available" not in goal["bar"]
+
+
+def test_contract_uses_qualified_roles_and_can_select_second_candidate(
+    tmp_path: Path,
+) -> None:
+    qualification, tree = _write_unqualified_baselines(tmp_path)
+    grilling, envelope = _artifacts()
+    with mock.patch(
+        "research_harness.orchestrator.strong_result.verify_strong_execution_evidence",
+        return_value={
+            "job_manifest_sha256": "1" * 64,
+            "runner_result_sha256": "2" * 64,
+        },
+    ):
+        source = goal_contract_input_from_artifacts(
+            repo_root=tmp_path,
+            baseline_dossier_id="bd_qualified_test",
+            operator_problem="Find a safe intervention that improves utility.",
+            grilling_record=grilling,
+            feasibility_envelope=envelope,
+            baseline_qualification=qualification,
+            baseline_artifact_root=tree,
+        )
+    contract = compile_goal_contract(source)
+    by_role = {item.role: item for item in contract.baseline_evidence}
+    assert by_role["current_best_known"].candidate_id == "c_second"
+    assert any(
+        "runner_result_sha256" in item
+        for item in by_role["current_best_known"].provenance
+    )
+
+
+def test_contract_rejects_unqualified_dossier_without_preflight(tmp_path: Path) -> None:
+    _write_unqualified_baselines(tmp_path)
+    grilling, envelope = _artifacts()
+    with pytest.raises(GoalContractError, match="unqualified"):
+        goal_contract_input_from_artifacts(
+            repo_root=tmp_path,
+            baseline_dossier_id="bd_qualified_test",
+            operator_problem="Find a safe intervention that improves utility.",
+            grilling_record=grilling,
+            feasibility_envelope=envelope,
+        )
+
+
+def test_contract_rejects_stale_baseline_replay(tmp_path: Path) -> None:
+    qualification, tree = _write_unqualified_baselines(tmp_path)
+    grilling, envelope = _artifacts()
+    with mock.patch(
+        "research_harness.orchestrator.strong_result.verify_strong_execution_evidence",
+        side_effect=ValueError("executed source differs from experiment plan"),
+    ), pytest.raises(GoalContractError, match="baseline qualification is invalid"):
+        goal_contract_input_from_artifacts(
+            repo_root=tmp_path,
+            baseline_dossier_id="bd_qualified_test",
+            operator_problem="Find a safe intervention that improves utility.",
+            grilling_record=grilling,
+            feasibility_envelope=envelope,
+            baseline_qualification=qualification,
+            baseline_artifact_root=tree,
+        )
 
 
 def _attempt(ordinal: int) -> DirectionAttemptRef:
