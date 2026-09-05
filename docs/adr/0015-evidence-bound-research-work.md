@@ -42,6 +42,24 @@ before persisting a job manifest. Rejection keeps the claim and work unchanged
 and routes formal experiments back to template revision. A corrected dispatch
 clears the previous rejection outcome while retaining the review record.
 
+The planner and implementation reviewer receive the registered protocol,
+including its notes. A work binds its protocol digest so a plan cannot execute
+against a different registration. This addresses the live run's conflict between
+a QMIX-only protocol and later MAC-IAICC preparation.
+
+`protocol_revision` routes a prospective development amendment to
+`revise_evaluation_protocol`. It can replace notes only. Structured resources,
+goal and predicate remain identical. Independent review must also establish that
+endpoint meanings, thresholds, partition and fair comparison rules remain intact
+and that the reserved holdout was untouched. Missing telemetry is not proof of
+no access. Qualification, promotion or recorded final evaluation closes this
+amendment window. Uncertain access history requires a new study.
+
+Approved amendments preserve the previous protocol, rationale and review. The
+paper writer receives them, the methods section must anchor each amendment, and
+the publication receipt covers the amendment records. An amendment grants no
+scientific approval and cannot turn prior development into preregistered evidence.
+
 A request rejected before a job manifest exists returns to `planned` with the
 same work identity. Its rejection reason and the absolute path of its saved
 dispatch request remain available for correction. No execution checkpoint is

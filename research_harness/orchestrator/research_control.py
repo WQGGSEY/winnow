@@ -11,7 +11,7 @@ from research_harness.adapters.codex_cli import CodexCliAdapter
 from research_harness.agent_runtime import AgentPrompt, CompletionRequest
 from research_harness.schemas.validator import validate_named_schema
 
-PLANNING_POLICY_VERSION = 2
+PLANNING_POLICY_VERSION = 3
 
 
 class StaleResearchWork(ValueError):
@@ -82,8 +82,9 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
 
     evidence = development_evidence(thread)
     previous = current_work(thread)
+    envelope = _read(thread / 'production/feasibility_envelope.json')
     planning_policy_version = PLANNING_POLICY_VERSION
-    if previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous['evidence_digest'] == _digest(evidence):
+    if previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('protocol_digest') == _digest(envelope) and previous['evidence_digest'] == _digest(evidence):
         return previous
     if previous.get('status') == 'running':
         # The public caller holds the same writer lock as execution. A remaining
@@ -91,9 +92,8 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
         report = _read(thread / 'production/tree' / previous['binding'].get('scope', 'baseline_preflight') / previous['binding']['node_id'] / 'worker_report.json')
         finish_work(thread, {'status': 'executed' if report.get('status') == 'completed' else 'interrupted'})
         previous = current_work(thread)
-        if previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous['evidence_digest'] == _digest(evidence):
+        if previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('protocol_digest') == _digest(envelope) and previous['evidence_digest'] == _digest(evidence):
             return previous
-    envelope = _read(thread / 'production/feasibility_envelope.json')
     ceiling = envelope['compute_budget']['max_runner_seconds_per_node']
     latest = list(evidence.values())[-1:] or [{}]
     diagnostic_required = (latest[0].get('execution_status') not in (None, 'completed') or
@@ -131,6 +131,8 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
             measurements[key] = details
     packet = {
         'planning_policy_version': planning_policy_version,
+        'registered_protocol': envelope,
+        'goal_contract': _read(thread / 'production/reorientation/goal_contract.json'),
         'research': research, 'implementation_context': implementations, 'measurement_context': measurements,
         'active_claim': _read(thread / 'production/tree/search_state.json').get('nodes', []),
         'development_evidence': evidence, 'previous_work': previous,
@@ -147,6 +149,11 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
     else:
         instructions = (
             'Choose ONE next research work unit using the supplied development evidence. '
+            'Read the full registered_protocol, including its notes. Its method, split and evaluation restrictions constrain this study. '
+            'Do not silently change a registered comparator, candidate or metric. If development needs a method change barred by an earlier protocol, '
+            'choose protocol_revision before further method selection. revise_evaluation_protocol can independently review a prospective notes amendment '
+            'before baseline qualification or final evaluation. It preserves the original goal, resources, held-out partition, endpoint definitions '
+            'and thresholds; it cannot retroactively certify results or make a failed test pass. The amendment and its timing remain disclosed. '
             'Resolve one uncertainty that changes the next research decision; put other useful questions in deferred_questions. '
             'Choose analysis for questions answerable by interpreting existing source, definitions or recorded evidence. '
             'Do not write an experiment program to classify the meaning of prose or source semantics. '
@@ -165,7 +172,7 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
             'Give competing explanations, contrasting observable predictions and the decision each outcome changes. '
             'Select the smallest useful diagnostic before expensive training when validity is uncertain. '
             'Do not prescribe the same full experiment after an unchanged observation; change the discriminating test. '
-            'If diagnostic_required is true, choose diagnostic or analysis to locate the failure. Otherwise choose analysis, diagnostic, competence, comparison or replication. '
+            'If diagnostic_required is true, choose diagnostic or analysis to locate the failure, or protocol_revision for a conflicting registration. Otherwise choose analysis, protocol_revision, diagnostic, competence, comparison or replication. '
             'Use an appropriate bounded runtime, at most max_runtime_seconds, and cite only supplied development_evidence IDs. '
             'Unexpected results can motivate new explanations; do not assume the user-suspected mechanism. '
             'Do not write the learner, approve a scientific claim, change the frozen goal, access holdout or ask a human. '
@@ -183,18 +190,21 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
     validate_named_schema('research_work', decision)
     if set(decision['evidence_ids']) - evidence.keys() or (evidence and not decision['evidence_ids']):
         raise ValueError('The work decision must cite existing development execution evidence.')
-    if diagnostic_required and decision['kind'] not in {'diagnostic', 'analysis'}:
+    if diagnostic_required and decision['kind'] not in {'diagnostic', 'analysis', 'protocol_revision'}:
         raise ValueError('An execution failure or unchanged observation requires a discriminating diagnostic.')
     if decision['max_runtime_seconds'] > ceiling:
         raise ValueError('Work exceeds the registered runtime limit.')
     _write(response_path, decision)
     work = {'work_id': _digest({'packet': packet, 'decision': decision}), 'status': 'planned',
             'planning_policy_version': planning_policy_version,
+            'protocol_digest': _digest(envelope),
             'decision': decision, 'evidence_digest': _digest(evidence),
             'source_observations': evidence, 'next_tool_to_call': 'execute_baseline_preflight'
             if not (thread / 'market/baseline_qualification.json').exists() else 'design_experiment_template'}
     if decision['kind'] == 'analysis':
         work['next_tool_to_call'] = 'resolve_research_work'
+    elif decision['kind'] == 'protocol_revision':
+        work['next_tool_to_call'] = 'revise_evaluation_protocol'
     _write(thread / 'production/research_control/current.json', work)
     _write(thread / 'production/research_control/work' / work['work_id'] / 'work.json', work)
     return work
@@ -210,11 +220,14 @@ def resolve_research_work(repo: Path, thread: Path, work_id: str) -> dict[str, A
         raise ValueError('Resolve the current planned analysis work only.')
     if work.get('planning_policy_version') != PLANNING_POLICY_VERSION:
         raise StaleResearchWork('Research planning policy changed; call plan_research_work before analysis.')
+    if work.get('protocol_digest') != _digest(_read(thread / 'production/feasibility_envelope.json')):
+        raise StaleResearchWork('Registered protocol changed; call plan_research_work before analysis.')
     evidence = development_evidence(thread)
     if work['evidence_digest'] != _digest(evidence):
         raise StaleResearchWork('New evidence arrived; call plan_research_work before analysis.')
     directory = thread / 'production/research_control/work' / work_id / 'analysis'
     packet = {'question': work['decision'], 'development_evidence': evidence,
+              'registered_protocol': _read(thread / 'production/feasibility_envelope.json'),
               'thread_dir': str(thread.resolve()),
               'development_artifacts': {key: str((thread / value['report_path']).resolve()) for key, value in evidence.items()}}
     record = review_research_packet(repo, directory, packet, purpose=(
@@ -243,8 +256,10 @@ def bind_work(thread: Path, work_id: str | None, node_id: str, plan: dict[str, A
         raise ValueError('Call plan_research_work and supply its work_id before a new execution.')
     if work.get('planning_policy_version') != PLANNING_POLICY_VERSION:
         raise StaleResearchWork('Research planning policy changed; call plan_research_work before execution.')
-    if work['decision']['kind'] == 'analysis':
-        raise StaleResearchWork('This question requires resolve_research_work, not a new experiment.')
+    if work['decision']['kind'] in {'analysis', 'protocol_revision'}:
+        raise StaleResearchWork(f"This question requires {work['next_tool_to_call']}, not a new experiment.")
+    if work.get('protocol_digest') != _digest(_read(thread / 'production/feasibility_envelope.json')):
+        raise StaleResearchWork('Registered protocol changed; call plan_research_work before execution.')
     if work.get('status') == 'planned' and work['evidence_digest'] != _digest(development_evidence(thread)):
         raise StaleResearchWork('New evidence arrived; call plan_research_work before execution.')
     if plan['resources']['timeout_sec'] > work['decision']['max_runtime_seconds']:
@@ -266,18 +281,21 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         raise ValueError('Implementation review requires the bound research work.')
     prior = work.get('implementation_review', {})
     plan_digest = _digest(plan)
-    review_policy_version = 2
+    review_policy_version = 3
     if prior.get('plan_digest') == plan_digest and prior.get('policy_version') == review_policy_version:
         if prior['decision'] != 'approve':
             raise ValueError('Work implementation needs revision: ' + json.dumps(prior, ensure_ascii=False))
         return
     directory = thread / 'production/research_control/work' / work_id / 'implementation_reviews'
     packet = {'work_decision': work['decision'], 'node': node, 'experiment_plan': plan,
+              'registered_protocol': _read(thread / 'production/feasibility_envelope.json'),
               'prior_objections': prior.get('required_work', []),
               'development_artifacts': {key: str((thread / value['report_path']).resolve())
                                         for key, value in work['source_observations'].items()}}
     review = review_research_packet(repo, directory, packet, purpose=(
         'Whether this proposed implementation performs the selected bounded research test. '
+        'Check compatibility with registered protocol notes as well as the selected test. A development diagnostic is not a protocol amendment '
+        'or permission to substitute an unregistered method in the final comparison. '
         'Questions listed in deferred_questions are outside this work and must not become preconditions for its execution. '
         'This is a pre-execution method check, not scientific approval; do not require positive results or finished training. '
         'Trace code, actual imports and data provenance. When the work calls for the actual learner, collector or replay, '

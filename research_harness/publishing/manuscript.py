@@ -71,6 +71,12 @@ def validate_sections(
         if any(token and token.casefold() in text.casefold() for token in identity_tokens):
             raise ManuscriptError(f"configured author identity in manuscript section {sid}")
         anchors = section.get("evidence_anchors", [])
+        if sid == "method" and bundle.get("protocol_revisions"):
+            for index in range(len(bundle["protocol_revisions"])):
+                prefix = f"protocol_revisions.{index}"
+                if not any(a.split("=", 1)[0].strip() in {"protocol_revisions", prefix}
+                           or a.startswith(prefix + ".") for a in anchors):
+                    raise ManuscriptError(f"methods must disclose protocol amendment {index} with an evidence anchor")
         if sid in {"method", "experiments", "discussion"} and not anchors:
             raise ManuscriptError(f"section {sid} requires evidence anchors")
         ledger["sections"][sid] = [resolve_anchor(bundle, a) for a in anchors]

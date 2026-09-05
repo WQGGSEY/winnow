@@ -16,6 +16,7 @@
       "type": "string",
       "enum": [
         "analysis",
+        "protocol_revision",
         "diagnostic",
         "competence",
         "comparison",

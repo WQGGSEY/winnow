@@ -29,7 +29,8 @@ def _entry(root: Path, path: Path) -> dict[str, Any]:
 
 def publication_inputs(production_dir: Path) -> list[dict[str, Any]]:
     paths = sorted(set((production_dir / "publication" / "_drafts").rglob("*.json"))
-                   | set((production_dir / "rebuttal").rglob("*.json")))
+                   | set((production_dir / "rebuttal").rglob("*.json"))
+                   | set((production_dir / "protocol_revisions").glob("*/approved.json")))
     return [_entry(production_dir, path) for path in paths]
 
 

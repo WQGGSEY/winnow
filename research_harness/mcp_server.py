@@ -119,6 +119,11 @@ AC_CONTRACT = (
 
 TOOL_DEFINITIONS = [
     {
+        "name": "revise_evaluation_protocol",
+        "description": "Submit replacement protocol notes and a development rationale for independent review of the current protocol_revision work. Only a prospective amendment before qualification/final evaluation is allowed. The goal, resources, structured predicate, endpoint meanings and untouched holdout must be preserved. Previous registration and amendments remain disclosed; this does not approve results.",
+        "inputSchema": {"type": "object", "required": ["thread_id", "work_id", "notes", "rationale"], "properties": {"thread_id": {"type": "string"}, "work_id": {"type": "string"}, "notes": {"type": "string", "minLength": 1}, "rationale": {"type": "string", "minLength": 1}}, "additionalProperties": False},
+    },
+    {
         "name": "resolve_research_work",
         "description": "Resolve a planned analysis work from existing sources and artifacts. The harness reads the evidence and records a sourced answer or the smallest missing observation. No new experiment, baseline approval or scientific claim approval is implied.",
         "inputSchema": {"type": "object", "required": ["thread_id", "work_id"], "properties": {"thread_id": {"type": "string"}, "work_id": {"type": "string"}}, "additionalProperties": False},
@@ -1408,6 +1413,21 @@ def handle_plan_research_work(args: dict[str, Any]) -> dict[str, Any]:
             return plan_research_work(_repo_root(), _thread_dir(tid))
         except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:
             return {'status': 'planning_failed', 'reason': str(exc), 'next_tool_to_call': 'plan_research_work'}
+
+
+def handle_revise_evaluation_protocol(args: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.orchestrator.protocol_revision import revise_evaluation_protocol
+    from research_harness.orchestrator.research_control import StaleResearchWork
+    from research_harness.adapters.codex_cli import CodexCliError
+
+    tid = args['thread_id']
+    with _exclusive_adaptive_writer(tid):
+        try:
+            return revise_evaluation_protocol(_repo_root(), _thread_dir(tid), work_id=args['work_id'], notes=args['notes'], rationale=args['rationale'])
+        except StaleResearchWork as exc:
+            return {'status': 'work_required', 'reason': str(exc), 'next_tool_to_call': 'plan_research_work'}
+        except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:
+            return {'status': 'rejected', 'reason': str(exc), 'next_tool_to_call': 'revise_evaluation_protocol'}
 
 
 def handle_resolve_research_work(args: dict[str, Any]) -> dict[str, Any]:
@@ -5027,6 +5047,7 @@ def _paper_dir(tid: str) -> Path:
 
 
 def _paper_evidence_bundle(tid: str, node_dir: Path) -> dict[str, Any]:
+    from research_harness.orchestrator.protocol_revision import approved_protocol_revisions
     production = _thread_dir(tid) / "production"
     return {
         "worker_report": _read_json(node_dir / "worker_report.json") or {},
@@ -5035,12 +5056,14 @@ def _paper_evidence_bundle(tid: str, node_dir: Path) -> dict[str, Any]:
         "falsifier_result": _read_json(_rebuttal_dir(tid) / "falsifier_result.json") or {},
         "construct_adversary_report": _read_json(_rebuttal_dir(tid) / "construct_adversary_report.json") or {},
         "goal_contract": _read_json(production / "reorientation" / "goal_contract.json") or {},
+        "protocol_revisions": approved_protocol_revisions(_thread_dir(tid)),
         "market_brief": _read_json(_thread_dir(tid) / "market" / "market_research_brief.json") or {},
     }
 
 
 def handle_prepare_paper_writing_context(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.publishing.sakana_paper import PAPER_WRITING_REQUIREMENTS
+    from research_harness.orchestrator.protocol_revision import approved_protocol_revisions
 
     tid = args["thread_id"]
     ctx = _resolve_promoted_node(tid, allow_completed=True)
@@ -5091,6 +5114,8 @@ def handle_prepare_paper_writing_context(args: dict[str, Any]) -> dict[str, Any]
         "construct_adversary_report": _read_json(rebuttal_dir / "construct_adversary_report.json"),
         "frozen_question": _read_json(production / "frozen_question.json"),
         "goal_contract": _read_json(production / "reorientation" / "goal_contract.json"),
+        "protocol_revisions": approved_protocol_revisions(_thread_dir(tid)),
+        "protocol_disclosure_requirement": "Describe approved development amendments and their timing in the methods. Do not portray an amended design as the original preregistration or use prior results as prospective evidence for the amendment.",
         "market_brief": market_brief,
         "reference_papers": market_brief.get("papers") or [],
         "citation_format": "Declare citation_source_ids from reference_papers[].id and embed <a href='#ref_ID'>citation</a>. The references section is generated from those retrieved records; do not hand-copy metadata.",
@@ -6185,6 +6210,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_plan_research_work(args)
             elif name == "resolve_research_work":
                 result = handle_resolve_research_work(args)
+            elif name == "revise_evaluation_protocol":
+                result = handle_revise_evaluation_protocol(args)
             elif name == "develop_research_hypotheses":
                 result = handle_develop_research_hypotheses(args)
             elif name == "get_next_admissible_node":

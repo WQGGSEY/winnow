@@ -245,3 +245,47 @@ def test_analysis_resolves_existing_evidence_without_fabricating_execution(tmp_p
     assert not result['outcome']['new_observation']
     assert result['outcome']['scientific_verdict'] == 'unverified'
     assert not list(tree.rglob('worker_report.json'))
+
+
+def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tmp_path, monkeypatch):
+    from research_harness.orchestrator import protocol_revision
+    from research_harness.publishing.manuscript import ManuscriptError, validate_sections
+
+    thread, _, node, plan, _ = fixture(tmp_path)
+    path = thread / 'production/feasibility_envelope.json'
+    original = json.loads(path.read_text())
+    original.update(notes='Only method A is allowed.', external_falsifier={'predicate': {'threshold': 1.0}})
+    path.write_text(json.dumps(original))
+    planner = Planner('protocol_revision')
+    work = plan_research_work(REPO, thread, transport=planner)
+    assert planner.calls[0]['registered_protocol'] == original
+    assert work['next_tool_to_call'] == 'revise_evaluation_protocol'
+    with pytest.raises(ValueError, match='revise_evaluation_protocol'):
+        bind_work(thread, work['work_id'], node['id'], plan)
+    calls = []
+    def review(repo, directory, packet, *, purpose):
+        calls.append(packet)
+        return {'request_sha256': 'review', 'assessment': {
+            'decision': 'reject' if len(calls) == 1 else 'approve',
+            'reason': 'Prospective amendment review.', 'evidence': ['development-only source audit'],
+            'required_work': ['Preserve the endpoint meaning.'] if len(calls) == 1 else [],
+        }}
+    monkeypatch.setattr(protocol_revision, 'review_research_packet', review)
+    kwargs = {'work_id': work['work_id'], 'notes': 'Any qualified method; identical endpoints and untouched partition.',
+              'rationale': 'The original method lock conflicts with development method selection.'}
+    assert protocol_revision.revise_evaluation_protocol(REPO, thread, **kwargs)['status'] == 'rejected'
+    assert json.loads(path.read_text()) == original
+    result = protocol_revision.revise_evaluation_protocol(REPO, thread, **kwargs)
+    assert json.loads(path.read_text()) == {**original, 'notes': kwargs['notes']}
+    assert result == protocol_revision.revise_evaluation_protocol(REPO, thread, **kwargs)
+    assert len(calls) == 2
+    assert result['outcome']['new_observation'] is False
+    records = protocol_revision.approved_protocol_revisions(thread)
+    assert records[0]['previous_protocol'] == original
+    with pytest.raises(ManuscriptError, match='disclose protocol amendment'):
+        validate_sections({'method': {'prose_html': 'An amended study.', 'evidence_anchors': ['worker_report.status']}},
+                          {'protocol_revisions': records, 'worker_report': {'status': 'completed'}}, require_citations=False)
+    work = plan_research_work(REPO, thread, transport=Planner('protocol_revision'))
+    (thread / 'production/falsifier_result.json').write_text('{}')
+    with pytest.raises(ValueError, match='Final evaluation'):
+        protocol_revision.revise_evaluation_protocol(REPO, thread, **{**kwargs, 'work_id': work['work_id'], 'notes': 'Another change'})

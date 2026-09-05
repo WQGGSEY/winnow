@@ -365,6 +365,7 @@ class MCPServerTests(unittest.TestCase):
         core_expected = {
             "plan_research_work",
             "resolve_research_work",
+            "revise_evaluation_protocol",
             "develop_research_hypotheses",
             "update_baseline_sources",
             "submit_baseline_qualification",
