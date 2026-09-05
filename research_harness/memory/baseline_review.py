@@ -18,11 +18,19 @@ def _write(path: Path, value: dict[str, Any]) -> None:
 
 
 def _packet(repo: Path, thread_dir: Path, qualification: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.settings_scoped import resolve_for_thread
+
     brief = json.loads((thread_dir / 'market/market_research_brief.json').read_text())
     if qualification.get('dossier_id') != brief.get('baseline_dossier_id'):
         raise ValueError("qualification must use this thread's researched dossier")
     dossier = load_baseline_dossier(repo, qualification['dossier_id'])
-    verified = validate_baseline_selection(repo, dossier, qualification, artifact_root=thread_dir / 'production/tree')
+    verified = validate_baseline_selection(
+        repo,
+        dossier,
+        qualification,
+        artifact_root=thread_dir / 'production/tree',
+        runner_settings=resolve_for_thread(repo, thread_dir.name),
+    )
     base = dossier_path(repo, qualification['dossier_id']).parent
     details = {candidate['id']: (base / candidate['detail_file']).read_text() for candidate in dossier['candidates_index']}
     return {'qualification': qualification, 'dossier': dossier, 'candidate_details': details, 'execution_verification': verified}

@@ -147,6 +147,7 @@ def validate_baseline_selection(
     *,
     artifact_root: Path,
     dossier_base_dir: Path | None = None,
+    runner_settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate comparable, executed baseline assignments.
 
@@ -243,6 +244,7 @@ def validate_baseline_selection(
                 worker_report=worker_report,
                 node_dir=execution_path(receipt["node_dir"], "node_dir"),
                 tree_dir=execution_path(receipt["tree_dir"], "tree_dir"),
+                settings=runner_settings,
             )
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             raise BaselineDossierError(

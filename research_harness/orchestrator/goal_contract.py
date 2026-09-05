@@ -647,15 +647,19 @@ def _baseline_evidence_from_qualification(
     artifact_root: Path,
 ) -> tuple[BaselineEvidence, ...]:
     try:
+        from research_harness.settings_scoped import resolve_for_thread
+
+        thread_dir = artifact_root.parent.parent
         validated = validate_baseline_selection(
             repo_root,
             dict(baseline_dossier),
             dict(qualification),
             artifact_root=artifact_root,
             dossier_base_dir=dossier_path(repo_root, dossier_id).parent,
+            runner_settings=resolve_for_thread(repo_root, thread_dir.name),
         )
         from research_harness.memory.baseline_review import require_baseline_approval
-        require_baseline_approval(repo_root, artifact_root.parent.parent, dict(qualification))
+        require_baseline_approval(repo_root, thread_dir, dict(qualification))
     except (BaselineDossierError, ValueError) as exc:
         raise GoalContractError(f"baseline qualification is invalid: {exc}") from exc
 

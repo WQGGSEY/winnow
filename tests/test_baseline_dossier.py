@@ -217,9 +217,11 @@ class BaselineDossierTests(unittest.TestCase):
                 },
             ) as verify:
                 result = validate_baseline_selection(
-                    root, dossier, qualification, artifact_root=root, dossier_base_dir=root
+                    root, dossier, qualification, artifact_root=root, dossier_base_dir=root,
+                    runner_settings={"runtime": {"runner_environment_overrides": {"BASELINE_TEST": "configured"}}},
                 )
 
+            self.assertEqual(verify.call_args.kwargs["settings"]["runtime"]["runner_environment_overrides"], {"BASELINE_TEST": "configured"})
             self.assertEqual(result["assignments"]["current_best_known"], "c_naive")
             self.assertIn("scientific role suitability", result["qualification_limit"])
             self.assertEqual(verify.call_count, 3)
