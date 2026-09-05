@@ -42,7 +42,7 @@ class Planner:
 
 
 def fixture(tmp_path):
-    thread = tmp_path / 'thread'
+    thread = tmp_path / 'runs/threads/thread'
     tree = thread / 'production/tree'
     tree.mkdir(parents=True)
     (thread / 'thread.json').write_text(json.dumps({'user_goal': 'Explain a plateau.'}))
@@ -75,7 +75,7 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     from research_harness import mcp_server
     from research_harness import settings_scoped
     from research_harness.orchestrator import research_review
-    monkeypatch.setattr(mcp_server, '_repo_root', lambda: REPO)
+    monkeypatch.setattr(mcp_server, '_repo_root', lambda: tmp_path)
     monkeypatch.setattr(mcp_server, '_thread_dir', lambda tid: thread)
     monkeypatch.setattr(settings_scoped, 'resolve_for_thread', lambda repo, tid: {})
     reviewed = []
@@ -123,10 +123,11 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     assert current_work(thread)['outcome']['reason'] == rejected['reason']
     assert Path(rejected['dispatch_request_path']).is_absolute()
     corrected = mcp_server.handle_execute_baseline_preflight({
-        'thread_id': 'thread', 'request_path': rejected['dispatch_request_path'],
+        'request_path': rejected['dispatch_request_path'],
         'updates': [{'path': ['node', 'id'], 'value': 'n_corrected'},
                     {'path': ['experiment_plan', 'node_id'], 'value': 'n_corrected'},
-                    {'path': ['experiment_plan', 'plan_id'], 'value': 'plan_corrected'}],
+                    {'path': ['experiment_plan', 'plan_id'], 'value': 'plan_corrected'},
+                    {'path': ['experiment_plan', 'source_files', 0, 'purpose'], 'value': 'Corrected measurement diagnostic.'}],
     })
     assert corrected['status'] == 'execution_failed'
     assert current_work(thread)['binding']['node_id'] == 'n_corrected'
@@ -145,12 +146,13 @@ def test_restart_reconciles_reserved_work_and_never_reads_final_holdout(tmp_path
     assert planner.calls[0]['previous_work']['status'] == 'completed'
 
 
-def test_dispatch_rejection_preserves_question_and_allows_corrected_input(tmp_path):
+@pytest.mark.parametrize('status', ['rejected', 'interrupted'])
+def test_dispatch_rejection_preserves_question_and_allows_corrected_input(tmp_path, status):
     thread, _, node, plan, _ = fixture(tmp_path)
     planner = Planner()
     work = plan_research_work(REPO, thread, transport=planner)
     bind_work(thread, work['work_id'], node['id'], plan)
-    result = finish_work(thread, {'status': 'rejected', 'reason': 'preflight must use the operator-selected input snapshot'})
+    result = finish_work(thread, {'status': status, 'reason': 'preflight must use the operator-selected input snapshot'})
     resumed = plan_research_work(REPO, thread, transport=planner)
     assert resumed['work_id'] == work['work_id']
     assert resumed['status'] == 'planned'

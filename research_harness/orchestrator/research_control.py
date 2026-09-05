@@ -84,6 +84,8 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
         report = _read(thread / 'production/tree' / previous['binding'].get('scope', 'baseline_preflight') / previous['binding']['node_id'] / 'worker_report.json')
         finish_work(thread, {'status': 'executed' if report.get('status') == 'completed' else 'interrupted'})
         previous = current_work(thread)
+        if previous.get('status') == 'planned' and previous['evidence_digest'] == _digest(evidence):
+            return previous
     envelope = _read(thread / 'production/feasibility_envelope.json')
     ceiling = envelope['compute_budget']['max_runner_seconds_per_node']
     latest = list(evidence.values())[-1:] or [{}]
@@ -204,7 +206,8 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         raise ValueError('Implementation review requires the bound research work.')
     prior = work.get('implementation_review', {})
     plan_digest = _digest(plan)
-    if prior.get('plan_digest') == plan_digest:
+    review_policy_version = 2
+    if prior.get('plan_digest') == plan_digest and prior.get('policy_version') == review_policy_version:
         if prior['decision'] != 'approve':
             raise ValueError('Work implementation needs revision: ' + json.dumps(prior, ensure_ascii=False))
         return
@@ -222,9 +225,13 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         'against referenced implementation when those are the subject of the test. Source paths may be inspected; '
         'the new workspace is materialized after this review, so do not require it to exist yet. '
         'Do not read final holdout or external-falsifier results. Return actionable changes to this implementation, not a new research question. '
-        'Check prior objections against the revised code. Do not add requirements unrelated to the selected bounded test.'
+        'Check prior objections against the revised code and reassess whether those objections were justified. '
+        'Every mandatory change must follow from the selected test, declared objective, or cited method semantics. '
+        'Do not impose a preferred estimator, representation, time unit, discount convention or favorable outcome as an unstated requirement. '
+        'When a convention is undeclared, ask the implementation to expose it and measure the consequences, not to adopt your preference. '
+        'Prior objections are fallible feedback, not new authoritative requirements. Do not add requirements unrelated to the selected bounded test.'
     ))
-    work['implementation_review'] = {**review['assessment'], 'plan_digest': plan_digest,
+    work['implementation_review'] = {**review['assessment'], 'plan_digest': plan_digest, 'policy_version': review_policy_version,
                                     'receipt_path': str((directory / review['request_sha256'] / 'review.json').resolve())}
     _write(thread / 'production/research_control/current.json', work)
     _write(thread / 'production/research_control/work' / work_id / 'work.json', work)
@@ -240,7 +247,7 @@ def finish_work(thread: Path, result: dict[str, Any]) -> dict[str, Any]:
     new = evidence.get(work['binding']['node_id'])
     previous = {e['observation_digest'] for e in work['source_observations'].values()}
     node_dir = thread / 'production/tree' / work['binding'].get('scope', 'baseline_preflight') / work['binding']['node_id']
-    dispatch_rejected = result.get('status') == 'rejected' and new is None and not (node_dir / 'job_manifest.json').exists()
+    dispatch_rejected = result.get('status') in {'rejected', 'interrupted'} and new is None and not (node_dir / 'job_manifest.json').exists()
     work.update(status='completed', outcome={
         'execution_result': result.get('status'), 'observation': new,
         'reason': result.get('reason'),

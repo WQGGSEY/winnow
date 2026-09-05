@@ -140,15 +140,15 @@ TOOL_DEFINITIONS = [
         "name": "execute_baseline_preflight",
         "description": "While baseline qualification is pending, write and execute ONE baseline implementation. To revise a saved dispatch, use its absolute request_path plus updates (path segments and new value), without retransmitting unchanged source code or writing files from the read-only shell. Example update: {path:[node,id],value:new_id}; also update experiment_plan.node_id. Inline objects work for initial requests. Use a new node ID when changing a previously executed plan; completed receipts are immutable. The harness binds the operator input snapshot, enforces compute limits and runs LocalRunner. Use exactly one baseline_evidence_requirement and report only that baseline key. This is execution evidence, not scientific approval. Implement methods yourself after retrieving primary sources.",
         "inputSchema": {
-            "type": "object", "required": ["thread_id"],
-            "anyOf": [{"required": ["request_path"]}, {"required": ["node", "experiment_plan", "role"]}],
+            "type": "object",
+            "anyOf": [{"required": ["request_path"]}, {"required": ["thread_id", "node", "experiment_plan", "role"]}],
             "properties": {
                 "thread_id": {"type": "string"}, "node": load_schema("node"), "experiment_plan": load_schema("experiment_plan"),
                 "role": {"type": "string", "enum": ["current_best_known", "naive", "random_or_null"]},
                 "work_id": {"type": "string", "description": "work_id returned by plan_research_work; required for a new execution."},
                 "request_path": {"type": "string", "description": "Absolute path of the saved request JSON inside this thread. Do not also supply inline node or plan."},
                 "updates": {"type": "array", "maxItems": 32, "items": {"type": "object", "required": ["path", "value"], "additionalProperties": False,
-                    "properties": {"path": {"type": "array", "minItems": 1, "items": {"type": "string"}}, "value": {}}}},
+                    "properties": {"path": {"type": "array", "minItems": 1, "items": {"anyOf": [{"type": "string"}, {"type": "integer", "minimum": 0}]}}, "value": {}}}},
             },
         },
     },
@@ -3941,7 +3941,15 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.orchestrator.research_control import bind_work, current_work, finish_work
     from research_harness.adapters.codex_cli import CodexCliError
 
-    tid = args["thread_id"]
+    tid = args.get('thread_id')
+    if not tid:
+        try:
+            relative = Path(args['request_path']).resolve().relative_to((_repo_root() / 'runs/threads').resolve())
+            if len(relative.parts) < 2:
+                raise ValueError('request_path must name a file inside a research thread')
+            tid = relative.parts[0]
+        except (KeyError, TypeError, ValueError) as exc:
+            return {'status': 'rejected', 'reason': f'Provide thread_id for inline requests or a saved request inside runs/threads: {exc}'}
     with _exclusive_adaptive_writer(tid):
         if baseline_roles_frozen(_thread_dir(tid)):
             return {"status": "rejected", "reason": "baseline preparation is closed for the approved baseline roles"}
@@ -3960,7 +3968,9 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
                     raise ValueError('Dispatch updates must be an array of at most 32 replacements.')
                 for update in updates:
                     keys = update['path']
-                    if not isinstance(keys, list) or not keys or not all(isinstance(key, str) for key in keys) or keys[0] not in {'node', 'experiment_plan', 'role', 'work_id'}:
+                    if not isinstance(keys, list) or not keys or not all(type(key) in (str, int) for key in keys):
+                        raise ValueError('Each update path must be an array of object keys and array indices, e.g. ["experiment_plan", "source_files", 0, "content"].')
+                    if keys[0] not in {'node', 'experiment_plan', 'role', 'work_id'}:
                         raise ValueError('Updates may only change dispatch node, plan, role or work_id.')
                     target = request
                     for key in keys[:-1]:

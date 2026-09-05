@@ -41,6 +41,12 @@ the proposed code implements the selected test. Its receipt binds the exact work
 decision and plan. A rewritten surrogate cannot stand in for an audit explicitly
 requiring the actual collector. Rejection keeps the work planned and provides
 required changes; it neither refutes the claim nor requests human approval.
+Review objections are themselves fallible. Required changes must follow from the
+selected test, declared objective or sourced method, rather than a reviewer's
+preferred representation. The E2E reviewer incorrectly imposed a primitive-time
+discount convention before that unit had been established. Review policy versions
+invalidate cached judgments after such corrections. A restart before dispatch
+also preserves the same planned work instead of inventing a new research result.
 
 `finish_work` records the actual runner/report observation and whether its
 measurement/error signature differs from the preceding observations. This is
