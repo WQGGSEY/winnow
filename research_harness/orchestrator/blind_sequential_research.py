@@ -850,12 +850,16 @@ class BlindSequentialResearch:
         state: ReorientationState,
     ) -> _GenerationPlan:
         draw_index = self._next_draw_index()
+        from research_harness.orchestrator.research_control import development_evidence
+
+        observations = development_evidence(self._thread_dir)
         request = GenerationRequest(
             goal_contract=contract,
             random_perspective=sample_random_perspective(
                 seed=self._perspective_seed,
                 draw_index=draw_index,
             ),
+            development_evidence=observations if observations and draw_index % 4 != 3 else None,
         )
         request_document = serialize_generation_request(request)
         reservation = make_generation_reservation(

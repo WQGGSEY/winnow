@@ -161,9 +161,9 @@ class CodexBlindDirectionGenerator:
         self._timeout_seconds = timeout_seconds
 
     def generate(self, request: Mapping[str, object], /) -> Mapping[str, object]:
-        if set(request) != {"goal_contract", "random_perspective"}:
+        if set(request) not in ({"goal_contract", "random_perspective"}, {"goal_contract", "random_perspective", "development_evidence"}):
             raise BlindMcpAdapterError(
-                "blind generation request must contain only goal contract and perspective"
+                "generation request must contain goal contract, perspective and optional development evidence"
             )
         with tempfile.TemporaryDirectory(prefix="research-harness-direction-") as raw:
             result = self._transport.complete(
@@ -282,8 +282,11 @@ def _direction_prompt(request: Mapping[str, object]) -> AgentPrompt:
             "State an intervention B that could improve the target A, with a "
             "falsifiable experiment against every mandatory baseline. Do not "
             "substitute a prohibition, warning, restatement, or mere risk list for "
-            "the intervention. Use only the supplied JSON. Do not inspect files, "
-            "tools, environment variables, or external context. Return only the "
+            "the intervention. Use only the supplied JSON. "
+            "Use supplied development observations to avoid known implementation confounds and propose a discriminating experiment. "
+            "Execution failures do not refute a scientific mechanism. No holdout evidence is supplied. "
+            "When development evidence is absent, explore the independent random perspective. "
+            "Do not inspect files, tools, environment variables, or external context. Return only the "
             "schema-conforming JSON object."
         ),
         input=_canonical_json(request),

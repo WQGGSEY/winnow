@@ -445,6 +445,23 @@ def _write_strong_candidate(engine, command) -> None:
     )
 
 
+def test_direction_generation_reuses_development_observations_without_holdout(tmp_path):
+    generator = _Generator(_draft("observed"))
+    engine = _engine(tmp_path, generator, _Acquisition())
+    thread = tmp_path / 'runs/threads/thread_test'
+    folder = thread / 'production/tree/baseline_preflight/diagnostic'
+    (folder / 'workspace').mkdir(parents=True)
+    (folder / 'worker_report.json').write_text(json.dumps({'status': 'completed', 'metrics': {'agreement': 0.0}}))
+    (folder / 'workspace/runner_result.json').write_text(json.dumps({'status': 'completed'}))
+    (thread / 'production/falsifier_result.json').write_text('{"secret_holdout": "DO_NOT_USE"}')
+    engine.advance_research(command_id='observed-direction')
+    request = generator.calls[0]
+    assert request['development_evidence']['diagnostic']['metrics']['agreement'] == 0.0
+    assert 'DO_NOT_USE' not in json.dumps(request)
+    assert engine.advance_research(command_id='observed-direction')['status'] == 'direction_ready'
+    assert len(generator.calls) == 1
+
+
 def test_generation_is_blind_and_command_retry_is_idempotent(tmp_path: Path) -> None:
     generator = _Generator(_draft("first"))
     engine = _engine(tmp_path, generator, _Acquisition())

@@ -164,3 +164,7 @@ Pacman은 이 제어 흐름을 수리하는 개발 문제다. 새로운 두 문�
 LocalRunner를 쓰는 기존 통합 테스트는 preflight의 완료 결과 재조회가 runner를 재실행하지 않는지, 새로운 실행을 허용할 예산이 부족해도 저장 결과를 읽을 수 있는지, 비교 실패가 get_state의 준비 요약에 나타나는지 확인한다. 정식 claim의 search_state를 생성하거나 과학적 승인을 부여하지 않는 것도 확인한다.
 
 코드 수정 커밋은 `a54c888`이다. 최종 전체 검증은 `venv/bin/python -m pytest -q`, 1047 passed와 20 subtests passed이며 `git diff --check`도 통과했다. 위 제어 방식 2–5단계는 아직 구현하지 않았다.
+
+## 2026-09-06 구현 후속
+
+[ADR 0015](../adr/0015-evidence-bound-research-work.md)에 따라 증거에 바인딩한 작업 계획·실행·결과 기록, 오류 후 진단 선택, 개발 관측을 활용하는 방향 생성과 독립 탐색, supervisor의 실행 경계 재개, 그래프 작업 상태를 구현했다. 위 제안의 모든 항목이 완성됐다는 뜻은 아니다. 최종 계약 유형의 재설계, 동결된 TBD 계약의 명시적 revision, 논문 수준 E2E 성공은 별도로 남아 있다.

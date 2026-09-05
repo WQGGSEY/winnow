@@ -121,6 +121,13 @@ def _setup(tmp_path, monkeypatch):
         return plan, used
 
     monkeypatch.setattr(plans, "build_experiment_plan_for_node", builder)
+    from tests.test_research_control import Planner
+    from research_harness.orchestrator.research_control import plan_research_work
+    (thread_dir / 'thread.json').write_text(json.dumps({'user_goal': 'Evaluate the intervention.'}))
+    (thread_dir / 'production/feasibility_envelope.json').write_text(json.dumps({
+        'compute_budget': {'max_runner_seconds_per_node': 60, 'max_total_node_hours': 1},
+    }))
+    plan_research_work(tmp_path, thread_dir, transport=Planner(budget=60))
     return thread_dir, state_path, source, snapshot, node
 
 
@@ -338,6 +345,9 @@ def test_invalid_baseline_evidence_contract_requeues_node(tmp_path, monkeypatch)
     monkeypatch.setattr(
         plans, "build_experiment_plan_for_node", corrected_metrics_builder
     )
+    from tests.test_research_control import Planner
+    from research_harness.orchestrator.research_control import plan_research_work
+    plan_research_work(tmp_path, thread_dir, transport=Planner(budget=60))
     retry = mcp.handle_execute_node_experiment(
         {"thread_id": "thread_bound", "node_id": node["id"]}
     )

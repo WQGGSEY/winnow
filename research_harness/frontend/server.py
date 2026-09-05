@@ -248,6 +248,7 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
                 "in_progress_nodes": p.get("in_progress_nodes") or [],
                 "preparation": p.get("preparation") or {},
                 "hypothesis_nodes": p.get("hypothesis_nodes") or [],
+                "research_work": p.get("research_work") or {},
                 "last_activity_mtime": p.get("last_activity_mtime") or 0,
             }
         )
@@ -276,6 +277,7 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
             intake_to_claim=production.get("intake_to_claim"),
             preparation=production.get("preparation") or {},
             hypothesis_nodes=production.get("hypothesis_nodes") or [],
+            research_work=production.get("research_work") or {},
         )
 
     # -------- partials
@@ -1460,6 +1462,8 @@ def _read_phase_artifacts(
         with contextlib.suppress(OSError):
             result["phase_started_unix"] = pdir.stat().st_mtime
     elif phase == "production":
+        from research_harness.orchestrator.research_control import current_work
+        result['research_work'] = current_work(pdir.parent)
         hypothesis_path = pdir / "hypotheses/current.json"
         if hypothesis_path.exists():
             with contextlib.suppress(OSError, json.JSONDecodeError):

@@ -1,0 +1,80 @@
+{
+  "type": "object",
+  "required": [
+    "kind",
+    "uncertainty",
+    "evidence_ids",
+    "interpretation",
+    "alternatives",
+    "test",
+    "next_if_inconclusive",
+    "max_runtime_seconds"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "diagnostic",
+        "competence",
+        "comparison",
+        "replication"
+      ]
+    },
+    "uncertainty": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "interpretation": {
+      "type": "string",
+      "minLength": 1
+    },
+    "alternatives": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "required": [
+          "explanation",
+          "prediction",
+          "decision_if_observed"
+        ],
+        "properties": {
+          "explanation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "prediction": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decision_if_observed": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "test": {
+      "type": "string",
+      "minLength": 1
+    },
+    "next_if_inconclusive": {
+      "type": "string",
+      "minLength": 1
+    },
+    "max_runtime_seconds": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "additionalProperties": false
+}

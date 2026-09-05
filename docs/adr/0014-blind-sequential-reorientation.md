@@ -1,6 +1,6 @@
 # ADR 0014 Blind sequential reorientation
 
-- **Status**: Accepted
+- **Status**: Accepted; generation context and work scheduling amended by [ADR 0015](0015-evidence-bound-research-work.md)
 - **Date**: 2026-09-01
 - **Supersedes**: ADR 0012's multi-root forest and failure terminal
 - **Amends**: ADR 0013's observation-derived successor generation and resource-frozen goal

@@ -669,6 +669,15 @@
       const resp = await fetch(liveUrl, { cache: "no-store" });
       if (!resp.ok) return;
       const data = await resp.json();
+      const work = data.research_work || {};
+      const decision = work.decision || {};
+      document.getElementById('research-work-status').textContent =
+        `${work.status || 'Not planned'}${decision.kind ? ' · ' + decision.kind : ''}`;
+      document.getElementById('research-work-question').textContent = decision.uncertainty || '';
+      document.getElementById('research-work-test').textContent = decision.test || '';
+      document.getElementById('research-work-outcome').textContent = work.outcome
+        ? `${work.outcome.execution_result} · ${work.outcome.new_observation ? 'New observation recorded' : 'No new observation recorded'} · claim unverified`
+        : '';
       const state = withHypotheses(data.tree_state || { nodes: [] }, data.hypothesis_nodes);
       preparation = data.preparation || {};
       const sig = snapshotSignature(state, data.last_activity_mtime);

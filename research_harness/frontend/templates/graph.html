@@ -53,6 +53,13 @@
   </section>
 
   <aside class="graph-inspector" id="graph-inspector">
+    <section class="inspector-body" aria-label="Current research work">
+      <h2>Research work</h2>
+      <p id="research-work-status">{{ research_work.get('status', 'Not planned') }}</p>
+      <p id="research-work-question">{{ research_work.get('decision', {}).get('uncertainty', '') }}</p>
+      <p id="research-work-test">{{ research_work.get('decision', {}).get('test', '') }}</p>
+      <p id="research-work-outcome"></p>
+    </section>
     <div class="inspector-header">
       <h2 id="inspector-title">Inspector</h2>
       <p class="muted" id="inspector-subtitle">Dashed hypothesis nodes are unverified candidates. Click to inspect their tests and critique.</p>

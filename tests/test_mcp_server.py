@@ -363,6 +363,7 @@ class MCPServerTests(unittest.TestCase):
         self.assertIn("top-level `baselines`", design_tool["description"])
         self.assertIn("primary_dataset.relative_path", design_tool["description"])
         core_expected = {
+            "plan_research_work",
             "develop_research_hypotheses",
             "update_baseline_sources",
             "submit_baseline_qualification",
@@ -444,6 +445,19 @@ class MCPServerTests(unittest.TestCase):
                     return_value=state["nodes"][0]["id"],
                 ):
                     r = srv.handle_get_next_admissible_node({"thread_id": tid})
+                    contract = tree.parent / "reorientation" / "goal_contract.json"
+                    contract.parent.mkdir(parents=True)
+                    contract.write_text(json.dumps({"baseline_evidence": []}))
+                    work_path = tree.parent / "research_control" / "current.json"
+                    work_path.parent.mkdir(parents=True)
+                    for status, expected in [("planned", "execute_baseline_preflight"),
+                                             ("running", "plan_research_work"),
+                                             ("completed", "plan_research_work")]:
+                        with self.subTest(work_status=status):
+                            work_path.write_text(json.dumps({"status": status, "next_tool_to_call": "execute_baseline_preflight"}))
+                            preparation = srv.handle_get_next_admissible_node({"thread_id": tid})
+                            self.assertEqual(preparation["status"], "preparation_work")
+                            self.assertEqual(preparation["next_tool_to_call"], expected)
             finally:
                 srv._thread_dir = orig
             self.assertEqual(r["status"], "retry_evidence")

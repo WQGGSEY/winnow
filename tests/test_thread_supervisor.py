@@ -1756,6 +1756,29 @@ class WatchLoopTests(unittest.TestCase):
             spawn.assert_called_once()
             self.assertEqual(result["status"], "max_cycles_exceeded")
 
+    def test_completed_execution_yields_without_waiting_for_stall(self):
+        with TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "fake_codex.py"
+            event = {"type": "item.completed", "item": {"id": "run1", "type": "mcp_tool_call",
+                     "server": "research_harness", "tool": "execute_baseline_preflight",
+                     "arguments": {}, "result": {}, "status": "completed"}}
+            pending = {"type": "item.started", "item": {"id": "read2", "type": "mcp_tool_call",
+                       "server": "research_harness", "tool": "get_research_state", "arguments": {}}}
+            completed = {"type": "item.completed", "item": {**pending['item'], "result": {}, "status": "completed"}}
+            marker = Path(tmp) / "pending_finished"
+            fake.write_text("#!/usr/bin/env python3\nimport time\nfrom pathlib import Path\n"
+                            + "print(" + repr(json.dumps(pending)) + ", flush=True)\n"
+                            + "print(" + repr(json.dumps(event)) + ", flush=True)\ntime.sleep(0.2)\n"
+                            + "Path(" + repr(str(marker)) + ").touch()\n"
+                            + "print(" + repr(json.dumps(completed)) + ", flush=True)\ntime.sleep(30)\n")
+            fake.chmod(0o755)
+            with mock.patch.object(ts, "_which", return_value=str(fake)):
+                started = time.time()
+                rc = ts.spawn_codex_session("prompt", stall_timeout=20)
+            self.assertEqual(rc, ts.WORK_UNIT_EXIT_CODE)
+            self.assertTrue(marker.exists())
+            self.assertLess(time.time() - started, 8)
+
     def test_spawn_watchdog_kills_hung_cycle(self):
         # Fix 3: a cycle that produces NO output and never exits (a hang — the
         # observed ToolSearch freeze) must be killed by the stall watchdog so

@@ -318,6 +318,7 @@ def _parse_random_perspective(value: object) -> RandomPerspective:
 class GenerationRequest:
     goal_contract: GoalContract
     random_perspective: RandomPerspective
+    development_evidence: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.goal_contract, GoalContract):
@@ -335,6 +336,8 @@ def serialize_generation_request(request: GenerationRequest) -> dict[str, object
             request.random_perspective
         ),
     }
+    if request.development_evidence is not None:
+        document['development_evidence'] = dict(request.development_evidence)
     validate_named_schema("generation_request", document)
     return document
 
@@ -344,12 +347,13 @@ def parse_generation_request(value: object) -> GenerationRequest:
     validate_named_schema("generation_request", dict(raw))
     _exact_keys(
         raw,
-        required=frozenset({"goal_contract", "random_perspective"}),
+        required=frozenset({"goal_contract", "random_perspective"} | ({'development_evidence'} if 'development_evidence' in raw else set())),
         label="generation request",
     )
     return GenerationRequest(
         goal_contract=parse_goal_contract(raw["goal_contract"]),
         random_perspective=_parse_random_perspective(raw["random_perspective"]),
+        development_evidence=raw.get('development_evidence'),
     )
 
 

@@ -5,6 +5,7 @@
   "type": "object",
   "required": ["goal_contract", "random_perspective"],
   "properties": {
+    "development_evidence": { "type": "object" },
     "goal_contract": { "type": "object" },
     "random_perspective": {
       "type": "object",

@@ -119,6 +119,11 @@ AC_CONTRACT = (
 
 TOOL_DEFINITIONS = [
     {
+        "name": "plan_research_work",
+        "description": "Choose one evidence-bound research work unit before a new execution. The harness interprets development results, distinguishes implementation problems from scientific hypotheses, records competing predictions and a bounded test. Resume the returned work_id; after execution plan the next unit from the new evidence. No human approval or scientific claim approval is implied.",
+        "inputSchema": {"type": "object", "required": ["thread_id"], "properties": {"thread_id": {"type": "string"}}, "additionalProperties": False},
+    },
+    {
         "name": "develop_research_hypotheses",
         "description": "Before baseline qualification or long training, develop three causally distinct hypotheses using the research question, connector ideas and literature packets. The harness independently critiques and revises them, stores unverified candidates for the graph, and selects a small discriminating diagnostic. This never approves a baseline or a scientific claim.",
         "inputSchema": {"type": "object", "required": ["thread_id"], "properties": {"thread_id": {"type": "string"}, "revision_request": {"type": "string", "description": "Findings for a new round after the current round completes. An unfinished round resumes its frozen context even if this text changes."}, "run_id": {"type": "string", "pattern": "^[a-f0-9]{64}$", "description": "Returned run_id to resume or replay. Omit to resume the unfinished current round automatically."}}, "additionalProperties": False},
@@ -139,6 +144,7 @@ TOOL_DEFINITIONS = [
             "properties": {
                 "thread_id": {"type": "string"}, "node": load_schema("node"), "experiment_plan": load_schema("experiment_plan"),
                 "role": {"type": "string", "enum": ["current_best_known", "naive", "random_or_null"]},
+                "work_id": {"type": "string", "description": "work_id returned by plan_research_work; required for a new execution."},
             },
         },
     },
@@ -549,6 +555,7 @@ TOOL_DEFINITIONS = [
             "properties": {
                 "thread_id": {"type": "string"},
                 "node_id": {"type": "string"},
+                "work_id": {"type": "string", "description": "The current planned work_id. Omit to use the current work unit."},
             },
         },
     },
@@ -1380,8 +1387,21 @@ def handle_develop_research_hypotheses(args: dict[str, Any]) -> dict[str, Any]:
             return {"status": "needs_revision", "reason": str(exc), "next_step": "Preserved hypothesis drafts remain unverified. Resolve the generation or evidence error and retry."}
 
 
+def handle_plan_research_work(args: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.orchestrator.research_control import plan_research_work
+    from research_harness.adapters.codex_cli import CodexCliError
+
+    tid = args['thread_id']
+    with _exclusive_adaptive_writer(tid):
+        try:
+            return plan_research_work(_repo_root(), _thread_dir(tid))
+        except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:
+            return {'status': 'planning_failed', 'reason': str(exc), 'next_tool_to_call': 'plan_research_work'}
+
+
 def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     from research_harness.runner.baseline_preflight import baseline_preparation_state
+    from research_harness.orchestrator.research_control import current_work
 
     tid = args["thread_id"]
     d = _thread_dir(tid)
@@ -1439,6 +1459,7 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
         "baseline_analysis_md": baseline_analysis_md,
         "baseline_qualification": _read_json(market_dir / "baseline_qualification.json"),
         "baseline_preparation": baseline_preparation_state(d),
+        "research_work": current_work(d),
         "baseline_preparation_contract": (
             "Create the research claim and plan through advance_research before waiting for baseline qualification. "
             "An empty GoalContract.baseline_evidence means assignments are pending, not approved. "
@@ -1535,7 +1556,7 @@ def _blind_command_id(
     *,
     bind_state: bool = True,
 ) -> str:
-    identity: dict[str, Any] = {"thread_id": tid, "trigger": trigger, "planning_version": 3}
+    identity: dict[str, Any] = {"thread_id": tid, "trigger": trigger, "planning_version": 4}
     if bind_state:
         thread_dir = _thread_dir(tid)
         identity["search"] = _read_json(
@@ -2086,6 +2107,16 @@ def _handle_get_next_admissible_node_locked(
         }
 
     nodes_by_id = {n["id"]: n for n in state["nodes"]}
+
+    contract = _read_json(_thread_dir(tid) / 'production/reorientation/goal_contract.json') or {}
+    if (contract.get('baseline_evidence') == [] and authoritative_node_id in nodes_by_id
+            and not (_thread_dir(tid) / 'market/baseline_qualification.json').exists()):
+        from research_harness.orchestrator.research_control import current_work
+        work = current_work(_thread_dir(tid))
+        return {'status': 'preparation_work', 'node_id': authoritative_node_id,
+                'research_work': work,
+                'next_tool_to_call': work['next_tool_to_call'] if work.get('status') == 'planned' else 'plan_research_work',
+                'reason': 'The claim exists, but comparative evidence needs qualified baselines. Resolve the recorded research uncertainty; submit qualification when the development evidence supports it. Do not repeat claim critic reviews while this prerequisite is pending.'}
 
     for node in state["nodes"]:
         if node.get("id") != authoritative_node_id:
@@ -3125,8 +3156,14 @@ def handle_design_experiment_template(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def handle_execute_node_experiment(args: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.orchestrator.research_control import current_work, finish_work
+
     with _exclusive_adaptive_writer(args["thread_id"]):
-        return _handle_execute_node_experiment_locked(args)
+        result = _handle_execute_node_experiment_locked(args)
+        work = current_work(_thread_dir(args['thread_id']))
+        if work.get('status') == 'running' and work.get('binding', {}).get('node_id') == args['node_id']:
+            return finish_work(_thread_dir(args['thread_id']), result)
+        return result
 
 
 def _handle_execute_node_experiment_locked(args: dict[str, Any]) -> dict[str, Any]:
@@ -3334,6 +3371,12 @@ def _handle_execute_node_experiment_locked(args: dict[str, Any]) -> dict[str, An
             }
             adaptive["experiments"].append(experiment_record)
             adaptive["revision"] = int(adaptive["revision"]) + 1
+    from research_harness.orchestrator.research_control import bind_work, current_work
+    work = current_work(_thread_dir(tid))
+    try:
+        bind_work(_thread_dir(tid), args.get('work_id', work.get('work_id')), node_id, plan, scope='nodes')
+    except ValueError as exc:
+        return {'status': 'work_required', 'reason': str(exc), 'next_tool_to_call': 'plan_research_work'}
     (node_run_dir / "experiment_plan.json").write_text(
         json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -3864,18 +3907,28 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.runner.baseline_preflight import execute_baseline_preflight
     from research_harness.memory.baseline_review import baseline_roles_frozen
     from research_harness.settings_scoped import resolve_for_thread
+    from research_harness.orchestrator.research_control import bind_work, finish_work
 
     tid = args["thread_id"]
     with _exclusive_adaptive_writer(tid):
         if baseline_roles_frozen(_thread_dir(tid)):
             return {"status": "rejected", "reason": "baseline preparation is closed for the approved baseline roles"}
+        bound = False
         try:
-            return execute_baseline_preflight(
+            node_id = args['node']['id']
+            path = _thread_dir(tid) / 'production/tree/baseline_preflight' / node_id
+            path.resolve().relative_to((_thread_dir(tid) / 'production/tree/baseline_preflight').resolve())
+            if not (path / 'worker_report.json').exists():
+                bind_work(_thread_dir(tid), args.get('work_id'), node_id, args['experiment_plan'])
+                bound = True
+            result = execute_baseline_preflight(
                 _repo_root(), _thread_dir(tid), node=args["node"], plan=args["experiment_plan"],
                 role=args["role"], settings=resolve_for_thread(_repo_root(), tid),
             )
+            return finish_work(_thread_dir(tid), result) if bound else result
         except (OSError, ValueError, KeyError, TypeError) as exc:
-            return {"status": "rejected", "reason": f"baseline preflight failed: {exc}"}
+            result = {"status": "rejected", "reason": f"baseline preflight failed: {exc}", "next_tool_to_call": "plan_research_work"}
+            return finish_work(_thread_dir(tid), result) if bound else result
 
 
 # --- LLM-driven rebuttal + paper writer (Phase C / D) -------------------- #
@@ -6011,6 +6064,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
         try:
             if name == "get_research_state":
                 result = handle_get_research_state(args, settings)
+            elif name == "plan_research_work":
+                result = handle_plan_research_work(args)
             elif name == "develop_research_hypotheses":
                 result = handle_develop_research_hypotheses(args)
             elif name == "get_next_admissible_node":

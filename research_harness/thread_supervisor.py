@@ -37,6 +37,7 @@ from pathlib import Path
 
 from research_harness.agent_runtime import AgentPrompt, ResearchHarnessMcp
 from research_harness.adapters.codex_cli import CodexCliAdapter
+
 from research_harness.config import load_settings
 from research_harness.orchestrator.blind_sequential_research import (
     BlindSequentialResearchError,
@@ -48,6 +49,7 @@ from research_harness.orchestrator.blind_sequential_research import (
 )
 
 LOG = sys.stderr
+WORK_UNIT_EXIT_CODE = 75
 
 
 # --- thresholds (configurable via CLI flags) ----------------------------- #
@@ -1268,6 +1270,10 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "",
         "방향:",
         f"  1. get_research_state(thread_id=\"{tid}\") 로 정확한 현재 상태 확인.",
+        "     새로운 실행 전 plan_research_work로 다음 작업의 근거·경쟁 예측·예산을 기록해.",
+        "     반환된 work_id와 test를 실행 코드에 적용하고 그 작업의 예산을 넘기지 마.",
+        "     한 실행이 끝나면 supervisor가 새 세션에서 결과를 해석하고 다음 작업을 계획한다.",
+        "     실행 오류를 과학적 반박으로 해석하지 말고, 동일 관측이면 판별 검사로 원인을 좁혀.",
         "  2. needed_resources가 있으면 advance_research의 획득 경계로 해결해.",
         "     frozen bar를 좁히지 말고 checkpoint 또는 hard_external_block을 보존해.",
         "     기준선 승인은 claim 생성의 선행 조건이 아니다. 정식 노드가 없으면",
@@ -1451,6 +1457,9 @@ def spawn_codex_session(
     # instead of blocking forever in the readline loop below.
     last_activity = [time.time()]
     stop_watchdog = threading.Event()
+    completed_calls = 0
+    execution_completed = False
+    pending_calls: set[str] = set()
 
     def _watchdog() -> None:
         check = max(1.0, min(15.0, stall_timeout / 4.0))
@@ -1520,6 +1529,25 @@ def spawn_codex_session(
                 LOG.flush()
             except Exception:  # noqa: BLE001
                 pass
+            item = event.raw.get('item', {})
+            if item.get('type') == 'mcp_tool_call':
+                if event.raw.get('type') == 'item.started':
+                    pending_calls.add(item['id'])
+                elif event.raw.get('type') == 'item.completed':
+                    pending_calls.discard(item['id'])
+                    completed_calls += 1
+                    execution_completed = execution_completed or item.get('tool') in {
+                        'execute_baseline_preflight', 'execute_node_experiment',
+                    }
+                    if not pending_calls and (completed_calls >= 16 or execution_completed):
+                        # Results are already durable and logged. Never interrupt an
+                        # in-flight tool or mistake this intentional yield for failure.
+                        session.terminate()
+                        try:
+                            session.wait(timeout=5)
+                        except _subprocess.TimeoutExpired:
+                            session.terminate(force=True)
+                        return WORK_UNIT_EXIT_CODE
         return session.wait()
     except KeyboardInterrupt:
         session.terminate()
@@ -1731,6 +1759,7 @@ def watch_thread(
     cycle = 0
     rate_limit_backoff = rate_limit_backoff_initial
     rate_limit_armed = False  # toggled after a fast-fail cycle
+    work_unit_yielded = False
     while True:
         terminal, outcome = is_terminal(repo, tid)
         if terminal:
@@ -1786,7 +1815,7 @@ def watch_thread(
         # auto-bootstrap, which would otherwise force a full max_idle wait before
         # the first spawn (the ~10-min cold-start delay). Spawn cycle #1
         # immediately; the idle gate governs only subsequent (resume) cycles.
-        if cycle > 0 and idle <= max_idle_seconds:
+        if cycle > 0 and idle <= max_idle_seconds and not work_unit_yielded:
             # Recent activity — MCP still being driven. Wait.
             time.sleep(poll_seconds)
             continue
@@ -1813,6 +1842,7 @@ def watch_thread(
                 experiment_hard_cap=experiment_hard_cap,
             )
             spawn_elapsed = time.time() - spawn_started
+            work_unit_yielded = exit_code == WORK_UNIT_EXIT_CODE
             _log(
                 log_path,
                 f"cycle #{cycle}: Codex subprocess exited code={exit_code} after {spawn_elapsed:.1f}s",
@@ -1820,7 +1850,9 @@ def watch_thread(
             # PR8 rate-limit detection. A real Codex session normally runs
             # at least several minutes (MCP tool calls + reasoning). A
             # sub-30s exit usually means auth/rate-limit/binary failure.
-            if spawn_elapsed < RATE_LIMIT_FAST_FAIL_SECONDS:
+            if work_unit_yielded:
+                _log(log_path, 'work unit checkpoint: interpreting durable evidence in the next cycle.')
+            elif spawn_elapsed < RATE_LIMIT_FAST_FAIL_SECONDS:
                 rate_limit_armed = True
                 _log(
                     log_path,
@@ -1840,6 +1872,7 @@ def watch_thread(
                 rate_limit_armed = False
                 rate_limit_backoff = rate_limit_backoff_initial
         except Exception as exc:  # noqa: BLE001
+            work_unit_yielded = False
             _log(log_path, f"cycle #{cycle}: spawn raised {type(exc).__name__}: {exc}")
             time.sleep(min(60.0, poll_seconds * 2))
 
