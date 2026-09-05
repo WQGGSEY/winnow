@@ -246,6 +246,7 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
                 "coverage_by_node_type": p.get("coverage_by_node_type") or {},
                 "readiness_history": p.get("readiness_history") or [],
                 "in_progress_nodes": p.get("in_progress_nodes") or [],
+                "preparation": p.get("preparation") or {},
                 "last_activity_mtime": p.get("last_activity_mtime") or 0,
             }
         )
@@ -272,6 +273,7 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
             coverage_by_node_type=production.get("coverage_by_node_type") or {},
             readiness_history=production.get("readiness_history") or [],
             intake_to_claim=production.get("intake_to_claim"),
+            preparation=production.get("preparation") or {},
         )
 
     # -------- partials
@@ -1598,6 +1600,14 @@ def _read_phase_artifacts(
                     "updated_at": updated,
                 })
         result["preflight_runs"] = sorted(preflight_runs, key=lambda row: row["updated_at"], reverse=True)
+        preparation = {"runs": result["preflight_runs"]}
+        migration_path = pdir / "reorientation/migration_block.json"
+        if migration_path.exists():
+            with contextlib.suppress(OSError, json.JSONDecodeError):
+                migration = json.loads(migration_path.read_text())
+                preparation["status"] = migration.get("status", "")
+                preparation["required_work"] = migration.get("required_work", "")
+        result["preparation"] = preparation
         for cand in [
             pdir / "tree" / "search_state.json",
             pdir / "intake_to_claim_dialog.json",

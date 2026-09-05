@@ -31,15 +31,32 @@
   try { dialogs = JSON.parse(dialogsRaw); } catch (_) { dialogs = {}; }
 
   let nodes = tree.nodes || [];
-  if (!nodes.length) {
-    inspectorTitle.textContent = "No graph data yet";
-    inspectorSubtitle.textContent =
-      "Run production to populate the claim tree. This page polls "
-      + "/api/threads/<tid>/graph_data — when Codex commits the "
-      + "first node, the graph will appear automatically.";
-    // Do NOT return — we still want the polling block at the bottom to
-    // register so the empty page upgrades itself when nodes show up.
+  let preparation = {};
+  try { preparation = JSON.parse(svg.dataset.preparation || "{}"); } catch (_) {}
+  function showPreparation(data) {
+    inspectorTitle.textContent = "No research claims yet";
+    inspectorSubtitle.textContent = data.status === "preflight_required"
+      ? "Baseline qualification is required before research claims can be generated."
+      : "The research claim tree has not been created yet.";
+    inspectorBody.replaceChildren();
+    const explanation = document.createElement("p");
+    explanation.textContent = data.required_work || "Progress will appear here when research preparation or claim generation begins.";
+    inspectorBody.append(explanation);
+    const runs = data.runs || [];
+    if (!runs.length) return;
+    const heading = document.createElement("h3");
+    heading.textContent = `Baseline preparation · ${runs.length} runs`;
+    const note = document.createElement("p");
+    note.textContent = "Execution results are preparation evidence. Completion does not imply scientific approval or a supported research claim.";
+    const list = document.createElement("ul");
+    for (const run of runs) {
+      const item = document.createElement("li");
+      item.textContent = `${run.node_id}: ${run.status}`;
+      list.append(item);
+    }
+    inspectorBody.append(heading, note, list);
   }
+  if (!nodes.length) showPreparation(preparation);
 
   // --- 1. Hierarchical layout -------------------------------------------
   // These data structures are declared once and reused on every poll-driven
@@ -405,8 +422,8 @@
     dialogs = dialogsObj || {};
     const newNodes = state.nodes || [];
     if (!newNodes.length) {
-      inspectorTitle.textContent = "No graph data";
-      inspectorSubtitle.textContent = "Run production to populate the claim tree.";
+      nodes = [];
+      showPreparation(preparation);
       return;
     }
     // Recompute layout + edges + nodes by calling the same helpers. We
@@ -642,6 +659,7 @@
       if (!resp.ok) return;
       const data = await resp.json();
       const state = data.tree_state || { nodes: [] };
+      preparation = data.preparation || {};
       const sig = snapshotSignature(state, data.last_activity_mtime);
       if (sig !== lastSignature) {
         lastSignature = sig;
@@ -651,6 +669,7 @@
       // (e.g. a node moves running → completed_worker_report). Apply it on
       // every poll so the visual lag is bounded by pollIntervalMs.
       applyInProgress(data.in_progress_nodes);
+      if (!(state.nodes || []).length) showPreparation(preparation);
     } catch (err) {
       // Network blip — wait for the next tick.
     }

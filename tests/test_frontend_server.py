@@ -34,6 +34,30 @@ class ServerSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("Pick or create a thread", resp.text)
 
+    def test_empty_graph_exposes_baseline_preparation_without_claims(self) -> None:
+        thread = threads.create_thread(self.repo, user_goal="baseline diagnosis")
+        tid = thread["thread_id"]
+        production = threads.phase_dir(self.repo, tid, "production")
+        run = production / "tree/baseline_preflight/baseline_1"
+        run.mkdir(parents=True)
+        (run / "experiment_plan.json").write_text("{}")
+        (run / "worker_report.json").write_text(json.dumps({"status": "completed"}))
+        migration = production / "reorientation/migration_block.json"
+        migration.parent.mkdir(parents=True)
+        migration.write_text(json.dumps({
+            "status": "preflight_required",
+            "required_work": "Implement and qualify the baseline.",
+        }))
+        response = self.client.get(f"/api/threads/{tid}/graph_data")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["tree_state"]["nodes"], [])
+        self.assertEqual(data["preparation"]["status"], "preflight_required")
+        self.assertEqual(data["preparation"]["runs"][0]["node_id"], "baseline_1")
+        page = self.client.get(f"/threads/{tid}/graph")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Implement and qualify the baseline.", page.text)
+
     def test_create_thread_redirects(self) -> None:
         resp = self.client.post(
             "/api/threads",
