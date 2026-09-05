@@ -60,12 +60,13 @@ def _fingerprint(label: str):
     )
 
 
-def test_codex_direction_generator_receives_only_blind_request() -> None:
+@pytest.mark.parametrize("intervention", ["adaptive scheduling", "sample tasks without replacement and adapt scheduling"])
+def test_codex_direction_generator_receives_only_blind_request(intervention: str) -> None:
     proposal = {
         "claim": "Adaptive scheduling improves utility by at least 5%.",
         "fingerprint": {
             "mechanism": "closed-loop load feedback",
-            "intervention": "adaptive scheduling",
+            "intervention": intervention,
             "observables_and_data": "public load and utility measurements",
             "analysis_unit": "daily service cohort",
             "timescale": "four weeks",

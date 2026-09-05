@@ -81,7 +81,7 @@ _NEGATIVE_FRAMING = re.compile(
     r"(?:\bdo(?:es)? not\b|\bdon't\b|\bdoesn't\b|\bcannot\b|\bcan't\b|"
     r"\bfails? to\b|\bineffective\b|\bno improvement\b|\bavoid\w*\b|"
     r"\bnever\b|\bban\w*\b|"
-    r"\bprohibit\w*\b|\brefrain from\b|\bstop(?: using)?\b|\bwithout\b|"
+    r"\bprohibit\w*\b|\brefrain from\b|\bstop(?: using)?\b|"
     r"\bremov\w*\b|\beliminat\w*\b|\bdisabl\w*\b|\bomitt?\w*\b|"
     r"\bexclud\w*\b|\bwithhold\w*\b|\bkept? off\b|\binaction\b|"
     r"\babsence\b|\bsuppress\w*\b|\bforego\w*\b|\bcease\w*\b|"
