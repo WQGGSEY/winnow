@@ -1180,12 +1180,19 @@ def _last_known_state_summary(repo: Path, tid: str) -> dict[str, object]:
 
 
 def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
+    from research_harness.orchestrator.operator_prompts import list_pending
+
     state = _last_known_state_summary(repo, tid)
     mid = state.get("mid_state_nodes") or []
     promoted = state.get("promoted_node_ids") or []
     archived = state.get("archived_attempts", 0)
     last_ac = state.get("last_ac_decision")
     needs = update_needed_resources_file(repo, tid)
+    responses = [
+        {"event_id": item["event_id"], "prompt": item["prompt"], "response": item["response"]}
+        for item in list_pending(repo / "runs" / "threads" / tid)
+        if item.get("status") == "responded"
+    ]
 
     executable_overrides: dict[str, object] = {}
     environment_override_keys: list[str] = []
@@ -1242,6 +1249,9 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "",
         *needs_block,
         "",
+        "미처리 연구자 답변 (반영 후 get_pending_operator_response로 수신 확인):",
+        json.dumps(responses, ensure_ascii=False),
+        "",
         "Operator-owned experiment runtime:",
         "  - LocalRunner executable overrides: "
         + json.dumps(executable_overrides, ensure_ascii=False, sort_keys=True),
@@ -1269,7 +1279,10 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "",
         "Anti-laziness 룰 작동 중 (PR1):",
         "  - claim narrowing-without-breadth → reject",
-        "  - self-made baseline (paper citation 없음) → reject",
+        "  - 인용만으로 구현이 그 논문 방법의 재현임을 인정하지 마.",
+        "    실행 영수증은 실행 사실만 증명한다. 원문의 방법과 구현을 대조하고",
+        "    차이와 역할 적합성을 검토해. 임의 정책에 논문 이름을 붙이지 마.",
+        "    naive/random 대조군은 실제 구현 그대로 기술하고 관련 없는 인용을 붙이지 마.",
         "  - synthetic data without bridging argument → reject",
         "  - disclaimer-only camera_ready_directives (revise일 때) → reject",
         "  - capability claim without decision_rule → reject",

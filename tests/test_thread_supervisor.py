@@ -1562,6 +1562,22 @@ class IdleDetectionTests(unittest.TestCase):
 
 
 class ResumePromptTests(unittest.TestCase):
+    def test_resume_delivers_unconsumed_researcher_response(self):
+        from research_harness.orchestrator.operator_prompts import (
+            enqueue_prompt, list_pending, submit_response, take_pending_response,
+        )
+
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            tdir = _make_thread(repo, "t1")
+            item = enqueue_prompt(tdir, kind="context_request", prompt="Review baseline")
+            submit_response(tdir, event_id=item["event_id"], response="Reject unsupported attribution")
+            prompt = ts.build_resume_prompt(repo, "t1", cycle=2)
+            self.assertIn("Reject unsupported attribution", prompt)
+            self.assertEqual(list_pending(tdir)[0]["status"], "responded")
+            take_pending_response(tdir, event_id=item["event_id"])
+            self.assertNotIn("Reject unsupported attribution", ts.build_resume_prompt(repo, "t1", cycle=3))
+
     def test_resume_prompt_carries_thread_id_and_anti_lazy_brief(self):
         with TemporaryDirectory() as tmp:
             repo = Path(tmp)
