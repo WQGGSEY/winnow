@@ -1412,6 +1412,10 @@ def spawn_codex_session(
     if log_fh:
         log_fh.write(f"\n=== codex spawn pid={session.pid} {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
         log_fh.flush()
+    events_fh = log_path.with_suffix(".events.jsonl").open("a", encoding="utf-8") if log_path else None
+    if events_fh:
+        events_fh.write(json.dumps({"event": "session_start", "pid": session.pid, "model": model, "prompt": prompt}, ensure_ascii=False) + "\n")
+        events_fh.flush()
 
     # Stall watchdog: a healthy cycle streams events continuously. If the
     # subprocess emits NO output for stall_timeout (a hang — e.g. a model/API
@@ -1473,6 +1477,9 @@ def spawn_codex_session(
     try:
         for event in session.events():
             last_activity[0] = time.time()
+            if events_fh:
+                events_fh.write(json.dumps({"pid": session.pid, "at": time.time(), "kind": event.kind, "raw": dict(event.raw)}, ensure_ascii=False) + "\n")
+                events_fh.flush()
             formatted = f"{event.kind}> {event.summary[:400]}"
             stamped = f"[{time.strftime('%H:%M:%S')}] {formatted}"
             if log_fh:
@@ -1501,6 +1508,8 @@ def spawn_codex_session(
             active_child_ref["pid"] = None
         if log_fh:
             log_fh.close()
+        if events_fh:
+            events_fh.close()
 
 
 # --- supervisor loop ---------------------------------------------------- #
