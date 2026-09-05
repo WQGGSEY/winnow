@@ -68,6 +68,13 @@ input errors still resume the same work. When a successful agent turn updates
 unfinished work, the supervisor continues without the former idle wait. A normal
 exit alone, without a durable work update, does not count as progress.
 
+Analysis responses use `answered` or `unresolved`, with an answer, evidence,
+limitations and next steps. A negative answer can resolve its question while
+requiring later work. It must not be rejected by the experimental-approval rule
+that prohibits approval with unresolved requirements. Completed analysis receipts
+remain in the planning evidence index after newer work finishes; their conclusions
+retain source-analysis scope and never become experimental observations.
+
 A request rejected before a job manifest exists returns to `planned` with the
 same work identity. Its rejection reason and the absolute path of its saved
 dispatch request remain available for correction. No execution checkpoint is

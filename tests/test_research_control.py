@@ -27,7 +27,7 @@ class Planner:
         self.calls.append(packet)
         decision = {
             'kind': self.kind, 'uncertainty': 'Is the measurement implementation valid?',
-            'evidence_ids': list(packet['development_evidence']),
+            'evidence_ids': list(packet['development_evidence']) + list(packet.get('analysis_findings', {})),
             'interpretation': 'Execution validity must be established before testing the mechanism.',
             'alternatives': [
                 {'explanation': 'The implementation is broken.', 'prediction': 'Independent replay disagrees.',
@@ -233,12 +233,14 @@ def test_analysis_resolves_existing_evidence_without_fabricating_execution(tmp_p
     with pytest.raises(ValueError, match='resolve_research_work'):
         bind_work(thread, work['work_id'], node['id'], plan)
     calls = []
-    def review(repo, directory, packet, *, purpose):
-        calls.append(packet)
-        return {'request_sha256': 'analysis', 'assessment': {'decision': 'approve',
-                'reason': 'The source declares one epoch per update; competence is unmeasured.',
-                'evidence': ['source method definition'], 'required_work': []}}
-    monkeypatch.setattr(research_review, 'review_research_packet', review)
+    class Analyst:
+        def complete(self, request):
+            calls.append(json.loads(request.prompt.input))
+            return CompletionResult(text=json.dumps({'status': 'answered',
+                'answer': 'The source declares one epoch per update; competence is unmeasured.',
+                'evidence': ['source method definition'], 'limitations': ['No learning competence measurement.'],
+                'next_steps': ['Measure learning competence.']}), usage=AgentUsage(), thread_id='analysis')
+    monkeypatch.setattr(research_review, 'CodexCliAdapter', Analyst)
     result = resolve_research_work(REPO, thread, work['work_id'])
     assert result == resolve_research_work(REPO, thread, work['work_id'])
     assert len(calls) == 1
@@ -246,6 +248,14 @@ def test_analysis_resolves_existing_evidence_without_fabricating_execution(tmp_p
     assert not result['outcome']['new_observation']
     assert result['outcome']['scientific_verdict'] == 'unverified'
     assert not list(tree.rglob('worker_report.json'))
+
+    planner = Planner('analysis')
+    second = plan_research_work(REPO, thread, transport=planner)
+    resolve_research_work(REPO, thread, second['work_id'])
+    plan_research_work(REPO, thread, transport=planner)
+    findings = planner.calls[-1]['analysis_findings']
+    assert set(findings) == {'analysis_' + work['work_id'], 'analysis_' + second['work_id']}
+    assert all(row['conclusion_excerpt'].startswith('The source declares') for row in findings.values())
 
 
 def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tmp_path, monkeypatch):
