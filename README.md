@@ -193,6 +193,21 @@ change a frozen goal. Historical operator feedback remains available as context,
 but unanswered legacy prompts do not pause the supervisor. Review failures do not
 count as approval, and publication still requires the research validation gates.
 
+The question and success bar freeze before baseline qualification. A goal with
+`baseline_evidence: []` has pending baseline assignments; it can generate and
+materialize an actual research claim and acquire inputs. Source updates, baseline
+execution and independent qualification remain available. Approval attaches the
+reviewed baseline references to the existing nodes without changing the goal bar.
+Conclusive acceptance or rejection of a comparison and terminal verification reject
+pending or stale baseline reviews.
+
+A missing real holdout protocol returns `protocol_required` and routes the agent to
+`submit_feasibility_envelope`. This is autonomous design and independent review
+work, not an external blocker. A reviewed protocol must still be registered before
+the success bar freezes. The compiler accepts the independent review's
+`adversary_pass` registration, while rejecting a missing holdout or a transfer
+screen as a final evaluation protocol.
+
 Before baseline qualification, `develop_research_hypotheses` records the connector's
 existing ideas as unverified graph nodes. It then develops a null/confound explanation
 and two distinct mechanism hypotheses, critiques their evidence and distinguishing tests, and revises weak

@@ -423,6 +423,9 @@ def is_terminal(
                 ).read_text(encoding="utf-8")
             )
         )
+        from research_harness.memory.baseline_review import require_goal_baseline_approval
+        from research_harness.orchestrator.goal_contract import serialize_goal_contract
+        require_goal_baseline_approval(repo, pdir.parent, serialize_goal_contract(contract))
         rebuilt_goal = project_research_goal(contract)
     except (OSError, json.JSONDecodeError, ValueError):
         return False, None
@@ -1263,7 +1266,13 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         f"  1. get_research_state(thread_id=\"{tid}\") 로 정확한 현재 상태 확인.",
         "  2. needed_resources가 있으면 advance_research의 획득 경계로 해결해.",
         "     frozen bar를 좁히지 말고 checkpoint 또는 hard_external_block을 보존해.",
-        "     preflight_required는 외부 차단이 아니다. 문헌 원문을 찾아 방법을",
+        "     기준선 승인은 claim 생성의 선행 조건이 아니다. 정식 노드가 없으면",
+        "     advance_research로 주장과 실행 계획부터 만들고 기준선은 증거 요건으로 해결해.",
+        "     protocol_required이면 미사용 holdout과 평가 판정식을 설계하여",
+        "     submit_feasibility_envelope의 독립 검토에 제출하고 승인 후 advance_research로 돌아가.",
+        "     baseline_evidence가 비어 있으면 기준선 미승인 상태이며 목표가 고정돼도",
+        "     문헌 갱신·preflight·자격 검토를 진행할 수 있다. 비교 주장 채택 전에는 승인이 필요해.",
+        "     문헌 원문을 찾아 방법을",
         "     검토하기 전에 hypotheses가 없으면 develop_research_hypotheses를 호출해.",
         "     선택된 가설의 작은 판별 실험으로 경쟁 설명을 구별하고 구현 전제를 확인해.",
         "     그 근거를 바탕으로 기준선을 구현하고 execute_baseline_preflight로 측정해.",

@@ -44,17 +44,40 @@ def _packet(repo: Path, thread_dir: Path, qualification: dict[str, Any]) -> dict
             if not path.is_relative_to(tree):
                 raise ValueError('baseline review artifact escapes the thread tree')
             artifacts[str(path)] = json.loads(path.read_text())
-    return {'qualification': qualification, 'dossier': dossier, 'candidate_details': details, 'execution_verification': verified, 'artifacts': artifacts}
+    goal_path = thread_dir / 'production/reorientation/goal_contract.json'
+    goal = json.loads(goal_path.read_text()) if goal_path.exists() else {}
+    return {'qualification': qualification, 'dossier': dossier, 'candidate_details': details,
+            'execution_verification': verified, 'artifacts': artifacts,
+            'pending_assignment_goal': goal if goal.get('baseline_evidence') == [] else None}
 
 
 def _digest(packet: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(packet, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
+def baseline_roles_frozen(thread_dir: Path) -> bool:
+    """Freeze approved implementations, not the question that precedes them."""
+    path = thread_dir / 'production/reorientation/goal_contract.json'
+    if not path.exists():
+        return False
+    contract = json.loads(path.read_text())
+    return contract.get('baseline_evidence') != [] or (thread_dir / 'market/baseline_qualification.json').exists()
+
+
+def require_goal_baseline_approval(repo: Path, thread_dir: Path, contract: dict[str, Any]) -> None:
+    """A goal frozen without baseline assignments still requires their later review."""
+    if contract.get('baseline_evidence') != []:
+        return
+    path = thread_dir / 'market/baseline_qualification.json'
+    if not path.exists():
+        raise ValueError('baseline qualification is pending; submit_baseline_qualification before promoting a comparative claim')
+    require_baseline_approval(repo, thread_dir, json.loads(path.read_text()))
+
+
 def update_baseline_sources(repo: Path, thread_dir: Path, dossier: dict[str, Any], details: dict[str, str]) -> dict[str, Any]:
     """Store unqualified literature candidates without granting arbitrary file writes."""
-    if (thread_dir / 'production/reorientation/goal_contract.json').exists():
-        raise ValueError('baseline sources are frozen for this goal contract')
+    if baseline_roles_frozen(thread_dir):
+        raise ValueError('baseline sources are frozen for the approved baseline roles')
     brief = json.loads((thread_dir / 'market/market_research_brief.json').read_text())
     dossier = json.loads(json.dumps(dossier))
     identifier = brief['baseline_dossier_id']
@@ -87,6 +110,29 @@ def update_baseline_sources(repo: Path, thread_dir: Path, dossier: dict[str, Any
     return {'status': 'recorded', 'dossier_id': identifier, 'revision': revision, 'scientific_approval': False}
 
 
+def _record_qualification(thread_dir: Path, qualification: dict[str, Any]) -> None:
+    _write(thread_dir / 'market/baseline_qualification.json', qualification)
+    state_path = thread_dir / 'production/tree/search_state.json'
+    if not state_path.exists():
+        return
+    state = json.loads(state_path.read_text())
+    references = [{
+        'baseline_dossier_id': qualification['dossier_id'],
+        'candidate_ids': [row['candidate_id'] for row in qualification['assignments']],
+        'roles': [row['role'] for row in qualification['assignments']],
+    }]
+    for node in state['nodes']:
+        if (not node.get('baseline_refs') and node.get('status') not in {'pruned', 'archived'}
+                and (node.get('strategy') or {}).get('derived_from_direction_id')):
+            node['baseline_refs'] = references
+            node_path = state_path.parent / 'nodes' / node['id'] / 'node.json'
+            if node_path.exists():
+                stored = json.loads(node_path.read_text())
+                stored['baseline_refs'] = references
+                _write(node_path, stored)
+    _write(state_path, state)
+
+
 def propose_baselines(repo: Path, thread_dir: Path, qualification: dict[str, Any]) -> dict[str, Any]:
     packet = _packet(repo, thread_dir, qualification)
     digest = _digest(packet)
@@ -96,7 +142,7 @@ def propose_baselines(repo: Path, thread_dir: Path, qualification: dict[str, Any
         review = json.loads(review_path.read_text())
         if review.get('reviewer') == 'independent-research-review':
             if review['decision'] == 'approve':
-                _write(thread_dir / 'market/baseline_qualification.json', qualification)
+                _record_qualification(thread_dir, qualification)
             return {'status': 'ok' if review['decision'] == 'approve' else 'rejected', 'review': review}
     proposal_path = root / f'{digest}.proposal.json'
     _write(proposal_path, packet)
@@ -117,7 +163,7 @@ def propose_baselines(repo: Path, thread_dir: Path, qualification: dict[str, Any
     }
     _write(review_path, record)
     if record['decision'] == 'approve':
-        _write(thread_dir / 'market/baseline_qualification.json', qualification)
+        _record_qualification(thread_dir, qualification)
     return {'status': 'ok' if record['decision'] == 'approve' else 'rejected',
             'proposal_digest': digest, 'review': record,
             'next_step': 'Continue research.' if record['decision'] == 'approve' else 'Resolve the review findings and submit revised execution evidence.'}

@@ -20,12 +20,12 @@ from research_harness.schemas.validator import validate_named_schema
 TargetScope = Literal["deployment", "feasibility", "directional"]
 FalsifierKind = Literal["real_holdout"]
 PredicateOperator = Literal[">=", ">", "<=", "<", "=="]
-RegisteredBy = Literal["operator", "supervisor_bootstrap"]
+RegisteredBy = Literal["operator", "supervisor_bootstrap", "adversary_pass"]
 
 _TARGET_SCOPES = frozenset({"deployment", "feasibility", "directional"})
 _FALSIFIER_KINDS = frozenset({"real_holdout"})
 _PREDICATE_OPERATORS = frozenset({">=", ">", "<=", "<", "=="})
-_REGISTERED_BY = frozenset({"operator", "supervisor_bootstrap"})
+_REGISTERED_BY = frozenset({"operator", "supervisor_bootstrap", "adversary_pass"})
 _BASELINE_ROLE_VALUES = frozenset(
     {"current_best_known", "naive", "random_or_null"}
 )
@@ -39,8 +39,8 @@ class GoalContractError(ValueError):
     pass
 
 
-class BaselinePreflightRequired(GoalContractError):
-    """Research preparation work remains; this is not an external outage."""
+class EvaluationProtocolRequired(GoalContractError):
+    """The harness must register a prospective holdout protocol before freezing."""
 
 
 def _canonical_json(value: object) -> str:
@@ -209,14 +209,14 @@ class GoalContractCompilerInput:
             scope not in _TARGET_SCOPES for scope in self.acceptable_scopes
         ):
             raise GoalContractError("acceptable scopes are invalid")
-        if not self.baseline_evidence or any(
+        if any(
             not isinstance(item, BaselineEvidence) for item in self.baseline_evidence
         ):
-            raise GoalContractError("baseline evidence must not be empty")
+            raise GoalContractError("baseline evidence must contain BaselineEvidence values")
         missing_baseline_roles = _BASELINE_ROLE_VALUES - {
             item.role for item in self.baseline_evidence
         }
-        if missing_baseline_roles:
+        if self.baseline_evidence and missing_baseline_roles:
             raise GoalContractError(
                 "baseline evidence is missing required roles "
                 f"{sorted(missing_baseline_roles)}"
@@ -719,15 +719,12 @@ def goal_contract_input_from_artifacts(
         raise GoalContractError(
             "loaded baseline dossier id does not match the requested id"
         )
-    if baseline_dossier.get("selected") is None and baseline_qualification is None:
-        raise BaselinePreflightRequired(
-            "baseline dossier candidates are unqualified; run baseline preflight "
-            "and submit baseline_qualification before compiling the goal contract"
-        )
     if baseline_qualification is not None and not isinstance(baseline_artifact_root, Path):
         raise GoalContractError(
             "baseline_artifact_root must be a Path when qualification is supplied"
         )
+    if (feasibility_envelope.get("external_falsifier") or {}).get("kind", "none") != "real_holdout":
+        raise EvaluationProtocolRequired("register an independently reviewed real_holdout evaluation protocol")
     question = _text(operator_problem, "operator problem")
     extracted = _mapping(grilling_record.get("extracted"), "grilling extracted")
     intent = _mapping(
@@ -785,10 +782,8 @@ def goal_contract_input_from_artifacts(
                 artifact_root=baseline_artifact_root,
             )
             if baseline_qualification is not None
-            else _baseline_evidence_from_dossier(
-                baseline_dossier,
-                dossier_id=dossier_id,
-            )
+            else (_baseline_evidence_from_dossier(baseline_dossier, dossier_id=dossier_id)
+                  if baseline_dossier.get("selected") is not None else ())
         ),
         safety_limits=normalized_safety,
         holdout_requirement=_parse_holdout(

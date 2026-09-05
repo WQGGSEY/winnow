@@ -47,7 +47,11 @@ class BaselineDossierTests(unittest.TestCase):
             dossier["selected"] = None
             frozen = thread / "production/reorientation/goal_contract.json"
             frozen.parent.mkdir(parents=True)
-            frozen.write_text("{}")
+            frozen.write_text('{"baseline_evidence": []}')
+            before = frozen.read_bytes()
+            self.assertEqual(update_baseline_sources(root, thread, dossier, details)["status"], "recorded")
+            self.assertEqual(frozen.read_bytes(), before)
+            (thread / "market/baseline_qualification.json").write_text('{}')
             with self.assertRaisesRegex(ValueError, "frozen"):
                 update_baseline_sources(root, thread, dossier, details)
 
@@ -284,6 +288,23 @@ class BaselineDossierTests(unittest.TestCase):
                 (root / "candidates/c_best.md").write_text("changed method evidence")
                 propose_baselines(root, tdir, qualification)
                 self.assertEqual(reviewer.call_count, 2)
+                state_path = tdir / "production/tree/search_state.json"
+                state_path.write_text(json.dumps({"nodes": [{"id": "n_claim", "baseline_refs": [], "strategy": {"derived_from_direction_id": "direction_test"}}]}))
+                contract_path = tdir / "production/reorientation/goal_contract.json"
+                contract_path.parent.mkdir(parents=True)
+                contract_path.write_text('{"baseline_evidence": [], "bar": "unchanged"}')
+                original_contract = contract_path.read_bytes()
+                (root / "candidates/c_best.md").write_text("corrected implementation evidence")
+                reviewer.return_value["assessment"]["decision"] = "approve"
+                approved = propose_baselines(root, tdir, qualification)
+                self.assertEqual(approved["status"], "ok")
+                refs = json.loads(state_path.read_text())["nodes"][0]["baseline_refs"]
+                self.assertEqual(set(refs[0]["roles"]), {"current_best_known", "naive", "random_or_null"})
+                self.assertEqual(contract_path.read_bytes(), original_contract)
+                state_path.write_text(json.dumps({"nodes": [{"id": "n_claim", "baseline_refs": [], "strategy": {"derived_from_direction_id": "direction_test"}}]}))
+                propose_baselines(root, tdir, qualification)
+                self.assertEqual(json.loads(state_path.read_text())["nodes"][0]["baseline_refs"], refs)
+                self.assertEqual(reviewer.call_count, 3)
 
     def test_selection_rejects_mismatched_comparison_and_runner_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

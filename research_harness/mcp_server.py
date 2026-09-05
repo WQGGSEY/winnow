@@ -125,7 +125,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "update_baseline_sources",
-        "description": "Update this thread's unqualified literature dossier before goal freezing. Supply a full baseline_dossier object and candidate_details mapping each candidate ID to source/method analysis text. The harness assigns all file paths. This does not approve a baseline. Use this tool instead of editing dossier files through the shell.",
+        "description": "Update this thread's unqualified literature dossier while baseline qualification is pending. Supply a full baseline_dossier object and candidate_details mapping each candidate ID to source/method analysis text. The harness assigns all file paths. This does not approve a baseline. Use this tool instead of editing dossier files through the shell.",
         "inputSchema": {
             "type": "object", "required": ["thread_id", "dossier", "candidate_details"],
             "properties": {"thread_id": {"type": "string"}, "dossier": load_schema("baseline_dossier"), "candidate_details": {"type": "object", "additionalProperties": {"type": "string"}}},
@@ -133,7 +133,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "execute_baseline_preflight",
-        "description": "Before a goal contract exists, write and execute ONE baseline implementation using an experiment_plan and node object. The harness assigns workspace, binds the operator input snapshot, enforces compute limits, runs LocalRunner, and returns replayable evidence. Use exactly one baseline_evidence_requirement and report only that baseline key. This is execution evidence, not scientific approval. Implement methods yourself after retrieving primary sources; lack of existing implementation is work to do.",
+        "description": "While baseline qualification is pending, write and execute ONE baseline implementation using an experiment_plan and node object. The harness assigns workspace, binds the operator input snapshot, enforces compute limits, runs LocalRunner, and returns replayable evidence. Use exactly one baseline_evidence_requirement and report only that baseline key. This is execution evidence, not scientific approval. Implement methods yourself after retrieving primary sources; lack of existing implementation is work to do.",
         "inputSchema": {
             "type": "object", "required": ["thread_id", "node", "experiment_plan", "role"],
             "properties": {
@@ -313,10 +313,7 @@ TOOL_DEFINITIONS = [
             "required": ["thread_id", "envelope"],
             "properties": {
                 "thread_id": {"type": "string"},
-                "envelope": {
-                    "type": "object",
-                    "description": "FeasibilityEnvelope object — see feasibility_envelope.schema.json.",
-                },
+                "envelope": load_schema("feasibility_envelope"),
             },
         },
     },
@@ -1414,6 +1411,12 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
         "baseline_dossier_candidate_yaml": baseline_dossier_yaml,
         "baseline_analysis_md": baseline_analysis_md,
         "baseline_qualification": _read_json(market_dir / "baseline_qualification.json"),
+        "baseline_preparation_contract": (
+            "Create the research claim and plan through advance_research before waiting for baseline qualification. "
+            "An empty GoalContract.baseline_evidence means assignments are pending, not approved. "
+            "Source updates and baseline preflight remain available until approval. "
+            "Use diagnostics to resolve prerequisites; qualify baselines before promoting a comparative claim."
+        ),
         "hypotheses": _read_json(d / "production/hypotheses/current.json"),
         "reference_papers": reference_papers,
         "_market_usage_contract": (
@@ -1421,7 +1424,7 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
             "choose current_best_known, naive, and random_or_null using sourced "
             "methods and matched task/data/split/budget/metric conditions. Reproduce "
             "them in preflight execution artifacts and submit_baseline_qualification "
-            "before freezing a new goal. Published scores on different tasks are "
+            "before promoting a comparative claim. Published scores on different tasks are "
             "not comparable thresholds. A source citation does not prove suitability."
         ),
         "search_state": _read_json(d / "production" / "tree" / "search_state.json"),
@@ -1504,7 +1507,7 @@ def _blind_command_id(
     *,
     bind_state: bool = True,
 ) -> str:
-    identity: dict[str, Any] = {"thread_id": tid, "trigger": trigger}
+    identity: dict[str, Any] = {"thread_id": tid, "trigger": trigger, "planning_version": 3}
     if bind_state:
         thread_dir = _thread_dir(tid)
         identity["search"] = _read_json(
@@ -3616,6 +3619,13 @@ def _handle_submit_professor_decision_locked(
     node = next((n for n in state["nodes"] if n["id"] == node_id), None)
     if not node:
         return {"status": "rejected", "reason": f"node {node_id} not in search_state"}
+    from research_harness.memory.baseline_review import require_goal_baseline_approval
+
+    try:
+        require_goal_baseline_approval(_repo_root(), _thread_dir(tid),
+            _read_json(_thread_dir(tid) / "production/reorientation/goal_contract.json") or {})
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return {"status": "rejected", "reason": str(exc), "next_tool_to_call": "submit_baseline_qualification"}
     if transition == "promoted":
         worker_report = _read_json(
             state_path.parent / "nodes" / node_id / "worker_report.json"
@@ -3806,14 +3816,15 @@ def handle_update_baseline_sources(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def handle_submit_baseline_qualification(args: dict[str, Any]) -> dict[str, Any]:
-    from research_harness.memory.baseline_review import propose_baselines
+    from research_harness.memory.baseline_review import baseline_roles_frozen, propose_baselines
     from research_harness.adapters.codex_cli import CodexCliError
 
     tid = args["thread_id"]
     with _exclusive_adaptive_writer(tid):
-        if (_thread_dir(tid) / "production" / "reorientation" / "goal_contract.json").exists():
-            return {"status": "rejected", "reason": "baseline roles are frozen in the existing goal contract"}
         qualification = args["qualification"]
+        if (baseline_roles_frozen(_thread_dir(tid))
+                and _read_json(_thread_dir(tid) / "market/baseline_qualification.json") != qualification):
+            return {"status": "rejected", "reason": "baseline roles are already qualified and frozen"}
         try:
             return propose_baselines(_repo_root(), _thread_dir(tid), qualification)
         except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:
@@ -3822,12 +3833,13 @@ def handle_submit_baseline_qualification(args: dict[str, Any]) -> dict[str, Any]
 
 def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.runner.baseline_preflight import execute_baseline_preflight
+    from research_harness.memory.baseline_review import baseline_roles_frozen
     from research_harness.settings_scoped import resolve_for_thread
 
     tid = args["thread_id"]
     with _exclusive_adaptive_writer(tid):
-        if (_thread_dir(tid) / "production/reorientation/goal_contract.json").exists():
-            return {"status": "rejected", "reason": "baseline preparation is closed for the frozen goal"}
+        if baseline_roles_frozen(_thread_dir(tid)):
+            return {"status": "rejected", "reason": "baseline preparation is closed for the approved baseline roles"}
         try:
             return execute_baseline_preflight(
                 _repo_root(), _thread_dir(tid), node=args["node"], plan=args["experiment_plan"],
@@ -5407,6 +5419,9 @@ def handle_submit_professor_user_goal_attestation(
                 verify_terminal_confirmation,
             )
             contract = blind_engine.read_goal_contract()
+            from research_harness.memory.baseline_review import require_goal_baseline_approval
+            from research_harness.orchestrator.goal_contract import serialize_goal_contract
+            require_goal_baseline_approval(_repo_root(), _thread_dir(tid), serialize_goal_contract(contract))
             verify_terminal_confirmation(
                 blind_engine.paths.confirmation_use, contract,
                 binding={"contract_id": strong_binding.contract_id,

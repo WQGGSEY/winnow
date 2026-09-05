@@ -314,8 +314,8 @@ def test_contract_rejects_no_falsifier_and_leaking_serialized_fields() -> None:
         "predicate": {"metric": "utility", "op": ">=", "threshold": 0.05},
         "registered_by": "adversary_pass",
     }
-    with pytest.raises(GoalContractError, match="registrant"):
-        _compiler_input(grilling, envelope)
+    reviewed = compile_goal_contract(_compiler_input(grilling, envelope))
+    assert reviewed.holdout_requirement.registered_by == "adversary_pass"
 
     legacy_screen = serialize_goal_contract(_contract())
     legacy_screen["holdout_requirement"]["kind"] = "cross_generator_transfer"
@@ -408,17 +408,21 @@ def test_contract_uses_qualified_roles_and_can_select_second_candidate(
     )
 
 
-def test_contract_rejects_unqualified_dossier_without_preflight(tmp_path: Path) -> None:
+def test_contract_freezes_success_before_baseline_qualification(tmp_path: Path) -> None:
     _write_unqualified_baselines(tmp_path)
     grilling, envelope = _artifacts()
-    with pytest.raises(GoalContractError, match="unqualified"):
-        goal_contract_input_from_artifacts(
-            repo_root=tmp_path,
-            baseline_dossier_id="bd_qualified_test",
-            operator_problem="Find a safe intervention that improves utility.",
-            grilling_record=grilling,
-            feasibility_envelope=envelope,
-        )
+    source = goal_contract_input_from_artifacts(
+        repo_root=tmp_path,
+        baseline_dossier_id="bd_qualified_test",
+        operator_problem="Find a safe intervention that improves utility.",
+        grilling_record=grilling,
+        feasibility_envelope=envelope,
+    )
+    contract = compile_goal_contract(source)
+    assert contract.baseline_evidence == ()
+    assert contract.mandatory_baselines == tuple(sorted(grilling["extracted"]["mandatory_baselines"]))
+    assert parse_goal_contract(serialize_goal_contract(contract)) == contract
+    assert not (tmp_path / "runs/threads/thread_test/market/baseline_qualification.json").exists()
 
 
 def test_contract_rejects_stale_baseline_replay(tmp_path: Path) -> None:

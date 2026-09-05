@@ -74,8 +74,8 @@ from research_harness.orchestrator.search_state import (
     validate_search_state,
 )
 from research_harness.orchestrator.goal_contract import (
-    BaselinePreflightRequired,
     GoalContract,
+    EvaluationProtocolRequired,
     compile_goal_contract,
     goal_contract_input_from_artifacts,
     parse_goal_contract,
@@ -658,13 +658,17 @@ class BlindSequentialResearch:
                 ),
             )
             contract = compile_goal_contract(source)
-        except BaselinePreflightRequired:
-            hypotheses = _read_json(self._thread_dir / "production/hypotheses/current.json") if (self._thread_dir / "production/hypotheses/current.json").exists() else {}
+        except EvaluationProtocolRequired:
             result = {
-                "status": "preflight_required",
-                "next_tool_to_call": "execute_baseline_preflight" if hypotheses.get("status") == "ready_for_diagnostic" else "develop_research_hypotheses",
-                "hypotheses": hypotheses,
-                "required_work": "Develop and critique prospective hypotheses before long baseline training. Use the selected small diagnostic to distinguish competing explanations and resolve implementation prerequisites. Then implement and qualify matched baselines for scientific comparisons. Hypothesis candidates need no baseline approval; supported claims still require verified experiments.",
+                "status": "protocol_required",
+                "next_tool_to_call": "submit_feasibility_envelope",
+                "required_work": (
+                    "Read the registered envelope and propose a prospective real_holdout protocol with an untouched "
+                    "holdout_source_id and a meaningful metric predicate. Submit the full envelope for independent review "
+                    "without changing the registered resources, scope, or increasing the budget. Do not inspect the holdout. "
+                    "After approval, call advance_research to create the claim before baseline qualification. "
+                    "This is autonomous research design work, not an external blocker or a request for human approval."
+                ),
             }
             _write_json_atomic(self._paths.migration_block, result)
             raise _MigrationBlocked(result)
@@ -1198,6 +1202,14 @@ class BlindSequentialResearch:
             _read_json(worker_path),
             data_status="satisfied",
         )
+        if isinstance(evidence, (StrongCandidate, ConclusiveFailure)):
+            from research_harness.memory.baseline_review import require_goal_baseline_approval
+            try:
+                require_goal_baseline_approval(self._repo_root, self._thread_dir,
+                                               serialize_goal_contract(self.read_goal_contract()))
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                return _Immediate({"status": "baseline_qualification_required", "node_id": node_id,
+                                   "next_tool_to_call": "submit_baseline_qualification", "reason": str(exc)})
         if isinstance(evidence, StrongCandidate):
             falsifier_path = (
                 self._thread_dir
@@ -1393,7 +1405,7 @@ class BlindSequentialResearch:
                     "candidate_ids": [item.candidate_id for item in contract.baseline_evidence],
                     "roles": ["current_best_known", "naive", "random_or_null"],
                 }
-            ],
+            ] if contract.baseline_evidence else [],
             "runtime_profile": {
                 "worker_type": "experiment_worker",
                 "timeout_policy": "task_class_dependent",
@@ -1406,6 +1418,16 @@ class BlindSequentialResearch:
             },
             "strategy": strategy,
         }
+        qualification_path = self._thread_dir / "market/baseline_qualification.json"
+        if not contract.baseline_evidence and qualification_path.exists():
+            from research_harness.memory.baseline_review import require_goal_baseline_approval
+            require_goal_baseline_approval(self._repo_root, self._thread_dir, serialize_goal_contract(contract))
+            qualification = _read_json(qualification_path)
+            node["baseline_refs"] = [{
+                "baseline_dossier_id": qualification["dossier_id"],
+                "candidate_ids": [row["candidate_id"] for row in qualification["assignments"]],
+                "roles": [row["role"] for row in qualification["assignments"]],
+            }]
         if state is None:
             state = initialize_search_state(
                 search_id=f"blind_{contract.contract_id.removeprefix('contract_')[:16]}",

@@ -71,10 +71,19 @@ The contract digest is the only source of truth for the success bar. This
 structural boundary does not prove that retained free text is semantically
 strategy-free. A separate goal-only intake projection must enforce that property.
 
-The compiler accepts only a `real_holdout` registered by the operator or
-supervisor bootstrap. A `cross_generator_transfer` result remains readable as a
+The compiler accepts only a `real_holdout` registered by the operator,
+supervisor bootstrap, or the independent protocol review (`adversary_pass`). A `cross_generator_transfer` result remains readable as a
 legacy screen, but it cannot author a `GoalContract` or permit
 `goal_achieved`. The compiler does not add a `none` falsifier kind.
+
+Baseline implementation approval is not a prerequisite for direction generation.
+An empty `baseline_evidence` freezes the success requirements with assignments
+pending. Baseline preparation stays open until independently approved; approval
+binds the references to the already created nodes. Promotion and terminal checks
+replay that approval against the exact artifacts. The goal bar remains unchanged.
+This replaces the preparation loop that could execute dozens of baseline runs
+without ever creating a claim. Missing evaluation protocols route to autonomous
+protocol review before goal compilation instead of an external blocker.
 
 ### Make blindness a data-flow property
 

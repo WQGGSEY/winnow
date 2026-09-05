@@ -1,4 +1,4 @@
-"""Execute one baseline before a research direction or success contract exists."""
+"""Execute one baseline while its scientific qualification is pending."""
 from __future__ import annotations
 
 import json

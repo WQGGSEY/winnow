@@ -28,7 +28,7 @@ def _make_thread(repo: Path, tid: str) -> Path:
     return tdir
 
 
-def _write_verified_terminal_state(tdir: Path) -> None:
+def _write_verified_terminal_state(tdir: Path, *, pending_baselines: bool = False) -> None:
     from research_harness.acquisition import (
         AcquisitionBudget,
         AcquisitionComplete,
@@ -103,7 +103,7 @@ def _write_verified_terminal_state(tdir: Path) -> None:
             operator_requirements=("provide an actionable intervention",),
             target_scope="directional",
             acceptable_scopes=("directional",),
-            baseline_evidence=(
+            baseline_evidence=() if pending_baselines else (
                 BaselineEvidence(
                     candidate_id="baseline_current",
                     method="baseline B",
@@ -856,6 +856,23 @@ class TerminalDetectionTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertEqual(ts.is_terminal(repo, "t1"), (False, None))
+
+    def test_terminal_requires_later_baseline_review_for_early_goal(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            tdir = _make_thread(repo, "t1")
+            _write_verified_terminal_state(tdir, pending_baselines=True)
+            self.assertEqual(ts.is_terminal(repo, "t1", require_rendered=False), (False, None))
+            market = tdir / "market"
+            market.mkdir(exist_ok=True)
+            (market / "baseline_qualification.json").write_text('{}')
+            with mock.patch("research_harness.memory.baseline_review.require_baseline_approval") as review:
+                self.assertEqual(ts.is_terminal(repo, "t1", require_rendered=False),
+                                 (True, "accept_with_goal_achieved"))
+                review.assert_called_once_with(repo, tdir, {})
+            with mock.patch("research_harness.memory.baseline_review.require_baseline_approval",
+                            side_effect=ValueError("stale baseline review")):
+                self.assertEqual(ts.is_terminal(repo, "t1", require_rendered=False), (False, None))
 
     def test_terminal_rederives_worker_and_falsifier_semantics(self):
         with TemporaryDirectory() as tmp:

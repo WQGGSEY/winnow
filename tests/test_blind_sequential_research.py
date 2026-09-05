@@ -1454,38 +1454,40 @@ def test_migration_freezes_the_validated_intake_handoff_contract(
     assert contract["bar"]["success_criteria"] == new_contract["success_criteria"]
 
 
-def test_unqualified_baseline_routes_to_hypotheses_before_execution(tmp_path, monkeypatch):
-    from research_harness.orchestrator import blind_sequential_research as module
-    from research_harness.orchestrator.goal_contract import BaselinePreflightRequired
-
+def test_missing_holdout_routes_to_autonomous_protocol_review(tmp_path):
     thread_dir = tmp_path / "thread"
     thread_dir.mkdir()
     _write_legacy_migration_artifacts(thread_dir)
-
-    def unqualified(**kwargs):
-        raise BaselinePreflightRequired("unqualified")
-
-    monkeypatch.setattr(module, "goal_contract_input_from_artifacts", unqualified)
+    path = thread_dir / "production/feasibility_envelope.json"
+    envelope = json.loads(path.read_text())
+    envelope["external_falsifier"] = {"kind": "none"}
+    path.write_text(json.dumps(envelope))
     engine = BlindSequentialResearch(repo_root=REPO_ROOT, thread_dir=thread_dir,
                                     writer_lock=_writer_lock, direction_generator=_Generator(),
                                     structural_assessor=_Assessor(), acquisition=_Acquisition())
-    result = engine.advance_research(command_id="before-hypotheses")
-    assert result["next_tool_to_call"] == "develop_research_hypotheses"
-    path = thread_dir / "production/hypotheses/current.json"
-    path.parent.mkdir(parents=True)
-    path.write_text(json.dumps({"status": "ready_for_diagnostic", "candidates": []}))
-    result = engine.advance_research(command_id="after-hypotheses")
-    assert result["next_tool_to_call"] == "execute_baseline_preflight"
-    assert not (thread_dir / "production/reorientation/goal_contract.json").exists()
-    assert not (thread_dir / "production/tree/search_state.json").exists()
+    result = engine.advance_research(command_id="missing-protocol")
+    assert result["status"] == "protocol_required"
+    assert result["next_tool_to_call"] == "submit_feasibility_envelope"
+    assert not engine.paths.goal_contract.exists()
 
 
+@pytest.mark.parametrize("unqualified", [False, True])
 def test_fresh_thread_without_search_state_materializes_one_active_node(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch, unqualified: bool,
 ) -> None:
     thread_dir = tmp_path / "runs" / "threads" / "thread_fresh"
     thread_dir.mkdir(parents=True)
     _write_legacy_migration_artifacts(thread_dir)
+    if unqualified:
+        from research_harness.orchestrator import goal_contract as compiler
+        original = compiler.load_baseline_dossier
+
+        def pending_dossier(*args, **kwargs):
+            dossier = original(*args, **kwargs)
+            dossier["selected"] = None
+            return dossier
+
+        monkeypatch.setattr(compiler, "load_baseline_dossier", pending_dossier)
     acquisition = _Acquisition()
     engine = BlindSequentialResearch(
         repo_root=REPO_ROOT,
@@ -1528,6 +1530,14 @@ def test_fresh_thread_without_search_state_materializes_one_active_node(
             "legacy_audit_only": False,
         }
     }
+
+    if unqualified:
+        for index, write_report in enumerate((_write_conclusive_failure, _write_strong_candidate)):
+            write_report(engine, command)
+            result = engine.advance_research(command_id=f"pending-baseline-evidence-{index}")
+            assert result["status"] == "baseline_qualification_required"
+            assert result["next_tool_to_call"] == "submit_baseline_qualification"
+            assert not engine.read_state().closed_attempts
 
 
 def test_conflicting_legacy_success_scopes_create_operational_block(

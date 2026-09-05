@@ -34,6 +34,15 @@ def test_preflight_tool_advertises_the_experiment_validation_contract(tmp_path):
     with unittest.TestCase().assertRaisesRegex(SchemaValidationError, "failure_index_hints"):
         validate_schema(tool["inputSchema"], arguments)
 
+    from tests.test_feasibility_envelope import _valid_envelope
+    envelope = _valid_envelope()
+    protocol_tool = next(t for t in srv.TOOL_DEFINITIONS if t["name"] == "submit_feasibility_envelope")
+    proposal = {"thread_id": "t1", "envelope": envelope}
+    validate_schema(protocol_tool["inputSchema"], proposal)
+    envelope["notes"] = ["A prospective holdout protocol."]
+    with unittest.TestCase().assertRaisesRegex(SchemaValidationError, "notes"):
+        validate_schema(protocol_tool["inputSchema"], proposal)
+
 
 def test_selector_rechecks_changed_preparation_and_checkpoint(tmp_path, monkeypatch):
     tid = "thread_resume"
