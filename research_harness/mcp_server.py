@@ -2431,6 +2431,11 @@ def handle_submit_feasibility_envelope(args: dict[str, Any], settings: dict[str,
 
 
 def handle_compute_falsifier_result(args: dict[str, Any]) -> dict[str, Any]:
+    with _exclusive_adaptive_writer(args["thread_id"]):
+        return _handle_compute_falsifier_result_locked(args)
+
+
+def _handle_compute_falsifier_result_locked(args: dict[str, Any]) -> dict[str, Any]:
     """ADR 0006: run the envelope's external_falsifier predicate over held-out
     evidence and persist the harness-produced FalsifierResult. This is the
     ONLY producer of a passing falsifier_result — the worker cannot stamp
@@ -2484,6 +2489,22 @@ def handle_compute_falsifier_result(args: dict[str, Any]) -> dict[str, Any]:
         measured_known = probe.get("known_baseline_transfer")
 
     try:
+        binding = _authoritative_strong_binding(tid)
+        if binding is None:
+            return {"status": "rejected", "reason": "falsifier requires an authoritative active direction"}
+        if falsifier.get("kind") == "real_holdout":
+            from contextlib import nullcontext
+            from research_harness.orchestrator.confirmation_use import consume_confirmation, digest_confirmation_evidence
+
+            engine = _build_blind_research_engine(tid)
+            contract = engine.read_goal_contract()
+            consume_confirmation(
+                engine.paths.confirmation_use, contract,
+                binding={"contract_id": binding.contract_id, "attempt_id": binding.attempt_id,
+                         "direction_id": binding.direction_id, "node_id": binding.node_id,
+                         "manifest_id": binding.manifest_id},
+                evidence_digest=digest_confirmation_evidence(contract, evidence), writer_lock=nullcontext,
+            )
         result = compute_falsifier_result(
             thread_id=tid,
             falsifier=falsifier,
@@ -5326,7 +5347,22 @@ def handle_submit_professor_user_goal_attestation(
                 _read_json(blind_engine.paths.node_attempts) or {},
                 node_id=str(promoted.get("promoted_id")),
             )
-        except (BlindSequentialResearchError, OSError, ValueError) as exc:
+            from research_harness.orchestrator.confirmation_use import (
+                confirmation_evidence_from_result, digest_confirmation_evidence,
+                verify_terminal_confirmation,
+            )
+            contract = blind_engine.read_goal_contract()
+            verify_terminal_confirmation(
+                blind_engine.paths.confirmation_use, contract,
+                binding={"contract_id": strong_binding.contract_id,
+                         "attempt_id": strong_binding.attempt_id,
+                         "direction_id": strong_binding.direction_id,
+                         "node_id": strong_binding.node_id,
+                         "manifest_id": strong_binding.manifest_id},
+                evidence_digest=digest_confirmation_evidence(
+                    contract, confirmation_evidence_from_result(falsifier_result)),
+            )
+        except (BlindSequentialResearchError, OSError, ValueError, KeyError, TypeError) as exc:
             missing_gates.append(f"active blind attempt binding: {exc}")
         execution_evidence: dict[str, Any] | None = None
         try:

@@ -591,6 +591,21 @@ def _write_verified_terminal_state(tdir: Path) -> None:
     }
     (tree / "search_state.json").write_text(json.dumps(state), encoding="utf-8")
 
+    from contextlib import nullcontext
+    from research_harness.orchestrator.confirmation_use import (
+        confirmation_evidence_from_result, digest_confirmation_evidence,
+        initialize_confirmation_ledger_locked, consume_confirmation,
+    )
+    confirmation_path = tdir / "production" / "reorientation" / "confirmation_use.json"
+    confirmation_path.unlink(missing_ok=True)
+    initialize_confirmation_ledger_locked(confirmation_path, contract)
+    consume_confirmation(
+        confirmation_path, contract,
+        binding={key: falsifier[key] for key in ("contract_id", "attempt_id", "direction_id", "node_id", "manifest_id")},
+        evidence_digest=digest_confirmation_evidence(contract, confirmation_evidence_from_result(falsifier)),
+        writer_lock=nullcontext,
+    )
+
     summary_path = tdir / "production" / "production_run_summary.json"
     if summary_path.exists():
         from research_harness.publishing.integrity import issue_publication_receipt

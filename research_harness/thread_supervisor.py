@@ -590,6 +590,24 @@ def is_terminal(
     ):
         return False, None
 
+    from research_harness.orchestrator.confirmation_use import (
+        confirmation_evidence_from_result, digest_confirmation_evidence,
+        verify_terminal_confirmation,
+    )
+    try:
+        verify_terminal_confirmation(
+            pdir / "reorientation" / "confirmation_use.json", contract,
+            binding={"contract_id": resolved_binding.contract_id,
+                     "attempt_id": resolved_binding.attempt_id,
+                     "direction_id": resolved_binding.direction_id,
+                     "node_id": resolved_binding.node_id,
+                     "manifest_id": resolved_binding.manifest_id},
+            evidence_digest=digest_confirmation_evidence(
+                contract, confirmation_evidence_from_result(loaded_artifacts["falsifier_result"])),
+        )
+    except (OSError, ValueError, TypeError, KeyError):
+        return False, None
+
     receipt_digest = strong_result_receipt_sha256(receipt)
     if require_rendered:
         from research_harness.publishing.integrity import verify_publication_receipt

@@ -263,6 +263,10 @@ class ReorientationPaths:
         return self.root / "goal_contract.json"
 
     @property
+    def confirmation_use(self) -> Path:
+        return self.root / "confirmation_use.json"
+
+    @property
     def legacy_solution_contract(self) -> Path:
         return self.root / "solution_contract.json"
 
@@ -425,6 +429,9 @@ class BlindSequentialResearch:
                     }
                     self._write_command_receipt(command_id, input_digest, result)
                     return result
+                from research_harness.orchestrator.confirmation_use import initialize_confirmation_ledger_locked
+
+                initialize_confirmation_ledger_locked(self._paths.confirmation_use, contract)
                 if expected_checkpoint_id is not None and (
                     not isinstance(state.phase, Checkpointed)
                     or state.phase.checkpoint.checkpoint_id

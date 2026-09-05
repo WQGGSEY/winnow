@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import tempfile
@@ -92,19 +93,42 @@ def digest_confirmation_evidence(
     """Bind opaque evidence content to the frozen holdout source identity."""
     if not isinstance(contract, GoalContract):
         raise ConfirmationUseError("confirmation evidence requires a GoalContract")
-    if not isinstance(evidence, Mapping) or set(evidence) != {"observed"}:
+    if (not isinstance(evidence, Mapping) or "observed" not in evidence
+            or set(evidence) - {"observed", "adapter_provenance", "exposure_null_observed"}):
         raise ConfirmationUseError(
-            "real-holdout confirmation evidence must contain exactly observed"
+            "real-holdout confirmation evidence requires observed and known provenance/guard fields"
         )
     observed = evidence["observed"]
     if isinstance(observed, bool) or not isinstance(observed, (int, float)):
         raise ConfirmationUseError("confirmation observation must be numeric")
+    if not math.isfinite(float(observed)):
+        raise ConfirmationUseError("confirmation observation must be finite")
+    normalized = {**evidence, "observed": float(observed)}
+    if normalized.get("adapter_provenance") is None:
+        normalized.pop("adapter_provenance", None)
+    if normalized.get("exposure_null_observed") is None:
+        normalized.pop("exposure_null_observed", None)
+    else:
+        normalized["exposure_null_observed"] = float(normalized["exposure_null_observed"])
+        if not math.isfinite(normalized["exposure_null_observed"]):
+            raise ConfirmationUseError("confirmation null observation must be finite")
     return _canonical_digest(
         {
             "holdout_source_id": contract.holdout_requirement.holdout_source_id,
-            "evidence": {"observed": observed},
+            "evidence": normalized,
         }
     )
+
+
+def confirmation_evidence_from_result(result: Mapping[str, Any]) -> dict[str, Any]:
+    evidence = {"observed": result["observed"]}
+    provenance = result.get("evidence", {}).get("adapter_provenance")
+    if provenance is not None:
+        evidence["adapter_provenance"] = provenance
+    exposure = result.get("guards", {}).get("exposure_null", {}).get("observed")
+    if exposure is not None:
+        evidence["exposure_null_observed"] = exposure
+    return evidence
 
 
 def initialize_confirmation_ledger(

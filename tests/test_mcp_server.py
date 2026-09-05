@@ -16,6 +16,33 @@ from unittest import mock
 import research_harness.mcp_server as srv
 
 
+def test_confirmation_reuse_is_rejected_before_predicate_execution(tmp_path):
+    import shutil
+    from types import SimpleNamespace
+    from tests.test_thread_supervisor import _write_verified_terminal_state
+    from research_harness.falsifier import compute_falsifier_result
+    from research_harness.orchestrator.confirmation_use import confirmation_evidence_from_result
+
+    tid = "thread_confirmation"
+    tdir = tmp_path / "runs" / "threads" / tid
+    (tdir / "production").mkdir(parents=True)
+    shutil.copyfile(Path(__file__).resolve().parents[1] / "settings.json", tmp_path / "settings.json")
+    _write_verified_terminal_state(tdir)
+    result = json.loads((tdir / "production" / "rebuttal" / "falsifier_result.json").read_text())
+    binding = {key: result[key] for key in ("contract_id", "attempt_id", "direction_id", "node_id", "manifest_id")}
+    evidence = confirmation_evidence_from_result(result)
+    with srv._repo_root_scope(tmp_path), mock.patch.object(
+        srv, "_authoritative_strong_binding", return_value=SimpleNamespace(**binding)
+    ) as active, mock.patch("research_harness.falsifier.compute_falsifier_result", wraps=compute_falsifier_result) as evaluate:
+        assert srv.handle_compute_falsifier_result({"thread_id": tid, "evidence": evidence})["status"] == "ok"
+        evaluate.reset_mock()
+        active.return_value = SimpleNamespace(**{**binding, "attempt_id": "another_attempt"})
+        rejected = srv.handle_compute_falsifier_result({"thread_id": tid, "evidence": evidence})
+        assert rejected["status"] == "rejected"
+        assert "consumed" in rejected["reason"]
+        evaluate.assert_not_called()
+
+
 def test_paper_render_rechecks_evidence_after_attestation(tmp_path):
     from tests.test_sakana_paper import _build_inputs
     from tests.test_thread_supervisor import _write_verified_terminal_state
@@ -87,6 +114,7 @@ def test_paper_render_rechecks_evidence_after_attestation(tmp_path):
         assert is_terminal(tmp_path, tid)[0]
         for artifact in (publication / "paper.html", drafts / "outline.json",
                          publication / "figures" / "f_baseline.png",
+                         tdir / "production" / "reorientation" / "confirmation_use.json",
                          publication / "publication_receipt.json"):
             original = artifact.read_bytes()
             artifact.unlink()
