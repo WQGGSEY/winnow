@@ -60,6 +60,14 @@ def _arxiv_baseline_requirements():
 
 
 def _setup(tmp_path, monkeypatch):
+    from research_harness.orchestrator import research_review
+
+    monkeypatch.setattr(research_review, "review_research_packet", lambda *args, **kwargs: {
+        "request_sha256": "fixture_review", "assessment": {
+            "decision": "approve", "reason": "Input binding fixture approved for execution.",
+            "evidence": ["fixture experiment plan"], "required_work": [],
+        },
+    })
     monkeypatch.setattr(mcp, "_repo_root", lambda: tmp_path)
     source = tmp_path / "dataset.json"
     source.write_text('{"label": "data"}', encoding="utf-8")
