@@ -1,12 +1,48 @@
 {
   "type": "object",
-  "required": ["decision", "reason", "evidence", "required_work"],
+  "required": [
+    "decision",
+    "reason",
+    "evidence",
+    "required_work",
+    "next_steps"
+  ],
   "properties": {
-    "decision": {"type": "string", "enum": ["approve", "reject"]},
-    "reason": {"type": "string", "minLength": 1},
-    "evidence": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
-    "next_steps": {"type": "array", "description": "Non-blocking later work, such as qualification before a future execution. These are not prerequisites for the current decision.", "items": {"type": "string", "minLength": 1}},
-    "required_work": {"type": "array", "description": "Blocking defects that must be resolved BEFORE the current decision can be approved. Empty when decision=approve.", "items": {"type": "string", "minLength": 1}}
+    "decision": {
+      "type": "string",
+      "enum": [
+        "approve",
+        "reject"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "next_steps": {
+      "type": "array",
+      "description": "Non-blocking later work, such as qualification before a future execution. These are not prerequisites for the current decision.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required_work": {
+      "type": "array",
+      "description": "Blocking defects that must be resolved BEFORE the current decision can be approved. Empty when decision=approve.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
   },
   "additionalProperties": false
 }

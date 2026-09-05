@@ -9,7 +9,7 @@ from research_harness.orchestrator.research_review import review_research_packet
 
 
 def test_independent_review_reuses_only_matching_evidence_and_rejects_unresolved_approval(tmp_path):
-    assessment = {"decision": "reject", "reason": "incorrect method", "evidence": ["experiment.py:12"], "required_work": ["fix implementation"]}
+    assessment = {"decision": "reject", "reason": "incorrect method", "evidence": ["experiment.py:12"], "required_work": ["fix implementation"], "next_steps": []}
     result = CompletionResult(text=json.dumps(assessment), usage=AgentUsage(), thread_id="review-session")
     repo = Path(__file__).resolve().parents[1]
     with patch("research_harness.orchestrator.research_review.CodexCliAdapter.complete", return_value=result) as complete:
