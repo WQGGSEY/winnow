@@ -48,7 +48,7 @@
     "venue": "colt",
     "year": 2026,
     "track": "main",
-    "supported": true,
+    "supported": false,
     "template_url": "https://learningtheory.org/colt2026/colt2026-style.zip",
     "template_sha256": "e4e93d8bd2ebd681e0c2617f0410200acb92a0dc1c0da66f3c5342608ef47212",
     "rules_source_url": "https://learningtheory.org/colt2026/cfp.html",
@@ -57,22 +57,22 @@
     "anonymous": true,
     "requires_impact_statement": false,
     "requires_checklist": false,
-    "appendix_policy": "all proof details needed to substantiate results must be included, possibly in appendices"
+    "appendix_policy": "all proof details needed to substantiate results must be included, possibly in appendices",
+    "unsupported_reason": "Official COLT 2026 class requires algorithm2e.sty, which is not available in the verified local TeX environment; target is pinned but not advertised as compilable."
   },
   "neurips-2026-main": {
     "venue": "neurips",
     "year": 2026,
     "track": "main",
-    "supported": false,
-    "template_url": null,
-    "template_sha256": null,
+    "supported": true,
+    "template_url": "https://media.neurips.cc/Conferences/NeurIPS2026/Formatting_Instructions_For_NeurIPS_2026.zip",
+    "template_sha256": "82473931e3ef710fcd3f4a8cd4119b9de32e56825f90f9e5a6d55f2d01b817d9",
     "rules_source_url": "https://neurips.cc/Conferences/2026/MainTrackHandbook",
     "main_page_limit": 9,
     "document_family": "neurips2026",
     "anonymous": true,
     "requires_impact_statement": false,
     "requires_checklist": true,
-    "appendix_policy": "references, optional technical appendices, and the mandatory checklist do not count as content pages",
-    "unsupported_reason": "No direct official 2026 LaTeX kit URL was found during the bounded implementation window."
+    "appendix_policy": "references, optional technical appendices, and the mandatory checklist do not count as content pages"
   }
 }
