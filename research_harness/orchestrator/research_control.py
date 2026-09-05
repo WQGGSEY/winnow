@@ -252,6 +252,7 @@ def bind_work(thread: Path, work_id: str | None, node_id: str, plan: dict[str, A
     binding = {'node_id': node_id, 'plan_digest': _digest(plan), 'scope': scope}
     if work.get('binding') and work['binding'] != binding:
         raise ValueError('This work unit is already bound to another execution.')
+    work.pop('outcome', None)
     work.update(status='running', binding=binding)
     _write(thread / 'production/research_control/current.json', work)
     _write(thread / 'production/research_control/work' / work_id / 'work.json', work)
@@ -316,7 +317,8 @@ def finish_work(thread: Path, result: dict[str, Any]) -> dict[str, Any]:
     }, next_tool_to_call='plan_research_work')
     if dispatch_rejected:
         work.update(status='planned', next_tool_to_call='execute_baseline_preflight'
-                    if work['binding'].get('scope', 'baseline_preflight') == 'baseline_preflight' else 'execute_node_experiment')
+                    if work['binding'].get('scope', 'baseline_preflight') == 'baseline_preflight'
+                    else result.get('next_tool_to_call', 'execute_node_experiment'))
         del work['binding']
         request_path = thread / 'production/research_control/work' / work['work_id'] / 'dispatch_request.json'
         if request_path.exists():

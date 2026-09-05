@@ -3421,17 +3421,23 @@ def _handle_execute_node_experiment_locked(args: dict[str, Any]) -> dict[str, An
             }
             adaptive["experiments"].append(experiment_record)
             adaptive["revision"] = int(adaptive["revision"]) + 1
-    from research_harness.orchestrator.research_control import bind_work, current_work
+    from research_harness.orchestrator.research_control import bind_work, current_work, review_work_implementation
+    from research_harness.adapters.codex_cli import CodexCliError
     work = current_work(_thread_dir(tid))
     try:
         bind_work(_thread_dir(tid), args.get('work_id', work.get('work_id')), node_id, plan, scope='nodes')
     except ValueError as exc:
         return {'status': 'work_required', 'reason': str(exc), 'next_tool_to_call': 'plan_research_work'}
+    try:
+        manifest = build_job_manifest_from_experiment_plan(node, plan, run_dir)
+        validate_named_schema("job_manifest", manifest)
+        review_work_implementation(repo, _thread_dir(tid), work['work_id'], node, plan)
+    except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:
+        return {'status': 'rejected', 'reason': f'experiment dispatch failed: {exc}',
+                'next_tool_to_call': 'design_experiment_template'}
     (node_run_dir / "experiment_plan.json").write_text(
         json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    manifest = build_job_manifest_from_experiment_plan(node, plan, run_dir)
-    validate_named_schema("job_manifest", manifest)
     (node_run_dir / "job_manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

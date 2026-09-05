@@ -37,6 +37,11 @@ completion is replayable and triggers the same automatic next-work checkpoint.
 Planning policy revisions invalidate stale planned work at dispatch as well as
 at selection; input correction cannot bypass an evidence-driven replan.
 
+Both baseline preparation and formal claim experiments review the implementation
+before persisting a job manifest. Rejection keeps the claim and work unchanged
+and routes formal experiments back to template revision. A corrected dispatch
+clears the previous rejection outcome while retaining the review record.
+
 A request rejected before a job manifest exists returns to `planned` with the
 same work identity. Its rejection reason and the absolute path of its saved
 dispatch request remain available for correction. No execution checkpoint is

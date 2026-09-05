@@ -164,6 +164,46 @@ def test_dispatch_rejection_preserves_question_and_allows_corrected_input(tmp_pa
     corrected = copy.deepcopy(plan)
     corrected['inputs'] = []
     bind_work(thread, work['work_id'], node['id'], corrected)
+    assert 'outcome' not in current_work(thread)
+
+
+def test_formal_experiment_review_rejects_before_dispatch_and_preserves_revision(tmp_path, monkeypatch):
+    from research_harness import mcp_server
+    from research_harness.orchestrator import experiment_plan, research_review
+    from research_harness.orchestrator.search_state import initialize_search_state
+    from research_harness.runner.local_runner import LocalRunner
+
+    thread, tree, node, plan, _ = fixture(tmp_path)
+    plan['baseline_evidence_requirements'] = build_demo_experiment_plan(node, tree)['baseline_evidence_requirements']
+    state = initialize_search_state(search_id='s_review', root_node=node, policy={
+        'max_depth': 5, 'max_debug_depth': 2, 'sunk_cost_policy': 'progress_gated',
+        'scaleup_policy': 'disallow_by_default',
+    })
+    state_path = tree / 'search_state.json'
+    state_path.write_text(json.dumps(state))
+    work = plan_research_work(REPO, thread, transport=Planner())
+    monkeypatch.setattr(mcp_server, '_thread_dir', lambda tid: thread)
+    monkeypatch.setattr(mcp_server, '_require_authoritative_node', lambda *args: None)
+    monkeypatch.setattr(experiment_plan, 'build_experiment_plan_for_node', lambda *args, **kwargs: (plan, True))
+    calls = []
+    def review(repo, directory, packet, *, purpose):
+        calls.append(packet)
+        return {'request_sha256': 'review', 'assessment': {'decision': 'reject',
+                'reason': 'The surrogate does not call the collector under test.',
+                'evidence': ['experiment.py'], 'required_work': ['Call the actual collector.']}}
+    monkeypatch.setattr(research_review, 'review_research_packet', review)
+    def no_dispatch(*args, **kwargs):
+        raise AssertionError('Rejected implementation reached the runner')
+    monkeypatch.setattr(LocalRunner, 'execute', no_dispatch)
+    result = mcp_server.handle_execute_node_experiment({'thread_id': 'thread', 'node_id': node['id'], 'work_id': work['work_id']})
+    assert result['status'] == 'rejected'
+    assert 'surrogate' in result['reason']
+    assert result['next_tool_to_call'] == 'design_experiment_template'
+    assert current_work(thread)['status'] == 'planned'
+    assert 'research_work_checkpoint' not in result
+    assert len(calls) == 1
+    assert json.loads(state_path.read_text()) == state
+    assert not list(tree.rglob('job_manifest.json'))
 
 
 def test_invalid_measurements_do_not_turn_runtime_into_research_evidence(tmp_path):
