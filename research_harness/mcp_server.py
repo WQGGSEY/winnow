@@ -3193,6 +3193,7 @@ def _handle_design_experiment_template_locked(args: dict[str, Any]) -> dict[str,
     thread's professor_templates/<node_id>/ + _lib/ on disk."""
     from research_harness.orchestrator.experiment_plan import (
         _professor_template_root,
+        python_source_diagnostics,
         resolve_source_files,
         write_professor_template,
     )
@@ -3239,6 +3240,7 @@ def _handle_design_experiment_template_locked(args: dict[str, Any]) -> dict[str,
         sources = [{'path': str((draft / relative).resolve()), 'sha256': _hash(draft / relative)} for relative in files]
         work.update(status='completed', outcome={'execution_result': 'implementation_prepared',
                     'template_digest': _digest(plan_meta), 'source_files': sources,
+                    'source_diagnostics': python_source_diagnostics(source_files),
                     'new_observation': False, 'scientific_verdict': 'unverified'}, next_tool_to_call='plan_research_work')
         _write(thread / 'production/research_control/current.json', work)
         _write(thread / 'production/research_control/work' / work['work_id'] / 'work.json', work)
@@ -3328,6 +3330,7 @@ def _handle_design_experiment_template_locked(args: dict[str, Any]) -> dict[str,
     return {
         "status": "accepted",
         "files_written": files_written,
+        "source_diagnostics": python_source_diagnostics(source_files),
         "node_template_dir": str(node_dir),
         "_lib_dir": str(template_root / "_lib"),
     }

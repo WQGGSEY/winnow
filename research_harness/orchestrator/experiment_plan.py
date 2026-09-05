@@ -166,6 +166,40 @@ def _professor_template_root(run_dir: Path) -> Path:
     return run_dir.resolve().parent / "professor_templates"
 
 
+def python_source_diagnostics(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Report launch defects without importing or executing research programs."""
+    from pyflakes.api import check
+    from pyflakes.messages import UndefinedLocal, UndefinedName
+
+    diagnostics = []
+
+    class Reporter:
+        def syntaxError(self, filename, message, lineno, offset, text):
+            diagnostics.append({'path': filename, 'line': lineno, 'severity': 'error',
+                                'kind': 'syntax_error', 'message': str(message)})
+
+        def unexpectedError(self, filename, message):
+            diagnostics.append({'path': filename, 'severity': 'warning',
+                                'kind': 'analysis_error', 'message': str(message)})
+
+        def flake(self, message):
+            if isinstance(message, (UndefinedName, UndefinedLocal)):
+                diagnostics.append({'path': message.filename, 'line': message.lineno, 'severity': 'warning',
+                                    'kind': type(message).__name__, 'message': message.message % message.message_args})
+
+    reporter = Reporter()
+    for source in sources:
+        if not source['path'].endswith('.py'):
+            continue
+        try:
+            compile(source['content'], source['path'], 'exec')
+        except SyntaxError as exc:
+            reporter.syntaxError(source['path'], exc.msg, exc.lineno, exc.offset, exc.text)
+            continue
+        check(source['content'], source['path'], reporter=reporter)
+    return diagnostics
+
+
 def resolve_source_files(thread: Path, sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Copy hash-pinned thread sources and apply unambiguous edits in memory."""
     import hashlib

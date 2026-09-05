@@ -22,6 +22,15 @@ The harness does not require global MCP registration or `~/.claude.json`.
 The auth preflight accepts ChatGPT login only. It records a redacted status and
 auth method, never account identifiers or tokens.
 
+Source preparation returns Python syntax and undefined-name diagnostics using
+the host interpreter and Pyflakes. It does not import or execute the submitted
+code. Name warnings require interpretation when code provides names dynamically;
+an empty diagnostic list does not establish method validity or task performance.
+Source files can also reference an existing file within the thread by absolute
+`from_path` and `sha256`, with optional exact `old`/`new` replacements. Each
+replacement must match once. The harness preserves the original and records the
+resolved source bytes for subsequent review and execution.
+
 ## Start production
 
 1. Start the frontend:

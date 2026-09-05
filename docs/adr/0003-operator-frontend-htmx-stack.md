@@ -6,6 +6,11 @@
 - **Relates to**: ADR 0002 (in-process process model), `CONTEXT.md`
   (operator_frontend, phase_accordion)
 
+2026-09-06 update: the core now depends on Pyflakes for non-executing Python
+source diagnostics. Repeated undefined-name failures in the research E2E made
+an existing parser preferable to building a Python name resolver. The zero-runtime-
+dependency observation below describes the original frontend decision.
+
 ## Context
 
 ADR 0002 fixes the frontend as in-process Python sitting alongside the

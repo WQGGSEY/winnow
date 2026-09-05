@@ -18,6 +18,19 @@ from research_harness.schemas.validator import validate_named_schema
 
 
 class ExperimentPlanTests(unittest.TestCase):
+    def test_source_diagnostics_find_missing_curve_without_executing_module(self) -> None:
+        from research_harness.orchestrator.experiment_plan import python_source_diagnostics
+
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = Path(tmp) / 'must_not_execute'
+            source = ("import math\nfrom pathlib import Path\nPath(" + repr(str(marker)) + ").touch()\n"
+                      "def train():\n    curve.append(1)\n")
+            diagnostics = python_source_diagnostics([{'path': 'train.py', 'content': source}])
+            self.assertFalse(marker.exists())
+            self.assertEqual(len(diagnostics), 1)
+            self.assertEqual(diagnostics[0]['message'], "undefined name 'curve'")
+            self.assertEqual(diagnostics[0]['line'], 5)
+
     def test_single_baseline_preflight_executes_without_weakening_research_plan(self) -> None:
         import json
         from research_harness.runner.baseline_preflight import execute_baseline_preflight
