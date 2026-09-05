@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/scientific_review_response.schema.json",
+  "title": "ScientificReviewResponse",
+  "type": "object",
+  "required": ["assessments", "objections"],
+  "properties": {
+    "assessments": {
+      "type": "array",
+      "minItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["category", "judgment", "evidence_ids", "citation_ids", "difference_from_closest_work"],
+        "properties": {
+          "category": {"type": "string", "enum": ["importance", "closest_work", "argument_completeness", "reproducibility", "limitations"]},
+          "judgment": {"type": "string", "minLength": 1},
+          "evidence_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "citation_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "difference_from_closest_work": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "objections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["objection_id", "category", "blocking", "status", "statement", "resolution", "evidence_ids", "citation_ids", "changed_section_ids", "resolution_evidence_ids", "claim_scope_change"],
+        "properties": {
+          "objection_id": {"type": "string", "minLength": 1},
+          "category": {"type": "string", "enum": ["importance", "closest_work", "argument_completeness", "reproducibility", "limitations"]},
+          "blocking": {"type": "boolean"},
+          "status": {"type": "string", "enum": ["open", "resolved", "accepted_limitation"]},
+          "statement": {"type": "string", "minLength": 1},
+          "resolution": {"type": "string"},
+          "evidence_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "citation_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "changed_section_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "resolution_evidence_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "claim_scope_change": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
