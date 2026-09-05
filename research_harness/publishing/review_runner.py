@@ -4,6 +4,8 @@ from __future__ import annotations
 import hashlib
 import json
 import tempfile
+import shutil
+import time
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -101,6 +103,14 @@ def run_scientific_reviews(
 
     for index, (reviewer_id, emphasis) in enumerate(_REVIEWERS, start=1):
         review_id = f"review-{index}"
+        existing = output_root / review_id
+        if (existing / 'run_receipt.json').exists():
+            review_ids.append(review_id)
+            continue
+        if existing.exists():
+            incomplete = publication_dir / 'incomplete_reviews'
+            incomplete.mkdir(exist_ok=True)
+            shutil.move(str(existing), str(incomplete / f'{review_id}-{time.time_ns()}'))
         prompt = _prompt(paper, ledger, emphasis)
         with tempfile.TemporaryDirectory(prefix=f"research-harness-{review_id}-") as raw:
             request = CompletionRequest(

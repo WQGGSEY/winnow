@@ -629,6 +629,9 @@ def is_terminal(
             s.get("publication_receipt_sha256"), receipt_digest,
         ):
             return False, None
+        from research_harness.publishing.submission import verify_submission
+        if not verify_submission(pdir / 'publication'):
+            return False, None
         try:
             from research_harness.orchestrator.blind_reorientation import (
                 GoalAchieved,
@@ -1275,6 +1278,7 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "  - ambient shell Python은 실험 Python이 아니다. 자원 가능 여부는 위",
         "    LocalRunner 설정이나 실제 execute_node_experiment 결과로 판정해.",
         "",
+        "HTML 렌더 뒤 finalize_submission_package로 독립 논문 검토와 공식 양식 PDF/source archive까지 생성해야 종료할 수 있어. get_research_state의 publication_target을 따르고, 지정이 없으면 원래 사용자가 허용한 대상 중 적합한 지원 형식을 선택해.",
         "방향:",
         f"  1. get_research_state(thread_id=\"{tid}\") 로 정확한 현재 상태 확인.",
         "     새로운 실행 전 plan_research_work로 다음 작업의 근거·경쟁 예측·예산을 기록해.",
@@ -1547,14 +1551,14 @@ def spawn_codex_session(
                 elif event.raw.get('type') == 'item.completed':
                     pending_calls.discard(item['id'])
                     completed_calls += 1
-                    if item.get('tool') in {'execute_baseline_preflight', 'execute_node_experiment', 'resolve_research_work', 'revise_evaluation_protocol', 'execute_confirmation_experiment', 'design_experiment_template'}:
+                    if item.get('tool') in {'execute_baseline_preflight', 'execute_node_experiment', 'resolve_research_work', 'revise_evaluation_protocol', 'execute_confirmation_experiment', 'design_experiment_template', 'finalize_submission_package'}:
                         for content in (item.get('result') or {}).get('content', []):
                             if content.get('type') == 'text':
                                 try:
                                     payload = json.loads(content['text'])
                                 except (ValueError, KeyError):
                                     continue
-                                if isinstance(payload, dict) and payload.get('research_work_checkpoint'):
+                                if isinstance(payload, dict) and (payload.get('research_work_checkpoint') or payload.get('publication_checkpoint')):
                                     execution_completed = True
                     if not pending_calls and (completed_calls >= 16 or execution_completed):
                         # Results are already durable and logged. Never interrupt an

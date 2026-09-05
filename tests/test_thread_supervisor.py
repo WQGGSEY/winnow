@@ -15,11 +15,31 @@ import json
 import os
 import time
 import unittest
+import pytest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
 from research_harness import thread_supervisor as ts
+
+
+@pytest.fixture(autouse=True)
+def reviewed_submission_boundary(monkeypatch):
+    # This module isolates research receipts and the supervisor loop. The submission
+    # module verifies manuscript reviews and package bytes separately.
+    from research_harness.publishing import submission
+    original = submission.verify_submission
+    monkeypatch.setattr(submission, 'verify_submission', lambda publication: True)
+    return original
+
+
+def test_html_preview_does_not_complete_publication(tmp_path, monkeypatch, reviewed_submission_boundary):
+    from research_harness.publishing import submission
+    monkeypatch.setattr(submission, 'verify_submission', reviewed_submission_boundary)
+    thread = _make_thread(tmp_path, 't1')
+    _write_verified_terminal_state(thread)
+    assert ts.is_terminal(tmp_path, 't1', require_rendered=False)[0] is True
+    assert ts.is_terminal(tmp_path, 't1') == (False, None)
 
 
 def _make_thread(repo: Path, tid: str) -> Path:

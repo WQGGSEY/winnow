@@ -119,6 +119,14 @@ AC_CONTRACT = (
 
 TOOL_DEFINITIONS = [
     {
+        "name": "finalize_submission_package",
+        "description": "After rendering the manuscript, run two independent scientific reviews against the complete manuscript and evidence ledger, then compile the chosen official venue template into an anonymous PDF and source archive. Reuse reviews for unchanged content; fix returned objections in the manuscript before resubmitting. This is required for automatic completion; HTML alone is a preview. Supported: ICML/ICLR/NeurIPS/CVPR/COLT 2026 main and ICLR 2027 main. No external submission occurs.",
+        "inputSchema": {"type": "object", "required": ["thread_id", "venue", "year"], "properties": {
+            "thread_id": {"type": "string"}, "venue": {"type": "string", "enum": ["icml", "iclr", "neurips", "cvpr", "colt"]},
+            "year": {"type": "integer"}, "track": {"type": "string", "enum": ["main"], "default": "main"}
+        }, "additionalProperties": False},
+    },
+    {
         "name": "execute_confirmation_experiment",
         "description": "Freeze a verified public measurement program and declared checkpoint dependencies, independently review it, replay its public fixture in isolation, then draw the approved future confirmation data and execute once without an intervening agent decision. Requires qualified baselines and planned confirmation work. No training or tuning is permitted. Metric comes from execution artifacts. The program reads RESEARCH_HARNESS_CONFIRMATION_BANK when set; additional_files lists all thread-local dependencies/checkpoints absent from the reference plan.",
         "inputSchema": {"type": "object", "required": ["thread_id", "work_id", "reference_scope", "reference_node_id", "additional_files"], "properties": {
@@ -936,7 +944,7 @@ TOOL_DEFINITIONS = [
             "(a) AC decision in {accept, revise, revise_with_new_measurements} "
             "and (b) submit_professor_user_goal_attestation with achieved=true. "
             "If achieved=false or attestation missing, render is blocked and "
-            "the canonical blind engine continues through advance_research."
+            "the canonical blind engine continues through advance_research. After preview rendering call finalize_submission_package; HTML alone does not finish the publication goal."
         ),
         "inputSchema": {
             "type": "object",
@@ -1547,6 +1555,7 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
         "baseline_qualification": _read_json(market_dir / "baseline_qualification.json"),
         "baseline_preparation": baseline_preparation_state(d),
         "research_work": current_work(d),
+        "publication_target": _read_json(d / "production/submission_target.json"),
         "baseline_preparation_contract": (
             "Create the research claim and plan through advance_research before waiting for baseline qualification. "
             "An empty GoalContract.baseline_evidence means assignments are pending, not approved. "
@@ -1578,7 +1587,7 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
     envelope = _read_json(d / 'production/feasibility_envelope.json') or {}
     return {
         **{key: state[key] for key in ('thread', 'operator_model_preference', '_model_note',
-                                      'baseline_preparation', 'baseline_preparation_contract', '_market_usage_contract')},
+                                      'baseline_preparation', 'baseline_preparation_contract', '_market_usage_contract', 'publication_target')},
         'view': 'current', 'thread_dir': str(d.resolve()), 'research_work': work,
         'operator_intent': envelope.get('operator_intent'),
         'compute_budget': envelope.get('compute_budget'),
@@ -2121,14 +2130,23 @@ def _handle_get_next_admissible_node_locked(
                     "before resuming research."
                 ),
             }
+        publication = _publication_dir(tid)
+        submission_status = _read_json(publication / 'submission_status.json') or {}
+        next_tool = 'prepare_paper_writing_context'
+        if (publication / 'publication_receipt.json').exists():
+            next_tool = 'finalize_submission_package'
+            from research_harness.confirmation_sampling import _hash
+            if (submission_status.get('status') in {'revision_required', 'export_failed'}
+                    and submission_status.get('readiness', {}).get('manuscript_sha256') == _hash(publication / 'paper.html')):
+                next_tool = 'prepare_paper_writing_context'
         return {
             "status": "goal_achieved_render_pending",
             "promoted_node_id": achieved_attestation.get("promoted_node_id"),
-            "next_tool_to_call": "prepare_paper_writing_context",
+            "next_tool_to_call": next_tool,
             "reason": (
                 "The verified strong-result receipt and achieved attestation "
                 "exist, but the supervisor terminal also requires rendered "
-                "publication artifacts and production_run_summary.json. Finish "
+                "publication artifacts, independent manuscript review and an official-template PDF/source package. Finish "
                 "the paper writer; do not resume search or rebuttal."
             ),
         }
@@ -4324,6 +4342,7 @@ def handle_prepare_rebuttal_packet(args: dict[str, Any]) -> dict[str, Any]:
         "reshaped_claim_under_test": reshaped_claim,
         "prior_failures": prior_failures,
         "active_lessons": active_lessons,
+        "submission_review": _read_json(_publication_dir(tid) / "submission_status.json") or {},
         "methodology_fit_reminder": (
             "When writing direct_methodology_for_user, judge fit to "
             "original_user_problem (not reshaped_claim_under_test). The "
@@ -5162,6 +5181,11 @@ def handle_prepare_paper_writing_context(args: dict[str, Any]) -> dict[str, Any]
     metric_keys = sorted((worker_report.get("metrics") or {}).keys())
     baseline_keys = sorted((worker_report.get("baselines") or {}).keys())
 
+    from research_harness.publishing.venue_export import load_venue_profiles
+    target = _read_json(production / 'submission_target.json') or {}
+    profile_key = f"{target.get('venue')}-{target.get('year')}-{target.get('track', 'main')}"
+    submission_profile = load_venue_profiles().get(profile_key)
+
     # Internal lessons provide review context, not citable external literature.
     repo = _repo_root()
     active_lessons: list[dict[str, Any]] = []
@@ -5192,12 +5216,15 @@ def handle_prepare_paper_writing_context(args: dict[str, Any]) -> dict[str, Any]
         "evidence_anchor_format": "artifact.path.to.value, optionally =JSON_VALUE (checked for equality); only the supplied research artifacts are allowed.",
         "baseline_analysis_md": analysis_path.read_text(encoding="utf-8") if analysis_path.exists() else None,
         "writing_requirements": list(PAPER_WRITING_REQUIREMENTS),
+        "submission_profile": submission_profile,
+        "venue_statement_requirement": "Include authored ai_use_statement when required by the supplied profile. Disclose actual uses and verification; do not invent human review or author actions.",
         "rebuttal_reviews": reviews,
         "orchestrator_reduction": reduction,
         "ac_decision": ac,
         "camera_ready_revision": revision,
         "mental_model_statement": revision.get("mental_model_statement"),
         "active_lessons": active_lessons,
+        "submission_review": _read_json(_publication_dir(tid) / "submission_status.json") or {},
         "available_metric_keys": metric_keys,
         "available_baseline_keys": baseline_keys,
         "supported_figure_types": [
@@ -6056,6 +6083,59 @@ def handle_submit_professor_user_goal_attestation(
     }
 
 
+def handle_finalize_submission_package(args: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.publishing.submission import finalize_submission
+    from research_harness.publishing.venue_export import VenueTarget
+    from research_harness.publishing.integrity import verify_publication_receipt, issue_publication_receipt, publication_inputs
+    from research_harness.orchestrator.blind_sequential_research import strong_result_receipt_sha256
+    from research_harness.thread_supervisor import is_terminal
+
+    tid = args['thread_id']
+    with _exclusive_adaptive_writer(tid):
+        try:
+            if not is_terminal(_repo_root(), tid, require_rendered=False)[0]:
+                raise ValueError('Submission preparation requires a verified research result')
+            production = _thread_dir(tid) / 'production'
+            summary_path = production / 'production_run_summary.json'
+            summary = _read_json(summary_path) or {}
+            state = _read_json(production / 'tree/search_state.json')
+            strong_digest = strong_result_receipt_sha256(state['adaptive']['strong_result_receipt'])
+            dispatch = summary.get('publication_dispatch') or {}
+            if not verify_publication_receipt(production, dispatch, summary.get('publication_receipt_sha256'), strong_digest):
+                return {'status': 'rejected', 'reason': 'The manuscript preview is missing or stale', 'next_tool_to_call': 'render_final_paper'}
+            target = _read_json(production / 'submission_target.json') or {}
+            requested_target = {'venue': args['venue'], 'year': args['year'], 'track': args.get('track', 'main')}
+            if target and requested_target != {key: target[key] for key in requested_target}:
+                return {'status': 'rejected', 'reason': 'Use the configured publication target', 'publication_target': target,
+                        'next_tool_to_call': 'finalize_submission_package'}
+            node_id = state['adaptive']['strong_result_receipt']['promoted_node_id']
+            model = (_read_json(_thread_dir(tid) / 'thread.json') or {}).get('mcp_model') or 'gpt-5.6-sol'
+            writing_inputs = publication_inputs(production)
+            result = finalize_submission(_repo_root(), production / 'publication',
+                target=VenueTarget(args['venue'], args['year'], args.get('track', 'main')),
+                worker_report=_read_json(production / 'tree/nodes' / node_id / 'worker_report.json'), model=model)
+            if result['status'] != 'completed':
+                return result
+            receipt = result['receipt']
+            artifacts = [item for item in dispatch['rendered_artifacts'] if item['output'] not in {'paper_pdf', 'submission_zip'}]
+            artifacts.extend({'output': name, 'artifact_path': str(production / 'publication' / receipt[key])}
+                             for name, key in [('paper_pdf', 'pdf_path'), ('submission_zip', 'archive_path')])
+            dispatch = {**dispatch, 'rendered_artifacts': artifacts}
+            summary['publication_dispatch'] = dispatch
+            summary['publication_receipt_sha256'] = issue_publication_receipt(production, dispatch, strong_digest, expected_inputs=writing_inputs)
+            _write_json_atomic(summary_path, summary)
+            _write_json_atomic(production / 'publication/publication_dispatch.json', dispatch)
+            return {**result, 'publication_dispatch': dispatch, 'publication_checkpoint': True}
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            status_path = _publication_dir(tid) / 'submission_status.json'
+            status = _read_json(status_path) or {}
+            from research_harness.confirmation_sampling import _hash
+            paper = _publication_dir(tid) / 'paper.html'
+            _write_json_atomic(status_path, {**status, 'status': 'export_failed', 'reason': str(exc),
+                'readiness': {**status.get('readiness', {}), 'manuscript_sha256': _hash(paper) if paper.exists() else None}})
+            return {'status': 'rejected', 'reason': str(exc), 'next_tool_to_call': 'prepare_paper_writing_context'}
+
+
 def handle_render_final_paper(args: dict[str, Any]) -> dict[str, Any]:
     with _exclusive_adaptive_writer(args["thread_id"]):
         return _handle_render_final_paper_locked(args)
@@ -6254,7 +6334,7 @@ def _handle_render_final_paper_locked(args: dict[str, Any]) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
 
-    return {"status": "ok", "publication_dispatch": outputs, "summary_path": str(_thread_dir(tid) / "production" / "production_run_summary.json")}
+    return {"status": "ok", "next_tool_to_call": "finalize_submission_package", "publication_dispatch": outputs, "summary_path": str(_thread_dir(tid) / "production" / "production_run_summary.json")}
 
 
 # --- JSON-RPC stdio loop -------------------------------------------------- #
@@ -6353,6 +6433,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_submit_paper_section(args)
             elif name == "submit_professor_user_goal_attestation":
                 result = handle_submit_professor_user_goal_attestation(args)
+            elif name == "finalize_submission_package":
+                result = handle_finalize_submission_package(args)
             elif name == "render_final_paper":
                 result = handle_render_final_paper(args)
             else:

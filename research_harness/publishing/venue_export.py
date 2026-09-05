@@ -1,4 +1,4 @@
-"""Export structured manuscript content to pinned 2026 venue LaTeX packages."""
+"""Export structured manuscript content to pinned official venue LaTeX packages."""
 
 from __future__ import annotations
 
@@ -71,6 +71,7 @@ def export_venue_package(
     appendix_sections: list[dict[str, Any]] | None = None,
     impact_statement: str | None = None,
     checklist_tex: str | None = None,
+    ai_use_statement: str | None = None,
     figure_files: Mapping[str, Path | str] | None = None,
     worker_report: Mapping[str, Any] | None = None,
     table_specs: Mapping[str, Mapping[str, Any]] | None = None,
@@ -107,6 +108,7 @@ def export_venue_package(
         appendix_sections=[] if profile["venue"] == "cvpr" else appendix_sections or [],
         impact_statement=impact_statement,
         checklist_tex=checklist_tex,
+        ai_use_statement=ai_use_statement,
         assets=assets,
     )
     bib = _render_bibtex(bibliography)
@@ -214,7 +216,7 @@ def _copy_template_files(template_root: Path, output_dir: Path) -> None:
         relative = source.relative_to(template_root)
         parts = relative.parts[1:] if len(relative.parts) > 1 else relative.parts
         destination = output_dir.joinpath(*parts)
-        if destination.name in {"main.tex", "example_paper.tex", "iclr2026_conference.tex", "colt2026-sample.tex", "neurips_2026.tex"}:
+        if destination.name in {"main.tex", "example_paper.tex", "iclr2026_conference.tex", "iclr2027_conference.tex", "colt2026-sample.tex", "neurips_2026.tex"}:
             continue
         if destination.name.endswith(".bib"):
             continue
@@ -332,6 +334,7 @@ def _render_latex(
     appendix_sections: list[dict[str, Any]],
     impact_statement: str | None,
     checklist_tex: str | None,
+    ai_use_statement: str | None,
     assets: RenderAssets,
 ) -> str:
     family = profile["document_family"]
@@ -347,14 +350,19 @@ def _render_latex(
         if not checklist_tex or not checklist_tex.strip():
             raise VenueExportError("target requires checklist_tex")
         checklist = "\n\\section*{Checklist}\n" + checklist_tex
+    ai_use = ""
+    if profile.get('requires_ai_use_statement'):
+        if not ai_use_statement or not ai_use_statement.strip():
+            raise VenueExportError('target requires an authored ai_use_statement')
+        ai_use = "\\section*{AI Use Statement}\n" + _html_to_latex(ai_use_statement, assets)
     main_end = f"\n\\label{{{_MAIN_END_LABEL}}}\n"
     if profile["venue"] == "icml":
         preamble = "\\documentclass{article}\n\\usepackage{graphicx}\n\\usepackage{booktabs}\n\\usepackage{hyperref}\n\\usepackage{icml2026}\n\\icmltitlerunning{" + _latex_text(title[:80]) + "}\n"
         author = "\\begin{icmlauthorlist}\\icmlauthor{Anonymous Authors}{anon}\\end{icmlauthorlist}\\icmlaffiliation{anon}{Anonymous Institution}\\icmlcorrespondingauthor{Anonymous}{anonymous@example.com}\\printAffiliationsAndNotice{}"
         return f"{preamble}\\begin{{document}}\n\\twocolumn[\\icmltitle{{{_latex_text(title)}}}\n{author}\n\\icmlkeywords{{Anonymous Submission}}\n\\vskip 0.3in]\n\\begin{{abstract}}\n{_html_to_latex(abstract, assets)}\n\\end{{abstract}}\n{body}\n{impact}{main_end}\n\\bibliography{{references}}\n\\bibliographystyle{{icml2026}}\n\\appendix\n{appendix}\n\\end{{document}}\n"
     if profile["venue"] == "iclr":
-        preamble = "\\documentclass{article}\n\\usepackage{iclr2026_conference,times}\n\\usepackage{hyperref}\n\\usepackage{booktabs}\n\\usepackage{graphicx}\n\\title{" + _latex_text(title) + "}\n\\author{Anonymous Authors\\\\Anonymous Institution}\n"
-        return f"{preamble}\\begin{{document}}\n\\maketitle\n\\begin{{abstract}}\n{_html_to_latex(abstract, assets)}\n\\end{{abstract}}\n{body}\n{impact}{main_end}\n\\bibliography{{references}}\n\\bibliographystyle{{iclr2026_conference}}\n\\appendix\n{appendix}\n{checklist}\n\\end{{document}}\n"
+        preamble = "\\documentclass{article}\n\\usepackage{" + family + "_conference,times}\n\\usepackage{hyperref}\n\\usepackage{booktabs}\n\\usepackage{graphicx}\n\\title{" + _latex_text(title) + "}\n\\author{Anonymous Authors\\\\Anonymous Institution}\n"
+        return f"{preamble}\\begin{{document}}\n\\maketitle\n\\begin{{abstract}}\n{_html_to_latex(abstract, assets)}\n\\end{{abstract}}\n{body}\n{impact}{main_end}{ai_use}\n\\bibliography{{references}}\n\\bibliographystyle{{{family}_conference}}\n\\appendix\n{appendix}\n{checklist}\n\\end{{document}}\n"
     if profile["venue"] == "cvpr":
         preamble = "\\documentclass[10pt,twocolumn,letterpaper]{article}\n\\usepackage[review]{cvpr}\n\\usepackage{times}\n\\usepackage{epsfig}\n\\usepackage{graphicx}\n\\usepackage{amsmath}\n\\usepackage{amssymb}\n\\usepackage[pagebackref,breaklinks,colorlinks]{hyperref}\n\\def\\paperID{0000}\n\\def\\confName{CVPR}\n\\def\\confYear{2026}\n\\title{" + _latex_text(title) + "}\n\\author{Anonymous Authors}\n"
         return f"{preamble}\\begin{{document}}\n\\maketitle\n\\begin{{abstract}}\n{_html_to_latex(abstract, assets)}\n\\end{{abstract}}\n{body}\n{impact}{main_end}\n{{\\small\\bibliographystyle{{ieeenat_fullname}}\\bibliography{{references}}}}\n\\end{{document}}\n"
@@ -387,6 +395,8 @@ def _required_statements(profile: dict[str, Any]) -> list[str]:
         out.append("impact_statement")
     if profile.get("requires_checklist"):
         out.append("checklist")
+    if profile.get("requires_ai_use_statement"):
+        out.append("ai_use_statement")
     if profile["venue"] == "iclr":
         out.extend(["ethics_statement_recommended", "reproducibility_statement_recommended"])
     if profile["venue"] == "colt":

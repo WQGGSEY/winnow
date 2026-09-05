@@ -71,6 +71,8 @@ def test_runs_two_isolated_reviews_and_replays_readiness(tmp_path: Path) -> None
         assert evidence[0]["value"] == 12.5
     assert result["readiness"]["ready"] is True
     assert result["readiness"]["review_execution_provenance"] == "harness_verified"
+    assert run_scientific_reviews(REPO_ROOT, publication, "test-model", transport) == result
+    assert len(transport.requests) == 2
 
 
 @pytest.mark.parametrize("filename", ["prompt.json", "raw_response.txt", "record.json"])

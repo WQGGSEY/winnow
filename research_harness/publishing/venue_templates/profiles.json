@@ -99,5 +99,22 @@
     "requires_impact_statement": false,
     "requires_checklist": true,
     "appendix_policy": "references, optional technical appendices, and the mandatory checklist do not count as content pages"
+  },
+  "iclr-2027-main": {
+    "venue": "iclr",
+    "year": 2027,
+    "track": "main",
+    "supported": true,
+    "template_url": "https://media.iclr.cc/Conferences/ICLR2027/iclr-2027-style-files.zip",
+    "template_sha256": "0d940dfa9398ae99a18f24a85a8a683f367204b6af6d17d2899e60a67102529e",
+    "rules_source_url": "https://iclr.cc/Conferences/2027/AuthorGuidelines",
+    "main_page_limit": 9,
+    "document_family": "iclr2027",
+    "anonymous": true,
+    "requires_impact_statement": false,
+    "requires_checklist": false,
+    "appendix_policy": "appendices after the bibliography are unlimited but optional for reviewers",
+    "requires_ai_use_statement": true,
+    "ai_policy_source_url": "https://iclr.cc/Conferences/2027/AIPolicyForAuthors"
   }
 }

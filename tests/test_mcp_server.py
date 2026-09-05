@@ -181,7 +181,7 @@ def test_confirmation_reuse_is_rejected_before_predicate_execution(tmp_path):
         evaluate.assert_not_called()
 
 
-def test_paper_render_rechecks_evidence_after_attestation(tmp_path):
+def test_paper_render_rechecks_evidence_after_attestation(tmp_path, monkeypatch):
     from tests.test_sakana_paper import _build_inputs
     from tests.test_thread_supervisor import _write_verified_terminal_state
 
@@ -249,6 +249,9 @@ def test_paper_render_rechecks_evidence_after_attestation(tmp_path):
         assert srv.handle_render_final_paper({"thread_id": tid})["status"] == "ok"
         from research_harness.thread_supervisor import is_terminal
 
+        assert not is_terminal(tmp_path, tid)[0]
+        # The remaining checks isolate preview/research integrity from submission readiness.
+        monkeypatch.setattr('research_harness.publishing.submission.verify_submission', lambda publication: True)
         assert is_terminal(tmp_path, tid)[0]
         for artifact in (publication / "paper.html", drafts / "outline.json",
                          publication / "figures" / "f_baseline.png",
@@ -423,6 +426,7 @@ class MCPServerTests(unittest.TestCase):
             "submit_paper_section",
             "register_paper_figure",
             "render_final_paper",
+            "finalize_submission_package",
         }
         dual_gate_expected = {
             "submit_professor_user_goal_attestation",
