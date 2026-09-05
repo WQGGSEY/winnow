@@ -1741,6 +1741,7 @@ def watch_thread(
             waiting_for_operator = True
             time.sleep(min(poll_seconds, 30.0))
             continue
+        operator_resumed = waiting_for_operator
         if waiting_for_operator:
             _log(log_path, "operator decision received; resuming research")
             if (tdir / "thread.json").exists():
@@ -1788,7 +1789,7 @@ def watch_thread(
         # auto-bootstrap, which would otherwise force a full max_idle wait before
         # the first spawn (the ~10-min cold-start delay). Spawn cycle #1
         # immediately; the idle gate governs only subsequent (resume) cycles.
-        if cycle > 0 and idle <= max_idle_seconds:
+        if cycle > 0 and not operator_resumed and idle <= max_idle_seconds:
             # Recent activity — MCP still being driven. Wait.
             time.sleep(poll_seconds)
             continue

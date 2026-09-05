@@ -1543,9 +1543,20 @@ def _blind_command_id(
 ) -> str:
     identity: dict[str, Any] = {"thread_id": tid, "trigger": trigger}
     if bind_state:
+        thread_dir = _thread_dir(tid)
         identity["search"] = _read_json(
-            _thread_dir(tid) / "production" / "tree" / "search_state.json"
+            thread_dir / "production" / "tree" / "search_state.json"
         )
+        identity["reorientation"] = _read_json(thread_dir / "production/reorientation/state.json")
+        if not (thread_dir / "production/reorientation/goal_contract.json").exists():
+            identity["preparation"] = {
+                name: _read_json(thread_dir / name)
+                for name in (
+                    "grilling/grilling_session.json", "market/market_research_brief.json",
+                    "market/baseline_qualification.json", "production/feasibility_envelope.json",
+                    "production/intake_to_claim_dialog.json",
+                )
+            }
     payload = json.dumps(
         identity,
         ensure_ascii=False,

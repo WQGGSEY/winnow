@@ -16,6 +16,34 @@ from unittest import mock
 import research_harness.mcp_server as srv
 
 
+def test_selector_rechecks_changed_preparation_and_checkpoint(tmp_path, monkeypatch):
+    tid = "thread_resume"
+    tdir = tmp_path / "runs/threads" / tid
+    (tdir / "market").mkdir(parents=True)
+    responses = {}
+    calls = []
+    def advance(args, settings):
+        identifier = args["command_id"]
+        calls.append(identifier)
+        if identifier not in responses:
+            responses[identifier] = {"status": "ready" if (tdir / "market/baseline_qualification.json").exists() else "preflight_required"}
+        return responses[identifier]
+    monkeypatch.setattr(srv, "handle_advance_research", advance)
+    monkeypatch.setattr(srv, "load_settings", lambda repo: {})
+    with srv._repo_root_scope(tmp_path):
+        assert srv.handle_get_next_admissible_node({"thread_id": tid})["status"] == "preflight_required"
+        assert srv.handle_get_next_admissible_node({"thread_id": tid})["status"] == "preflight_required"
+        assert calls[0] == calls[1]
+        (tdir / "market/baseline_qualification.json").write_text('{"approved": true}')
+        assert srv.handle_get_next_admissible_node({"thread_id": tid})["status"] == "ready"
+        assert calls[-1] != calls[0]
+        state = tdir / "production/reorientation/state.json"
+        state.parent.mkdir(parents=True)
+        state.write_text('{"revision": 1}')
+        srv.handle_get_next_admissible_node({"thread_id": tid})
+        assert calls[-1] != calls[-2]
+
+
 def test_confirmation_reuse_is_rejected_before_predicate_execution(tmp_path):
     import shutil
     from types import SimpleNamespace
