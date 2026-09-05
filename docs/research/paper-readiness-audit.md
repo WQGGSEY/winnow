@@ -84,3 +84,38 @@ P13은 별도 Lean 이론 계약과 실제 커널 검사·재실행 모듈을 �
 새 레이아웃의 [원고 미리보기](../../runs/audits/paper-preview-20260905/paper.html)와 [내부 보고서](../../runs/audits/paper-preview-20260905/interactive_summary.html)를 만들었다. screenshots와 `preview_provenance.json`도 같은 디렉터리에 있다. 기존 원고의 문장·실험·숫자는 그대로 사용했으므로 내용의 학술적 부족은 남아 있다. 이 산출물은 수정된 renderer를 검토하기 위한 것이며 논문 제출물이 아니다.
 
 실제 신규 연구, 공식 템플릿 컴파일, 인용 원문 대조, 독립 실험 재실행, 외부 학술 심사는 수행하지 않았다. H/P의 미해결 항목이 남아 있는 동안 이 세션의 논문 생성 성공 조건은 충족되지 않았다.
+
+## 2026-09-05 game-only E2E 추가 관찰
+
+실행 `thread_02646d27`은 게임 엔진·입출력·맵만 등록한 신규 연구다.
+첫 입력에 평가 메타 정보가 섞였던 `thread_556d8b0b`는 중단하고 보존했다.
+신규 실행의 grilling과 연구 판단은 연구자 역할의 운영 에이전트가 입력하며,
+학습기와 정책 구현은 하네스 에이전트가 작성한다. 이 실행에는 아래와 같은
+운영 개입이 있으므로 무개입 E2E 성공으로 보고하지 않는다.
+
+첫 production cycle은 세 정책을 실제 LocalRunner로 실행했지만 연구상
+유효한 기준선은 확보하지 못했다. 고정 역할과 Manhattan greedy로 작성된
+`n_baseline_role_split/workspace/experiment.py`를 `Consensus Q-Learning for
+Multi-agent Cooperative Planning` 후보의 `current_best_known`으로 연결했다.
+코드에는 학습 업데이트가 없다. 세 정책 각각의 결과도 세 baseline 키에
+자신의 측정값을 반복해서 기록했다. 구조 검증은 이를 승인했으며 P11의
+과학적 적합성 검토 공백이 실제 E2E에서 드러났다. 실행 성공과 방법 재현은
+별개라는 안내만으로는 이 공백을 막을 수 없다.
+
+연구자 검토에서 승인을 보류하고 기존 qualification을
+`market/rejected_baseline_qualifications/first_preflight.json`으로 보존했다.
+코드와 실행 결과는 수정하지 않았다. 원문·구현 대조, 대조군의 정확한 명명,
+실제로 측정한 정책만 보고하도록 재검토 의견을 operator 채널에 전달했다.
+이 수동 거절은 자동 검증의 수정 완료를 뜻하지 않는다.
+
+같은 cycle은 H8의 `holdout kind must be real_holdout`에서 멈췄다.
+현재 게임 시뮬레이터 등록만으로 최종 독립 평가 계약이 성립하지 않는다.
+미사용 맵·seed 분리 방향은 연구자로서 제안했지만 독립 평가의 실행·보존·재사용
+제한은 아직 검증되지 않았다. 시뮬레이션을 외부 실측 자료로 표시해서 이
+경계를 통과시키지 않는다.
+
+재시작 프롬프트에는 미소비 operator 답변이 빠져 있었다. 이를 전달하도록
+수정했고 답변의 실제 소비는 기존 MCP 수신 도구에 남겼다. 관련 검증은
+`venv/bin/python -m pytest tests/test_thread_supervisor.py -q`에서
+51 passed, 3 subtests passed였다. 수정 후 supervisor를 재시작했다.
+상세 개입 기록은 `runs/e2e/lab3-game-only/operator_interventions.jsonl`에 있다.
