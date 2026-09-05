@@ -35,7 +35,7 @@
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["arxiv", "google_scholar", "websearch", "manual"]
+        "enum": ["arxiv", "crossref", "google_scholar", "websearch", "manual"]
       },
       "minItems": 1
     },

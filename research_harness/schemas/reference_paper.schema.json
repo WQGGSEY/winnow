@@ -8,7 +8,7 @@
     "id": { "type": "string", "minLength": 1 },
     "source": {
       "type": "string",
-      "enum": ["arxiv", "google_scholar", "manual", "websearch"]
+      "enum": ["arxiv", "crossref", "google_scholar", "manual", "websearch"]
     },
     "title": { "type": "string", "minLength": 1 },
     "authors": {

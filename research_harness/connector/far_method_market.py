@@ -22,7 +22,8 @@ from typing import Any
 
 from research_harness.agents.market_research import (
     HttpFetcher,
-    _arxiv_search,
+    search_literature,
+    LiteratureUnavailable,
     _deduplicate_papers,
     _default_http_fetcher,
 )
@@ -34,6 +35,7 @@ def research_far_method(
     *,
     http_fetcher: HttpFetcher | None = None,
     max_papers: int = 6,
+    search_provider: str = "arxiv",
 ) -> dict[str, Any]:
     """Search for prior work on ``field_method`` within ``field``. P-blind.
 
@@ -52,9 +54,11 @@ def research_far_method(
     warnings: list[str] = []
     if method:
         try:
-            papers = _deduplicate_papers(_arxiv_search(fetcher, query, max_papers))[:max_papers]
+            papers = _deduplicate_papers(search_literature(fetcher, query, max_papers, provider=search_provider))[:max_papers]
+        except LiteratureUnavailable:
+            raise
         except Exception as exc:  # noqa: BLE001 — degrade gracefully
-            warnings.append(f"far-method arxiv search failed: {exc}")
+            warnings.append(f"far-method {search_provider} search failed: {exc}")
     else:
         warnings.append("reading produced no field_method; skipping method search")
 

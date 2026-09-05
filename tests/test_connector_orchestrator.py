@@ -383,3 +383,32 @@ def test_baseline_research_failure_blocks_production_handoff(tmp_path):
 
     assert out.session["status"] == "aborted"
     assert "baseline research failed" in out.session["error"]
+
+
+def test_rate_limit_stops_field_search_and_preserves_partial_evidence(tmp_path):
+    from urllib.error import HTTPError
+    fake = RoutingFakeCodex({
+        "abstraction": _ABSTRACTION_OK, "reading": _READING_OK,
+        "prune1": _PRUNE1_PASS, "reduction": _REDUCE_OK,
+    })
+    calls = []
+
+    def limited(url):
+        calls.append(url)
+        raise HTTPError(url, 429, "Rate exceeded", {"Retry-After": "120"}, None)
+
+    run_dir = tmp_path / "connector"
+    out = run_domain_connector(
+        REPO_ROOT, _valid_grilling(), run_dir=run_dir,
+        billing_ack=True, execution_ack=True, command_runner=fake,
+        http_fetcher=limited, quota=2, max_fields_tried=40, field_seed=123,
+    )
+    assert len(calls) == 1
+    assert out.session["status"] == "aborted"
+    assert out.session["stopped_reason"] == "retrieval_unavailable"
+    assert out.session["fields_tried"] == 1
+    assert "Retry-After=120" in out.session["error"]
+    persisted = json.loads((run_dir / "connector_session.json").read_text())
+    assert persisted["attempts"][0]["perspective_packet"]["reading"]
+    events = [json.loads(line) for line in (run_dir / "events.jsonl").read_text().splitlines()]
+    assert events[-1]["type"] == "field_error"

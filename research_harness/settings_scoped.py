@@ -96,6 +96,12 @@ class FieldSpec:
 # is required for the field to participate in resolution, snapshotting,
 # or (later) the settings UI.
 FIELD_REGISTRY: tuple[FieldSpec, ...] = (
+    FieldSpec(
+        path="domain_connector.literature_provider",
+        writable_at=("project", "operator", "thread"),
+        type="enum", enum=("arxiv", "crossref"), default="arxiv",
+        description="Public literature metadata provider for connector and baseline discovery.",
+    ),
     # ---- Project-only structural (read-only in UI) ----
     FieldSpec(
         path="runtime.auth_policy.provider",

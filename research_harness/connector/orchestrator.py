@@ -40,7 +40,7 @@ from research_harness.connector.field_sampler import field_permutation
 from research_harness.connector.prune1 import prune1_check
 from research_harness.connector.reading import generate_reading
 from research_harness.connector.reduction import reduce_to_claim
-from research_harness.agents.market_research import HttpFetcher
+from research_harness.agents.market_research import HttpFetcher, LiteratureUnavailable
 from research_harness.schemas.validator import validate_named_schema
 from research_harness.settings_scoped import resolve_for_thread, thread_id_from_run_dir
 
@@ -76,6 +76,9 @@ def _run_baseline_research(
         write_dossier_to_memory=True,
         http_fetcher=http_fetcher,
         pdf_fetcher=http_fetcher,
+        search_provider=resolve_for_thread(repo_root, thread_id_from_run_dir(run_dir)).get_dotted("domain_connector.literature_provider", "arxiv"),
+        enable_claude_websearch=False,
+        enable_google_scholar=False,
     )
 
 
@@ -180,6 +183,7 @@ def run_domain_connector(
     session_path = run_dir / "connector_session.json"
 
     settings = resolve_for_thread(repo_root, thread_id_from_run_dir(run_dir))
+    search_provider = settings.get_dotted("domain_connector.literature_provider", "arxiv")
     model = resolve_agent_model(settings, "domain_connector_agent")
     quota = quota if quota is not None else _resolve_knob(settings, "quota", DEFAULT_QUOTA)
     max_fields_tried = (
@@ -196,6 +200,7 @@ def run_domain_connector(
         "created_at": datetime.now(timezone.utc).isoformat(),
         "grilling_session_id": grilling_id,
         "model": model,
+        "literature_provider": search_provider,
         "field_seed": seed,
         "quota": quota,
         "max_fields_tried": max_fields_tried,
@@ -220,9 +225,11 @@ def run_domain_connector(
 
     def _finish(session: dict[str, Any]) -> DomainConnectorOutcome:
         validate_named_schema("connector_session", session)
-        session_path.write_text(
+        temporary = session_path.with_suffix(".json.tmp")
+        temporary.write_text(
             json.dumps(session, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
+        temporary.replace(session_path)
         return DomainConnectorOutcome(session=session, claims=list(session["claims"]))
 
     if not _billing_ack_ok(billing_ack):
@@ -237,7 +244,17 @@ def run_domain_connector(
     usage = dict(base_session["usage_estimate"])
     # Optional live-progress sink (the frontend bridges this to the SSE stream
     # so the operator watches the connector work step by step). No-op by default.
-    emit = event_emitter if callable(event_emitter) else (lambda _e: None)
+    def emit(event: dict[str, Any]) -> None:
+        with (run_dir / "events.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps({"at": datetime.now(timezone.utc).isoformat(), "session_id": session_id, **event}, ensure_ascii=False) + "\n")
+        if callable(event_emitter):
+            event_emitter(event)
+
+    if session_path.exists():
+        archive = run_dir / "attempts" / (session_id + ".previous.json")
+        archive.parent.mkdir(exist_ok=True)
+        archive.write_bytes(session_path.read_bytes())
+    _finish(base_session)
 
     def _add_usage(u: dict[str, Any]) -> None:
         usage["llm_calls"] += 1
@@ -299,6 +316,15 @@ def run_domain_connector(
     fields_tried = 0
     stopped_reason = "namespace_exhausted"
 
+    def checkpoint(*, error: str | None = None) -> DomainConnectorOutcome:
+        return _finish({**base_session, "status": "aborted" if error else "in_progress",
+                        "abstraction": abstraction_record, "fields_tried": fields_tried,
+                        "attempts": attempts, "claims": claims, "usage_estimate": usage,
+                        "quota_met": len(claims) >= quota,
+                        "stopped_reason": "retrieval_unavailable" if error else "not_started", "error": error})
+
+    checkpoint()
+
     for fld in perm:
         if len(claims) >= quota:
             stopped_reason = "quota_met"
@@ -340,7 +366,7 @@ def run_domain_connector(
                   "passed": p1["passed"], "num_pairs": p1["num_pairs"]})
             if p1["passed"]:
                 material = research_far_method(
-                    fld, reading["field_mechanism"], http_fetcher=http_fetcher
+                    fld, reading["field_mechanism"], http_fetcher=http_fetcher, search_provider=search_provider
                 )
                 emit({"type": "market_done", "code": field_meta["code"],
                       "num_papers": material["num_papers"]})
@@ -350,6 +376,7 @@ def run_domain_connector(
                 attempt["perspective_packet"] = packet
                 if not material["papers"]:
                     attempts.append(attempt)
+                    checkpoint()
                     continue
                 red = reduce_to_claim(
                     grilling_session, reading, p1, method_research=material,
@@ -372,11 +399,17 @@ def run_domain_connector(
                     emit({"type": "claim_kept", "code": field_meta["code"],
                           "kept": len(claims), "quota": quota,
                           "claim_under_test": red["claim_contract"]["claim_under_test"]})
+        except LiteratureUnavailable as exc:
+            attempt["error"] = str(exc)
+            attempts.append(attempt)
+            emit({"type": "field_error", "code": field_meta["code"], "error": str(exc)})
+            return checkpoint(error=str(exc))
         except (ConnectorLLMError, ValueError) as exc:
             # Best-effort: one bad field is logged + skipped, never fatal.
             attempt["error"] = str(exc)[:300]
             emit({"type": "field_error", "code": field_meta["code"], "error": str(exc)[:200]})
         attempts.append(attempt)
+        checkpoint()
     else:
         # Loop fell through without break: namespace exhausted (or quota/cap
         # coincided with the last field). Re-derive the honest reason.

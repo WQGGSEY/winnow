@@ -38,6 +38,7 @@
     "created_at": { "type": "string", "minLength": 1 },
     "grilling_session_id": { "type": "string", "minLength": 1 },
     "model": { "type": "string", "minLength": 1 },
+    "literature_provider": { "type": "string", "enum": ["arxiv", "crossref"] },
     "field_seed": { "type": "integer" },
     "quota": { "type": "integer", "minimum": 1 },
     "max_fields_tried": { "type": "integer", "minimum": 1 },
@@ -45,7 +46,7 @@
     "quota_met": { "type": "boolean" },
     "stopped_reason": {
       "type": "string",
-      "enum": ["not_started", "quota_met", "max_fields_tried", "namespace_exhausted"]
+      "enum": ["not_started", "quota_met", "max_fields_tried", "namespace_exhausted", "retrieval_unavailable"]
     },
     "abstraction": {
       "type": ["object", "null"],

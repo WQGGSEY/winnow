@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import shutil
 import subprocess
 import urllib.parse
+import urllib.error
 import urllib.request
 import uuid
 import xml.etree.ElementTree as ET
@@ -53,6 +55,10 @@ class MarketResearchError(ValueError):
     """Raised when the market research agent cannot proceed."""
 
 
+class LiteratureUnavailable(MarketResearchError):
+    """A failed retrieval is not evidence that the literature is empty."""
+
+
 @dataclass
 class _CandidatePaper:
     paper: dict[str, Any]
@@ -82,6 +88,7 @@ def run_market_research(
     execution_ack: bool | None = None,
     claude_path: str | None = None,
     analysis_command_runner: CommandRunner | None = None,
+    search_provider: str = "arxiv",
 ) -> MarketResearchOutcome:
     """Run an agent-level paper-search pass and emit a baseline dossier candidate.
 
@@ -112,12 +119,14 @@ def run_market_research(
     warnings: list[str] = []
 
     try:
-        arxiv_papers = _arxiv_search(fetcher, query, max_papers)
-        sources_attempted.append("arxiv")
-        papers.extend(arxiv_papers)
+        retrieved_papers = search_literature(fetcher, query, max_papers, provider=search_provider)
+        sources_attempted.append(search_provider)
+        papers.extend(retrieved_papers)
+    except LiteratureUnavailable:
+        raise
     except Exception as exc:
-        warnings.append(f"arxiv search failed: {exc}")
-        sources_attempted.append("arxiv")
+        warnings.append(f"{search_provider} search failed: {exc}")
+        sources_attempted.append(search_provider)
 
     if enable_google_scholar:
         try:
@@ -269,6 +278,43 @@ def run_market_research(
     validate_named_schema("market_research_brief", brief)
     brief_path.write_text(json.dumps(brief, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return MarketResearchOutcome(brief=brief, dossier=dossier, papers=papers)
+
+
+def search_literature(fetcher: HttpFetcher, query: str, max_results: int, *, provider: str = "arxiv") -> list[dict[str, Any]]:
+    if provider not in {"arxiv", "crossref"}:
+        raise LiteratureUnavailable(f"unsupported literature provider: {provider}")
+    try:
+        return (_arxiv_search if provider == "arxiv" else _crossref_search)(fetcher, query, max_results)
+    except urllib.error.HTTPError as exc:
+        retry_after = exc.headers.get("Retry-After") if exc.headers else None
+        raise LiteratureUnavailable(
+            f"{provider} HTTP {exc.code}; retrieval unavailable, not empty literature; Retry-After={retry_after or 'unspecified'}"
+        ) from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise LiteratureUnavailable(f"{provider} retrieval unavailable: {exc}") from exc
+
+
+def _crossref_search(fetcher: HttpFetcher, query: str, max_results: int) -> list[dict[str, Any]]:
+    url = "https://api.crossref.org/works?" + urllib.parse.urlencode({"query.bibliographic": query, "rows": max_results})
+    document = json.loads(fetcher(url))
+    papers = []
+    for item in document["message"]["items"]:
+        doi = item.get("DOI")
+        titles = item.get("title") or []
+        if not doi or not titles:
+            continue
+        dates = (item.get("published") or {}).get("date-parts") or []
+        year = dates[0][0] if dates and dates[0] else None
+        papers.append({
+            "id": "crossref_" + hashlib.sha256(doi.lower().encode()).hexdigest()[:24],
+            "source": "crossref", "title": _strip_html(titles[0]),
+            "authors": [" ".join(filter(None, (a.get("given"), a.get("family")))) or a.get("name", "")
+                        for a in item.get("author", [])],
+            "abstract": _strip_html(item["abstract"]) if item.get("abstract") else None,
+            "url": "https://doi.org/" + doi, "year": year, "arxiv_id": None,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        })
+    return papers
 
 
 def _arxiv_search(fetcher: HttpFetcher, query: str, max_results: int) -> list[dict[str, Any]]:

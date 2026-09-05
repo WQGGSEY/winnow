@@ -9,6 +9,8 @@ from research_harness.agents.market_research import (
     MarketResearchError,
     run_market_research,
 )
+
+
 from research_harness.config import load_yaml
 from research_harness.memory.baseline_dossier import (
     load_baseline_dossier,
@@ -306,3 +308,29 @@ class MarketResearchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_crossref_discovery_preserves_metadata_without_inventing_an_abstract(tmp_path):
+    urls = []
+
+    def fetch(url):
+        urls.append(url)
+        return json.dumps({"message": {"items": [{
+            "DOI": "10.1234/example", "title": ["A retrieved title"],
+            "author": [{"given": "A", "family": "Researcher"}],
+            "published": {"date-parts": [[2024, 2]]},
+        }]}}).encode()
+
+    result = run_market_research(
+        REPO_ROOT, _grilling_session(), run_dir=tmp_path,
+        search_provider="crossref", http_fetcher=fetch,
+        enable_google_scholar=False, enable_claude_websearch=False,
+        write_dossier_to_memory=False,
+    )
+    assert len(urls) == 1 and urls[0].startswith("https://api.crossref.org/works?")
+    paper = result.papers[0]
+    assert paper["source"] == "crossref"
+    assert paper["url"] == "https://doi.org/10.1234/example"
+    assert paper["authors"] == ["A Researcher"]
+    assert paper["year"] == 2024 and paper["abstract"] is None
+    assert result.brief["sources_used"] == ["crossref"]
