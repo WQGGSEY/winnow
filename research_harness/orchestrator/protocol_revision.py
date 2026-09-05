@@ -170,3 +170,21 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
 
 def approved_protocol_revisions(thread: Path) -> list[dict[str, Any]]:
     return [_read(path) for path in sorted((thread / 'production/protocol_revisions').glob('*/approved.json'))]
+
+
+def protocol_note_history(thread: Path) -> dict[str, Any]:
+    """Follow installed amendments backwards, excluding unrelated or rejected proposals."""
+    current = _read(thread / 'production/feasibility_envelope.json')
+    records = [(path, _read(path)) for path in (thread / 'production/protocol_revisions').glob('*/approved.json')]
+    records.sort(key=lambda item: item[1]['recorded_at'], reverse=True)
+    chain = []
+    for path, record in records:
+        if record['protocol'] == current:
+            chain.append({'notes': current.get('notes', ''), 'receipt_path': str(path.resolve()),
+                          'recorded_at': record['recorded_at']})
+            current = record['previous_protocol']
+    entries = [{'notes': current.get('notes', ''), 'scope': 'Protocol before the first linked amendment'}, *reversed(chain)]
+    return {'interpretation': 'Read in chronological order. A later amendment supersedes only the terms it explicitly changes. '
+                             'References to unchanged prior rules inherit their definitions from earlier entries. '
+                             'Retired banks, replaced methods and superseded restrictions are historical, not active requirements.',
+            'entries': entries}

@@ -1602,6 +1602,8 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
             'qualification': 'market/baseline_qualification.json', 'hypotheses': 'production/hypotheses/current.json',
             'search_state': 'production/tree/search_state.json', 'research_work': 'production/research_control/current.json',
             'goal_contract': 'production/reorientation/goal_contract.json',
+            'registered_protocol': 'production/feasibility_envelope.json',
+            'approved_protocol_history': 'production/protocol_revisions',
         }.items() if (d / path).exists()},
         'detail_access': 'Read the named artifact for a specific question, or request view=full. Historical drafts are not current execution results.',
     }

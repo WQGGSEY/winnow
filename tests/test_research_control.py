@@ -326,7 +326,14 @@ def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tm
     with pytest.raises(ManuscriptError, match='disclose protocol amendment'):
         validate_sections({'method': {'prose_html': 'An amended study.', 'evidence_anchors': ['worker_report.status']}},
                           {'protocol_revisions': records, 'worker_report': {'status': 'completed'}}, require_citations=False)
-    work = plan_research_work(REPO, thread, transport=Planner('protocol_revision'))
+    unrelated = thread / 'production/protocol_revisions/unrelated/approved.json'
+    unrelated.parent.mkdir()
+    unrelated.write_text(json.dumps({**records[0], 'recorded_at': '9999',
+                                    'protocol': {**original, 'notes': 'Unrelated branch must not enter the active protocol.'}}))
+    following_planner = Planner('protocol_revision')
+    work = plan_research_work(REPO, thread, transport=following_planner)
+    history = following_planner.calls[0]['protocol_note_history']['entries']
+    assert [entry['notes'] for entry in history] == [original['notes'], kwargs['notes']]
     (thread / 'production/falsifier_result.json').write_text('{}')
     with pytest.raises(ValueError, match='Final evaluation'):
         protocol_revision.revise_evaluation_protocol(REPO, thread, **{**kwargs, 'work_id': work['work_id'], 'notes': 'Another change'})

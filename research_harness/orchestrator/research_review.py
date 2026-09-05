@@ -31,6 +31,7 @@ def review_research_packet(repo: Path, directory: Path, packet: dict[str, Any], 
         "For a later experiment, implementation freeze, or prospective development amendment, candidate/comparator source and checkpoint bindings can be appropriate. "
         "Keep the frozen task goal and success criterion distinct from these method bindings; recording a fixed implementation does not itself redefine the goal. "
         "Apply the decision-specific scope supplied below. Protocol registration is a two-step transaction: "
+        "Read protocol_note_history chronologically when supplied: later notes can be an amendment only. Unchanged rules inherit earlier definitions; explicitly replaced rules and retired banks are no longer active. "
         "you review the submitted proposal, then the harness installs it atomically if approved. Do not demand that the "
         "proposal already appear in the current authoritative envelope, or ask the agent to directly edit harness-owned "
         "registration files before approval. Required work must be actionable before this decision. "

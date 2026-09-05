@@ -21,6 +21,7 @@ def _write(path: Path, value: dict[str, Any]) -> None:
 
 def _packet(repo: Path, thread_dir: Path, qualification: dict[str, Any]) -> dict[str, Any]:
     from research_harness.settings_scoped import resolve_for_thread
+    from research_harness.orchestrator.protocol_revision import protocol_note_history
 
     brief = json.loads((thread_dir / 'market/market_research_brief.json').read_text())
     if qualification.get('dossier_id') != brief.get('baseline_dossier_id'):
@@ -47,6 +48,7 @@ def _packet(repo: Path, thread_dir: Path, qualification: dict[str, Any]) -> dict
     goal_path = thread_dir / 'production/reorientation/goal_contract.json'
     goal = json.loads(goal_path.read_text()) if goal_path.exists() else {}
     return {'qualification': qualification, 'dossier': dossier, 'candidate_details': details,
+            'protocol_note_history': protocol_note_history(thread_dir),
             'execution_verification': verified, 'artifacts': artifacts,
             'pending_assignment_goal': goal if goal.get('baseline_evidence') == [] else None}
 

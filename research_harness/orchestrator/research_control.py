@@ -13,7 +13,7 @@ from research_harness.schemas.validator import validate_named_schema
 from research_harness.evaluation_vault import sealed_bank_metadata
 from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
 
-PLANNING_POLICY_VERSION = 7
+PLANNING_POLICY_VERSION = 8
 
 
 class StaleResearchWork(ValueError):
@@ -129,6 +129,7 @@ def prepared_implementations(thread: Path) -> dict[str, Any]:
 
 def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '', transport=None) -> dict[str, Any]:
     from research_harness.orchestrator.hypothesis_development import hypothesis_context
+    from research_harness.orchestrator.protocol_revision import protocol_note_history
 
     confirmation = _read(thread / 'production/confirmation_execution.json')
     if confirmation:
@@ -200,6 +201,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
         'review_runtime': runtime,
         'planning_policy_version': planning_policy_version,
         'registered_protocol': envelope,
+        'protocol_note_history': protocol_note_history(thread),
         'reconsider_reason': reconsider_reason,
         'thread_dir': str(thread.resolve()),
         'goal_contract': _read(thread / 'production/reorientation/goal_contract.json'),
@@ -240,7 +242,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'When reconsider_reason is present, reassess the rejected implementation or protocol feedback and the feasibility of the selected test. '
             'Preserve the research objective and previous evidence, but change the procedure or work kind when the prior test cannot answer it. '
             'This supersedes a plan, not a scientific hypothesis; an input rejection is not an empirical observation. '
-            'Read the full registered_protocol, including its notes. Its method, split and evaluation restrictions constrain this study. '
+            'Read registered_protocol and protocol_note_history together. Later notes may contain only an amendment; unchanged qualification and split definitions remain in earlier approved notes. Apply explicit later replacements, not retired historical restrictions. '
             'Do not silently change a registered comparator, candidate or metric. If development needs a method change barred by an earlier protocol, '
             'choose protocol_revision before further method selection. revise_evaluation_protocol can independently review a prospective notes amendment '
             'before baseline qualification or final evaluation. It preserves the original goal, resources, held-out partition, endpoint definitions '
@@ -330,6 +332,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
 
 def resolve_research_work(repo: Path, thread: Path, work_id: str) -> dict[str, Any]:
     from research_harness.orchestrator.research_review import analyze_research_packet
+    from research_harness.orchestrator.protocol_revision import protocol_note_history
 
     work = current_work(thread)
     if work.get('work_id') == work_id and work.get('status') == 'completed' and work.get('outcome', {}).get('analysis'):
@@ -350,6 +353,7 @@ def resolve_research_work(repo: Path, thread: Path, work_id: str) -> dict[str, A
               'analysis_findings': analysis_findings(thread),
               'prepared_implementations': prepared_implementations(thread),
               'registered_protocol': _read(thread / 'production/feasibility_envelope.json'),
+              'protocol_note_history': protocol_note_history(thread),
               'thread_dir': str(thread.resolve()),
               'development_artifacts': {key: str((thread / value['report_path']).resolve()) for key, value in evidence.items()}}
     record = analyze_research_packet(repo, directory, packet, purpose=(
@@ -402,13 +406,14 @@ def bind_work(thread: Path, work_id: str | None, node_id: str, plan: dict[str, A
 
 def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dict[str, Any], plan: dict[str, Any]) -> None:
     from research_harness.orchestrator.research_review import review_research_packet
+    from research_harness.orchestrator.protocol_revision import protocol_note_history
 
     work = current_work(thread)
     if work.get('work_id') != work_id or work.get('binding', {}).get('node_id') != node['id']:
         raise ValueError('Implementation review requires the bound research work.')
     prior = work.get('implementation_review', {})
     plan_digest = _digest(plan)
-    review_policy_version = 3
+    review_policy_version = 4
     if prior.get('plan_digest') == plan_digest and prior.get('policy_version') == review_policy_version:
         if prior['decision'] != 'approve':
             raise ValueError('Work implementation needs revision: ' + json.dumps(prior, ensure_ascii=False))
@@ -418,6 +423,7 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
               'analysis_findings': analysis_findings(thread),
               'prepared_implementations': prepared_implementations(thread),
               'registered_protocol': _read(thread / 'production/feasibility_envelope.json'),
+              'protocol_note_history': protocol_note_history(thread),
               'prior_objections': prior.get('required_work', []),
               'development_artifacts': {key: str((thread / value['report_path']).resolve())
                                         for key, value in work['source_observations'].items()}}

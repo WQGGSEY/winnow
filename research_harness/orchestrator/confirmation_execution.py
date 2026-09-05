@@ -142,7 +142,9 @@ def execute_confirmation_experiment(repo: Path, thread: Path, *, work_id: str, r
     elapsed += sum(_read(path).get('elapsed_sec', 0) for path in (thread / 'production/research_control/work').glob('*/confirmation_dry_runs/*.json'))
     if elapsed + timeout > envelope['compute_budget']['max_total_node_hours'] * 3600:
         raise ValueError('Insufficient registered compute after public dry runs')
+    from research_harness.orchestrator.protocol_revision import protocol_note_history
     packet = {'binding': binding, 'work_id': work_id, 'work': work['decision'], 'registered_protocol': envelope,
+              'protocol_note_history': protocol_note_history(thread),
               'sampling_registration': registration, 'reference_directory': str(reference),
               'reference_execution_sha256': proof['runner_result_sha256'],
               'frozen_files': {str(path): digest for path, digest in files.items()},
