@@ -7,7 +7,7 @@ from typing import Any
 
 from research_harness.orchestrator.research_control import (
     PLANNING_POLICY_VERSION, StaleResearchWork, _digest, _read, _write,
-    analysis_findings, current_work, development_evidence,
+    analysis_findings, current_work, development_evidence, execution_inventory,
 )
 from research_harness.orchestrator.research_review import review_research_packet
 
@@ -57,6 +57,7 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
             'original_goal': _read(production / 'reorientation/goal_contract.json'),
             'development_evidence': evidence, 'thread_dir': str(thread.resolve()),
             'analysis_findings': analysis_findings(thread),
+            'execution_inventory': execution_inventory(thread),
             'execution_plans': [str(path.resolve()) for path in sorted((production / 'tree').rglob('experiment_plan.json'))],
         }
         _write(request_path, packet)

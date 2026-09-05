@@ -144,6 +144,14 @@ Live command probes confirm that public files remain readable while private
 canary reads fail through both Codex sandbox and LocalRunner. These probes verify
 the access boundary, not scientific independence or publication readiness.
 
+Historical analysis receives a server-built execution inventory covering both
+baseline preparation and formal nodes, including reservations without runner
+receipts. The live directory contained 77 preparation reservations and one formal
+node when an analysis incorrectly treated the direction ledger's single node as
+the full execution history. Earlier analysis receipts remain visible and indicate
+whether this inventory was supplied. The inventory excludes measurements and
+cannot establish absence of shell reads or reconstruct missing execution times.
+
 New direction reservations include the development packet when available. Every
 fourth draw omits it and explores the independently sampled perspective. This is
 an initial explicit exploration allocation, not an empirically optimized ratio.

@@ -11,7 +11,7 @@ from research_harness.adapters.codex_cli import CodexCliAdapter
 from research_harness.agent_runtime import AgentPrompt, CompletionRequest
 from research_harness.schemas.validator import validate_named_schema
 
-PLANNING_POLICY_VERSION = 3
+PLANNING_POLICY_VERSION = 4
 
 
 class StaleResearchWork(ValueError):
@@ -37,6 +37,26 @@ def current_work(thread: Path) -> dict[str, Any]:
     return _read(thread / 'production/research_control/current.json')
 
 
+def execution_inventory(thread: Path) -> dict[str, Any]:
+    groups = {}
+    for scope in ('baseline_preflight', 'nodes'):
+        root = thread / 'production/tree' / scope
+        groups[scope] = {
+            path.parent.name: {
+                'runner_status': _read(path.parent / 'workspace/runner_result.json').get('status'),
+                'runner_receipt_exists': (path.parent / 'workspace/runner_result.json').is_file(),
+            }
+            for path in sorted(root.glob('*/job_manifest.json'))
+        }
+    return {
+        'base_path': str((thread / 'production/tree').resolve()),
+        'groups': groups,
+        'scope': 'All persisted execution reservations, including baseline preparation outside the direction ledger. '
+                 'Each entry lives at base_path/group/id. A job manifest alone does not prove execution. '
+                 'This is not a complete file-read audit and missing timestamps cannot establish registration-relative timing.',
+    }
+
+
 def analysis_findings(thread: Path) -> dict[str, Any]:
     findings = {}
     for path in sorted((thread / 'production/research_control/work').glob('*/work.json')):
@@ -51,6 +71,7 @@ def analysis_findings(thread: Path) -> dict[str, Any]:
             'conclusion_excerpt': reason[:1600], 'truncated': len(reason) > 1600,
             'next_steps': analysis.get('next_steps', analysis.get('required_work', [])), 'receipt_path': outcome['receipt_path'],
             'evidence_scope': 'Existing-source analysis, not a new experiment or scientific claim approval',
+            'execution_inventory_supplied': bool(outcome.get('execution_inventory_digest')),
         }
     return findings
 
@@ -160,6 +181,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
         'goal_contract': _read(thread / 'production/reorientation/goal_contract.json'),
         'research': research, 'implementation_context': implementations, 'measurement_context': measurements,
         'analysis_findings': findings,
+        'execution_inventory': execution_inventory(thread),
         'active_claim': _read(thread / 'production/tree/search_state.json').get('nodes', []),
         'development_evidence': evidence, 'previous_work': previous,
         'diagnostic_required': diagnostic_required, 'max_runtime_seconds': ceiling,
@@ -177,6 +199,8 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'Choose ONE next research work unit using the supplied development evidence. '
             'Retain the accumulated analysis_findings and their scope. Do not re-run a resolved source question because '
             'its answer is no longer in previous_work. Consult the receipt if the excerpt is insufficient. '
+            'Source analyses remain fallible. For comprehensive execution claims, compare their actual coverage with execution_inventory. '
+            'node_attempts and search_state omit baseline_preflight executions; neither is a complete execution or file-access ledger. '
             'Use read-only inspection of referenced development sources when needed to check which records actually exist. '
             'Missing telemetry is unknown, not zero observed events. Source inspection and historical access reconstruction may need analysis, '
             'not a new experiment that merely searches source literals. Do not execute training, modify files or inspect holdout data while planning. '
@@ -264,7 +288,9 @@ def resolve_research_work(repo: Path, thread: Path, work_id: str) -> dict[str, A
     if work['evidence_digest'] != _digest(evidence):
         raise StaleResearchWork('New evidence arrived; call plan_research_work before analysis.')
     directory = thread / 'production/research_control/work' / work_id / 'analysis'
+    inventory = execution_inventory(thread)
     packet = {'question': work['decision'], 'development_evidence': evidence,
+              'execution_inventory': inventory,
               'analysis_findings': analysis_findings(thread),
               'registered_protocol': _read(thread / 'production/feasibility_envelope.json'),
               'thread_dir': str(thread.resolve()),
@@ -275,6 +301,8 @@ def resolve_research_work(repo: Path, thread: Path, work_id: str) -> dict[str, A
         'An answered question does not approve a baseline, scientific claim or paper. '
         'If a new measurement or missing source is necessary, state the unresolved distinction and smallest next step. '
         'Do not turn semantic interpretation into a keyword classifier or demand a new program to restate existing source. '
+        'For historical execution coverage use execution_inventory, including baseline_preflight as well as formal nodes. '
+        'The direction ledger alone is incomplete. No execution inventory proves absence of shell or reviewer file reads. '
         'Distinguish the implemented estimator and its declared conventions from your preferred representation. '
         'Do not infer unmeasured learning competence or causal improvements. Deferred questions are outside this decision. '
         'Do not inspect final holdout or external-falsifier outcomes, launch training, write code or modify artifacts.'
@@ -283,6 +311,7 @@ def resolve_research_work(repo: Path, thread: Path, work_id: str) -> dict[str, A
         'execution_result': 'analysis_completed' if record['assessment']['status'] == 'answered' else 'analysis_inconclusive',
         'analysis': record['assessment'], 'receipt_path': str((directory / record['request_sha256'] / 'review.json').resolve()),
         'new_observation': False, 'scientific_verdict': 'unverified',
+        'execution_inventory_digest': _digest(inventory),
     }, next_tool_to_call='plan_research_work')
     _write(thread / 'production/research_control/current.json', work)
     _write(thread / 'production/research_control/work' / work_id / 'work.json', work)

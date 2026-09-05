@@ -10,10 +10,24 @@ from research_harness.orchestrator.experiment_plan import build_demo_experiment_
 from research_harness.orchestrator.research_control import (
     bind_work, current_work, development_evidence, finish_work, plan_research_work,
     resolve_research_work,
+    execution_inventory,
 )
 from research_harness.runner.baseline_preflight import execute_baseline_preflight
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+def test_execution_inventory_includes_preparation_without_reading_measurements(tmp_path):
+    for scope, node_id in [('baseline_preflight', 'preflight'), ('nodes', 'formal')]:
+        directory = tmp_path / 'production/tree' / scope / node_id
+        (directory / 'workspace').mkdir(parents=True)
+        (directory / 'job_manifest.json').write_text('{}')
+        (directory / 'worker_report.json').write_text('unreadable scientific measurements')
+        if scope == 'baseline_preflight':
+            (directory / 'workspace/runner_result.json').write_text('{"status":"timeout"}')
+    groups = execution_inventory(tmp_path)['groups']
+    assert groups['baseline_preflight']['preflight'] == {'runner_status': 'timeout', 'runner_receipt_exists': True}
+    assert groups['nodes']['formal'] == {'runner_status': None, 'runner_receipt_exists': False}
 
 
 class Planner:
