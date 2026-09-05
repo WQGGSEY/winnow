@@ -60,10 +60,18 @@ def _fingerprint(label: str):
     )
 
 
-@pytest.mark.parametrize("intervention", ["adaptive scheduling", "sample tasks without replacement and adapt scheduling"])
-def test_codex_direction_generator_receives_only_blind_request(intervention: str) -> None:
+@pytest.mark.parametrize(("claim", "intervention"), [
+    ("Adaptive scheduling improves utility.", "adaptive scheduling"),
+    ("Adaptive scheduling improves utility.", "sample tasks without replacement and adapt scheduling"),
+    ("Adaptive scheduling improves utility.", "apply a bandit scheduler to allocate team roles"),
+    ("Adaptive scheduling improves utility.", "use block coordinate updates to reduce duplicate commitments"),
+    ("팀원 역할을 사전 지정하지 않고 탈출 보너스를 추가하면 협력 성과를 향상시킬 수 있다.",
+     "새 제어기를 적용하여 중복 행동을 억제하고 협력을 개선한다"),
+    ("Adaptive scheduling improves utility.", "apply a coordination gate without removing the learned policy"),
+])
+def test_codex_direction_generator_receives_only_blind_request(claim: str, intervention: str) -> None:
     proposal = {
-        "claim": "Adaptive scheduling improves utility by at least 5%.",
+        "claim": claim,
         "fingerprint": {
             "mechanism": "closed-loop load feedback",
             "intervention": intervention,

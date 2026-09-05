@@ -77,17 +77,13 @@ _PUBLIC_SOURCE_KEYS = frozenset(
 _MAX_REQUESTS = 100
 _MAX_DOWNLOAD_BYTES = 1024 * 1024 * 1024
 _MAX_WALL_SECONDS = 300
-_NEGATIVE_FRAMING = re.compile(
-    r"(?:\bdo(?:es)? not\b|\bdon't\b|\bdoesn't\b|\bcannot\b|\bcan't\b|"
-    r"\bfails? to\b|\bineffective\b|\bno improvement\b|\bavoid\w*\b|"
-    r"\bnever\b|\bban\w*\b|"
-    r"\bprohibit\w*\b|\brefrain from\b|\bstop(?: using)?\b|"
-    r"\bremov\w*\b|\beliminat\w*\b|\bdisabl\w*\b|\bomitt?\w*\b|"
-    r"\bexclud\w*\b|\bwithhold\w*\b|\bkept? off\b|\binaction\b|"
-    r"\babsence\b|\bsuppress\w*\b|\bforego\w*\b|\bcease\w*\b|"
-    r"\bhalt\w*\b|\bblock\w*\b|\bcurtail\w*\b|하지 (?:말|않)|금지|"
-    r"배제|제거|삭제|생략|제외|보류|중단|차단|억제|축소|비활성|없애|"
-    r"사용하지 않|효과가? 없|개선하지 못|향상시키지 못)",
+_PROHIBITION = re.compile(
+    r"^(?:do not|does not|don't|never|avoid|refrain from|stop using)\b",
+    re.IGNORECASE,
+)
+_NEGATED_EFFECT = re.compile(
+    r"(?:\b(?:does? not|fails? to|cannot|can't)\s+(?:improv|increase|reduce|achiev)|"
+    r"\bineffective\b|\bno improvement\b|효과가? 없|개선하지 못|향상시키지 못)",
     re.IGNORECASE,
 )
 _EFFECT_CLAIM = re.compile(
@@ -188,7 +184,10 @@ class CodexBlindDirectionGenerator:
             )
         proposal = _json_object(result.text, "blind direction generator")
         validate_named_schema("blind_direction_proposal", proposal)
-        _validate_positive_direction(proposal)
+        try:
+            _validate_positive_direction(proposal)
+        except BlindMcpAdapterError as exc:
+            raise BlindMcpAdapterError(f"{exc}; rejected proposal: {_canonical_json(proposal)}") from exc
         fingerprint_raw = proposal["fingerprint"]
         fingerprint = make_direction_fingerprint(
             **{axis: fingerprint_raw[axis] for axis in FINGERPRINT_AXES}
@@ -307,9 +306,10 @@ def _assessment_prompt(payload: Mapping[str, object]) -> AgentPrompt:
 def _validate_positive_direction(proposal: Mapping[str, Any]) -> None:
     claim = proposal["claim"].strip()
     intervention = proposal["fingerprint"]["intervention"].strip()
-    if _NEGATIVE_FRAMING.search(claim) or _NEGATIVE_FRAMING.search(
-        intervention
-    ):
+    effect = _EFFECT_CLAIM.search(claim)
+    negated = _NEGATED_EFFECT.search(claim)
+    if (_PROHIBITION.search(claim) or _PROHIBITION.search(intervention)
+            or (negated is not None and (effect is None or negated.start() <= effect.start()))):
         raise BlindMcpAdapterError(
             "direction must propose a positive intervention, not a prohibition"
         )

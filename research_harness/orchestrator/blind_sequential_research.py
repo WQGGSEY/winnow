@@ -495,6 +495,12 @@ class BlindSequentialResearch:
                         continue
                     if generation_error is not None:
                         committed.result["generation_error"] = generation_error
+                        committed.result["next_tool_to_call"] = "advance_research"
+                        committed.result["required_work"] = (
+                            "Retry with the returned revision/checkpoint. The direction generator reads only the frozen "
+                            "goal contract and a fresh perspective; it does not read the preparation hypotheses catalog. "
+                            "Regenerating that catalog cannot repair this generation failure."
+                        )
                     self._commit_transition(
                         command_id,
                         input_digest,
