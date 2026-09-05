@@ -81,6 +81,21 @@ class ThreadsCrudTests(unittest.TestCase):
             reloaded = threads.load_thread(repo, t["thread_id"])
             self.assertEqual(reloaded["phase_status"], "awaiting_input")
 
+    def test_boot_repair_preserves_live_production_supervisor(self) -> None:
+        import os
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            t = threads.create_thread(repo, user_goal="live production")
+            tid = t["thread_id"]
+            threads.update_thread(repo, tid, current_phase="production", phase_status="running")
+            lock = threads.threads_root(repo) / tid / ".supervisor.lock"
+            lock.write_text(str(os.getpid()))
+            self.assertEqual(threads.boot_repair(repo), [])
+            self.assertEqual(threads.load_thread(repo, tid)["phase_status"], "running")
+            lock.write_text("not a pid")
+            self.assertEqual(threads.boot_repair(repo), [tid])
+
     def test_boot_repair_demotes_orphan_aborted_to_failed(self) -> None:
         """When the previous launcher couldn't write phase_status=failed
         before the server died, the thread is left in awaiting_input but

@@ -232,6 +232,18 @@ def boot_repair(repo_root: Path) -> list[str]:
         tid = index["thread_id"]
         phase = index.get("current_phase")
         ps = index.get("phase_status")
+        # Production supervisors outlive the frontend process.
+        if phase == "production":
+            lock = threads_root(repo_root) / tid / ".supervisor.lock"
+            try:
+                pid = int(lock.read_text(encoding="utf-8").strip())
+                if pid > 0:
+                    os.kill(pid, 0)
+                    continue
+            except PermissionError:
+                continue
+            except (OSError, ValueError):
+                pass
         artifact_status = _read_phase_artifact_status(
             repo_root, tid, phase
         ) if phase else None
