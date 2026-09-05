@@ -592,6 +592,13 @@ def is_terminal(
 
     receipt_digest = strong_result_receipt_sha256(receipt)
     if require_rendered:
+        from research_harness.publishing.integrity import verify_publication_receipt
+
+        if not verify_publication_receipt(
+            pdir, s.get("publication_dispatch") or {},
+            s.get("publication_receipt_sha256"), receipt_digest,
+        ):
+            return False, None
         try:
             from research_harness.orchestrator.blind_reorientation import (
                 GoalAchieved,

@@ -5621,6 +5621,9 @@ def handle_render_final_paper(args: dict[str, Any]) -> dict[str, Any]:
 
 def _handle_render_final_paper_locked(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.publishing.sakana_paper import render_sakana_paper, SakanaPaperError
+    from research_harness.publishing.integrity import (
+        PublicationIntegrityError, issue_publication_receipt, publication_inputs,
+    )
     from research_harness.thread_supervisor import is_terminal
 
     tid = args["thread_id"]
@@ -5664,6 +5667,7 @@ def _handle_render_final_paper_locked(args: dict[str, Any]) -> dict[str, Any]:
                 "advance_research when the direction closes."
             ),
         }
+    writing_inputs = publication_inputs(_thread_dir(tid) / "production")
     paper_dir = _paper_dir(tid)
     outline = _read_json(paper_dir / "outline.json")
     if not outline:
@@ -5713,6 +5717,18 @@ def _handle_render_final_paper_locked(args: dict[str, Any]) -> dict[str, Any]:
     except SakanaPaperError as exc:
         return {"status": "rejected", "reason": f"paper render failed: {exc}"}
 
+    from research_harness.orchestrator.blind_sequential_research import strong_result_receipt_sha256
+
+    state = _read_json(_thread_dir(tid) / "production" / "tree" / "search_state.json")
+    try:
+        receipt_digest = issue_publication_receipt(
+            _thread_dir(tid) / "production", outputs,
+            strong_result_receipt_sha256(state["adaptive"]["strong_result_receipt"]),
+            expected_inputs=writing_inputs,
+        )
+    except (OSError, PublicationIntegrityError) as exc:
+        return {"status": "rejected", "reason": f"publication integrity failed: {exc}"}
+
     # Build minimal production_run_summary.json so the frontend panel populates.
     summary = {
         "type": "production_run_summary",
@@ -5732,6 +5748,7 @@ def _handle_render_final_paper_locked(args: dict[str, Any]) -> dict[str, Any]:
             "camera_ready_directives": ac.get("camera_ready_directives", []),
         },
         "publication_dispatch": outputs,
+        "publication_receipt_sha256": receipt_digest,
     }
     (_thread_dir(tid) / "production" / "production_run_summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True) + "\n",

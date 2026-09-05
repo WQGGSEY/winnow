@@ -591,6 +591,26 @@ def _write_verified_terminal_state(tdir: Path) -> None:
     }
     (tree / "search_state.json").write_text(json.dumps(state), encoding="utf-8")
 
+    summary_path = tdir / "production" / "production_run_summary.json"
+    if summary_path.exists():
+        from research_harness.publishing.integrity import issue_publication_receipt
+        from research_harness.orchestrator.blind_sequential_research import strong_result_receipt_sha256
+
+        publication = tdir / "production" / "publication"
+        drafts = publication / "_drafts"
+        drafts.mkdir(parents=True, exist_ok=True)
+        (drafts / "outline.json").write_text(json.dumps({"title": "Verified fixture"}))
+        paper = publication / "paper.html"
+        paper.write_text("<html><body>Verified fixture manuscript</body></html>")
+        summary = json.loads(summary_path.read_text())
+        dispatch = {"rendered_artifacts": [{"output": "paper_html", "artifact_path": str(paper)}]}
+        summary["publication_dispatch"] = dispatch
+        summary["publication_receipt_sha256"] = issue_publication_receipt(
+            tdir / "production", dispatch,
+            strong_result_receipt_sha256(state["adaptive"]["strong_result_receipt"]),
+        )
+        summary_path.write_text(json.dumps(summary))
+
 
 class TerminalDetectionTests(unittest.TestCase):
     def test_no_summary_file_is_not_terminal(self):

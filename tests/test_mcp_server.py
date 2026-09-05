@@ -44,6 +44,19 @@ def test_paper_render_rechecks_evidence_after_attestation(tmp_path):
             )
         (drafts / "outline.json").write_text(json.dumps(outline))
         assert srv.handle_render_final_paper({"thread_id": tid})["status"] == "ok"
+        from research_harness.thread_supervisor import is_terminal
+
+        assert is_terminal(tmp_path, tid)[0]
+        for artifact in (publication / "paper.html", drafts / "outline.json",
+                         publication / "figures" / "f_baseline.png",
+                         publication / "publication_receipt.json"):
+            original = artifact.read_bytes()
+            artifact.unlink()
+            assert not is_terminal(tmp_path, tid)[0]
+            artifact.write_bytes(original + b"tampered")
+            assert not is_terminal(tmp_path, tid)[0]
+            artifact.write_bytes(original)
+            assert is_terminal(tmp_path, tid)[0]
         report_path = next((tdir / "production" / "tree" / "nodes").glob("*/worker_report.json"))
         report = json.loads(report_path.read_text())
         report["metrics"]["unverified_change"] = 999.0
