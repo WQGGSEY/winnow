@@ -135,6 +135,8 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
         return {'status': confirmation['status'], 'work_id': confirmation['work_id'],
                 'next_tool_to_call': 'compute_falsifier_result',
                 'reason': 'Confirmation is reserved; adaptive development is closed.'}
+    from research_harness.orchestrator.research_review import review_runtime_status
+    runtime = review_runtime_status(thread)
     evidence = development_evidence(thread)
     findings = analysis_findings(thread)
     previous = current_work(thread)
@@ -146,7 +148,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
                                          for key in ('implementation_review', 'protocol_review'))):
         raise ValueError('Reconsideration requires a planned work with rejected implementation feedback or protocol feedback.')
     planning_policy_version = PLANNING_POLICY_VERSION
-    if not reconsider_reason and previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('protocol_digest') == _digest(envelope) and previous.get('evaluation_bank_digest') == _digest(bank) and previous.get('sampling_spec_digest') == _digest(sampling) and previous['evidence_digest'] == _digest(evidence):
+    if not reconsider_reason and previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('protocol_digest') == _digest(envelope) and previous.get('evaluation_bank_digest') == _digest(bank) and previous.get('sampling_spec_digest') == _digest(sampling) and previous.get('review_runtime_digest') == _digest(runtime) and previous['evidence_digest'] == _digest(evidence):
         return previous
     if previous.get('status') == 'running':
         # The public caller holds the same writer lock as execution. A remaining
@@ -154,7 +156,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
         report = _read(thread / 'production/tree' / previous['binding'].get('scope', 'baseline_preflight') / previous['binding']['node_id'] / 'worker_report.json')
         finish_work(thread, {'status': 'executed' if report.get('status') == 'completed' else 'interrupted'})
         previous = current_work(thread)
-        if previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('protocol_digest') == _digest(envelope) and previous['evidence_digest'] == _digest(evidence):
+        if previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('protocol_digest') == _digest(envelope) and previous.get('review_runtime_digest') == _digest(runtime) and previous['evidence_digest'] == _digest(evidence):
             return previous
     ceiling = envelope['compute_budget']['max_runner_seconds_per_node']
     latest = list(evidence.values())[-1:] or [{}]
@@ -195,6 +197,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     available_evidence = evidence.keys() | findings.keys() | prepared.keys()
     packet = {
         'available_evidence_ids': sorted(available_evidence),
+        'review_runtime': runtime,
         'planning_policy_version': planning_policy_version,
         'registered_protocol': envelope,
         'reconsider_reason': reconsider_reason,
@@ -227,6 +230,9 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'its answer is no longer in previous_work. Consult the receipt if the excerpt is insufficient. '
             'Source analyses remain fallible. For comprehensive execution claims, compare their actual coverage with execution_inventory. '
             'node_attempts and search_state omit baseline_preflight executions; neither is a complete execution or file-access ledger. '
+            'Host schema/transport failures are infrastructure incidents, not scientific uncertainties. '
+            'When review_runtime reports accepted_by_host_reviewer for the current schema, resume the blocked research decision; do not launch a scientific preflight to test that same API boundary. '
+            'LocalRunner development experiments have no network; they cannot run Codex/API compatibility probes. Host reviewer calls occur outside that sandbox. '
             'Historical claims about missing harness capabilities can become stale after a software change. The tools described here are currently available. '
             'Use read-only inspection of referenced development sources when needed to check which records actually exist. '
             'Missing telemetry is unknown, not zero observed events. Source inspection and historical access reconstruction may need analysis, '
@@ -297,6 +303,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     _write(response_path, decision)
     work = {'work_id': _digest({'packet': packet, 'decision': decision}), 'status': 'planned',
             'planning_policy_version': planning_policy_version,
+            'review_runtime_digest': _digest(runtime),
             'protocol_digest': _digest(envelope),
             'evaluation_bank_digest': _digest(bank),
             'sampling_spec_digest': _digest(sampling),

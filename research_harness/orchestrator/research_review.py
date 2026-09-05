@@ -93,8 +93,29 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
         "request_sha256": digest, "reviewer": "independent-research-review",
         "model": "gpt-5.6-sol", "reasoning_effort": "low",
         "thread_id": result.thread_id, "usage": result.usage.as_dict(), "assessment": assessment,
+        "response_schema_sha256": request_data["response_schema_sha256"],
     }
     temporary_path = result_path.with_suffix(".tmp")
     temporary_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
     temporary_path.replace(result_path)
     return record
+
+
+def review_runtime_status(thread: Path) -> dict[str, Any]:
+    schema = Path(__file__).resolve().parents[1] / 'schemas/research_review_response.schema.json'
+    digest = hashlib.sha256(schema.read_bytes()).hexdigest()
+    paths = list((thread / 'production/protocol_revisions').glob('*/review/*/review.json'))
+    paths.extend((thread / 'production/runtime_checks').glob('**/review.json'))
+    for path in sorted(paths, key=lambda item: item.stat().st_mtime_ns, reverse=True):
+        record = json.loads(path.read_text())
+        if record.get('response_schema_sha256') != digest:
+            continue
+        request_bytes = (path.parent / 'request.json').read_bytes().rstrip(b'\n')
+        if hashlib.sha256(request_bytes).hexdigest() != record.get('request_sha256'):
+            continue
+        validate_named_schema('research_review_response', record['assessment'])
+        return {'status': 'accepted_by_host_reviewer', 'schema_sha256': digest,
+                'receipt_path': str(path.resolve()), 'request_sha256': record['request_sha256'],
+                'scope': 'Host CLI accepted the current review schema. This is runtime health, not research evidence or scientific approval.'}
+    return {'status': 'unknown', 'schema_sha256': digest,
+            'scope': 'No successful host reviewer receipt for this schema was found. This is not a scientific outcome.'}
