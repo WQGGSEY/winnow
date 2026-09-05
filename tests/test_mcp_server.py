@@ -253,6 +253,7 @@ class MCPServerTests(unittest.TestCase):
         self.assertIn("top-level `baselines`", design_tool["description"])
         self.assertIn("primary_dataset.relative_path", design_tool["description"])
         core_expected = {
+            "submit_baseline_qualification",
             "get_research_state",
             "get_next_admissible_node",
             "advance_research",

@@ -118,6 +118,14 @@ AC_CONTRACT = (
 
 TOOL_DEFINITIONS = [
     {
+        "name": "submit_baseline_qualification",
+        "description": "Before freezing the goal, qualify sourced baseline candidates using replayable preflight execution artifacts under production/tree. Research ranking alone does not assign baseline roles.",
+        "inputSchema": {
+            "type": "object", "required": ["thread_id", "qualification"],
+            "properties": {"thread_id": {"type": "string"}, "qualification": {"type": "object"}},
+        },
+    },
+    {
         "name": "get_research_state",
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
@@ -1424,16 +1432,15 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
         "market_brief": _read_json(market_dir / "market_research_brief.json"),
         "baseline_dossier_candidate_yaml": baseline_dossier_yaml,
         "baseline_analysis_md": baseline_analysis_md,
+        "baseline_qualification": _read_json(market_dir / "baseline_qualification.json"),
         "reference_papers": reference_papers,
         "_market_usage_contract": (
-            "When designing claim_contract.mandatory_baselines, you MUST "
-            "ground each of the three roles (current_best_known / naive / "
-            "random_or_null) in the baseline_dossier_candidate above — copy "
-            "the concrete algorithm names + their published metric thresholds "
-            "verbatim. Citing a paper by name from reference_papers is "
-            "required for the current_best_known role. Ignoring market "
-            "output is a persona violation; the validator will reject your "
-            "design and you'll be asked to retry."
+            "Search results are unqualified candidates. Preserve all candidates and "
+            "choose current_best_known, naive, and random_or_null using sourced "
+            "methods and matched task/data/split/budget/metric conditions. Reproduce "
+            "them in preflight execution artifacts and submit_baseline_qualification "
+            "before freezing a new goal. Published scores on different tasks are "
+            "not comparable thresholds. A source citation does not prove suitability."
         ),
         "search_state": _read_json(d / "production" / "tree" / "search_state.json"),
         "tree_summary": _read_json(d / "production" / "tree" / "tree_search_summary.json"),
@@ -3738,6 +3745,30 @@ def handle_decide_publication_readiness(args: dict[str, Any]) -> dict[str, Any]:
     return {"status": "recorded"}
 
 
+def handle_submit_baseline_qualification(args: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.memory.baseline_dossier import load_baseline_dossier, validate_baseline_selection
+
+    tid = args["thread_id"]
+    with _exclusive_adaptive_writer(tid):
+        if (_thread_dir(tid) / "production" / "reorientation" / "goal_contract.json").exists():
+            return {"status": "rejected", "reason": "baseline roles are frozen in the existing goal contract"}
+        qualification = args["qualification"]
+        market = _thread_dir(tid) / "market"
+        brief = _read_json(market / "market_research_brief.json") or {}
+        if qualification.get("dossier_id") != brief.get("baseline_dossier_id"):
+            return {"status": "rejected", "reason": "qualification must use this thread's researched dossier"}
+        try:
+            dossier = load_baseline_dossier(_repo_root(), qualification["dossier_id"])
+            verified = validate_baseline_selection(
+                _repo_root(), dossier, qualification,
+                artifact_root=_thread_dir(tid) / "production" / "tree",
+            )
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return {"status": "rejected", "reason": f"baseline qualification failed: {exc}"}
+        _write_json_atomic(market / "baseline_qualification.json", qualification)
+        return {"status": "ok", "qualification": verified}
+
+
 # --- LLM-driven rebuttal + paper writer (Phase C / D) -------------------- #
 
 
@@ -5956,6 +5987,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_prepare_paper_writing_context(args)
             elif name == "submit_paper_outline":
                 result = handle_submit_paper_outline(args)
+            elif name == "submit_baseline_qualification":
+                result = handle_submit_baseline_qualification(args)
             elif name == "register_paper_figure":
                 result = handle_register_paper_figure(args)
             elif name == "submit_paper_section":
