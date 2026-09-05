@@ -1151,6 +1151,8 @@ def bootstrap_envelope_if_missing(
 def _last_known_state_summary(repo: Path, tid: str) -> dict[str, object]:
     """Pull a few cheap facts from the thread state for the resume prompt.
     Best-effort — missing files return defaults."""
+    from research_harness.runner.baseline_preflight import baseline_preparation_state
+
     pdir = _thread_dir(repo, tid) / "production"
     summary: dict[str, object] = {"thread_id": tid}
     state_path = pdir / "tree" / "search_state.json"
@@ -1179,6 +1181,7 @@ def _last_known_state_summary(repo: Path, tid: str) -> dict[str, object]:
             pass
     archived = sorted(p.name for p in _thread_dir(repo, tid).glob("production.attempt_*"))
     summary["archived_attempts"] = len(archived)
+    summary["baseline_preparation"] = baseline_preparation_state(pdir.parent)
     return summary
 
 
@@ -1248,6 +1251,7 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         f"  - archived previous attempts: {archived}",
         f"  - last AC decision: {last_ac!r}",
         f"  - search state status: {state.get('search_state_status')!r}",
+        "  - baseline preparation (not claim evidence): " + json.dumps(state['baseline_preparation'], ensure_ascii=False),
         "",
         *needs_block,
         "",

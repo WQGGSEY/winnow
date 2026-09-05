@@ -29,6 +29,8 @@ def _digest(value: Any) -> str:
 
 
 def hypothesis_context(repo: Path, thread: Path) -> dict[str, Any]:
+    from research_harness.runner.baseline_preflight import baseline_preparation_state
+
     connector = _read(thread / 'connector/connector_session.json')
     brief = _read(thread / 'market/market_research_brief.json')
     dossier = load_baseline_dossier(repo, brief['baseline_dossier_id']) if brief.get('baseline_dossier_id') else {}
@@ -44,6 +46,9 @@ def hypothesis_context(repo: Path, thread: Path) -> dict[str, Any]:
     reviews = sorted((thread / 'market/baseline_reviews').glob('*.review.json'), key=lambda path: path.stat().st_mtime)
     if reviews:
         sources['baseline_preparation_review'] = {'evidence_kind': 'implementation_review_not_paper_evidence', 'review': _read(reviews[-1])}
+    preparation = baseline_preparation_state(thread)
+    if preparation['attempt_count']:
+        sources['baseline_preparation_runs'] = {'evidence_kind': 'execution_diagnostics_not_scientific_approval', **preparation}
     details = {}
     if dossier:
         base = dossier_path(repo, brief['baseline_dossier_id']).parent
@@ -69,21 +74,34 @@ def _records(candidates: list[dict[str, Any]], critique: dict[str, Any] | None =
     } for index, candidate in enumerate(candidates)]
 
 
-def develop_hypotheses(repo: Path, thread: Path, *, revision_request: str = '', transport=None) -> dict[str, Any]:
+def develop_hypotheses(repo: Path, thread: Path, *, revision_request: str = '', run_id: str | None = None, transport=None) -> dict[str, Any]:
     """Persist drafts immediately, critique alternatives, and revise once if needed.
 
     Readiness here means worth testing, never demonstrated truth or permission
     to bypass experiment/claim-validation gates.
     """
-    context = hypothesis_context(repo, thread)
-    if revision_request:
-        context['revision_request'] = revision_request
+    root = thread / 'production/hypotheses'
+    current = root / 'current.json'
+    previous = _read(current)
+    if run_id is None and previous.get('status') in {
+        'developing', 'awaiting_critique', 'awaiting_revision', 'awaiting_revision_critique',
+    }:
+        run_id = previous['context_digest']
+    if run_id is not None:
+        if len(run_id) != 64 or any(c not in '0123456789abcdef' for c in run_id):
+            raise ValueError('invalid hypothesis run_id')
+        context = _read(root / run_id / 'context.json')
+        if not context or _digest(context) != run_id:
+            raise ValueError('hypothesis run_id has no matching frozen context')
+        digest = run_id
+    else:
+        context = hypothesis_context(repo, thread)
+        if revision_request:
+            context['revision_request'] = revision_request
+        digest = _digest(context)
     if not context['research_question']:
         raise ValueError('hypothesis development requires a research question')
-    root = thread / 'production/hypotheses'
-    digest = _digest(context)
     run = root / digest
-    current = root / 'current.json'
     completed = _read(run / 'result.json')
     if completed:
         _write(current, completed)
@@ -96,7 +114,6 @@ def develop_hypotheses(repo: Path, thread: Path, *, revision_request: str = '', 
         'origin': 'connector', 'scientific_support': 'unverified',
         'candidate': item, 'selected_for_diagnostic': False,
     } for item in context['connector_candidates']]
-    previous = _read(current)
     if not previous or previous.get('context_digest') != digest:
         _write(current, {'status': 'developing', 'context_digest': digest, 'candidates': seeds})
     client = transport or CodexCliAdapter()
@@ -180,7 +197,8 @@ def develop_hypotheses(repo: Path, thread: Path, *, revision_request: str = '', 
     def checkpoint(status: str, candidates: list[dict[str, Any]], critique=None):
         value = {'status': status, 'context_digest': digest, 'candidates': _records(candidates, critique),
                  'next_tool_to_call': 'develop_research_hypotheses',
-                 'next_step': 'Resume the next independent development stage with the same revision_request. These are unverified candidates.'}
+                 'run_id': digest,
+                 'next_step': 'Resume this run_id to advance the next independent stage. Its context and original revision request remain frozen until completion. These are unverified candidates.'}
         _write(current, value)
         return value
 
@@ -201,7 +219,7 @@ def develop_hypotheses(repo: Path, thread: Path, *, revision_request: str = '', 
         critique = complete('revision_critique', 'hypothesis_critique', review_instructions, {'context': context, **draft})
     records = _records(draft['candidates'], critique)
     result = {'status': 'ready_for_diagnostic' if any(row['selected_for_diagnostic'] for row in records) else 'needs_revision',
-              'context_digest': digest, 'candidates': records, 'selection_reason': critique['selection_reason'],
+              'context_digest': digest, 'run_id': digest, 'candidates': records, 'selection_reason': critique['selection_reason'],
               'next_step': ('Run the selected small diagnostic and resolve its prerequisites; baseline qualification remains required for scientific comparison.'
                             if any(row['selected_for_diagnostic'] for row in records)
                             else 'Resolve the critique with source or diagnostic evidence, then call develop_research_hypotheses with a concrete revision_request. Do not treat these candidates as test-ready.')}

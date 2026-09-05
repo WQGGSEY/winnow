@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from research_harness.orchestrator.demo import _demo_node
@@ -26,12 +27,12 @@ class ExperimentPlanTests(unittest.TestCase):
             tdir = repo / "thread"
             tree = tdir / "production/tree"
             tree.mkdir(parents=True)
-            (tdir / "production/feasibility_envelope.json").write_text(json.dumps({"compute_budget": {"max_runner_seconds_per_node": 30, "max_total_node_hours": 1}}))
+            (tdir / "production/feasibility_envelope.json").write_text(json.dumps({"compute_budget": {"max_runner_seconds_per_node": 3600, "max_total_node_hours": 1}}))
             node = _demo_node()
             plan = build_demo_experiment_plan(node, tree)
             requirement = plan["baseline_evidence_requirements"][2]
             plan["baseline_evidence_requirements"] = [requirement]
-            plan["resources"]["timeout_sec"] = 10
+            plan["resources"]["timeout_sec"] = 3600
             payload = {"metrics": {requirement["metric_key"]: 0.5}, "baselines": {requirement["baseline_key"]: 0.5}, "claim_verdict_candidate": "supported"}
             plan["source_files"] = [{"path": "experiment.py", "purpose": "receipt integration fixture", "content": "from pathlib import Path\nPath('artifacts').mkdir(exist_ok=True)\nPath('artifacts/metrics.json').write_text(" + repr(json.dumps(payload)) + ")\n"}]
             plan["expected_outputs"]["metrics_files"] = ["artifacts/metrics.json"]
@@ -46,6 +47,14 @@ class ExperimentPlanTests(unittest.TestCase):
             second = execute_baseline_preflight(repo, tdir, node=node, plan=plan, role=requirement["role"], settings={})
             self.assertEqual(first, second)
             self.assertEqual(receipt_file.stat().st_mtime_ns, stamp)
+            import research_harness.mcp_server as srv
+            with mock.patch.object(srv, '_thread_dir', return_value=tdir):
+                state = srv.handle_get_research_state({'thread_id': 'test'}, {})
+            preparation = state['baseline_preparation']
+            self.assertEqual(preparation['attempt_count'], 1)
+            self.assertEqual(preparation['recent_attempts'][0]['status'], 'comparison_failed')
+            self.assertFalse(preparation['qualification_recorded'])
+            self.assertIsNone(state['search_state'])
 
     def test_demo_experiment_plan_is_schema_valid_and_materializes_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

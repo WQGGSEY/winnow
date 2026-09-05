@@ -14,6 +14,57 @@ from research_harness.runtime_inputs import bind_runtime_input
 from research_harness.schemas.validator import validate_named_schema
 
 
+def baseline_preparation_state(thread_dir: Path) -> dict[str, Any]:
+    """Project preparation receipts without treating them as claim evidence."""
+    root = thread_dir / 'production/tree/baseline_preflight'
+    attempts = []
+    unreadable = []
+
+    def read(path: Path) -> dict[str, Any]:
+        if not path.exists():
+            return {}
+        try:
+            value = json.loads(path.read_text())
+            if not isinstance(value, dict):
+                raise ValueError('expected object')
+            return value
+        except (OSError, ValueError):
+            unreadable.append(str(path.relative_to(thread_dir)))
+            return {}
+
+    for path in sorted(root.glob('*/node.json'), key=lambda p: (p.stat().st_mtime_ns, str(p))):
+        directory = path.parent
+        plan = read(directory / 'experiment_plan.json')
+        report = read(directory / 'worker_report.json')
+        result = read(directory / 'workspace/runner_result.json')
+        requirements = plan.get('baseline_evidence_requirements', [])
+        status = 'incomplete'
+        if result.get('status') == 'completed' and report.get('status') == 'completed':
+            status = ('comparison_failed' if report.get('baseline_evidence_status', {}).get('overall') == 'failed'
+                      else 'executed_unreviewed')
+        elif (result and result.get('status') != 'completed') or (report and report.get('status') != 'completed'):
+            status = 'execution_failed'
+        attempts.append({
+            'node_id': directory.name,
+            'role': requirements[0]['role'] if requirements else None,
+            'status': status,
+            'elapsed_sec': result.get('elapsed_sec', 0),
+            'metrics': report.get('metrics', {}),
+            'failure': report.get('failure_record_candidate') or result.get('failure_record_candidate'),
+            'report_path': str((directory / 'worker_report.json').relative_to(thread_dir)) if report else None,
+        })
+    return {
+        'attempt_count': len(attempts),
+        'elapsed_sec': sum(row['elapsed_sec'] for row in attempts),
+        'status_counts': {status: sum(row['status'] == status for row in attempts)
+                          for status in ('incomplete', 'execution_failed', 'comparison_failed', 'executed_unreviewed')},
+        'recent_attempts': attempts[-5:],
+        'qualification_recorded': (thread_dir / 'market/baseline_qualification.json').exists(),
+        'unreadable_artifacts': unreadable,
+        'evidence_scope': 'Preparation only. Completion is not scientific approval; incomplete does not imply a live process. Read bound artifacts before choosing the next diagnostic.',
+    }
+
+
 def execute_baseline_preflight(
     repo: Path, thread_dir: Path, *, node: dict[str, Any], plan: dict[str, Any],
     role: str, settings: dict[str, Any],
@@ -33,13 +84,6 @@ def execute_baseline_preflight(
     plan['workspace'] = str(workspace.resolve())
     node['type'] = 'operational'
     envelope = json.loads((thread_dir / 'production/feasibility_envelope.json').read_text())
-    budget = envelope['compute_budget']
-    timeout = plan['resources']['timeout_sec']
-    if timeout > budget['max_runner_seconds_per_node']:
-        raise ValueError('preflight exceeds registered per-node compute budget')
-    elapsed = sum(json.loads(p.read_text()).get('elapsed_sec', 0) for p in (tree / 'baseline_preflight').glob('*/workspace/runner_result.json'))
-    if elapsed + timeout > budget['max_total_node_hours'] * 3600:
-        raise ValueError('preflight exceeds remaining registered compute budget')
     intent = envelope.get('operator_intent', {})
     if intent.get('data_source_anchor'):
         contract = node['claim_contract']
@@ -54,6 +98,13 @@ def execute_baseline_preflight(
         raise ValueError('preflight node already has another plan; use a new node ID')
     report_path = node_dir / 'worker_report.json'
     if not report_path.exists():
+        budget = envelope['compute_budget']
+        timeout = plan['resources']['timeout_sec']
+        if timeout > budget['max_runner_seconds_per_node']:
+            raise ValueError('preflight exceeds registered per-node compute budget')
+        elapsed = sum(json.loads(p.read_text()).get('elapsed_sec', 0) for p in (tree / 'baseline_preflight').glob('*/workspace/runner_result.json'))
+        if elapsed + timeout > budget['max_total_node_hours'] * 3600:
+            raise ValueError('preflight exceeds remaining registered compute budget')
         manifest = build_job_manifest_from_experiment_plan(node, plan, tree, preflight_role=role)
         for name, value in [('node.json', node), ('experiment_plan.json', plan), ('job_manifest.json', manifest)]:
             (node_dir / name).write_text(json.dumps(value, indent=2) + '\n')

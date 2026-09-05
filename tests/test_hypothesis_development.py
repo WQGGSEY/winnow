@@ -61,8 +61,8 @@ def test_hypotheses_are_visible_before_qualification_and_revised_from_critique(t
             requests.append(request)
             return CompletionResult(text=json.dumps(responses.pop(0)), usage=AgentUsage(), thread_id='test')
 
-    for _ in range(4):
-        result = develop_hypotheses(REPO, tdir, transport=Transport())
+    for instruction in ('', 'Critique the draft.', 'Address the critique.', 'Review the revision.'):
+        result = develop_hypotheses(REPO, tdir, revision_request=instruction, transport=Transport())
     assert result['status'] == 'ready_for_diagnostic'
     assert result['candidates'][1]['selected_for_diagnostic']
     assert all(row['scientific_support'] == 'unverified' for row in result['candidates'])

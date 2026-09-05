@@ -121,7 +121,7 @@ TOOL_DEFINITIONS = [
     {
         "name": "develop_research_hypotheses",
         "description": "Before baseline qualification or long training, develop three causally distinct hypotheses using the research question, connector ideas and literature packets. The harness independently critiques and revises them, stores unverified candidates for the graph, and selects a small discriminating diagnostic. This never approves a baseline or a scientific claim.",
-        "inputSchema": {"type": "object", "required": ["thread_id"], "properties": {"thread_id": {"type": "string"}, "revision_request": {"type": "string", "description": "Concrete critique findings and new source or diagnostic evidence to address in another development round."}}, "additionalProperties": False},
+        "inputSchema": {"type": "object", "required": ["thread_id"], "properties": {"thread_id": {"type": "string"}, "revision_request": {"type": "string", "description": "Findings for a new round after the current round completes. An unfinished round resumes its frozen context even if this text changes."}, "run_id": {"type": "string", "pattern": "^[a-f0-9]{64}$", "description": "Returned run_id to resume or replay. Omit to resume the unfinished current round automatically."}}, "additionalProperties": False},
     },
     {
         "name": "update_baseline_sources",
@@ -1375,12 +1375,14 @@ def handle_develop_research_hypotheses(args: dict[str, Any]) -> dict[str, Any]:
     tid = args["thread_id"]
     with _exclusive_adaptive_writer(tid):
         try:
-            return develop_hypotheses(_repo_root(), _thread_dir(tid), revision_request=args.get("revision_request", ""))
+            return develop_hypotheses(_repo_root(), _thread_dir(tid), revision_request=args.get("revision_request", ""), run_id=args.get("run_id"))
         except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:
             return {"status": "needs_revision", "reason": str(exc), "next_step": "Preserved hypothesis drafts remain unverified. Resolve the generation or evidence error and retry."}
 
 
 def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.runner.baseline_preflight import baseline_preparation_state
+
     tid = args["thread_id"]
     d = _thread_dir(tid)
     thread = _read_json(d / "thread.json") or {}
@@ -1436,6 +1438,7 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
         "baseline_dossier_candidate_yaml": baseline_dossier_yaml,
         "baseline_analysis_md": baseline_analysis_md,
         "baseline_qualification": _read_json(market_dir / "baseline_qualification.json"),
+        "baseline_preparation": baseline_preparation_state(d),
         "baseline_preparation_contract": (
             "Create the research claim and plan through advance_research before waiting for baseline qualification. "
             "An empty GoalContract.baseline_evidence means assignments are pending, not approved. "
