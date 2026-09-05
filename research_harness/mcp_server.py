@@ -163,12 +163,14 @@ TOOL_DEFINITIONS = [
             "Returns the current research state for a thread: thread.json, "
             "grilling extraction, market brief, search_state (if production "
             "started), roadmap, readiness history, and per-node dialogs. "
-            "Always call this BEFORE any decision so you have current context."
+            "Production defaults to current work, operational constraints and artifact paths. "
+            "Use view=full only when historical detail is needed. Call before a new decision; "
+            "repeating an unchanged state read adds no evidence."
         ),
         "inputSchema": {
             "type": "object",
             "required": ["thread_id"],
-            "properties": {"thread_id": {"type": "string"}},
+            "properties": {"thread_id": {"type": "string"}, "view": {"type": "string", "enum": ["current", "full"]}},
         },
     },
     {
@@ -1445,7 +1447,7 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
                 reference_papers.append(
                     {"filename": p.name, "size_bytes": p.stat().st_size}
                 )
-    return {
+    state = {
         "thread": thread,
         "operator_model_preference": model_preference,
         "_model_note": (
@@ -1479,6 +1481,31 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
         "search_state": _read_json(d / "production" / "tree" / "search_state.json"),
         "tree_summary": _read_json(d / "production" / "tree" / "tree_search_summary.json"),
         "intake_to_claim": _read_json(d / "production" / "intake_to_claim_dialog.json"),
+    }
+    if args.get('view', 'current' if thread.get('current_phase') == 'production' else 'full') == 'full':
+        return state
+    work = dict(state['research_work'])
+    work.pop('source_observations', None)
+    envelope = _read_json(d / 'production/feasibility_envelope.json') or {}
+    return {
+        **{key: state[key] for key in ('thread', 'operator_model_preference', '_model_note',
+                                      'baseline_preparation', 'baseline_preparation_contract', '_market_usage_contract')},
+        'view': 'current', 'thread_dir': str(d.resolve()), 'research_work': work,
+        'operator_intent': envelope.get('operator_intent'),
+        'compute_budget': envelope.get('compute_budget'),
+        'external_falsifier': envelope.get('external_falsifier'),
+        'nodes': [{'id': n['id'], 'status': n['status'],
+                   'claim': n.get('claim_contract', {}).get('claim_under_test'),
+                   'artifact_dir': str((d / 'production/tree/nodes' / n['id']).resolve())}
+                  for n in (state['search_state'] or {}).get('nodes', [])],
+        'artifact_paths': {key: str((d / path).resolve()) for key, path in {
+            'grilling': 'grilling/grilling_session.json', 'market_brief': 'market/market_research_brief.json',
+            'baseline_dossier': 'market/baseline_dossier_candidate.yaml', 'baseline_analysis': 'market/baseline_analysis.md',
+            'qualification': 'market/baseline_qualification.json', 'hypotheses': 'production/hypotheses/current.json',
+            'search_state': 'production/tree/search_state.json', 'research_work': 'production/research_control/current.json',
+            'goal_contract': 'production/reorientation/goal_contract.json',
+        }.items() if (d / path).exists()},
+        'detail_access': 'Read the named artifact for a specific question, or request view=full. Historical drafts are not current execution results.',
     }
 
 

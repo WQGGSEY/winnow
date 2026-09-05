@@ -74,6 +74,12 @@ This is an automatic scheduling boundary, not a request for human decisions.
 The graph shows the work's uncertainty, selected test, status and whether a new
 observation was recorded independently of claim count.
 
+During production, `get_research_state` defaults to the current work, execution
+constraints, node summaries and absolute artifact paths. Full historical content
+is available with `view=full`; it is no longer injected before every decision.
+The live Pacman agent repeatedly fetched an unchanged response of about 70,000
+characters, including historical hypotheses, while trying to locate one error.
+
 ## What this does not assert
 
 The controller does not guarantee an informative experiment merely because the

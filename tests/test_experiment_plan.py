@@ -27,7 +27,8 @@ class ExperimentPlanTests(unittest.TestCase):
             tdir = repo / "thread"
             tree = tdir / "production/tree"
             tree.mkdir(parents=True)
-            (tdir / "production/feasibility_envelope.json").write_text(json.dumps({"compute_budget": {"max_runner_seconds_per_node": 3600, "max_total_node_hours": 1}}))
+            envelope = {"compute_budget": {"max_runner_seconds_per_node": 3600, "max_total_node_hours": 1}}
+            (tdir / "production/feasibility_envelope.json").write_text(json.dumps(envelope))
             node = _demo_node()
             plan = build_demo_experiment_plan(node, tree)
             requirement = plan["baseline_evidence_requirements"][2]
@@ -50,6 +51,15 @@ class ExperimentPlanTests(unittest.TestCase):
             import research_harness.mcp_server as srv
             with mock.patch.object(srv, '_thread_dir', return_value=tdir):
                 state = srv.handle_get_research_state({'thread_id': 'test'}, {})
+                (tdir / 'thread.json').write_text(json.dumps({'current_phase': 'production'}))
+                current = srv.handle_get_research_state({'thread_id': 'test'}, {})
+                full = srv.handle_get_research_state({'thread_id': 'test', 'view': 'full'}, {})
+                self.assertEqual(current['view'], 'current')
+                self.assertEqual(current['baseline_preparation'], state['baseline_preparation'])
+                self.assertEqual(current['compute_budget'], envelope['compute_budget'])
+                self.assertEqual(current['thread_dir'], str(tdir.resolve()))
+                self.assertNotIn('baseline_analysis_md', current)
+                self.assertIn('baseline_analysis_md', full)
             preparation = state['baseline_preparation']
             self.assertEqual(preparation['attempt_count'], 1)
             self.assertEqual(preparation['recent_attempts'][0]['status'], 'comparison_failed')
