@@ -1801,6 +1801,8 @@ def watch_thread(
         prompt = build_resume_prompt(repo, tid, cycle)
         if cycle == 1:
             _log(log_path, "cycle #1: cold start, starting Codex immediately (idle gate applies from cycle #2)")
+        elif operator_resumed:
+            _log(log_path, f"cycle #{cycle}: operator response received, starting Codex immediately")
         else:
             _log(log_path, f"cycle #{cycle}: idle={idle:.0f}s > {max_idle_seconds:.0f}s, starting Codex")
         spawn_started = time.time()
