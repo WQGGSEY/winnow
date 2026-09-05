@@ -1,0 +1,10 @@
+{
+  "type": "object", "additionalProperties": false,
+  "required": ["version", "theorem_id", "declaration_name", "contract_sha256", "proof_path", "proof_sha256", "source_path", "source_sha256", "log_path", "log_sha256", "lean_path", "lean_sha256", "lean_version", "used_axioms"],
+  "properties": {
+    "version": {"const": 1}, "theorem_id": {"type": "string"}, "declaration_name": {"type": "string"},
+    "contract_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "proof_path": {"type": "string"}, "proof_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source_path": {"type": "string"}, "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "log_path": {"type": "string"}, "log_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "lean_path": {"type": "string"}, "lean_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "lean_version": {"type": "string"}, "used_axioms": {"type": "array", "items": {"type": "string"}}
+  }
+}

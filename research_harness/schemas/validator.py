@@ -61,6 +61,8 @@ SCHEMA_FILES = {
     "blind_direction_proposal": "blind_direction_proposal.schema.json",
     "structural_axis_relations": "structural_axis_relations.schema.json",
     "failure_evidence_receipt": "failure_evidence_receipt.schema.json",
+    "theory_evidence_contract": "theory_evidence_contract.schema.json",
+    "theory_evidence_receipt": "theory_evidence_receipt.schema.json",
 }
 
 
