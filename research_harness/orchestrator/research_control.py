@@ -13,7 +13,7 @@ from research_harness.schemas.validator import validate_named_schema
 from research_harness.evaluation_vault import sealed_bank_metadata
 from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
 
-PLANNING_POLICY_VERSION = 8
+PLANNING_POLICY_VERSION = 9
 
 
 class StaleResearchWork(ValueError):
@@ -247,6 +247,11 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'choose protocol_revision before further method selection. revise_evaluation_protocol can independently review a prospective notes amendment '
             'before baseline qualification or final evaluation. It preserves the original goal, resources, held-out partition, endpoint definitions '
             'and thresholds; it cannot retroactively certify results or make a failed test pass. The amendment and its timing remain disclosed. '
+            'A comparator_failed study does not terminate the original research question. For a prospective new study, distinguish source fidelity, '
+            'a reproduced learning-failure condition, and strong-comparator qualification. Do not require the failure condition to disappear before investigating it. '
+            'If qualification design itself precludes the research question, propose a justified prospective redesign with task-feasibility controls, credible tuning effort '
+            'and an appropriate strong comparator, preserving the failed-study record and final success bar. Method-name substitution alone is not a causal explanation: '
+            'state which changed configuration or diagnostic distinguishes the next attempt from earlier failures. '
             'If future_confirmation_sampling is available, prefer a prospective protocol revision with replace_holdout=true and defer_holdout_generation=true. '
             'This retires all existing banks and fixes the sampler before future data collection; the new bank will be drawn only after implementations and checkpoints are frozen. '
             'Do not request an existing bank ID or historical access audit for data that have not yet been generated. Preserve the full endpoints and statistical procedure. '
