@@ -452,18 +452,38 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
     @app.post("/api/threads/{thread_id}/feasibility_envelope")
     async def register_feasibility_envelope(thread_id: str, req: Request) -> JSONResponse:
         from research_harness.mcp_server import register_operator_feasibility_envelope
+        from research_harness.orchestrator.blind_mcp_adapter import adaptive_writer_lock
         from research_harness.settings_scoped import resolve_for_thread
 
         _require_thread(s.repo_root, thread_id)
         body = await req.json()
         if not isinstance(body, dict) or not isinstance(body.get("envelope"), dict):
             raise HTTPException(400, "envelope object is required")
-        result = register_operator_feasibility_envelope(
-            {"thread_id": thread_id, "envelope": body["envelope"]},
-            resolve_for_thread(s.repo_root, thread_id),
-            thread_dir=s.repo_root / "runs" / "threads" / thread_id,
-        )
+        tdir = s.repo_root / "runs" / "threads" / thread_id
+        with adaptive_writer_lock(tdir):
+            result = register_operator_feasibility_envelope(
+                {"thread_id": thread_id, "envelope": body["envelope"]},
+                resolve_for_thread(s.repo_root, thread_id), thread_dir=tdir,
+            )
         return JSONResponse(result, status_code=409 if result["status"] == "rejected" else 200)
+
+    @app.post("/api/threads/{thread_id}/baseline_review")
+    async def baseline_review(thread_id: str, req: Request) -> JSONResponse:
+        from research_harness.memory.baseline_review import review_baselines
+        from research_harness.orchestrator.blind_mcp_adapter import adaptive_writer_lock
+
+        _require_thread(s.repo_root, thread_id)
+        body = await req.json()
+        try:
+            tdir = s.repo_root / "runs/threads" / thread_id
+            with adaptive_writer_lock(tdir):
+                result = review_baselines(
+                    s.repo_root, tdir,
+                    proposal_digest=body["proposal_digest"], decision=body["decision"], reason=body["reason"],
+                )
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return JSONResponse(result)
 
     @app.post("/api/threads/{thread_id}/{phase}/retry")
     async def phase_retry(thread_id: str, phase: str, req: Request) -> JSONResponse:

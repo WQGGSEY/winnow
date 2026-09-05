@@ -650,6 +650,8 @@ def _baseline_evidence_from_qualification(
             artifact_root=artifact_root,
             dossier_base_dir=dossier_path(repo_root, dossier_id).parent,
         )
+        from research_harness.memory.baseline_review import require_baseline_approval
+        require_baseline_approval(repo_root, artifact_root.parent.parent, dict(qualification))
     except (BaselineDossierError, ValueError) as exc:
         raise GoalContractError(f"baseline qualification is invalid: {exc}") from exc
 

@@ -84,6 +84,9 @@ def _write_unqualified_baselines(repo: Path) -> tuple[dict, Path]:
     from research_harness.agents.market_research import _render_dossier_yaml
     (dossier_dir / "bd_qualified_test.yaml").write_text(_render_dossier_yaml(dossier))
     tree = repo / "runs" / "threads" / "thread_test" / "production" / "tree"
+    market = tree.parent.parent / "market"
+    market.mkdir(parents=True)
+    (market / "market_research_brief.json").write_text(json.dumps({"baseline_dossier_id": "bd_qualified_test"}))
     node_dir = tree / "baseline_preflight" / "n_baseline"
     node_dir.mkdir(parents=True)
     (node_dir / "node.json").write_text('{"id": "n_baseline"}')
@@ -381,6 +384,9 @@ def test_contract_uses_qualified_roles_and_can_select_second_candidate(
             "runner_result_sha256": "2" * 64,
         },
     ):
+        from research_harness.memory.baseline_review import propose_baselines, review_baselines
+        proposal = propose_baselines(tmp_path, tree.parent.parent, qualification)
+        review_baselines(tmp_path, tree.parent.parent, proposal_digest=proposal["proposal_digest"], decision="approve", reason="fixture scientific review")
         source = goal_contract_input_from_artifacts(
             repo_root=tmp_path,
             baseline_dossier_id="bd_qualified_test",

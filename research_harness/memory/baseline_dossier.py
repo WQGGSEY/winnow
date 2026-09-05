@@ -207,6 +207,8 @@ def validate_baseline_selection(
 
     for assignment in assignments:
         candidate_id = assignment["candidate_id"]
+        if assignment["role"] == "current_best_known" and not assignment["source_ids"]:
+            raise BaselineDossierError("current_best_known requires literature provenance")
         if candidate_id not in candidate_ids:
             raise BaselineDossierError(
                 f"qualified candidate is not in dossier: {candidate_id}"

@@ -3787,27 +3787,17 @@ def handle_decide_publication_readiness(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def handle_submit_baseline_qualification(args: dict[str, Any]) -> dict[str, Any]:
-    from research_harness.memory.baseline_dossier import load_baseline_dossier, validate_baseline_selection
+    from research_harness.memory.baseline_review import propose_baselines
 
     tid = args["thread_id"]
     with _exclusive_adaptive_writer(tid):
         if (_thread_dir(tid) / "production" / "reorientation" / "goal_contract.json").exists():
             return {"status": "rejected", "reason": "baseline roles are frozen in the existing goal contract"}
         qualification = args["qualification"]
-        market = _thread_dir(tid) / "market"
-        brief = _read_json(market / "market_research_brief.json") or {}
-        if qualification.get("dossier_id") != brief.get("baseline_dossier_id"):
-            return {"status": "rejected", "reason": "qualification must use this thread's researched dossier"}
         try:
-            dossier = load_baseline_dossier(_repo_root(), qualification["dossier_id"])
-            verified = validate_baseline_selection(
-                _repo_root(), dossier, qualification,
-                artifact_root=_thread_dir(tid) / "production" / "tree",
-            )
+            return propose_baselines(_repo_root(), _thread_dir(tid), qualification)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             return {"status": "rejected", "reason": f"baseline qualification failed: {exc}"}
-        _write_json_atomic(market / "baseline_qualification.json", qualification)
-        return {"status": "ok", "qualification": verified}
 
 
 # --- LLM-driven rebuttal + paper writer (Phase C / D) -------------------- #
