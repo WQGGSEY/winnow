@@ -13,7 +13,7 @@ from research_harness.schemas.validator import validate_named_schema
 from research_harness.evaluation_vault import sealed_bank_metadata
 from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
 
-PLANNING_POLICY_VERSION = 9
+PLANNING_POLICY_VERSION = 10
 
 
 class StaleResearchWork(ValueError):
@@ -252,6 +252,15 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'If qualification design itself precludes the research question, propose a justified prospective redesign with task-feasibility controls, credible tuning effort '
             'and an appropriate strong comparator, preserving the failed-study record and final success bar. Method-name substitution alone is not a causal explanation: '
             'state which changed configuration or diagnostic distinguishes the next attempt from earlier failures. '
+            'After repeated task-level failure, check whether development evidence establishes that the task objective is attainable '
+            'under the actual inputs, horizon and opponent or operating conditions before choosing another expensive training run. '
+            'If that evidence is absent, prefer one bounded task-feasibility or reward-semantics diagnostic over another full learner substitution. '
+            'Inspect input strata separately: an aggregate can hide instances with no opportunity to achieve the measured objective. '
+            'Nonzero reward counts do not establish useful success feedback; distinguish reward sign, background penalties, intermediate events '
+            'and the actual task outcome. A successful simple control demonstrates attainability, not a strong learned comparator or the proposed mechanism. '
+            'Have the execution agent construct the diagnostic from available apparatus; do not assume a supplied reference learner exists. '
+            'If the current registration blocks this diagnosis until after learning success, propose a prospective amendment to the diagnostic order. '
+            'Preserve the previous failure, original objective, final endpoints and thresholds, and label development controls as development evidence. '
             'If future_confirmation_sampling is available, prefer a prospective protocol revision with replace_holdout=true and defer_holdout_generation=true. '
             'This retires all existing banks and fixes the sampler before future data collection; the new bank will be drawn only after implementations and checkpoints are frozen. '
             'Do not request an existing bank ID or historical access audit for data that have not yet been generated. Preserve the full endpoints and statistical procedure. '
