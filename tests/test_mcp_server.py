@@ -27,6 +27,28 @@ def test_paper_render_rechecks_evidence_after_attestation(tmp_path):
     publication = tdir / "production" / "publication"
     publication.mkdir()
     _, _, _, figures, outline, sections = _build_inputs(publication)
+    from research_harness.publishing.figures import render_figure, figure_source_projection
+    import hashlib
+
+    report_path = next((tdir / "production" / "tree" / "nodes").glob("*/worker_report.json"))
+    report = json.loads(report_path.read_text())
+    data_spec = {"main_metric_key": "worker_report.metrics.score"}
+    artifact = render_figure("f_baseline", "baseline_bars", "Baselines", data_spec, report, {}, publication / "figures")
+    projection = figure_source_projection("baseline_bars", data_spec, report, {})
+    figures["f_baseline"].update({"data_spec": data_spec, "source_digest": projection.digest,
+                                "source_paths": list(projection.source_paths),
+                                "artifact_sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()})
+    for section in sections.values():
+        section["evidence_anchors"] = ["worker_report.metrics.score=1.1"]
+    sections["introduction"]["citation_source_ids"] = ["fixture_source"]
+    sections["introduction"]["prose_html"] += '<a href="#ref_fixture_source">Fixture citation</a>'
+    market = tdir / "market"
+    market.mkdir()
+    (market / "market_research_brief.json").write_text(json.dumps({"papers": [{
+        "id": "fixture_source", "title": "Test-only bibliographic record",
+        "authors": ["Fixture Author"], "year": 2026,
+        "url": "https://example.org/fixture", "source": "test_fixture",
+    }]}))
     drafts = publication / "_drafts"
     (drafts / "sections").mkdir(parents=True)
     (drafts / "outline.json").write_text(json.dumps(outline))
@@ -43,6 +65,22 @@ def test_paper_render_rechecks_evidence_after_attestation(tmp_path):
                 json.dumps({"prose_html": f"<p>Fixture {sid}.</p>"})
             )
         (drafts / "outline.json").write_text(json.dumps(outline))
+        method_file = drafts / "sections" / "method.json"
+        valid_method = method_file.read_text()
+        for bad_anchor in ("worker_report.metrics.missing", "worker_report.metrics.score=999"):
+            bad_section = json.loads(valid_method)
+            bad_section["evidence_anchors"] = [bad_anchor]
+            method_file.write_text(json.dumps(bad_section))
+            rejection = srv.handle_render_final_paper({"thread_id": tid})
+            assert rejection["status"] == "rejected"
+            assert "anchor" in rejection["reason"]
+        method_file.write_text(valid_method)
+        for extra in ("<p>/home/author/private/run.json</p>", '<a href="#ref_missing">Missing source</a>'):
+            bad_section = json.loads(valid_method)
+            bad_section["prose_html"] += extra
+            method_file.write_text(json.dumps(bad_section))
+            assert srv.handle_render_final_paper({"thread_id": tid})["status"] == "rejected"
+        method_file.write_text(valid_method)
         assert srv.handle_render_final_paper({"thread_id": tid})["status"] == "ok"
         from research_harness.thread_supervisor import is_terminal
 

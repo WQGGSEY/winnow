@@ -147,6 +147,8 @@ class _EmbedScanner(HTMLParser):
             match = re.fullmatch(r"figures/(f_[a-z0-9_]+)\.png", src)
             if match:
                 self.figure_ids.append(match.group(1))
+            else:
+                raise SakanaPaperError("manuscript images must reference registered figures/{figure_id}.png")
         if tag == "table":
             table_id = values.get("id") or ""
             if re.fullmatch(r"t_[a-z0-9_]+", table_id):
@@ -380,6 +382,8 @@ def render_sakana_paper(
         artifact_path = Path(str(meta.get("artifact_path") or ""))
         if not artifact_path.exists() or not artifact_path.is_file():
             raise SakanaPaperError(f"figure {figure_id!r} artifact file is missing")
+        if artifact_path.resolve() != (output_dir / "figures" / f"{figure_id}.png").resolve():
+            raise SakanaPaperError(f"figure {figure_id!r} file differs from manuscript image path")
 
     table_specs = {
         spec.get("table_id"): spec for spec in outline.get("table_specs", [])

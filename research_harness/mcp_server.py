@@ -4739,6 +4739,19 @@ def _paper_dir(tid: str) -> Path:
     return _publication_dir(tid) / "_drafts"
 
 
+def _paper_evidence_bundle(tid: str, node_dir: Path) -> dict[str, Any]:
+    production = _thread_dir(tid) / "production"
+    return {
+        "worker_report": _read_json(node_dir / "worker_report.json") or {},
+        "experiment_plan": _read_json(node_dir / "experiment_plan.json") or {},
+        "runner_result": _read_json(node_dir / "workspace" / "runner_result.json") or {},
+        "falsifier_result": _read_json(_rebuttal_dir(tid) / "falsifier_result.json") or {},
+        "construct_adversary_report": _read_json(_rebuttal_dir(tid) / "construct_adversary_report.json") or {},
+        "goal_contract": _read_json(production / "reorientation" / "goal_contract.json") or {},
+        "market_brief": _read_json(_thread_dir(tid) / "market" / "market_research_brief.json") or {},
+    }
+
+
 def handle_prepare_paper_writing_context(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.publishing.sakana_paper import PAPER_WRITING_REQUIREMENTS
 
@@ -4793,6 +4806,8 @@ def handle_prepare_paper_writing_context(args: dict[str, Any]) -> dict[str, Any]
         "goal_contract": _read_json(production / "reorientation" / "goal_contract.json"),
         "market_brief": market_brief,
         "reference_papers": market_brief.get("papers") or [],
+        "citation_format": "Declare citation_source_ids from reference_papers[].id and embed <a href='#ref_ID'>citation</a>. The references section is generated from those retrieved records; do not hand-copy metadata.",
+        "evidence_anchor_format": "artifact.path.to.value, optionally =JSON_VALUE (checked for equality); only the supplied research artifacts are allowed.",
         "baseline_analysis_md": analysis_path.read_text(encoding="utf-8") if analysis_path.exists() else None,
         "writing_requirements": list(PAPER_WRITING_REQUIREMENTS),
         "rebuttal_reviews": reviews,
@@ -4837,7 +4852,7 @@ def handle_submit_paper_outline(args: dict[str, Any]) -> dict[str, Any]:
 
 def handle_register_paper_figure(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.schemas.validator import validate_named_schema
-    from research_harness.publishing.figures import render_figure, FigureRenderError
+    from research_harness.publishing.figures import render_figure, FigureRenderError, figure_source_projection
 
     tid = args["thread_id"]
     req = args["figure_request"]
@@ -4862,6 +4877,7 @@ def handle_register_paper_figure(args: dict[str, Any]) -> dict[str, Any]:
     figures_dir = _figures_dir(tid)
     figures_dir.mkdir(parents=True, exist_ok=True)
     try:
+        projection = figure_source_projection(req["figure_type"], req.get("data_spec", {}), worker_report, ac)
         artifact_path = render_figure(
             figure_id=req["figure_id"],
             figure_type=req["figure_type"],
@@ -4877,7 +4893,11 @@ def handle_register_paper_figure(args: dict[str, Any]) -> dict[str, Any]:
     # Record registration.
     registry_path = _paper_dir(tid) / "figures.json"
     registry = _read_json(registry_path) or {}
-    registry[req["figure_id"]] = {**req, "artifact_path": str(artifact_path)}
+    registry[req["figure_id"]] = {
+        **req, "artifact_path": str(artifact_path),
+        "source_digest": projection.digest, "source_paths": list(projection.source_paths),
+        "artifact_sha256": hashlib.sha256(artifact_path.read_bytes()).hexdigest(),
+    }
     registry_path.parent.mkdir(parents=True, exist_ok=True)
     registry_path.write_text(json.dumps(registry, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -4891,6 +4911,7 @@ def handle_register_paper_figure(args: dict[str, Any]) -> dict[str, Any]:
 
 def handle_submit_paper_section(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.schemas.validator import validate_named_schema
+    from research_harness.publishing.manuscript import ManuscriptError, validate_sections
     tid = args["thread_id"]
     section = args["section"]
     try:
@@ -4913,6 +4934,16 @@ def handle_submit_paper_section(args: dict[str, Any]) -> dict[str, Any]:
             "status": "rejected",
             "reason": f"section {section['section_id']!r} requires non-empty evidence_anchors",
         }
+
+    if section["thread_id"] != tid:
+        return {"status": "rejected", "reason": "section thread_id differs from request"}
+    ctx = _resolve_promoted_node(tid, allow_completed=True)
+    node_dir = _thread_dir(tid) / "production" / "tree" / "nodes" / ctx["promoted_id"]
+    try:
+        validate_sections({section["section_id"]: section}, _paper_evidence_bundle(tid, node_dir),
+                          identity_tokens=(tid,), require_citations=False)
+    except ManuscriptError as exc:
+        return {"status": "rejected", "reason": str(exc)}
 
     sections_dir = _paper_dir(tid) / "sections"
     sections_dir.mkdir(parents=True, exist_ok=True)
@@ -5701,6 +5732,31 @@ def _handle_render_final_paper_locked(args: dict[str, Any]) -> dict[str, Any]:
 
     publication_dir = _publication_dir(tid)
     publication_dir.mkdir(parents=True, exist_ok=True)
+    from research_harness.publishing.manuscript import (
+        ManuscriptError, bibliography_html, validate_sections,
+    )
+    from research_harness.publishing.figures import FigureRenderError, figure_source_projection
+    try:
+        for figure_id, figure in figures_registry.items():
+            projection = figure_source_projection(figure["figure_type"], figure.get("data_spec", {}), worker_report, ac)
+            path = publication_dir / "figures" / f"{figure_id}.png"
+            if (projection.digest != figure.get("source_digest")
+                    or list(projection.source_paths) != figure.get("source_paths")
+                    or not path.is_file()
+                    or hashlib.sha256(path.read_bytes()).hexdigest() != figure.get("artifact_sha256")):
+                raise ManuscriptError(f"figure source or file changed: {figure_id}; register it again")
+        ledger = validate_sections(sections, _paper_evidence_bundle(tid, node_dir),
+                                   identity_tokens=(tid,))
+        if publication_inputs(_thread_dir(tid) / "production") != writing_inputs:
+            raise ManuscriptError("writing inputs changed during validation")
+        (paper_dir / "evidence_ledger.json").write_text(
+            json.dumps(ledger, sort_keys=True, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        writing_inputs = publication_inputs(_thread_dir(tid) / "production")
+        sections["references"] = {**sections["references"], "prose_html": bibliography_html(ledger)}
+    except (ManuscriptError, FigureRenderError) as exc:
+        return {"status": "rejected", "reason": f"manuscript validation failed: {exc}"}
     try:
         outputs = render_sakana_paper(
             outline=outline,
