@@ -1194,6 +1194,20 @@ def _last_known_state_summary(repo: Path, tid: str) -> dict[str, object]:
     archived = sorted(p.name for p in _thread_dir(repo, tid).glob("production.attempt_*"))
     summary["archived_attempts"] = len(archived)
     summary["baseline_preparation"] = baseline_preparation_state(pdir.parent)
+    work_path = pdir / "research_control" / "current.json"
+    if work_path.exists():
+        try:
+            work = json.loads(work_path.read_text(encoding="utf-8"))
+            summary["research_work"] = {
+                "path": str(work_path),
+                "work_id": work.get("work_id"),
+                "status": work.get("status"),
+                "decision": work.get("decision"),
+                "outcome": work.get("outcome"),
+                "binding": work.get("binding"),
+            }
+        except (OSError, json.JSONDecodeError):
+            pass
     return summary
 
 
@@ -1264,6 +1278,8 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         f"  - last AC decision: {last_ac!r}",
         f"  - search state status: {state.get('search_state_status')!r}",
         "  - baseline preparation (not claim evidence): " + json.dumps(state['baseline_preparation'], ensure_ascii=False),
+        "  - current research work: " + json.dumps(state.get('research_work'), ensure_ascii=False),
+        "현재 작업의 outcome과 연결된 실행 기록부터 이어가. claim graph의 오래된 worker_report를 전체 연구의 마지막 실행으로 간주하지 마. 현재 작업의 완료는 논문이나 claim의 검증 완료를 뜻하지 않아.",
         "",
         *needs_block,
         "",

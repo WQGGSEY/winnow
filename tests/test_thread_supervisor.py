@@ -1645,8 +1645,17 @@ class ResumePromptTests(unittest.TestCase):
             (tdir / "production" / "tree" / "search_state.json").write_text(
                 json.dumps(state), encoding="utf-8"
             )
+            work_dir = tdir / "production" / "research_control"
+            work_dir.mkdir()
+            (work_dir / "current.json").write_text(json.dumps({
+                "work_id": "recent_diagnostic", "status": "completed",
+                "decision": {"kind": "diagnostic_experiment"},
+                "outcome": {"observation": {"report_path": "baseline_preflight/recent/worker_report.json"}},
+            }), encoding="utf-8")
             prompt = ts.build_resume_prompt(repo, "t1", cycle=1)
             self.assertIn("n_root", prompt)
+            self.assertIn("recent_diagnostic", prompt)
+            self.assertIn("baseline_preflight/recent/worker_report.json", prompt)
 
 
 class LockTests(unittest.TestCase):
