@@ -41,7 +41,7 @@ class Planner:
         self.calls.append(packet)
         decision = {
             'kind': self.kind, 'uncertainty': 'Is the measurement implementation valid?',
-            'evidence_ids': list(packet['development_evidence']) + list(packet.get('analysis_findings', {})),
+            'evidence_ids': packet['available_evidence_ids'],
             'interpretation': 'Execution validity must be established before testing the mechanism.',
             'alternatives': [
                 {'explanation': 'The implementation is broken.', 'prediction': 'Independent replay disagrees.',
@@ -371,4 +371,4 @@ def test_implementation_work_writes_bound_bytes_without_executing(tmp_path, monk
     assert mcp_server.handle_design_experiment_template(args) == prepared
     planner = Planner('analysis')
     plan_research_work(REPO, thread, transport=planner)
-    assert planner.calls[0]['prepared_implementations'] == [prepared['outcome']]
+    assert planner.calls[0]['prepared_implementations'] == {'implementation_' + work['work_id']: prepared['outcome']}
