@@ -13,7 +13,7 @@ from research_harness.schemas.validator import validate_named_schema
 from research_harness.evaluation_vault import sealed_bank_metadata
 from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
 
-PLANNING_POLICY_VERSION = 10
+PLANNING_POLICY_VERSION = 11
 
 
 class StaleResearchWork(ValueError):
@@ -199,6 +199,12 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     packet = {
         'available_evidence_ids': sorted(available_evidence),
         'review_runtime': runtime,
+        'execution_review': {
+            'automatic_before_runner': True,
+            'checks': ['selected test', 'registered protocol', 'actual imports and input consumption',
+                       'measurement validity', 'prior implementation objections'],
+            'rejection_preserves_work': True,
+        },
         'planning_policy_version': planning_policy_version,
         'registered_protocol': envelope,
         'protocol_note_history': protocol_note_history(thread),
@@ -277,6 +283,11 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'Use design_experiment_template with this work_id; it writes a work-specific draft and returns source paths and hashes without running anything. '
             'A nonexistent program cannot have a prior hash. Prepared implementations are not empirical evidence or approval; inspect them, bind them if required, then execute the smallest useful probe. '
             'Choose analysis for questions answerable by interpreting existing source, definitions or recorded evidence. '
+            'Every selected execution already receives the independent pre-execution review described in execution_review. '
+            'Do not insert a separate analysis work solely to approve the same prepared program for that same execution. '
+            'When new measurements are the next needed evidence and the program exists, select the bounded execution; '
+            'its automatic review will inspect implementation validity and return repair feedback before any runner starts. '
+            'A separate source analysis is justified when it answers a distinct scientific or semantic question that changes which experiment to run. '
             'Do not write an experiment program to classify the meaning of prose or source semantics. '
             'diagnostic_experiment always runs a program to obtain new measurements. Source-only inspection of schemas, serializers, or code is analysis even when it diagnoses a bug. '
             'Choose an execution kind only when new measurements are needed. Analysis cannot establish unmeasured causal or performance claims. '
