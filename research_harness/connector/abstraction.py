@@ -16,6 +16,7 @@ best abstraction and record any residual leak honestly.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -112,6 +113,12 @@ def _build_user_prompt(extracted: dict[str, Any], leaked_terms: list[str]) -> st
         str(extracted.get("claim_under_test") or "").strip(),
         "",
         f"Home domain tag: {extracted.get('domain') or 'unspecified'}",
+        "",
+        "Conservative lexical exclusion list (JSON):",
+        json.dumps(extract_domain_terms(extracted)),
+        "The output abstraction must avoid every listed token, including generic "
+        "words retained by this conservative scanner. Preserve relationships using "
+        "different wording; do not merely remove the problem's substance.",
     ]
     facets = extracted.get("goal_facets") or []
     if facets:
