@@ -47,6 +47,10 @@ def _records(manuscript_digest: str, ledger: dict) -> list[dict]:
                 "judgment": f"Evidence-bound judgment for {category}",
                 "evidence_ids": ["worker_report.metrics.return"],
                 "citation_ids": ["closest"],
+                "difference_from_closest_work": (
+                    "Unlike Prior work, this manuscript evaluates the frozen symmetric setting."
+                    if category == "closest_work" else ""
+                ),
             } for category in categories[index::2]],
             "objections": [],
         })
@@ -107,6 +111,9 @@ def test_unresolved_blocker_rejects_readiness() -> None:
         "resolution": "",
         "evidence_ids": [],
         "citation_ids": ["closest"],
+        "changed_section_ids": [],
+        "resolution_evidence_ids": [],
+        "claim_scope_change": "",
     }]
 
     result = assess_readiness("d" * 64, ledger, records)
@@ -126,6 +133,9 @@ def test_resolved_objection_requires_resolution_text() -> None:
         "resolution": "",
         "evidence_ids": ["worker_report.metrics.return"],
         "citation_ids": [],
+        "changed_section_ids": [],
+        "resolution_evidence_ids": [],
+        "claim_scope_change": "",
     }]
 
     with pytest.raises(ScientificReviewError, match="lacks resolution"):
@@ -137,5 +147,107 @@ def test_duplicate_reviewer_provenance_is_not_independent() -> None:
     records = _records("d" * 64, ledger)
     records[1]["reviewer"] = copy.deepcopy(records[0]["reviewer"])
 
-    with pytest.raises(ScientificReviewError, match="identities must be independent"):
+    with pytest.raises(ScientificReviewError, match="identities must be distinct"):
         assess_readiness("d" * 64, ledger, records)
+
+
+def test_closest_work_requires_literature_and_difference() -> None:
+    ledger = _ledger()
+    records = _records("d" * 64, ledger)
+    closest = next(
+        assessment for record in records for assessment in record["assessments"]
+        if assessment["category"] == "closest_work"
+    )
+    closest["citation_ids"] = []
+    with pytest.raises(ScientificReviewError, match="retrieved literature"):
+        assess_readiness("d" * 64, ledger, records)
+
+    closest["citation_ids"] = ["closest"]
+    closest["difference_from_closest_work"] = ""
+    with pytest.raises(ScientificReviewError, match="claimed difference"):
+        assess_readiness("d" * 64, ledger, records)
+
+
+def test_importance_requires_evidence_and_literature() -> None:
+    ledger = _ledger()
+    records = _records("d" * 64, ledger)
+    importance = next(
+        assessment for record in records for assessment in record["assessments"]
+        if assessment["category"] == "importance"
+    )
+    importance["evidence_ids"] = []
+    with pytest.raises(ScientificReviewError, match="both research evidence and literature"):
+        assess_readiness("d" * 64, ledger, records)
+
+def test_declared_hashes_are_not_reported_as_verified_runs() -> None:
+    ledger = _ledger()
+    result = assess_readiness("d" * 64, ledger, _records("d" * 64, ledger))
+
+    assert result["review_execution_provenance"] == "declared_only"
+    assert result["verified_review_run_ids"] == []
+
+
+def test_verified_runs_can_be_required_at_integration_boundary() -> None:
+    ledger = _ledger()
+    records = _records("d" * 64, ledger)
+    with pytest.raises(ScientificReviewError, match="lack harness-verified"):
+        assess_readiness(
+            "d" * 64, ledger, records, require_verified_runs=True,
+        )
+
+    artifacts = [{
+        "kind": "verified_harness_review_run",
+        "review_id": record["review_id"],
+        "reviewer_id": record["reviewer"]["reviewer_id"],
+        "prompt_sha256": "a" * 64,
+        "response_sha256": "b" * 64,
+        "review_record_sha256": json_digest(record),
+        "runner_receipt_sha256": str(index + 3) * 64,
+    } for index, record in enumerate(records)]
+    result = assess_readiness(
+        "d" * 64, ledger, records,
+        review_run_artifacts=artifacts,
+        require_verified_runs=True,
+    )
+    assert result["ready"] is True
+    assert result["review_execution_provenance"] == "harness_verified"
+
+    artifacts[0]["review_record_sha256"] = "f" * 64
+    with pytest.raises(ScientificReviewError, match="response differs"):
+        assess_readiness(
+            "d" * 64, ledger, records,
+            review_run_artifacts=artifacts,
+            require_verified_runs=True,
+        )
+
+
+def test_resolved_objection_requires_changed_section_evidence_and_scope() -> None:
+    ledger = _ledger()
+    records = _records("d" * 64, ledger)
+    objection = {
+        "objection_id": "scope-gap",
+        "category": "limitations",
+        "blocking": True,
+        "status": "resolved",
+        "statement": "The claim exceeds the measured population.",
+        "resolution": "Narrowed the claim.",
+        "evidence_ids": ["worker_report.metrics.return"],
+        "citation_ids": [],
+        "changed_section_ids": [],
+        "resolution_evidence_ids": [],
+        "claim_scope_change": "",
+    }
+    records[0]["objections"] = [objection]
+    with pytest.raises(ScientificReviewError, match="changed sections"):
+        assess_readiness("d" * 64, ledger, records)
+
+    objection["changed_section_ids"] = ["experiments"]
+    with pytest.raises(ScientificReviewError, match="resolution evidence"):
+        assess_readiness("d" * 64, ledger, records)
+
+    objection["resolution_evidence_ids"] = ["worker_report.metrics.return"]
+    with pytest.raises(ScientificReviewError, match="claim-scope"):
+        assess_readiness("d" * 64, ledger, records)
+
+    objection["claim_scope_change"] = "Limited the claim to the evaluated tasks."
+    assert assess_readiness("d" * 64, ledger, records)["ready"] is True

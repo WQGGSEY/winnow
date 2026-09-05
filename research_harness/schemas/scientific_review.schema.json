@@ -25,12 +25,13 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["category", "judgment", "evidence_ids", "citation_ids"],
+        "required": ["category", "judgment", "evidence_ids", "citation_ids", "difference_from_closest_work"],
         "properties": {
           "category": {"type": "string", "enum": ["importance", "closest_work", "argument_completeness", "reproducibility", "limitations"]},
           "judgment": {"type": "string", "minLength": 1},
           "evidence_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
-          "citation_ids": {"type": "array", "items": {"type": "string", "minLength": 1}}
+          "citation_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "difference_from_closest_work": {"type": "string"}
         },
         "additionalProperties": false
       }
@@ -39,7 +40,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["objection_id", "category", "blocking", "status", "statement", "resolution", "evidence_ids", "citation_ids"],
+        "required": ["objection_id", "category", "blocking", "status", "statement", "resolution", "evidence_ids", "citation_ids", "changed_section_ids", "resolution_evidence_ids", "claim_scope_change"],
         "properties": {
           "objection_id": {"type": "string", "minLength": 1},
           "category": {"type": "string", "enum": ["importance", "closest_work", "argument_completeness", "reproducibility", "limitations"]},
@@ -48,7 +49,10 @@
           "statement": {"type": "string", "minLength": 1},
           "resolution": {"type": "string"},
           "evidence_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
-          "citation_ids": {"type": "array", "items": {"type": "string", "minLength": 1}}
+          "citation_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "changed_section_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "resolution_evidence_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "claim_scope_change": {"type": "string"}
         },
         "additionalProperties": false
       }
