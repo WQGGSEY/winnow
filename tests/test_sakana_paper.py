@@ -67,18 +67,29 @@ def _build_inputs(tmp_path):
         ],
         "figure_specs": [{"figure_id": "f_baseline", "figure_type": "baseline_bars",
                            "caption": "Baselines", "data_spec": {}}],
-        "table_specs": [],
+        "table_specs": [{"table_id": "t_metrics", "title": "Headline metrics",
+                          "data_source": "worker_report.metrics",
+                          "columns": ["metric", "value"]}],
     }
-    sections = {
-        sid: {
+    sections = {}
+    for sid in ["introduction", "method", "experiments", "discussion", "conclusion"]:
+        prose = f"<p>Section {sid} body.</p>"
+        embedded_figures = []
+        embedded_tables = []
+        if sid == "method":
+            prose = "<p>Method body with <img src='figures/f_baseline.png'>.</p>"
+            embedded_figures = ["f_baseline"]
+        if sid == "experiments":
+            prose = "<p>Experiment body with <table id='t_metrics'></table>.</p>"
+            embedded_tables = ["t_metrics"]
+        sections[sid] = {
             "thread_id": "t", "section_id": sid,
-            "prose_html": f"<p>Section {sid} body with <img src='figures/f_baseline.png'>.</p>",
+            "prose_html": prose,
             "mental_model_link": "Connects to mental model.",
             "evidence_anchors": ["worker_report.metrics.auc_overall=0.968"],
-            "embedded_figure_ids": ["f_baseline"] if sid == "method" else [],
+            "embedded_figure_ids": embedded_figures,
+            "embedded_table_ids": embedded_tables,
         }
-        for sid in ["introduction", "method", "experiments", "discussion", "conclusion"]
-    }
     return wr, ac, revision, figs_registry, outline, sections
 
 
@@ -97,6 +108,8 @@ def test_paper_assembles_with_mental_model(tmp_path):
     assert "Research Harness — Practitioner-Reviewed Pipeline" not in html
     assert "n_root" not in html
     assert "n_root" in summary
+    assert '<table id="t_metrics">' in html
+    assert "auc_overall" in html
 
 
 def test_paper_rejects_empty_mental_model(tmp_path):
@@ -114,8 +127,10 @@ def test_paper_rejects_empty_mental_model(tmp_path):
 def test_paper_allows_text_only_manuscript(tmp_path):
     wr, ac, rev, figs, outline, sections = _build_inputs(tmp_path)
     outline["figure_specs"] = []
+    outline["table_specs"] = []
     for section in sections.values():
         section["embedded_figure_ids"] = []
+        section["embedded_table_ids"] = []
         section["prose_html"] = "<p>A proof without figures.</p>"
     render_sakana_paper(
         outline=outline, sections=sections, figures_registry={},
@@ -128,6 +143,7 @@ def test_paper_allows_text_only_manuscript(tmp_path):
 def test_paper_rejects_unregistered_figure_reference(tmp_path):
     wr, ac, rev, figs, outline, sections = _build_inputs(tmp_path)
     sections["method"]["embedded_figure_ids"] = ["f_baseline", "f_ghost"]
+    sections["method"]["prose_html"] += "<img src='figures/f_ghost.png'>"
     with pytest.raises(SakanaPaperError, match="unregistered"):
         render_sakana_paper(
             outline=outline, sections=sections, figures_registry=figs,
@@ -174,7 +190,7 @@ def test_paper_preserves_figure_and_citation_urls(tmp_path):
 
     parsed = Links()
     parsed.feed((tmp_path / "paper.html").read_text(encoding="utf-8"))
-    assert parsed.images and all(src == "figures/f_baseline.png" for src in parsed.images)
+    assert parsed.images == ["figures/f_baseline.png"]
     assert "https://example.org/paper?a=1&b=2" in parsed.links
 
 
@@ -192,3 +208,108 @@ def test_paper_preserves_authored_appendix_and_numbers_body_from_one(tmp_path):
     paper = (tmp_path / "paper.html").read_text(encoding="utf-8")
     assert "1. Introduction" in paper
     assert "The full proof is retained here." in paper
+
+
+def test_paper_rejects_figure_declaration_that_does_not_match_markup(tmp_path):
+    wr, ac, rev, figs, outline, sections = _build_inputs(tmp_path)
+    sections["discussion"]["prose_html"] += "<img src='figures/f_baseline.png'>"
+    with pytest.raises(SakanaPaperError, match="embedded_figure_ids"):
+        render_sakana_paper(
+            outline=outline, sections=sections, figures_registry=figs,
+            ac_decision=ac, camera_ready_revision=rev, orchestrator_reduction={},
+            rebuttal_reviews=[], node={}, worker_report=wr, output_dir=tmp_path,
+        )
+
+
+def test_paper_rejects_missing_registered_figure_file(tmp_path):
+    wr, ac, rev, figs, outline, sections = _build_inputs(tmp_path)
+    figs["f_baseline"]["artifact_path"] = str(tmp_path / "figures" / "missing.png")
+    with pytest.raises(SakanaPaperError, match="artifact file is missing"):
+        render_sakana_paper(
+            outline=outline, sections=sections, figures_registry=figs,
+            ac_decision=ac, camera_ready_revision=rev, orchestrator_reduction={},
+            rebuttal_reviews=[], node={}, worker_report=wr, output_dir=tmp_path,
+        )
+
+
+def test_paper_rejects_internal_score_or_tree_figures_in_manuscript(tmp_path):
+    wr, ac, rev, figs, outline, sections = _build_inputs(tmp_path)
+    render_figure("f_scores", "score_radar", "Scores", {}, wr, ac, tmp_path / "figures")
+    figs["f_scores"] = {
+        "figure_id": "f_scores", "figure_type": "score_radar",
+        "caption": "Scores", "artifact_path": str(tmp_path / "figures" / "f_scores.png"),
+    }
+    outline["figure_specs"].append({"figure_id": "f_scores", "figure_type": "score_radar",
+                                     "caption": "Scores", "data_spec": {}})
+    sections["discussion"]["prose_html"] += "<img src='figures/f_scores.png'>"
+    sections["discussion"]["embedded_figure_ids"] = ["f_scores"]
+    with pytest.raises(SakanaPaperError, match="internal review material"):
+        render_sakana_paper(
+            outline=outline, sections=sections, figures_registry=figs,
+            ac_decision=ac, camera_ready_revision=rev, orchestrator_reduction={},
+            rebuttal_reviews=[], node={}, worker_report=wr, output_dir=tmp_path,
+        )
+
+
+def test_paper_rejects_table_declaration_that_does_not_match_markup(tmp_path):
+    wr, ac, rev, figs, outline, sections = _build_inputs(tmp_path)
+    sections["discussion"]["embedded_table_ids"] = ["t_metrics"]
+    with pytest.raises(SakanaPaperError, match="embedded_table_ids"):
+        render_sakana_paper(
+            outline=outline, sections=sections, figures_registry=figs,
+            ac_decision=ac, camera_ready_revision=rev, orchestrator_reduction={},
+            rebuttal_reviews=[], node={}, worker_report=wr, output_dir=tmp_path,
+        )
+
+
+def test_paper_rejects_declared_unembedded_table(tmp_path):
+    wr, ac, rev, figs, outline, sections = _build_inputs(tmp_path)
+    sections["experiments"]["prose_html"] = "<p>No table appears here.</p>"
+    sections["experiments"]["embedded_table_ids"] = []
+    with pytest.raises(SakanaPaperError, match="declared tables were not embedded"):
+        render_sakana_paper(
+            outline=outline, sections=sections, figures_registry=figs,
+            ac_decision=ac, camera_ready_revision=rev, orchestrator_reduction={},
+            rebuttal_reviews=[], node={}, worker_report=wr, output_dir=tmp_path,
+        )
+
+
+def test_paper_rejects_table_source_outside_worker_report(tmp_path):
+    wr, ac, rev, figs, outline, sections = _build_inputs(tmp_path)
+    outline["table_specs"][0]["data_source"] = "ac_decision.score_summary"
+    with pytest.raises(SakanaPaperError, match="worker_report dot-path"):
+        render_sakana_paper(
+            outline=outline, sections=sections, figures_registry=figs,
+            ac_decision=ac, camera_ready_revision=rev, orchestrator_reduction={},
+            rebuttal_reviews=[], node={}, worker_report=wr, output_dir=tmp_path,
+        )
+
+
+def test_paper_preserves_reference_targets_and_validates_citations(tmp_path):
+    wr, ac, rev, figs, outline, sections = _build_inputs(tmp_path)
+    outline["section_outline"].append({"section_id": "references", "title": "References"})
+    sections["method"]["prose_html"] += "<p>Prior work <a href='#ref_src1'>Smith 2024</a>.</p>"
+    sections["method"]["citation_source_ids"] = ["src1"]
+    sections["references"] = {
+        "prose_html": "<ol><li id='ref_src1'>Smith et al. 2024.</li></ol>",
+    }
+    render_sakana_paper(
+        outline=outline, sections=sections, figures_registry=figs,
+        ac_decision=ac, camera_ready_revision=rev, orchestrator_reduction={},
+        rebuttal_reviews=[], node={}, worker_report=wr, output_dir=tmp_path,
+    )
+    paper = (tmp_path / "paper.html").read_text(encoding="utf-8")
+    assert 'href="#ref_src1"' in paper
+    assert 'id="ref_src1"' in paper
+
+
+def test_paper_rejects_citation_declaration_that_does_not_match_links(tmp_path):
+    wr, ac, rev, figs, outline, sections = _build_inputs(tmp_path)
+    sections["method"]["prose_html"] += "<p>Prior work <a href='#ref_src1'>Smith 2024</a>.</p>"
+    sections["method"]["citation_source_ids"] = ["src2"]
+    with pytest.raises(SakanaPaperError, match="citation_source_ids"):
+        render_sakana_paper(
+            outline=outline, sections=sections, figures_registry=figs,
+            ac_decision=ac, camera_ready_revision=rev, orchestrator_reduction={},
+            rebuttal_reviews=[], node={}, worker_report=wr, output_dir=tmp_path,
+        )

@@ -12,14 +12,17 @@ Supported figure_type values:
 - baseline_bars        — bar chart of main metric vs each baseline value
 - ablation_drops       — bar chart of metric drop when each feature block is removed
 - lift_ci_forest       — forest plot of lift estimates with CIs across conditions
-- score_radar          — radar chart of critic_score_summary axes
-- claim_tree_status    — small graph showing root + promoted/pruned children
-- metric_table         — rendered table image of a dict of metrics (for embed-as-figure use)
+- score_radar          — internal report radar chart of critic_score_summary axes
+- claim_tree_status    — internal report graph showing root + promoted/pruned children
+- metric_table         — rendered table image of a worker_report dict
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -33,7 +36,26 @@ class FigureRenderError(ValueError):
     non-numeric values, unsupported figure_type, etc."""
 
 
+MANUSCRIPT_BLOCKED_FIGURE_TYPES = frozenset({"score_radar", "claim_tree_status"})
+
+
+@dataclass(frozen=True, slots=True)
+class SourceProjection:
+    """Evidence slice used to render a figure, plus a stable digest for receipts."""
+
+    source_paths: tuple[str, ...]
+    value: Any
+    digest: str
+
+
+def _digest(value: Any) -> str:
+    payload = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _dotpath(state: Mapping[str, Any], path: str) -> Any:
+    if not isinstance(path, str) or not path.strip():
+        raise FigureRenderError("data_spec path must be a non-empty string")
     cur: Any = state
     for part in path.split("."):
         if isinstance(cur, Mapping) and part in cur:
@@ -41,6 +63,101 @@ def _dotpath(state: Mapping[str, Any], path: str) -> Any:
         else:
             raise FigureRenderError(f"data_spec path not found: {path!r}")
     return cur
+
+
+def _require_worker_report_path(path: str, *, field: str) -> str:
+    if not isinstance(path, str) or not path.startswith("worker_report."):
+        raise FigureRenderError(f"{field} must be a worker_report dot-path")
+    return path
+
+
+def figure_source_projection(
+    figure_type: str,
+    data_spec: dict[str, Any],
+    worker_report: dict[str, Any],
+    ac_decision: dict[str, Any],
+) -> SourceProjection:
+    """Return the exact evidence projection a rendered figure will consume."""
+
+    state = {"worker_report": worker_report, "ac_decision": ac_decision}
+    spec = data_spec or {}
+    if figure_type == "loco_heatmap":
+        path = _require_worker_report_path(
+            spec.get("cells_key") or "worker_report.metrics.loco_auc_per_cell",
+            field="loco_heatmap.cells_key",
+        )
+        value = _dotpath(state, path)
+        return SourceProjection((path,), value, _digest({"paths": [path], "value": value}))
+    if figure_type == "baseline_bars":
+        main_path = _require_worker_report_path(
+            spec.get("main_metric_key") or "worker_report.metrics.auc_overall",
+            field="baseline_bars.main_metric_key",
+        )
+        baseline_path = _require_worker_report_path(
+            spec.get("baselines_key") or "worker_report.baselines",
+            field="baseline_bars.baselines_key",
+        )
+        value = {
+            "main": _dotpath(state, main_path),
+            "baselines": _dotpath(state, baseline_path),
+        }
+        return SourceProjection((main_path, baseline_path), value, _digest({"paths": [main_path, baseline_path], "value": value}))
+    if figure_type == "ablation_drops":
+        if "drops" in spec:
+            raise FigureRenderError("ablation_drops.drops inline data is not allowed; use drops_key")
+        path = _require_worker_report_path(
+            spec.get("drops_key") or "worker_report.metrics.ablation_drops",
+            field="ablation_drops.drops_key",
+        )
+        value = _dotpath(state, path)
+        return SourceProjection((path,), value, _digest({"paths": [path], "value": value}))
+    if figure_type == "lift_ci_forest":
+        if "entries" in spec:
+            raise FigureRenderError("lift_ci_forest.entries inline data is not allowed; use entries_key or point/ci paths")
+        entries_key = spec.get("entries_key")
+        if entries_key:
+            path = _require_worker_report_path(entries_key, field="lift_ci_forest.entries_key")
+            value = _dotpath(state, path)
+            return SourceProjection((path,), value, _digest({"paths": [path], "value": value}))
+        paths = (
+            _require_worker_report_path(
+                spec.get("point_key") or "worker_report.metrics.lift_over_naive_auc",
+                field="lift_ci_forest.point_key",
+            ),
+            _require_worker_report_path(
+                spec.get("ci_low_key") or "worker_report.metrics.lift_over_naive_ci95_low",
+                field="lift_ci_forest.ci_low_key",
+            ),
+            _require_worker_report_path(
+                spec.get("ci_high_key") or "worker_report.metrics.lift_over_naive_ci95_high",
+                field="lift_ci_forest.ci_high_key",
+            ),
+        )
+        value = {"label": spec.get("label") or "overall"}
+        value.update({path: _dotpath(state, path) for path in paths})
+        return SourceProjection(paths, value, _digest({"paths": list(paths), "value": value}))
+    if figure_type == "metric_table":
+        if "rows" in spec:
+            raise FigureRenderError("metric_table.rows inline data is not allowed; use dict_key")
+        path = _require_worker_report_path(
+            spec.get("dict_key") or "worker_report.metrics",
+            field="metric_table.dict_key",
+        )
+        value = _dotpath(state, path)
+        return SourceProjection((path,), value, _digest({"paths": [path], "value": value}))
+    if figure_type == "score_radar":
+        path = spec.get("score_summary_key") or "ac_decision.score_summary"
+        value = _dotpath(state, path)
+        return SourceProjection((path,), value, _digest({"paths": [path], "value": value}))
+    if figure_type == "claim_tree_status":
+        if "nodes" in spec:
+            raise FigureRenderError("claim_tree_status.nodes inline data is not allowed; use nodes_key")
+        path = spec.get("nodes_key")
+        if not path:
+            raise FigureRenderError("claim_tree_status.nodes_key is required")
+        value = _dotpath(state, path)
+        return SourceProjection((path,), value, _digest({"paths": [path], "value": value}))
+    raise FigureRenderError(f"unsupported figure_type: {figure_type!r}")
 
 
 def render_figure(
@@ -57,6 +174,13 @@ def render_figure(
     artifact = output_dir / f"{figure_id}.png"
 
     state = {"worker_report": worker_report, "ac_decision": ac_decision}
+
+    figure_source_projection(
+        figure_type,
+        data_spec,
+        worker_report,
+        ac_decision,
+    )
 
     if figure_type == "loco_heatmap":
         _draw_loco_heatmap(artifact, data_spec, state)
@@ -88,19 +212,7 @@ def _draw_loco_heatmap(path: Path, spec: dict[str, Any], state: dict[str, Any]) 
       - dict[str, dict[str, float]] — pre-shaped { region: { asset: auc } }
     """
     cells_key = spec.get("cells_key") or "worker_report.metrics.loco_auc_per_cell"
-    try:
-        cells = _dotpath(state, cells_key)
-    except FigureRenderError:
-        # Try a fallback synthesized layout from per-cell min/max if available.
-        wr = state.get("worker_report", {})
-        metrics = wr.get("metrics") or {}
-        loco_min = metrics.get("loco_auc_min")
-        loco_max = metrics.get("loco_auc_max")
-        if loco_min is None or loco_max is None:
-            raise FigureRenderError(
-                f"loco_heatmap: neither {cells_key!r} nor loco_auc_min/max in worker_report.metrics"
-            )
-        cells = {"min": float(loco_min), "max": float(loco_max)}
+    cells = _dotpath(state, cells_key)
 
     if isinstance(cells, dict) and cells and isinstance(next(iter(cells.values())), (int, float)):
         regions: list[str] = []
@@ -176,16 +288,12 @@ def _draw_baseline_bars(path: Path, spec: dict[str, Any], state: dict[str, Any])
 def _draw_ablation_drops(path: Path, spec: dict[str, Any], state: dict[str, Any]) -> None:
     """data_spec: { 'drops_key': 'worker_report.metrics.ablation_drops' }
     drops_key resolves to dict[str, float] of feature-block -> drop magnitude.
-    Or inline data via data_spec.drops = [{name, drop}, ...].
     """
-    if "drops" in spec:
-        items = [(d["name"], float(d["drop"])) for d in spec["drops"]]
-    else:
-        drops_key = spec.get("drops_key") or "worker_report.metrics.ablation_drops"
-        d = _dotpath(state, drops_key)
-        if not isinstance(d, dict) or not d:
-            raise FigureRenderError(f"ablation_drops: {drops_key!r} must be a non-empty dict")
-        items = [(k, float(v)) for k, v in d.items()]
+    drops_key = spec.get("drops_key") or "worker_report.metrics.ablation_drops"
+    d = _dotpath(state, drops_key)
+    if not isinstance(d, dict) or not d:
+        raise FigureRenderError(f"ablation_drops: {drops_key!r} must be a non-empty dict")
+    items = [(k, float(v)) for k, v in d.items()]
     items.sort(key=lambda kv: kv[1], reverse=True)
     labels = [k for k, _ in items]
     values = [v for _, v in items]
@@ -205,16 +313,16 @@ def _draw_ablation_drops(path: Path, spec: dict[str, Any], state: dict[str, Any]
 
 
 def _draw_lift_ci_forest(path: Path, spec: dict[str, Any], state: dict[str, Any]) -> None:
-    """data_spec.entries = [{label, point, ci_low, ci_high}, ...]"""
-    entries = spec.get("entries")
-    if not entries:
-        # Fallback: build a single-row forest from worker_report keys.
-        try:
-            point = float(_dotpath(state, "worker_report.metrics.lift_over_naive_auc"))
-            lo = float(_dotpath(state, "worker_report.metrics.lift_over_naive_ci95_low"))
-            hi = float(_dotpath(state, "worker_report.metrics.lift_over_naive_ci95_high"))
-        except FigureRenderError as exc:
-            raise FigureRenderError(f"lift_ci_forest: provide entries or worker_report.metrics.lift_* keys ({exc})")
+    """data_spec entries must come from worker_report paths."""
+    entries_key = spec.get("entries_key")
+    if entries_key:
+        entries = _dotpath(state, entries_key)
+        if not isinstance(entries, list) or not entries:
+            raise FigureRenderError(f"lift_ci_forest: {entries_key!r} must resolve to a non-empty list")
+    else:
+        point = float(_dotpath(state, spec.get("point_key") or "worker_report.metrics.lift_over_naive_auc"))
+        lo = float(_dotpath(state, spec.get("ci_low_key") or "worker_report.metrics.lift_over_naive_ci95_low"))
+        hi = float(_dotpath(state, spec.get("ci_high_key") or "worker_report.metrics.lift_over_naive_ci95_high"))
         entries = [{"label": "overall", "point": point, "ci_low": lo, "ci_high": hi}]
 
     labels = [e["label"] for e in entries]
@@ -264,10 +372,10 @@ def _draw_score_radar(path: Path, spec: dict[str, Any], state: dict[str, Any]) -
 
 
 def _draw_claim_tree_status(path: Path, spec: dict[str, Any], state: dict[str, Any]) -> None:
-    """data_spec.nodes = [{id, status, node_type, parent}, ...]"""
-    nodes = spec.get("nodes") or []
+    """data_spec.nodes_key resolves to [{id, status, node_type, parent}, ...]."""
+    nodes = _dotpath(state, spec.get("nodes_key"))
     if not nodes:
-        raise FigureRenderError("claim_tree_status: data_spec.nodes is required")
+        raise FigureRenderError("claim_tree_status: nodes_key must resolve to nodes")
     parents = {n["id"]: n.get("parent") for n in nodes}
     children: dict[str | None, list[str]] = {}
     for n in nodes:
@@ -312,15 +420,12 @@ def _draw_claim_tree_status(path: Path, spec: dict[str, Any], state: dict[str, A
 
 
 def _draw_metric_table(path: Path, spec: dict[str, Any], state: dict[str, Any]) -> None:
-    """data_spec.rows = [{label, value}, ...] OR data_spec.dict_key resolving to dict."""
-    if "rows" in spec:
-        rows = [(r["label"], r["value"]) for r in spec["rows"]]
-    else:
-        dict_key = spec.get("dict_key") or "worker_report.metrics"
-        d = _dotpath(state, dict_key)
-        if not isinstance(d, dict):
-            raise FigureRenderError(f"metric_table: {dict_key!r} must resolve to a dict")
-        rows = [(k, v) for k, v in d.items()]
+    """data_spec.dict_key resolves to a worker_report dict."""
+    dict_key = spec.get("dict_key") or "worker_report.metrics"
+    d = _dotpath(state, dict_key)
+    if not isinstance(d, dict):
+        raise FigureRenderError(f"metric_table: {dict_key!r} must resolve to a dict")
+    rows = [(k, v) for k, v in d.items()]
 
     fig_height = max(1.2, 0.35 * len(rows) + 0.6)
     fig, ax = plt.subplots(figsize=(6, fig_height))

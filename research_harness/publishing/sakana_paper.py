@@ -6,6 +6,7 @@ HTML rendering does not establish scientific or conference submission readiness.
 from __future__ import annotations
 
 import html as html_lib
+import hashlib
 import json
 import re
 from html.parser import HTMLParser
@@ -52,6 +53,8 @@ _ALLOWED_TAGS = {
 _ALLOWED_ATTRS = {
     "img": {"src", "alt", "title"},
     "a": {"href", "title"},
+    "li": {"id"},
+    "table": {"id"},
     "th": {"colspan", "rowspan"},
     "td": {"colspan", "rowspan"},
     "figure": {"id"},
@@ -123,6 +126,122 @@ def _table_from_dict(data: dict[str, Any], col_a: str = "key", col_b: str = "val
         f"<table><thead><tr><th>{_esc(col_a)}</th><th>{_esc(col_b)}</th></tr></thead>"
         f"<tbody>{rows}</tbody></table>"
     )
+
+
+def _json_digest(value: Any) -> str:
+    payload = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+class _EmbedScanner(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.figure_ids: list[str] = []
+        self.table_ids: list[str] = []
+        self.citation_source_ids: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        if tag == "img":
+            src = values.get("src") or ""
+            match = re.fullmatch(r"figures/(f_[a-z0-9_]+)\.png", src)
+            if match:
+                self.figure_ids.append(match.group(1))
+        if tag == "table":
+            table_id = values.get("id") or ""
+            if re.fullmatch(r"t_[a-z0-9_]+", table_id):
+                self.table_ids.append(table_id)
+        if tag == "a":
+            href = values.get("href") or ""
+            match = re.fullmatch(r"#ref_([-A-Za-z0-9_:.]+)", href)
+            if match:
+                self.citation_source_ids.append(match.group(1))
+
+
+def _scan_embeds(prose_html: str) -> tuple[set[str], set[str], set[str]]:
+    scanner = _EmbedScanner()
+    scanner.feed(prose_html)
+    scanner.close()
+    return (
+        set(scanner.figure_ids),
+        set(scanner.table_ids),
+        set(scanner.citation_source_ids),
+    )
+
+
+def _dotpath(state: dict[str, Any], path: str) -> Any:
+    if not isinstance(path, str) or not path.startswith("worker_report."):
+        raise SakanaPaperError(f"table data_source must be a worker_report dot-path: {path!r}")
+    cur: Any = state
+    for part in path.split("."):
+        if isinstance(cur, dict) and part in cur:
+            cur = cur[part]
+            continue
+        raise SakanaPaperError(f"table data_source path not found: {path!r}")
+    return cur
+
+
+def _render_data_table(table_spec: dict[str, Any], worker_report: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    table_id = table_spec["table_id"]
+    data_source = table_spec["data_source"]
+    value = _dotpath({"worker_report": worker_report}, data_source)
+    requested_columns = [str(c) for c in table_spec.get("columns") or []]
+
+    if isinstance(value, dict) and all(not isinstance(v, dict) for v in value.values()):
+        columns = requested_columns or ["metric", "value"]
+        if len(columns) != 2:
+            raise SakanaPaperError(f"table {table_id!r} scalar dict tables require exactly two columns")
+        rows = [[key, _fmt_table_value(val)] for key, val in value.items()]
+    elif isinstance(value, dict) and all(isinstance(v, dict) for v in value.values()):
+        nested_columns = requested_columns or sorted(
+            {str(k) for row in value.values() for k in row.keys()}
+        )
+        columns = ["item", *nested_columns]
+        rows = [
+            [key, *[_fmt_table_value(row.get(col, "")) for col in nested_columns]]
+            for key, row in value.items()
+        ]
+    elif isinstance(value, list) and all(isinstance(row, dict) for row in value):
+        columns = requested_columns or sorted({str(k) for row in value for k in row.keys()})
+        rows = [[_fmt_table_value(row.get(col, "")) for col in columns] for row in value]
+    else:
+        columns = requested_columns or ["value"]
+        if len(columns) != 1:
+            raise SakanaPaperError(f"table {table_id!r} scalar values require one column")
+        rows = [[_fmt_table_value(value)]]
+
+    head = "".join(f"<th>{_esc(col)}</th>" for col in columns)
+    body = "".join(
+        "<tr>" + "".join(f"<td>{_esc(cell)}</td>" for cell in row) + "</tr>"
+        for row in rows
+    )
+    html = (
+        f"<table id=\"{_esc(table_id)}\"><caption>{_esc(table_spec.get('title', table_id))}</caption>"
+        f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+    )
+    receipt = {
+        "table_id": table_id,
+        "data_source": data_source,
+        "source_digest": _json_digest(value),
+        "row_count": len(rows),
+        "columns": columns,
+    }
+    return html, receipt
+
+
+def _fmt_table_value(value: Any) -> str:
+    if isinstance(value, float):
+        return f"{value:.4f}"
+    return str(value)
+
+
+def _replace_table_placeholders(prose: str, table_html: dict[str, str]) -> str:
+    for table_id, rendered in table_html.items():
+        pattern = re.compile(rf"<table id=\"{re.escape(table_id)}\">\s*</table>")
+        prose, count = pattern.subn(rendered, prose)
+        if count == 0:
+            raise SakanaPaperError(f"table {table_id!r} must appear as an empty table placeholder")
+    return prose
 
 
 def _render_directives_table(directives: list[dict[str, Any]]) -> str:
@@ -224,6 +343,60 @@ def render_sakana_paper(
     missing_fids = sorted(referenced_ids - set(figures_registry.keys()))
     if missing_fids:
         raise SakanaPaperError(f"sections reference unregistered figures: {missing_fids}")
+    actual_figure_ids: set[str] = set()
+    actual_table_ids: set[str] = set()
+    for section_id, section in sections.items():
+        section_figures, section_tables, section_citations = _scan_embeds(
+            section.get("prose_html") or ""
+        )
+        declared_figures = set(section.get("embedded_figure_ids") or [])
+        declared_tables = set(section.get("embedded_table_ids") or [])
+        declared_citations = set(section.get("citation_source_ids") or [])
+        if section_figures != declared_figures:
+            raise SakanaPaperError(
+                f"section {section_id!r} embedded_figure_ids do not match manuscript images"
+            )
+        if section_tables != declared_tables:
+            raise SakanaPaperError(
+                f"section {section_id!r} embedded_table_ids do not match manuscript table placeholders"
+            )
+        if section_citations != declared_citations:
+            raise SakanaPaperError(
+                f"section {section_id!r} citation_source_ids do not match manuscript reference links"
+            )
+        actual_figure_ids.update(section_figures)
+        actual_table_ids.update(section_tables)
+
+    figure_specs = {
+        spec.get("figure_id"): spec for spec in outline.get("figure_specs", [])
+    }
+    for figure_id in actual_figure_ids:
+        meta = figures_registry.get(figure_id) or {}
+        figure_type = meta.get("figure_type") or (figure_specs.get(figure_id) or {}).get("figure_type")
+        if figure_type in {"score_radar", "claim_tree_status"}:
+            raise SakanaPaperError(
+                f"figure {figure_id!r} is internal review material and cannot be embedded in the manuscript"
+            )
+        artifact_path = Path(str(meta.get("artifact_path") or ""))
+        if not artifact_path.exists() or not artifact_path.is_file():
+            raise SakanaPaperError(f"figure {figure_id!r} artifact file is missing")
+
+    table_specs = {
+        spec.get("table_id"): spec for spec in outline.get("table_specs", [])
+    }
+    unknown_tables = sorted(actual_table_ids - set(table_specs))
+    if unknown_tables:
+        raise SakanaPaperError(f"sections reference undeclared tables: {unknown_tables}")
+    unused_tables = sorted(set(table_specs) - actual_table_ids)
+    if unused_tables:
+        raise SakanaPaperError(f"declared tables were not embedded: {unused_tables}")
+    rendered_tables: dict[str, str] = {}
+    table_receipts: list[dict[str, Any]] = []
+    for table_id in sorted(actual_table_ids):
+        table_html, receipt = _render_data_table(table_specs[table_id], worker_report)
+        rendered_tables[table_id] = table_html
+        table_receipts.append(receipt)
+
     title = outline.get("title") or node.get("claim_contract", {}).get("claim_under_test", "Untitled")
     abstract = sections.get("abstract", {}).get("prose_html") or outline.get("abstract_seed", "")
     abstract_sanitized = _sanitize_html(abstract)
@@ -240,7 +413,10 @@ def render_sakana_paper(
         if not section:
             raise SakanaPaperError(f"section {sid!r} was in outline but never submitted")
         sec_title = sec_spec.get("title") or sid.replace("_", " ").title()
-        prose = _sanitize_html(section["prose_html"])
+        prose = _replace_table_placeholders(
+            _sanitize_html(section["prose_html"]),
+            {table_id: rendered_tables[table_id] for table_id in section.get("embedded_table_ids", []) or []},
+        )
         heading = f"{len(body_sections_html) + 1}. {_esc(sec_title)}"
         contents.append(f"<a href='#{_esc(sid)}'>{heading}</a>")
         body_sections_html.append(
@@ -373,6 +549,7 @@ def render_sakana_paper(
             {"output": "interactive_html", "artifact_path": str(interactive_path)},
             {"output": "slides_html", "artifact_path": str(slides_path)},
         ],
+        "rendered_tables": table_receipts,
         "skipped_outputs": [],
         "blocked_reason": None,
         "dispatch_path": str(output_dir / "publication_dispatch.json"),

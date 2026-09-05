@@ -20,7 +20,7 @@
     "prose_html": {
       "type": "string",
       "minLength": 200,
-      "description": "Section body as safe HTML fragment. Allowed tags: <p>, <h3>, <h4>, <ul>, <ol>, <li>, <strong>, <em>, <code>, <pre>, <table>, <thead>, <tbody>, <tr>, <th>, <td>, <figure>, <figcaption>, <img>, <a>. Other tags stripped at render time. Figure embeds use <img src='figures/{figure_id}.png'> referencing registered figure_ids."
+      "description": "Section body as safe HTML fragment. Allowed tags: <p>, <h3>, <h4>, <ul>, <ol>, <li>, <strong>, <em>, <code>, <pre>, <table>, <thead>, <tbody>, <tr>, <th>, <td>, <figure>, <figcaption>, <img>, <a>. Other tags stripped at render time. Figure embeds use <img src='figures/{figure_id}.png'> and table embeds use an empty <table id='t_table_id'></table> placeholder. The renderer cross-checks both against embedded_figure_ids and embedded_table_ids."
     },
     "mental_model_link": {
       "type": "string",
@@ -39,7 +39,12 @@
     },
     "embedded_table_ids": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": { "type": "string", "pattern": "^t_[a-z0-9_]+$" }
+    },
+    "citation_source_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Source ids cited by this section. Must match actual links shaped as href='#ref_{source_id}' in prose_html."
     }
   },
   "additionalProperties": false

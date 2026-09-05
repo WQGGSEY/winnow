@@ -84,7 +84,8 @@
           "title": { "type": "string" },
           "data_source": {
             "type": "string",
-            "description": "Dot-path into the state bundle (e.g., 'worker_report.metrics', 'worker_report.baselines') or 'rebuttal_synthesis.*'."
+            "pattern": "^worker_report\\.",
+            "description": "Dot-path into worker_report. Tables in the manuscript must be rendered from executed evidence, e.g. 'worker_report.metrics' or 'worker_report.baselines'."
           },
           "columns": {
             "type": "array",
