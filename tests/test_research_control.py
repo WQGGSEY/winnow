@@ -105,7 +105,14 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
         }}
     monkeypatch.setattr(research_review, 'review_research_packet', review)
     request_path = thread / 'dispatch.json'
-    request_path.write_text(json.dumps({**({'node': node} if explicit_node else {}), 'experiment_plan': plan, 'role': role, 'work_id': work['work_id']}))
+    request_plan = copy.deepcopy(plan)
+    if not explicit_node:
+        import hashlib
+        source = thread / 'existing_measurement.py'
+        source.write_text(plan['source_files'][0]['content'])
+        request_plan['source_files'] = [{'path': 'experiment.py', 'purpose': plan['source_files'][0]['purpose'],
+                                        'from_path': str(source), 'sha256': hashlib.sha256(source.read_bytes()).hexdigest()}]
+    request_path.write_text(json.dumps({**({'node': node} if explicit_node else {}), 'experiment_plan': request_plan, 'role': role, 'work_id': work['work_id']}))
     outside = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(tmp_path / 'outside.json')})
     assert outside['status'] == 'rejected'
     revision = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})

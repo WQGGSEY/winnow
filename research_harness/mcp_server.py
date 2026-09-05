@@ -37,6 +37,21 @@ from research_harness.orchestrator.llm_orchestrator.persona_validator import (
 # --- MCP tool definitions ------------------------------------------------- #
 
 
+def _experiment_plan_input_schema() -> dict[str, Any]:
+    schema = load_schema('experiment_plan')
+    literal = schema['properties']['source_files']['items']
+    reference = {'type': 'object', 'required': ['path', 'purpose', 'from_path', 'sha256'],
+                 'additionalProperties': False, 'properties': {
+                     'path': literal['properties']['path'], 'purpose': literal['properties']['purpose'],
+                     'from_path': {'type': 'string', 'minLength': 1},
+                     'sha256': {'type': 'string', 'pattern': '^[a-f0-9]{64}$'},
+                     'replacements': {'type': 'array', 'maxItems': 32, 'items': {
+                         'type': 'object', 'required': ['old', 'new'], 'additionalProperties': False,
+                         'properties': {'old': {'type': 'string', 'minLength': 1}, 'new': {'type': 'string'}}}}}}
+    schema['properties']['source_files']['items'] = {'anyOf': [literal, reference]}
+    return schema
+
+
 PROFESSOR_CONTRACT = (
     "You are the Professor (\"교수님\"). When you call any tool below, you are "
     "acting as the senior advisor in our claim-first research harness. "
@@ -166,12 +181,12 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "execute_baseline_preflight",
-        "description": "While baseline qualification is pending, write and execute ONE baseline implementation. Prefer supplying experiment_plan without node: the harness derives operational metadata, input snapshot, and the identical claim contract automatically. An explicit node remains subject to exact contract validation. To revise a saved dispatch, use its absolute request_path plus updates (path segments and new value), without retransmitting unchanged source code or writing files from the read-only shell. To change node identity, update experiment_plan.node_id; update node.id as well only if the saved request supplied an explicit node. Inline objects work for initial requests. Use a new node ID when changing a previously executed plan; completed receipts are immutable. The harness binds the operator input snapshot, enforces compute limits and runs LocalRunner. Use exactly one baseline_evidence_requirement and report only that baseline key. This is execution evidence, not scientific approval. Implement methods yourself after retrieving primary sources.",
+        "description": "While baseline qualification is pending, write and execute ONE baseline implementation. Prefer supplying experiment_plan without node: the harness derives operational metadata, input snapshot, and the identical claim contract automatically. An explicit node remains subject to exact contract validation. source_files may use from_path (absolute existing thread file), sha256, and optional replacements:[{old,new}] instead of content; every old text must match exactly once, and the original file is preserved. To revise a saved dispatch, use its absolute request_path plus updates (path segments and new value), without retransmitting unchanged source code or writing files from the read-only shell. To change node identity, update experiment_plan.node_id; update node.id as well only if the saved request supplied an explicit node. Inline objects work for initial requests. Use a new node ID when changing a previously executed plan; completed receipts are immutable. The harness binds the operator input snapshot, enforces compute limits and runs LocalRunner. Use exactly one baseline_evidence_requirement and report only that baseline key. This is execution evidence, not scientific approval. Implement methods yourself after retrieving primary sources.",
         "inputSchema": {
             "type": "object",
             "anyOf": [{"required": ["request_path"]}, {"required": ["thread_id", "experiment_plan", "role"]}],
             "properties": {
-                "thread_id": {"type": "string"}, "node": load_schema("node"), "experiment_plan": load_schema("experiment_plan"),
+                "thread_id": {"type": "string"}, "node": load_schema("node"), "experiment_plan": _experiment_plan_input_schema(),
                 "role": {"type": "string", "enum": ["current_best_known", "naive", "random_or_null"]},
                 "work_id": {"type": "string", "description": "work_id returned by plan_research_work; required for a new execution."},
                 "request_path": {"type": "string", "description": "Absolute path of the saved request JSON inside this thread. Do not also supply inline node or plan."},
@@ -532,6 +547,7 @@ TOOL_DEFINITIONS = [
             "For planned implementation work, supply work_id to write isolated draft source_files without execution or scientific approval; the result records exact paths/hashes and completes this preparation work. Otherwise write the experiment code for the current node. Submit a "
             "plan_metadata dict (task_class, objective, entrypoint, resources, "
             "expected_outputs, baseline_evidence_requirements, source_files). "
+            "Reuse or revise source_files without retranscribing them: supply {path, purpose, from_path:absolute_existing_thread_file, sha256:base_file_hash, replacements:[{old:exact_text,new:replacement_text}]} instead of content. Each old string must match exactly once; omit replacements to copy unchanged bytes. Original files are not edited. "
             "source_files paths starting with `_lib/` are shared across the "
             "whole thread (do this once at the root); other paths land under "
             "the per-node dir. REUSE existing shared modules whenever they "
@@ -3177,6 +3193,7 @@ def _handle_design_experiment_template_locked(args: dict[str, Any]) -> dict[str,
     thread's professor_templates/<node_id>/ + _lib/ on disk."""
     from research_harness.orchestrator.experiment_plan import (
         _professor_template_root,
+        resolve_source_files,
         write_professor_template,
     )
 
@@ -3191,6 +3208,8 @@ def _handle_design_experiment_template_locked(args: dict[str, Any]) -> dict[str,
     source_files = plan_meta.get("source_files") or []
     if not isinstance(source_files, list):
         return {"status": "rejected", "reason": "plan_metadata.source_files must be a list"}
+    source_files = resolve_source_files(_thread_dir(tid), source_files)
+    plan_meta = {**plan_meta, 'source_files': source_files}
 
     if args.get('work_id'):
         from research_harness.orchestrator.research_control import current_work, _digest, _write, development_evidence, PLANNING_POLICY_VERSION
@@ -3216,6 +3235,7 @@ def _handle_design_experiment_template_locked(args: dict[str, Any]) -> dict[str,
             raise ValueError('Implementation preparation requires source files')
         draft = thread / 'production/research_control/work' / work['work_id'] / 'implementation'
         files = write_professor_template(draft, draft, plan_meta)
+        _write(draft.parent / 'implementation_request.json', args['plan_metadata'])
         sources = [{'path': str((draft / relative).resolve()), 'sha256': _hash(draft / relative)} for relative in files]
         work.update(status='completed', outcome={'execution_result': 'implementation_prepared',
                     'template_digest': _digest(plan_meta), 'source_files': sources,
@@ -4069,6 +4089,7 @@ def handle_submit_baseline_qualification(args: dict[str, Any]) -> dict[str, Any]
 
 def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.runner.baseline_preflight import build_preflight_node, execute_baseline_preflight
+    from research_harness.orchestrator.experiment_plan import resolve_source_files
     from research_harness.memory.baseline_review import baseline_roles_frozen
     from research_harness.settings_scoped import resolve_for_thread
     from research_harness.orchestrator.research_control import StaleResearchWork, bind_work, current_work, finish_work
@@ -4124,16 +4145,17 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
                 args = {**request, 'thread_id': tid}
             elif args.get('updates'):
                 raise ValueError('Dispatch updates require request_path.')
-            node = args['node'] if 'node' in args else build_preflight_node(_thread_dir(tid), args['experiment_plan'])
+            plan = {**args['experiment_plan'], 'source_files': resolve_source_files(_thread_dir(tid), args['experiment_plan']['source_files'])}
+            node = args['node'] if 'node' in args else build_preflight_node(_thread_dir(tid), plan)
             node_id = node['id']
             path = _thread_dir(tid) / 'production/tree/baseline_preflight' / node_id
             path.resolve().relative_to((_thread_dir(tid) / 'production/tree/baseline_preflight').resolve())
             if not (path / 'worker_report.json').exists():
-                bind_work(_thread_dir(tid), args.get('work_id'), node_id, args['experiment_plan'])
+                bind_work(_thread_dir(tid), args.get('work_id'), node_id, plan)
                 bound = True
                 _write_json_atomic(_thread_dir(tid) / 'production/research_control/work' / args['work_id'] / 'dispatch_request.json', args)
             result = execute_baseline_preflight(
-                _repo_root(), _thread_dir(tid), node=node, plan=args["experiment_plan"],
+                _repo_root(), _thread_dir(tid), node=node, plan=plan,
                 role=args["role"], settings=resolve_for_thread(_repo_root(), tid),
                 research_work_id=args.get('work_id'),
             )

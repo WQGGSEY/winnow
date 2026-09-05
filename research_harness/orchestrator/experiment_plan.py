@@ -166,6 +166,43 @@ def _professor_template_root(run_dir: Path) -> Path:
     return run_dir.resolve().parent / "professor_templates"
 
 
+def resolve_source_files(thread: Path, sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Copy hash-pinned thread sources and apply unambiguous edits in memory."""
+    import hashlib
+
+    resolved = []
+    for source in sources:
+        if not isinstance(source, dict):
+            raise ExperimentPlanError('source_files entries must be objects')
+        if 'from_path' not in source:
+            resolved.append(source)
+            continue
+        if 'content' in source or set(source) - {'path', 'purpose', 'from_path', 'sha256', 'replacements'}:
+            raise ExperimentPlanError('A source reference cannot include content or unknown fields')
+        if not isinstance(source['from_path'], str):
+            raise ExperimentPlanError('source from_path must be a string')
+        origin = Path(source['from_path'])
+        if not origin.is_absolute():
+            raise ExperimentPlanError('source from_path must be absolute')
+        ensure_path_inside(origin.resolve(), thread.resolve(), 'source reference')
+        data = origin.read_bytes()
+        if hashlib.sha256(data).hexdigest() != source.get('sha256'):
+            raise ExperimentPlanError(f'source reference SHA-256 mismatch: {origin}')
+        content = data.decode('utf-8')
+        edits = source.get('replacements', [])
+        if not isinstance(edits, list) or len(edits) > 32:
+            raise ExperimentPlanError('source replacements must be an array of at most 32 edits')
+        for edit in edits:
+            if (not isinstance(edit, dict) or set(edit) != {'old', 'new'}
+                    or not isinstance(edit['old'], str) or not edit['old'] or not isinstance(edit['new'], str)):
+                raise ExperimentPlanError('Each source replacement requires nonempty old text and string new text')
+            if content.count(edit['old']) != 1:
+                raise ExperimentPlanError('Source replacement old text must match exactly once; include more surrounding context')
+            content = content.replace(edit['old'], edit['new'], 1)
+        resolved.append({key: value for key, value in source.items() if key in {'path', 'purpose'}} | {'content': content})
+    return resolved
+
+
 def write_professor_template(template_root: Path, node_dir: Path, plan_meta: dict[str, Any]) -> list[str]:
     """Validate every destination before persisting a source-only proposal."""
     ensure_path_inside(node_dir, template_root, 'template node')

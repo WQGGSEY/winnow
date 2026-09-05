@@ -44,6 +44,33 @@ def test_template_write_rejects_escaping_paths_before_any_file_changes(tmp_path)
             assert sentinel.read_text() == 'original source'
 
 
+def test_template_source_edits_preserve_original_and_reject_stale_or_ambiguous_inputs(tmp_path):
+    import hashlib
+    from types import SimpleNamespace
+
+    thread = tmp_path / 'runs/threads/thread_edit'
+    thread.mkdir(parents=True)
+    original = thread / 'source.py'
+    original.write_text('VALUE = 1\nOTHER = 1\n')
+    digest = hashlib.sha256(original.read_bytes()).hexdigest()
+    reference = {'path': 'src/revised.py', 'purpose': 'Narrow source repair', 'from_path': str(original),
+                 'sha256': digest, 'replacements': [{'old': 'VALUE = 1', 'new': 'VALUE = 2'}]}
+    with srv._repo_root_scope(tmp_path), mock.patch.object(srv, '_require_authoritative_node', return_value=None), mock.patch(
+        'research_harness.settings_scoped.resolve_for_thread', return_value=SimpleNamespace(get_dotted=lambda *args: [])
+    ):
+        args = {'thread_id': 'thread_edit', 'node_id': 'n_edit', 'plan_metadata': {'source_files': [reference]}}
+        assert srv.handle_design_experiment_template(args)['status'] == 'accepted'
+        output = thread / 'production/professor_templates/n_edit/src/revised.py'
+        assert output.read_text() == 'VALUE = 2\nOTHER = 1\n'
+        outside = tmp_path / 'outside.py'
+        outside.write_bytes(original.read_bytes())
+        for change in ({'sha256': '0' * 64}, {'replacements': [{'old': '= 1', 'new': '= 2'}]}, {'from_path': str(outside)}):
+            args['plan_metadata']['source_files'] = [reference | change]
+            assert srv.handle_design_experiment_template(args)['status'] == 'rejected'
+            assert output.read_text() == 'VALUE = 2\nOTHER = 1\n'
+        assert hashlib.sha256(original.read_bytes()).hexdigest() == digest
+
+
 def test_preflight_tool_advertises_the_experiment_validation_contract(tmp_path):
     from research_harness.orchestrator.demo import _demo_node
     from research_harness.orchestrator.experiment_plan import build_demo_experiment_plan
@@ -56,6 +83,9 @@ def test_preflight_tool_advertises_the_experiment_validation_contract(tmp_path):
     validate_schema(tool["inputSchema"], arguments)
     del arguments['node']
     validate_schema(tool["inputSchema"], arguments)
+    plan['source_files'] = [{'path': 'experiment.py', 'purpose': 'Existing thread code',
+                             'from_path': '/thread/source.py', 'sha256': 'a' * 64}]
+    validate_schema(tool['inputSchema'], arguments)
     plan["task_class"] = "train_eval"
     with unittest.TestCase().assertRaisesRegex(SchemaValidationError, "task_class"):
         validate_schema(tool["inputSchema"], arguments)
