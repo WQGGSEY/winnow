@@ -192,3 +192,11 @@ def test_production_command_uses_read_only_shell_and_per_call_mcp(tmp_path: Path
     assert 'mcp_servers.research_harness.args=["-m", "research_harness.mcp_server", "--repo-root", "' in " ".join(command)
     assert 'mcp_servers.research_harness.env.COIN_DATA_DIR="/data/coin"' in command
     assert command[-1] == "-"
+
+
+def test_mcp_transport_timeout_covers_configured_experiment(tmp_path: Path) -> None:
+    settings = {"runtime": {"runner_timeouts": {"training": 900}, "llm_orchestrator": {"mcp": {"server_command": "python", "server_args": ["-m", "research_harness.mcp_server"]}}}}
+    mcp = ResearchHarnessMcp.from_settings(tmp_path, settings)
+    command = CodexCliAdapter()._build_exec_command(request=None, model="gpt-5.6-sol", cwd=tmp_path, mcp=mcp)
+    assert mcp.tool_timeout_seconds > 900
+    assert f"mcp_servers.research_harness.tool_timeout_sec={mcp.tool_timeout_seconds}" in command

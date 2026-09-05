@@ -223,6 +223,8 @@ class CodexCliAdapter:
                     "mcp_servers.research_harness.args=" + json.dumps(list(mcp.args)),
                     "-c",
                     'mcp_servers.research_harness.default_tools_approval_mode="approve"',
+                    "-c",
+                    f"mcp_servers.research_harness.tool_timeout_sec={mcp.tool_timeout_seconds}",
                 ]
             )
             for key, value in sorted(mcp.environment.items()):

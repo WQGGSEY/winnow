@@ -74,6 +74,7 @@ class ResearchHarnessMcp:
     command: str
     args: tuple[str, ...]
     environment: Mapping[str, str] = field(default_factory=dict)
+    tool_timeout_seconds: float = 1200.0
 
     @classmethod
     def from_settings(
@@ -99,8 +100,11 @@ class ResearchHarnessMcp:
         ):
             raise ValueError("runtime.llm_orchestrator.mcp.server_env must be a string map")
         resolved_args = tuple(arg.replace("{repo_root}", str(repo_root)) for arg in args)
+        runner_timeouts = settings.get("runtime", {}).get("runner_timeouts", {})
+        tool_timeout = max([600.0, *(float(value) for value in runner_timeouts.values())]) + 600.0
         return cls(
             command=command.replace("{repo_root}", str(repo_root)),
             args=resolved_args,
             environment=dict(environment),
+            tool_timeout_seconds=tool_timeout,
         )
