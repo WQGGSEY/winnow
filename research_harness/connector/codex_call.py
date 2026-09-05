@@ -36,6 +36,7 @@ def call_agent_json(
                 model=model,
                 timeout_seconds=timeout_seconds,
                 label=label,
+                allow_local_tools=False,
             )
         )
     except CodexCliError as exc:

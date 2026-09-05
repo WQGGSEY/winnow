@@ -537,6 +537,7 @@ def _call_agent_round(
                 model=model,
                 timeout_seconds=round_timeout_seconds,
                 label="grilling",
+                allow_local_tools=False,
             )
         )
     except CodexCliError as exc:

@@ -65,6 +65,9 @@ def test_call_agent_json_parses_inner_and_pops_api_key(monkeypatch):
     )
     assert parsed["abstraction"] == "x"
     assert usage.input_tokens == 11 and usage.output_tokens == 22
+    command = fake.calls[0]["cmd"]
+    disabled = {command[i + 1] for i, value in enumerate(command) if value == "--disable"}
+    assert {"shell_tool", "unified_exec", "view_image"} <= disabled
     # subscription-only: BOTH the API key and base-URL override must be stripped
     # from the child env so the call uses the default subscription path.
     assert "ANTHROPIC_API_KEY" not in fake.calls[0]["env"]

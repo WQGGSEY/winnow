@@ -107,6 +107,7 @@ class GrillingTests(unittest.TestCase):
         responses = [
             _wrap_assistant_text(json.dumps({"action": "DONE", "extracted": extracted}))
         ]
+        runner = FakeClaudeRunner(responses)
         with tempfile.TemporaryDirectory() as tmp:
             session = run_grilling_session(
                 REPO_ROOT,
@@ -114,13 +115,16 @@ class GrillingTests(unittest.TestCase):
                 run_dir=Path(tmp),
                 billing_ack=True,
                 execution_ack=True,
-                command_runner=FakeClaudeRunner(responses),
+                command_runner=runner,
                 input_provider=lambda q: "",
             )
             self.assertEqual(session["status"], "done")
             self.assertEqual(session["extracted"]["domain"], "retrieval")
             self.assertEqual(session["usage_estimate"]["rounds_used"], 1)
             self.assertEqual(session["rounds"], [])
+            command = runner.calls[0]["cmd"]
+            disabled = {command[i + 1] for i, value in enumerate(command) if value == "--disable"}
+            self.assertTrue({"shell_tool", "unified_exec", "view_image"} <= disabled)
             validate_named_schema("grilling_session", session)
 
     def test_multi_round_ask_then_done(self) -> None:
