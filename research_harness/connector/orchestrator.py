@@ -245,6 +245,15 @@ def run_domain_connector(
     emit({"type": "abstraction_done", "abstraction": abstraction_text,
           "firewall_clean": abstraction["firewall_clean"],
           "regen_attempts": abstraction["regen_attempts"], "quota": quota})
+    if not abstraction["firewall_clean"]:
+        return _finish({
+            **base_session,
+            "status": "aborted",
+            "abstraction": abstraction_record,
+            "usage_estimate": usage,
+            "error": "abstraction firewall rejected residual domain terms: "
+                     + ", ".join(abstraction["residual_leaked_terms"]),
+        })
 
     # --- resample-to-quota loop (P-blind below the firewall) ---
     perm = field_permutation(seed=seed)

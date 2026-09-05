@@ -186,6 +186,27 @@ def test_firewall_p_absent_from_p_blind_steps(tmp_path):
     assert saw_abstraction and saw_blind
 
 
+def test_leaking_abstraction_aborts_before_field_or_baseline_research(tmp_path):
+    fake = RoutingFakeCodex({
+        "abstraction": {"abstraction": "Predict equity returns from order flow.",
+                        "domain_terms_stripped": []},
+        "reading": _READING_OK, "prune1": _PRUNE1_PASS, "reduction": _REDUCE_OK,
+    })
+    baseline_calls = []
+    out = run_domain_connector(
+        REPO_ROOT, _valid_grilling(), run_dir=tmp_path / "connector",
+        billing_ack=True, execution_ack=True, command_runner=fake,
+        http_fetcher=_fetcher, quota=1, max_fields_tried=1, max_regen=0,
+        baseline_research_runner=lambda *a, **kw: baseline_calls.append(kw),
+    )
+    assert out.session["status"] == "aborted"
+    assert out.session["abstraction"]["residual_leaked_terms"]
+    assert out.session["fields_tried"] == 0
+    assert out.claims == []
+    assert [call["kind"] for call in fake.calls] == ["abstraction"]
+    assert baseline_calls == []
+
+
 def test_prune1_all_fail_yields_no_claims_and_logs_cap(tmp_path):
     fake = RoutingFakeCodex({
         "abstraction": _ABSTRACTION_OK, "reading": _READING_OK,
