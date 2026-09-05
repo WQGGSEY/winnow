@@ -43,6 +43,7 @@ exclude = ["tests*"]
   "default_failures/*/*.md",
 ]
 "research_harness.schemas" = ["*.schema.json"]
+"research_harness.publishing" = ["venue_templates/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
