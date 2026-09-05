@@ -269,7 +269,7 @@ TOOL_DEFINITIONS = [
         "name": "submit_feasibility_envelope",
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
-            "PR7: BEFORE designing any claim, the Professor declares the "
+            "BEFORE designing any claim, the Professor proposes the "
             "FeasibilityEnvelope — what the harness actually has at this "
             "thread's disposal: registered real-data adapters, available "
             "LLM oracles (subscription / live API / proxy), compute budget "
@@ -278,9 +278,9 @@ TOOL_DEFINITIONS = [
             "operator's target deploy_grade_scope. This anchors every "
             "subsequent claim: 'deployment' scope is blocked when no real "
             "adapter is registered, 'live LLM' oracle is blocked when no "
-            "billing_ack is set, etc. The envelope is persisted to "
-            "production/feasibility_envelope.json and read by every "
-            "downstream validator."
+            "billing_ack is set, etc. This tool writes a proposal and requests "
+            "an operator decision. It does not change the registered envelope. "
+            "Only the operator frontend can register the reviewed criterion."
         ),
         "inputSchema": {
             "type": "object",
@@ -2332,15 +2332,53 @@ def handle_resume_production_state(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def handle_submit_feasibility_envelope(args: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    """PR7: persist the operator+Professor feasibility envelope. Subsequent
-    contract compilation reads this file and validates claim scope against it."""
+    """The research agent proposes resources and criteria; it cannot register them."""
+    from research_harness.orchestrator.operator_prompts import enqueue_prompt
     from research_harness.schemas.validator import validate_named_schema
+
     tid = args["thread_id"]
     env = args["envelope"]
     try:
         validate_named_schema("feasibility_envelope", env)
+    except ValueError as exc:
+        return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
+    if env.get("thread_id") != tid:
+        return {"status": "rejected", "reason": "envelope thread_id mismatch"}
+    tdir = _thread_dir(tid)
+    existing = _read_json(tdir / "production" / "feasibility_envelope.json")
+    if existing == env:
+        return {"status": "ok", "reason": "unchanged operator registration"}
+    proposal_path = tdir / "production" / "feasibility_envelope_proposal.json"
+    _write_json_atomic(proposal_path, env)
+    event = enqueue_prompt(
+        tdir, kind="decision_request",
+        prompt="Review the proposed feasibility envelope and evaluation criterion before registration: " + str(proposal_path),
+        source_rail="feasibility_registration",
+        event_id="opr_envelope_" + hashlib.sha256(json.dumps(env, sort_keys=True).encode()).hexdigest()[:16],
+    )
+    return {
+        "status": "awaiting_operator", "event_id": event["event_id"],
+        "proposal_path": str(proposal_path),
+        "reason": "Only the operator frontend can register criteria. A proposal or textual reply does not change the active envelope.",
+    }
+
+
+def register_operator_feasibility_envelope(
+    args: dict[str, Any], settings: dict[str, Any], *, thread_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Operator entry point, deliberately absent from the MCP tool registry."""
+    from research_harness.schemas.validator import validate_named_schema
+    tid = args["thread_id"]
+    tdir = thread_dir if thread_dir is not None else _thread_dir(tid)
+    env = json.loads(json.dumps(args["envelope"]))
+    try:
+        validate_named_schema("feasibility_envelope", env)
     except Exception as exc:  # noqa: BLE001
         return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
+    if env["thread_id"] != tid:
+        return {"status": "rejected", "reason": "envelope thread_id mismatch"}
+    if env.get("external_falsifier", {}).get("kind", "none") != "none":
+        env["external_falsifier"]["registered_by"] = "operator"
 
     # Cross-check: 'deployment' target requires at least one real_adapter
     # data source. (We catch this at envelope-submission time too, not just
@@ -2378,9 +2416,12 @@ def handle_submit_feasibility_envelope(args: dict[str, Any], settings: dict[str,
     # operator-supplied value is overwritten by the derivation.
     env["max_attestable_status"] = _derive_max_attestable_status(env)
 
-    env_path = _thread_dir(tid) / "production" / "feasibility_envelope.json"
+    env_path = tdir / "production" / "feasibility_envelope.json"
+    if (tdir / "production" / "reorientation" / "goal_contract.json").exists():
+        if _read_json(env_path) != env:
+            return {"status": "rejected", "reason": "goal contract is frozen; start a new research revision"}
     state = _read_json(
-        _thread_dir(tid) / "production" / "tree" / "search_state.json"
+        tdir / "production" / "tree" / "search_state.json"
     ) or {}
     adaptive = state.get("adaptive")
     if isinstance(adaptive, dict):

@@ -481,7 +481,7 @@ def _base_envelope(tid, **overrides):
 def test_submit_envelope_stamps_unverified_screen_when_no_falsifier(tmp_path, monkeypatch):
     monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
     tid = "t_env"
-    out = M.handle_submit_feasibility_envelope(
+    out = M.register_operator_feasibility_envelope(
         {"thread_id": tid, "envelope": _base_envelope(tid)},
         settings={"data_adapters": {"registered": []}},
     )
@@ -503,12 +503,24 @@ def test_submit_envelope_stamps_goal_achieved_with_falsifier_and_overwrites_oper
         external_falsifier=_xgen_falsifier(),
         max_attestable_status="unverified_screen",  # operator lie — must be overwritten
     )
-    out = M.handle_submit_feasibility_envelope(
+    out = M.register_operator_feasibility_envelope(
         {"thread_id": tid, "envelope": env},
         settings={"data_adapters": {"registered": []}},
     )
     assert out["status"] == "ok"
     assert out["max_attestable_status"] == "goal_achieved"
+
+
+def test_agent_cannot_register_its_own_falsifier(tmp_path, monkeypatch):
+    monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / tid)
+    env = _base_envelope("t", external_falsifier=_xgen_falsifier())
+    env["external_falsifier"]["registered_by"] = "supervisor_bootstrap"
+    out = M.handle_submit_feasibility_envelope(
+        {"thread_id": "t", "envelope": env}, settings={}
+    )
+    assert out["status"] == "awaiting_operator"
+    assert not (tmp_path / "t/production/feasibility_envelope.json").exists()
+    assert (tmp_path / "t/production/feasibility_envelope_proposal.json").exists()
 
 
 # --- supervisor bootstrap default --------------------------------------- #

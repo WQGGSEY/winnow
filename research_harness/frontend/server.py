@@ -449,6 +449,22 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
             raise HTTPException(409, str(exc)) from exc
         return JSONResponse({"ok": True, "event_id": event_id})
 
+    @app.post("/api/threads/{thread_id}/feasibility_envelope")
+    async def register_feasibility_envelope(thread_id: str, req: Request) -> JSONResponse:
+        from research_harness.mcp_server import register_operator_feasibility_envelope
+        from research_harness.settings_scoped import resolve_for_thread
+
+        _require_thread(s.repo_root, thread_id)
+        body = await req.json()
+        if not isinstance(body, dict) or not isinstance(body.get("envelope"), dict):
+            raise HTTPException(400, "envelope object is required")
+        result = register_operator_feasibility_envelope(
+            {"thread_id": thread_id, "envelope": body["envelope"]},
+            resolve_for_thread(s.repo_root, thread_id),
+            thread_dir=s.repo_root / "runs" / "threads" / thread_id,
+        )
+        return JSONResponse(result, status_code=409 if result["status"] == "rejected" else 200)
+
     @app.post("/api/threads/{thread_id}/{phase}/retry")
     async def phase_retry(thread_id: str, phase: str, req: Request) -> JSONResponse:
         """Re-run a phase that ended in ``phase_status == "failed"``.
