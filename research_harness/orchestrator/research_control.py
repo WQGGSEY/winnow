@@ -204,6 +204,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'checks': ['selected test', 'registered protocol', 'actual imports and input consumption',
                        'measurement validity', 'prior implementation objections'],
             'rejection_preserves_work': True,
+            'source_binding': 'bind_research_work records the complete plan digest, including source bytes, before review and execution',
         },
         'planning_policy_version': planning_policy_version,
         'registered_protocol': envelope,
@@ -288,6 +289,9 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'When new measurements are the next needed evidence and the program exists, select the bounded execution; '
             'its automatic review will inspect implementation validity and return repair feedback before any runner starts. '
             'A separate source analysis is justified when it answers a distinct scientific or semantic question that changes which experiment to run. '
+            'An already permitted development diagnostic is bound by its recorded execution plan. Do not add a separate '
+            'protocol amendment solely to register its source hash unless the active protocol explicitly requires that extra registration. '
+            'A prior analysis saying source is ready for binding is not itself such a protocol requirement. '
             'Do not write an experiment program to classify the meaning of prose or source semantics. '
             'diagnostic_experiment always runs a program to obtain new measurements. Source-only inspection of schemas, serializers, or code is analysis even when it diagnoses a bug. '
             'Choose an execution kind only when new measurements are needed. Analysis cannot establish unmeasured causal or performance claims. '

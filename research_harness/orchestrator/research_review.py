@@ -62,6 +62,9 @@ def analyze_research_packet(repo: Path, directory: Path, packet: dict[str, Any],
         'This is source analysis, not approval of a method, protocol, scientific claim or paper. '
         'Distinguish a method specification from an executable artifact binding. Do not invent a requirement that an implementation '
         'hash had to exist before implementation unless registration explicitly requires it. '
+        'For an already permitted development diagnostic, the harness records the complete execution-plan digest, including source bytes, '
+        'before independent execution review and launch. Do not require a separate protocol amendment merely to register that diagnostic source '
+        'unless an explicit active protocol clause requires it. Cite that clause when making registration a prerequisite. '
         'Do not run experiments, modify files, inspect held-out outcomes or ask a human. Return JSON. '
         f'Question and scope: {purpose}'
     )
