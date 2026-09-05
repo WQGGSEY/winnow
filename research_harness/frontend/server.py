@@ -700,6 +700,10 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
             if proc.poll() is not None:
                 break  # subprocess died during startup — stop waiting
             await asyncio.sleep(0.1)
+        if running:
+            threads.update_thread(
+                s.repo_root, thread_id, current_phase="production", phase_status="running"
+            )
         return JSONResponse({
             "ok": True,
             "pid": proc.pid,

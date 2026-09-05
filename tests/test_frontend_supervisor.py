@@ -232,6 +232,7 @@ class SupervisorRoutesTests(unittest.TestCase):
         # running branch (with logs) without a manual reload.
         with TemporaryDirectory() as tmp:
             repo = _setup_repo(Path(tmp))
+            fserver.threads.update_thread(repo, "thread_t1", current_phase="connector", phase_status="complete")
             client = self._client(repo)
             lock_path = repo / "runs" / "threads" / "thread_t1" / ".supervisor.lock"
             with mock.patch.object(fserver, "subprocess") as proc_mod:
@@ -252,6 +253,8 @@ class SupervisorRoutesTests(unittest.TestCase):
                 )
             self.assertEqual(r.status_code, 200, r.text)
             self.assertTrue(r.json()["running"])
+            index = fserver.threads.load_thread(repo, "thread_t1")
+            self.assertEqual((index["current_phase"], index["phase_status"]), ("production", "running"))
 
     def test_start_rejects_if_already_running(self):
         with TemporaryDirectory() as tmp:
