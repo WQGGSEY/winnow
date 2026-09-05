@@ -3093,12 +3093,19 @@ def handle_submit_grad_student_review(
 
 
 def handle_design_experiment_template(args: dict[str, Any]) -> dict[str, Any]:
+    with _exclusive_adaptive_writer(args['thread_id']):
+        try:
+            return _handle_design_experiment_template_locked(args)
+        except (OSError, ValueError) as exc:
+            return {'status': 'rejected', 'reason': str(exc)}
+
+
+def _handle_design_experiment_template_locked(args: dict[str, Any]) -> dict[str, Any]:
     """Persist Professor-authored experiment code (source_files dict) to the
     thread's professor_templates/<node_id>/ + _lib/ on disk."""
     from research_harness.orchestrator.experiment_plan import (
-        PLAN_METADATA_FILENAME,
-        SRC_DIRNAME,
         _professor_template_root,
+        write_professor_template,
     )
 
     tid = args["thread_id"]
@@ -3191,32 +3198,9 @@ def handle_design_experiment_template(args: dict[str, Any]) -> dict[str, Any]:
     tree_dir = _thread_dir(tid) / "production" / "tree"
     template_root = _professor_template_root(tree_dir)
     node_dir = template_root / node_id
-    node_dir.mkdir(parents=True, exist_ok=True)
-    src_dir = node_dir / SRC_DIRNAME
-    src_dir.mkdir(parents=True, exist_ok=True)
-
-    plan_only = {k: v for k, v in plan_meta.items() if k != "source_files"}
-    (node_dir / PLAN_METADATA_FILENAME).write_text(
-        json.dumps(plan_only, indent=2) + "\n", encoding="utf-8"
-    )
-    files_written: list[str] = []
-    for sf in source_files:
-        if not isinstance(sf, dict):
-            continue
-        rel = str(sf.get("path") or "").strip()
-        content = str(sf.get("content") or "")
-        if not rel or not content:
-            continue
-        if rel.startswith("_lib/"):
-            target = template_root / rel
-        else:
-            target = node_dir / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists() and rel.startswith("_lib/"):
-            # Idempotent: never clobber existing shared lib.
-            continue
-        target.write_text(content, encoding="utf-8")
-        files_written.append(rel)
+    from research_harness.workers.workspace import ensure_path_inside
+    ensure_path_inside(template_root, _thread_dir(tid) / 'production', 'template root')
+    files_written = write_professor_template(template_root, node_dir, plan_meta)
     return {
         "status": "accepted",
         "files_written": files_written,

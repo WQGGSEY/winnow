@@ -166,6 +166,40 @@ def _professor_template_root(run_dir: Path) -> Path:
     return run_dir.resolve().parent / "professor_templates"
 
 
+def write_professor_template(template_root: Path, node_dir: Path, plan_meta: dict[str, Any]) -> list[str]:
+    """Validate every destination before persisting a source-only proposal."""
+    ensure_path_inside(node_dir, template_root, 'template node')
+    metadata_path = node_dir / PLAN_METADATA_FILENAME
+    ensure_path_inside(metadata_path, node_dir, 'template metadata')
+    destinations = []
+    seen = set()
+    for source in plan_meta.get('source_files') or []:
+        if not isinstance(source, dict) or not isinstance(source.get('content'), str):
+            raise ExperimentPlanError('source_files entries require a path and string content')
+        relative = _relative_workspace_path(str(source.get('path') or ''), 'source_files')
+        if not relative.parts or relative == Path('.'):
+            raise ExperimentPlanError('source_files paths cannot be empty')
+        shared = relative.parts[0] == '_lib'
+        root = template_root if shared else node_dir
+        target = (root / relative).resolve()
+        ensure_path_inside(target, root, 'template source')
+        if target in seen or target == metadata_path.resolve():
+            raise ExperimentPlanError('duplicate or reserved template destination')
+        seen.add(target)
+        destinations.append((relative.as_posix(), target, source['content'], shared))
+    node_dir.mkdir(parents=True, exist_ok=True)
+    (node_dir / SRC_DIRNAME).mkdir(exist_ok=True)
+    metadata_path.write_text(json.dumps({key: value for key, value in plan_meta.items() if key != 'source_files'}, indent=2) + '\n')
+    written = []
+    for relative, target, content, shared in destinations:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if shared and target.exists():
+            continue
+        target.write_text(content, encoding='utf-8')
+        written.append(relative)
+    return written
+
+
 def _safe_node_dirname(node_id: str) -> str:
     """Coerce a node id into a filesystem-safe directory name."""
     safe = "".join(c if c.isalnum() or c in {"_", "-"} else "_" for c in node_id)
@@ -211,39 +245,7 @@ def _materialize_professor_template(
         shared_lib_module_name="_lib" if shared_modules else None,
     )
 
-    node_dir.mkdir(parents=True, exist_ok=True)
-    src_dir = node_dir / SRC_DIRNAME
-    src_dir.mkdir(parents=True, exist_ok=True)
-
-    plan_metadata_payload = {
-        k: v for k, v in plan_meta.items() if k != "source_files"
-    }
-    # Drop legacy 'inputs' if it leaked in — user_experiment_plan_metadata
-    # already has it as optional and we want to keep this clean.
-    (node_dir / PLAN_METADATA_FILENAME).write_text(
-        __import_json().dumps(plan_metadata_payload, indent=2) + "\n",
-        encoding="utf-8",
-    )
-
-    for sf in plan_meta.get("source_files") or []:
-        rel = sf.get("path", "")
-        content = sf.get("content", "")
-        if not rel or not content:
-            continue
-        if rel.startswith("_lib/"):
-            target = template_root / rel
-        else:
-            target = node_dir / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists() and rel.startswith("_lib/"):
-            # Idempotent: never overwrite an existing shared lib file.
-            continue
-        target.write_text(content, encoding="utf-8")
-
-
-def __import_json():
-    import json as _json
-    return _json
+    write_professor_template(template_root, node_dir, plan_meta)
 
 
 def _build_plan_from_professor_template(

@@ -16,6 +16,34 @@ from unittest import mock
 import research_harness.mcp_server as srv
 
 
+def test_template_write_rejects_escaping_paths_before_any_file_changes(tmp_path):
+    from types import SimpleNamespace
+
+    node = tmp_path / 'runs/threads/thread_guard/production/professor_templates/n_guard'
+    node.mkdir(parents=True)
+    metadata = node / 'plan.json'
+    metadata.write_text('original metadata')
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    sentinel = outside / 'sentinel.py'
+    sentinel.write_text('original source')
+    (node / 'link').symlink_to(outside, target_is_directory=True)
+    with srv._repo_root_scope(tmp_path), mock.patch.object(srv, '_require_authoritative_node', return_value=None), mock.patch(
+        'research_harness.settings_scoped.resolve_for_thread', return_value=SimpleNamespace(get_dotted=lambda *args: [])
+    ):
+        for path in (str(sentinel), '../escape.py', 'link/sentinel.py', 'plan.json'):
+            result = srv.handle_design_experiment_template({
+                'thread_id': 'thread_guard', 'node_id': 'n_guard', 'plan_metadata': {'source_files': [
+                    {'path': 'src/new.py', 'content': 'VALUE = 1'},
+                    {'path': path, 'content': 'changed'},
+                ]},
+            })
+            assert result['status'] == 'rejected'
+            assert not (node / 'src/new.py').exists()
+            assert metadata.read_text() == 'original metadata'
+            assert sentinel.read_text() == 'original source'
+
+
 def test_preflight_tool_advertises_the_experiment_validation_contract(tmp_path):
     from research_harness.orchestrator.demo import _demo_node
     from research_harness.orchestrator.experiment_plan import build_demo_experiment_plan
