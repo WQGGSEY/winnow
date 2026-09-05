@@ -120,8 +120,8 @@ AC_CONTRACT = (
 TOOL_DEFINITIONS = [
     {
         "name": "revise_evaluation_protocol",
-        "description": "Submit replacement protocol notes and a development rationale for independent review of the current protocol_revision work. Only a prospective amendment before qualification/final evaluation is allowed. The goal, resources, structured predicate, endpoint meanings and untouched holdout must be preserved. Previous registration and amendments remain disclosed; this does not approve results.",
-        "inputSchema": {"type": "object", "required": ["thread_id", "work_id", "notes", "rationale"], "properties": {"thread_id": {"type": "string"}, "work_id": {"type": "string"}, "notes": {"type": "string", "minLength": 1}, "rationale": {"type": "string", "minLength": 1}}, "additionalProperties": False},
+        "description": "Submit replacement protocol notes and a development rationale for independent review of the current protocol_revision work. Only a prospective amendment before qualification/final evaluation is allowed. The goal, resources, structured predicate and endpoint meanings must be preserved. With replace_holdout=true, a server-sealed bank can replace the entire contaminated partition under a new prospective protocol; old cells and results are retired. Previous registration and amendments remain disclosed; this does not approve results.",
+        "inputSchema": {"type": "object", "required": ["thread_id", "work_id", "notes", "rationale"], "properties": {"thread_id": {"type": "string"}, "work_id": {"type": "string"}, "notes": {"type": "string", "minLength": 1}, "rationale": {"type": "string", "minLength": 1}, "replace_holdout": {"type": "boolean", "default": False}}, "additionalProperties": False},
     },
     {
         "name": "resolve_research_work",
@@ -1423,7 +1423,7 @@ def handle_revise_evaluation_protocol(args: dict[str, Any]) -> dict[str, Any]:
     tid = args['thread_id']
     with _exclusive_adaptive_writer(tid):
         try:
-            return revise_evaluation_protocol(_repo_root(), _thread_dir(tid), work_id=args['work_id'], notes=args['notes'], rationale=args['rationale'])
+            return revise_evaluation_protocol(_repo_root(), _thread_dir(tid), work_id=args['work_id'], notes=args['notes'], rationale=args['rationale'], replace_holdout=args.get('replace_holdout', False))
         except StaleResearchWork as exc:
             return {'status': 'work_required', 'reason': str(exc), 'next_tool_to_call': 'plan_research_work'}
         except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:

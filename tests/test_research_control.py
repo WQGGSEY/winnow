@@ -272,7 +272,8 @@ def test_analysis_resolves_existing_evidence_without_fabricating_execution(tmp_p
     assert all(row['conclusion_excerpt'].startswith('The source declares') for row in findings.values())
 
 
-def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tmp_path, monkeypatch):
+@pytest.mark.parametrize('replace_holdout', [False, True])
+def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tmp_path, monkeypatch, replace_holdout):
     from research_harness.orchestrator import protocol_revision
     from research_harness.publishing.manuscript import ManuscriptError, validate_sections
 
@@ -288,6 +289,8 @@ def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tm
     with pytest.raises(ValueError, match='revise_evaluation_protocol'):
         bind_work(thread, work['work_id'], node['id'], plan)
     calls = []
+    bank = {'bank_id': 'bank_fresh', 'integrity_verified': True} if replace_holdout else None
+    monkeypatch.setattr(protocol_revision, 'sealed_bank_metadata', lambda thread: bank)
     def review(repo, directory, packet, *, purpose):
         calls.append(packet)
         return {'request_sha256': 'review', 'assessment': {
@@ -297,7 +300,8 @@ def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tm
         }}
     monkeypatch.setattr(protocol_revision, 'review_research_packet', review)
     kwargs = {'work_id': work['work_id'], 'notes': 'Any qualified method; identical endpoints and untouched partition.',
-              'rationale': 'The original method lock conflicts with development method selection.'}
+              'rationale': 'The original method lock conflicts with development method selection.',
+              'replace_holdout': replace_holdout}
     assert protocol_revision.revise_evaluation_protocol(REPO, thread, **kwargs)['status'] == 'rejected'
     rejected = current_work(thread)
     assert rejected['status'] == 'planned'
@@ -309,8 +313,12 @@ def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tm
     assert result == protocol_revision.revise_evaluation_protocol(REPO, thread, **kwargs)
     assert len(calls) == 2
     assert result['outcome']['new_observation'] is False
+    assert result['protocol_review']['decision'] == 'approve'
+    assert 'reconsideration_available' not in result
     records = protocol_revision.approved_protocol_revisions(thread)
     assert records[0]['previous_protocol'] == original
+    assert records[0].get('replacement_holdout_bank') == bank
+    assert calls[0]['replacement_holdout_bank'] == bank
     with pytest.raises(ManuscriptError, match='disclose protocol amendment'):
         validate_sections({'method': {'prose_html': 'An amended study.', 'evidence_anchors': ['worker_report.status']}},
                           {'protocol_revisions': records, 'worker_report': {'status': 'completed'}}, require_citations=False)

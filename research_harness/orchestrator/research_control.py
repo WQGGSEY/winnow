@@ -10,6 +10,7 @@ from typing import Any
 from research_harness.adapters.codex_cli import CodexCliAdapter
 from research_harness.agent_runtime import AgentPrompt, CompletionRequest
 from research_harness.schemas.validator import validate_named_schema
+from research_harness.evaluation_vault import sealed_bank_metadata
 
 PLANNING_POLICY_VERSION = 4
 
@@ -123,12 +124,13 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     findings = analysis_findings(thread)
     previous = current_work(thread)
     envelope = _read(thread / 'production/feasibility_envelope.json')
+    bank = sealed_bank_metadata(thread)
     if reconsider_reason and (previous.get('status') != 'planned'
                               or not any(previous.get(key, {}).get('decision') == 'reject'
                                          for key in ('implementation_review', 'protocol_review'))):
         raise ValueError('Reconsideration requires a planned work with rejected implementation feedback or protocol feedback.')
     planning_policy_version = PLANNING_POLICY_VERSION
-    if not reconsider_reason and previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('protocol_digest') == _digest(envelope) and previous['evidence_digest'] == _digest(evidence):
+    if not reconsider_reason and previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('protocol_digest') == _digest(envelope) and previous.get('evaluation_bank_digest') == _digest(bank) and previous['evidence_digest'] == _digest(evidence):
         return previous
     if previous.get('status') == 'running':
         # The public caller holds the same writer lock as execution. A remaining
@@ -182,6 +184,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
         'research': research, 'implementation_context': implementations, 'measurement_context': measurements,
         'analysis_findings': findings,
         'execution_inventory': execution_inventory(thread),
+        'sealed_evaluation_bank': bank,
         'active_claim': _read(thread / 'production/tree/search_state.json').get('nodes', []),
         'development_evidence': evidence, 'previous_work': previous,
         'diagnostic_required': diagnostic_required, 'max_runtime_seconds': ceiling,
@@ -201,6 +204,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'its answer is no longer in previous_work. Consult the receipt if the excerpt is insufficient. '
             'Source analyses remain fallible. For comprehensive execution claims, compare their actual coverage with execution_inventory. '
             'node_attempts and search_state omit baseline_preflight executions; neither is a complete execution or file-access ledger. '
+            'Historical claims about missing harness capabilities can become stale after a software change. The tools described here are currently available. '
             'Use read-only inspection of referenced development sources when needed to check which records actually exist. '
             'Missing telemetry is unknown, not zero observed events. Source inspection and historical access reconstruction may need analysis, '
             'not a new experiment that merely searches source literals. Do not execute training, modify files or inspect holdout data while planning. '
@@ -212,6 +216,13 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'choose protocol_revision before further method selection. revise_evaluation_protocol can independently review a prospective notes amendment '
             'before baseline qualification or final evaluation. It preserves the original goal, resources, held-out partition, endpoint definitions '
             'and thresholds; it cannot retroactively certify results or make a failed test pass. The amendment and its timing remain disclosed. '
+            'If sealed_evaluation_bank is available, a protocol revision with replace_holdout=true can propose retiring the entire old partition '
+            'and registering the concealed bank prospectively. Its sampling distribution must answer the original question without outcome selection '
+            'or lowering the success bar. This is a new confirmation protocol, not retroactive validation. Historical access reconstruction '
+            'need not continue when the entire old partition will be retired; preserve known contamination and uncertainty in the disclosure. '
+            'A procedural generator with a specified seed distribution defines a sampling population; it need not enumerate all possible layouts '
+            'or sample uniformly over every game. Assess relevance to the original question and honest scope, not equality to the retired population. '
+            'Distinguish missing provenance from an established sampling defect and inspect the supplied sampling_provenance before discarding a bank. '
             'Resolve one uncertainty that changes the next research decision; put other useful questions in deferred_questions. '
             'Choose analysis for questions answerable by interpreting existing source, definitions or recorded evidence. '
             'Do not write an experiment program to classify the meaning of prose or source semantics. '
@@ -257,6 +268,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     work = {'work_id': _digest({'packet': packet, 'decision': decision}), 'status': 'planned',
             'planning_policy_version': planning_policy_version,
             'protocol_digest': _digest(envelope),
+            'evaluation_bank_digest': _digest(bank),
             'decision': decision, 'evidence_digest': _digest(evidence),
             'source_observations': evidence, 'next_tool_to_call': 'execute_baseline_preflight'
             if not (thread / 'market/baseline_qualification.json').exists() else 'design_experiment_template'}

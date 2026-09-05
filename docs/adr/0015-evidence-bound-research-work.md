@@ -50,10 +50,15 @@ a QMIX-only protocol and later MAC-IAICC preparation.
 `protocol_revision` routes a prospective development amendment to
 `revise_evaluation_protocol`. It can replace notes only. Structured resources,
 goal and predicate remain identical. Independent review must also establish that
-endpoint meanings, thresholds, partition and fair comparison rules remain intact
-and that the reserved holdout was untouched. Missing telemetry is not proof of
-no access. Qualification, promotion or recorded final evaluation closes this
-amendment window. Uncertain access history requires a new study.
+endpoint meanings, thresholds and fair comparison rules remain intact. A regular
+notes amendment preserves an untouched partition. With `replace_holdout=true`,
+a server-sealed bank can replace the entire old partition under a new prospective
+confirmation protocol. The review checks the original question, sampling frame,
+sample counts, statistical units and qualification rules against protocol history.
+The old partition and its outcomes cannot support confirmation. Known exposure,
+uncertain access, changed sampling and registration timing remain disclosed.
+Missing telemetry is not proof of no access. Qualification, promotion or recorded
+final evaluation closes this amendment window.
 
 Approved amendments preserve the previous protocol, rationale and review. The
 paper writer receives them, the methods section must anchor each amendment, and
@@ -138,6 +143,21 @@ so private inputs cannot be copied into a development snapshot through those
 paths. This does not repair previously exposed inputs or implement final
 evaluation access. A trusted final evaluator and a prospective replacement
 protocol are still required before using a new bank for confirmation.
+
+`scripts/seal_lab3_holdout.py` samples one concealed bank through the pinned
+upstream maze generator and the game-only simulator. It supplies no policy,
+learner or performance result. It commits the private seeds and sampler source,
+records the generator, source hashes, sampling law and structural checks, and
+never filters by learning performance. Replay preserves the same bank. The
+planner receives public metadata and sampling provenance; source or commitment
+changes fail validation. A bank is not registered merely by creating it.
+
+The first live bank predates automatic sampler receipts. Its later provenance
+supplement explicitly records reconstruction from the operator-observed command
+and unchanged source. It also corrects the seed-law description: that sampler
+mapped raw zero to one. The bank was not redrawn or modified. The current sampler
+uses an exactly uniform positive 128-bit integer law and records provenance
+during generation. Review must retain this distinction for the first bank.
 
 The profile follows the [Codex filesystem permission rules](https://learn.chatgpt.com/docs/permissions).
 Live command probes confirm that public files remain readable while private
