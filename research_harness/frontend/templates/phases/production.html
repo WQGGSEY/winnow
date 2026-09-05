@@ -14,6 +14,21 @@
      hx-trigger="supervisor-state-changed from:body"
      {% endif %}
      hx-swap="outerHTML">
+{% if p.hypotheses %}
+<section class="claim-tree-card">
+  <h3>Hypothesis candidates · {{ p.hypotheses.status }}</h3>
+  <p>These are unverified proposals. Baseline qualification is required before scientific comparison.</p>
+  <a href="/threads/{{ thread.thread_id }}/graph">Inspect hypotheses and independent critiques</a>
+  {% for candidate in p.hypotheses.candidates %}
+  <details{% if candidate.selected_for_diagnostic %} open{% endif %}>
+    <summary>{{ 'Next diagnostic: ' if candidate.selected_for_diagnostic else '' }}{{ candidate.claim_under_test|truncate_chars(160) }}</summary>
+    <p>{{ candidate.claim_under_test }}</p>
+    {% if candidate.candidate.discriminating_test %}<p>{{ candidate.candidate.discriminating_test }}</p>{% endif %}
+    {% if candidate.critique %}<p>{{ candidate.critique.reason }}</p>{% endif %}
+  </details>
+  {% endfor %}
+</section>
+{% endif %}
 {% if p.preflight_runs %}
 <section class="supervisor-card">
   <h3>Baseline preparation</h3>

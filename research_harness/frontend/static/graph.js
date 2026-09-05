@@ -29,6 +29,10 @@
   let dialogs = {};
   try { tree = JSON.parse(treeRaw); } catch (_) { tree = {}; }
   try { dialogs = JSON.parse(dialogsRaw); } catch (_) { dialogs = {}; }
+  function withHypotheses(state, hypotheses) {
+    return { ...state, nodes: [...(state.nodes || []), ...(hypotheses || [])] };
+  }
+  try { tree = withHypotheses(tree, JSON.parse(svg.dataset.hypotheses || "[]")); } catch (_) {}
 
   let nodes = tree.nodes || [];
   let preparation = {};
@@ -265,6 +269,13 @@
     lines.push("</dl>");
     if (n.claim_under_test) {
       lines.push('<div class="claim-text">' + escape(n.claim_under_test) + "</div>");
+    }
+    if (n.hypothesis_detail) {
+      const detail = n.hypothesis_detail;
+      lines.push("<p><strong>Unverified hypothesis.</strong> A test proposal is not evidence that the claim is true.</p>");
+      if (detail.selected_for_diagnostic) lines.push("<p>Selected for the next small diagnostic.</p>");
+      lines.push("<h3>Mechanism, competing explanation and test</h3><pre>" + escape(JSON.stringify(detail.candidate, null, 2)) + "</pre>");
+      if (detail.critique) lines.push("<h3>Independent critique</h3><pre>" + escape(JSON.stringify(detail.critique, null, 2)) + "</pre>");
     }
     if (entries.length) {
       lines.push("<h3>교수님 ↔ 대학원생 dialog</h3>");
@@ -658,7 +669,7 @@
       const resp = await fetch(liveUrl, { cache: "no-store" });
       if (!resp.ok) return;
       const data = await resp.json();
-      const state = data.tree_state || { nodes: [] };
+      const state = withHypotheses(data.tree_state || { nodes: [] }, data.hypothesis_nodes);
       preparation = data.preparation || {};
       const sig = snapshotSignature(state, data.last_activity_mtime);
       if (sig !== lastSignature) {

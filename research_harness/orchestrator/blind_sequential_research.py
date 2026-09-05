@@ -659,10 +659,12 @@ class BlindSequentialResearch:
             )
             contract = compile_goal_contract(source)
         except BaselinePreflightRequired:
+            hypotheses = _read_json(self._thread_dir / "production/hypotheses/current.json") if (self._thread_dir / "production/hypotheses/current.json").exists() else {}
             result = {
                 "status": "preflight_required",
-                "next_tool_to_call": "execute_baseline_preflight",
-                "required_work": "Retrieve method sources, implement candidate baselines, execute matched preflight runs, then submit_baseline_qualification for scientific review. Missing implementations are work to perform, not an external blocker.",
+                "next_tool_to_call": "execute_baseline_preflight" if hypotheses.get("status") == "ready_for_diagnostic" else "develop_research_hypotheses",
+                "hypotheses": hypotheses,
+                "required_work": "Develop and critique prospective hypotheses before long baseline training. Use the selected small diagnostic to distinguish competing explanations and resolve implementation prerequisites. Then implement and qualify matched baselines for scientific comparisons. Hypothesis candidates need no baseline approval; supported claims still require verified experiments.",
             }
             _write_json_atomic(self._paths.migration_block, result)
             raise _MigrationBlocked(result)

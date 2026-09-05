@@ -119,6 +119,11 @@ AC_CONTRACT = (
 
 TOOL_DEFINITIONS = [
     {
+        "name": "develop_research_hypotheses",
+        "description": "Before baseline qualification or long training, develop three causally distinct hypotheses using the research question, connector ideas and literature packets. The harness independently critiques and revises them, stores unverified candidates for the graph, and selects a small discriminating diagnostic. This never approves a baseline or a scientific claim.",
+        "inputSchema": {"type": "object", "required": ["thread_id"], "properties": {"thread_id": {"type": "string"}, "revision_request": {"type": "string", "description": "Concrete critique findings and new source or diagnostic evidence to address in another development round."}}, "additionalProperties": False},
+    },
+    {
         "name": "update_baseline_sources",
         "description": "Update this thread's unqualified literature dossier before goal freezing. Supply a full baseline_dossier object and candidate_details mapping each candidate ID to source/method analysis text. The harness assigns all file paths. This does not approve a baseline. Use this tool instead of editing dossier files through the shell.",
         "inputSchema": {
@@ -1341,6 +1346,18 @@ def _strip_tool_envelope_leak(text: Any) -> str:
     return stripped
 
 
+def handle_develop_research_hypotheses(args: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.orchestrator.hypothesis_development import develop_hypotheses
+    from research_harness.adapters.codex_cli import CodexCliError
+
+    tid = args["thread_id"]
+    with _exclusive_adaptive_writer(tid):
+        try:
+            return develop_hypotheses(_repo_root(), _thread_dir(tid), revision_request=args.get("revision_request", ""))
+        except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:
+            return {"status": "needs_revision", "reason": str(exc), "next_step": "Preserved hypothesis drafts remain unverified. Resolve the generation or evidence error and retry."}
+
+
 def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     tid = args["thread_id"]
     d = _thread_dir(tid)
@@ -1397,6 +1414,7 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
         "baseline_dossier_candidate_yaml": baseline_dossier_yaml,
         "baseline_analysis_md": baseline_analysis_md,
         "baseline_qualification": _read_json(market_dir / "baseline_qualification.json"),
+        "hypotheses": _read_json(d / "production/hypotheses/current.json"),
         "reference_papers": reference_papers,
         "_market_usage_contract": (
             "Search results are unqualified candidates. Preserve all candidates and "
@@ -1499,7 +1517,7 @@ def _blind_command_id(
                 for name in (
                     "grilling/grilling_session.json", "market/market_research_brief.json",
                     "market/baseline_qualification.json", "production/feasibility_envelope.json",
-                    "production/intake_to_claim_dialog.json",
+                    "production/intake_to_claim_dialog.json", "production/hypotheses/current.json",
                 )
             }
     payload = json.dumps(
@@ -5949,6 +5967,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
         try:
             if name == "get_research_state":
                 result = handle_get_research_state(args, settings)
+            elif name == "develop_research_hypotheses":
+                result = handle_develop_research_hypotheses(args)
             elif name == "get_next_admissible_node":
                 result = handle_get_next_admissible_node(args)
             elif name == "advance_research":

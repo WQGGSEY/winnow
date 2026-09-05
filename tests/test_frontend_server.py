@@ -72,6 +72,18 @@ class ServerSmokeTests(unittest.TestCase):
         page = self.client.get(f"/threads/{tid}/graph")
         self.assertEqual(page.status_code, 200)
         self.assertIn("Implement and qualify the baseline.", page.text)
+        hypotheses = production / "hypotheses/current.json"
+        hypotheses.parent.mkdir()
+        hypotheses.write_text(json.dumps({"status": "developing", "candidates": [{
+            "id": "hypothesis_1", "claim_under_test": "An unverified causal hypothesis.",
+            "candidate": {}, "scientific_support": "unverified",
+        }]}))
+        data = self.client.get(f"/api/threads/{tid}/graph_data").json()
+        self.assertEqual(data["tree_state"]["nodes"], [])
+        self.assertEqual(data["hypothesis_nodes"][0]["status"], "proposed")
+        self.assertEqual(data["hypothesis_nodes"][0]["verdict"], "unverified")
+        page = self.client.get(f"/threads/{tid}/graph")
+        self.assertIn("An unverified causal hypothesis.", page.text)
 
     def test_create_thread_redirects(self) -> None:
         resp = self.client.post(

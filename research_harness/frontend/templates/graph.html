@@ -32,6 +32,7 @@
          data-tree='{{ tree_state|tojson }}'
          data-dialogs='{{ node_dialogs|tojson }}'
          data-preparation='{{ preparation|default({})|tojson }}'
+         data-hypotheses='{{ hypothesis_nodes|default([])|tojson }}'
          data-live-url="/api/threads/{{ active_thread.thread_id }}/graph_data"
          data-poll-interval-ms="4000">
       <defs>
@@ -54,7 +55,7 @@
   <aside class="graph-inspector" id="graph-inspector">
     <div class="inspector-header">
       <h2 id="inspector-title">Inspector</h2>
-      <p class="muted" id="inspector-subtitle">Hover a node or edge.</p>
+      <p class="muted" id="inspector-subtitle">Dashed hypothesis nodes are unverified candidates. Click to inspect their tests and critique.</p>
     </div>
     <div class="inspector-body" id="inspector-body">
       <p class="muted">Hover or click a node to see its claim and the

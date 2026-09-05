@@ -1454,6 +1454,32 @@ def test_migration_freezes_the_validated_intake_handoff_contract(
     assert contract["bar"]["success_criteria"] == new_contract["success_criteria"]
 
 
+def test_unqualified_baseline_routes_to_hypotheses_before_execution(tmp_path, monkeypatch):
+    from research_harness.orchestrator import blind_sequential_research as module
+    from research_harness.orchestrator.goal_contract import BaselinePreflightRequired
+
+    thread_dir = tmp_path / "thread"
+    thread_dir.mkdir()
+    _write_legacy_migration_artifacts(thread_dir)
+
+    def unqualified(**kwargs):
+        raise BaselinePreflightRequired("unqualified")
+
+    monkeypatch.setattr(module, "goal_contract_input_from_artifacts", unqualified)
+    engine = BlindSequentialResearch(repo_root=REPO_ROOT, thread_dir=thread_dir,
+                                    writer_lock=_writer_lock, direction_generator=_Generator(),
+                                    structural_assessor=_Assessor(), acquisition=_Acquisition())
+    result = engine.advance_research(command_id="before-hypotheses")
+    assert result["next_tool_to_call"] == "develop_research_hypotheses"
+    path = thread_dir / "production/hypotheses/current.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"status": "ready_for_diagnostic", "candidates": []}))
+    result = engine.advance_research(command_id="after-hypotheses")
+    assert result["next_tool_to_call"] == "execute_baseline_preflight"
+    assert not (thread_dir / "production/reorientation/goal_contract.json").exists()
+    assert not (thread_dir / "production/tree/search_state.json").exists()
+
+
 def test_fresh_thread_without_search_state_materializes_one_active_node(
     tmp_path: Path,
 ) -> None:

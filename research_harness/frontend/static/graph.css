@@ -192,3 +192,10 @@ body.graph-page {
   .graph-main { grid-template-columns: 1fr; }
   .graph-inspector { max-height: 38vh; border-left: none; border-top: 1px solid #d8dde7; }
 }
+/* Prospective hypotheses remain visibly distinct from research results. */
+.graph-node[data-type="hypothesis"] .node-circle {
+  fill: #fff4d9;
+  stroke: #b98020;
+  stroke-dasharray: 5 3;
+}
+.graph-inspector pre { white-space: pre-wrap; overflow-wrap: anywhere; }

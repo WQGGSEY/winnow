@@ -1,0 +1,190 @@
+{
+  "type": "object",
+  "properties": {
+    "candidates": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "properties": {
+          "proposal": {
+            "type": "object",
+            "required": [
+              "claim",
+              "fingerprint",
+              "experiment_objective",
+              "data_needs",
+              "predicted_outcomes"
+            ],
+            "properties": {
+              "claim": {
+                "type": "string",
+                "minLength": 1
+              },
+              "fingerprint": {
+                "type": "object",
+                "required": [
+                  "mechanism",
+                  "intervention",
+                  "observables_and_data",
+                  "analysis_unit",
+                  "timescale",
+                  "system_boundary"
+                ],
+                "properties": {
+                  "mechanism": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "intervention": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "observables_and_data": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "analysis_unit": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "timescale": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "system_boundary": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              },
+              "experiment_objective": {
+                "type": "string",
+                "minLength": 1
+              },
+              "data_needs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "description"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "registered_adapter",
+                        "public_api",
+                        "public_page",
+                        "crawl"
+                      ]
+                    },
+                    "description": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "predicted_outcomes": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 2
+              }
+            },
+            "additionalProperties": false
+          },
+          "causal_rationale": {
+            "type": "string",
+            "minLength": 1
+          },
+          "competing_explanation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "discriminating_test": {
+            "type": "string",
+            "minLength": 1
+          },
+          "supporting_outcome": {
+            "type": "string",
+            "minLength": 1
+          },
+          "refuting_outcome": {
+            "type": "string",
+            "minLength": 1
+          },
+          "critical_assumptions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "source_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "source_limitations": {
+            "type": "string",
+            "minLength": 1
+          },
+          "novelty_vs_closest_work": {
+            "type": "string",
+            "minLength": 1
+          },
+          "test_budget_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120
+          },
+          "test_prerequisites": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "explanation_role": {
+            "type": "string",
+            "enum": [
+              "null_or_confound",
+              "mechanism"
+            ]
+          }
+        },
+        "required": [
+          "proposal",
+          "causal_rationale",
+          "competing_explanation",
+          "discriminating_test",
+          "supporting_outcome",
+          "refuting_outcome",
+          "critical_assumptions",
+          "source_ids",
+          "source_limitations",
+          "novelty_vs_closest_work",
+          "test_budget_seconds",
+          "test_prerequisites",
+          "explanation_role"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "candidates"
+  ],
+  "additionalProperties": false
+}

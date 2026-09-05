@@ -193,6 +193,23 @@ change a frozen goal. Historical operator feedback remains available as context,
 but unanswered legacy prompts do not pause the supervisor. Review failures do not
 count as approval, and publication still requires the research validation gates.
 
+Before baseline qualification, `develop_research_hypotheses` records the connector's
+existing ideas as unverified graph nodes. It then develops a null/confound explanation
+and two distinct mechanism hypotheses, critiques their evidence and distinguishing tests, and revises weak
+proposals. Each stage is a separate resumable Sol low invocation. The inputs retain
+the connector's perspective packets and source metadata, including missing abstracts;
+an analogy or paper title is not treated as established method evidence.
+
+Candidate proposals include competing explanations, source limitations, refuting
+outcomes, prerequisites, and a diagnostic budget of at most 120 seconds. Invalid
+responses are retained and returned as correction context on retry. Source identifiers
+are constrained to the actual evidence packet in the model's output schema. The selected
+candidate guides preparation through `get_research_state` and the supervisor prompt.
+The claim graph displays these candidates separately from execution-backed research
+nodes. A critique's `ready_for_test` means worth testing, not a supported claim.
+Scientific comparison and publication still require the qualified baseline and
+existing evidence gates.
+
 ## Experiment Plan Templates (per-domain, directory-based)
 
 Real experiment code lives in user-owned template directories listed in

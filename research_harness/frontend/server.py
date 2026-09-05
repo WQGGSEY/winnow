@@ -247,6 +247,7 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
                 "readiness_history": p.get("readiness_history") or [],
                 "in_progress_nodes": p.get("in_progress_nodes") or [],
                 "preparation": p.get("preparation") or {},
+                "hypothesis_nodes": p.get("hypothesis_nodes") or [],
                 "last_activity_mtime": p.get("last_activity_mtime") or 0,
             }
         )
@@ -274,6 +275,7 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
             readiness_history=production.get("readiness_history") or [],
             intake_to_claim=production.get("intake_to_claim"),
             preparation=production.get("preparation") or {},
+            hypothesis_nodes=production.get("hypothesis_nodes") or [],
         )
 
     # -------- partials
@@ -1458,6 +1460,16 @@ def _read_phase_artifacts(
         with contextlib.suppress(OSError):
             result["phase_started_unix"] = pdir.stat().st_mtime
     elif phase == "production":
+        hypothesis_path = pdir / "hypotheses/current.json"
+        if hypothesis_path.exists():
+            with contextlib.suppress(OSError, json.JSONDecodeError):
+                hypotheses = json.loads(hypothesis_path.read_text())
+                result["hypotheses"] = hypotheses
+                result["hypothesis_nodes"] = [{
+                    "id": row["id"], "parent": None, "type": "hypothesis", "status": "proposed",
+                    "claim_under_test": row["claim_under_test"], "verdict": "unverified",
+                    "hypothesis_detail": row,
+                } for row in hypotheses.get("candidates", [])]
         sp = pdir / "production_run_summary.json"
         if sp.exists():
             with contextlib.suppress(json.JSONDecodeError, OSError):
@@ -1561,6 +1573,7 @@ def _read_phase_artifacts(
                 preparation["required_work"] = migration.get("required_work", "")
         result["preparation"] = preparation
         for cand in [
+            pdir / "hypotheses/current.json",
             pdir / "tree" / "search_state.json",
             pdir / "intake_to_claim_dialog.json",
             pdir / "production_run_summary.json",
@@ -1595,6 +1608,7 @@ def _read_phase_artifacts(
             or (pdir / "_drafts").exists()
             or (pdir / "production_run_summary.json").exists()
             or bool(preflight_runs)
+            or bool(result.get("hypothesis_nodes"))
         )
         # MCP-mode progress: list per-node MCP decision files + their
         # mtimes so the operator can see Codex's last action.
