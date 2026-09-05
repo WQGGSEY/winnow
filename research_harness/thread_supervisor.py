@@ -600,6 +600,13 @@ def is_terminal(
         verify_terminal_confirmation,
     )
     try:
+        from research_harness.confirmation_sampling import active_sampling_registration
+        if active_sampling_registration(pdir.parent):
+            from dataclasses import asdict
+            from research_harness.orchestrator.confirmation_execution import verified_confirmation_receipt
+            measured = verified_confirmation_receipt(pdir.parent, asdict(resolved_binding))
+            if confirmation_evidence_from_result(loaded_artifacts['falsifier_result']).get('observed') != measured['observed']:
+                return False, None
         verify_terminal_confirmation(
             pdir / "reorientation" / "confirmation_use.json", contract,
             binding={"contract_id": resolved_binding.contract_id,
