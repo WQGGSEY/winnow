@@ -272,8 +272,8 @@ def test_analysis_resolves_existing_evidence_without_fabricating_execution(tmp_p
     assert all(row['conclusion_excerpt'].startswith('The source declares') for row in findings.values())
 
 
-@pytest.mark.parametrize('replace_holdout', [False, True])
-def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tmp_path, monkeypatch, replace_holdout):
+@pytest.mark.parametrize('replace_holdout,deferred', [(False, False), (True, False), (True, True)])
+def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tmp_path, monkeypatch, replace_holdout, deferred):
     from research_harness.orchestrator import protocol_revision
     from research_harness.publishing.manuscript import ManuscriptError, validate_sections
 
@@ -289,8 +289,10 @@ def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tm
     with pytest.raises(ValueError, match='revise_evaluation_protocol'):
         bind_work(thread, work['work_id'], node['id'], plan)
     calls = []
-    bank = {'bank_id': 'bank_fresh', 'integrity_verified': True} if replace_holdout else None
+    bank = {'bank_id': 'bank_fresh', 'integrity_verified': True} if replace_holdout and not deferred else None
     monkeypatch.setattr(protocol_revision, 'sealed_bank_metadata', lambda thread: bank)
+    sampling = {'spec_id': 'future_spec', 'source': 'pinned'} if deferred else None
+    monkeypatch.setattr(protocol_revision, 'read_sampling_spec', lambda thread: sampling)
     def review(repo, directory, packet, *, purpose):
         calls.append(packet)
         return {'request_sha256': 'review', 'assessment': {
@@ -301,7 +303,7 @@ def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tm
     monkeypatch.setattr(protocol_revision, 'review_research_packet', review)
     kwargs = {'work_id': work['work_id'], 'notes': 'Any qualified method; identical endpoints and untouched partition.',
               'rationale': 'The original method lock conflicts with development method selection.',
-              'replace_holdout': replace_holdout}
+              'replace_holdout': replace_holdout, 'defer_holdout_generation': deferred}
     assert protocol_revision.revise_evaluation_protocol(REPO, thread, **kwargs)['status'] == 'rejected'
     rejected = current_work(thread)
     assert rejected['status'] == 'planned'
@@ -319,6 +321,7 @@ def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tm
     assert records[0]['previous_protocol'] == original
     assert records[0].get('replacement_holdout_bank') == bank
     assert calls[0]['replacement_holdout_bank'] == bank
+    assert records[0].get('replacement_sampling_spec') == sampling
     with pytest.raises(ManuscriptError, match='disclose protocol amendment'):
         validate_sections({'method': {'prose_html': 'An amended study.', 'evidence_anchors': ['worker_report.status']}},
                           {'protocol_revisions': records, 'worker_report': {'status': 'completed'}}, require_citations=False)
@@ -346,3 +349,26 @@ def test_reconsideration_keeps_rejected_plan_and_does_not_create_observations(tm
     assert old['status'] == 'superseded'
     assert old['superseded_by'] == revised['work_id']
     assert not list(tree.rglob('worker_report.json'))
+
+
+def test_implementation_work_writes_bound_bytes_without_executing(tmp_path, monkeypatch):
+    from research_harness import mcp_server
+    from research_harness.confirmation_sampling import _hash
+    thread, tree, node, plan, _ = fixture(tmp_path)
+    work = plan_research_work(REPO, thread, transport=Planner('implementation'))
+    assert work['next_tool_to_call'] == 'design_experiment_template'
+    with pytest.raises(ValueError, match='design_experiment_template'):
+        bind_work(thread, work['work_id'], node['id'], plan)
+    monkeypatch.setattr(mcp_server, '_thread_dir', lambda tid: thread)
+    monkeypatch.setattr(mcp_server, '_require_authoritative_node', lambda tid, node_id: None)
+    args = {'thread_id': 'thread', 'node_id': node['id'], 'work_id': work['work_id'],
+            'plan_metadata': {'source_files': [{'path': 'prepared.py', 'content': "raise RuntimeError('must not execute during preparation')\n"}]}}
+    prepared = mcp_server.handle_design_experiment_template(args)
+    source = prepared['outcome']['source_files'][0]
+    assert _hash(Path(source['path'])) == source['sha256']
+    assert prepared['outcome']['new_observation'] is False
+    assert not list(tree.rglob('runner_result.json'))
+    assert mcp_server.handle_design_experiment_template(args) == prepared
+    planner = Planner('analysis')
+    plan_research_work(REPO, thread, transport=planner)
+    assert planner.calls[0]['prepared_implementations'] == [prepared['outcome']]

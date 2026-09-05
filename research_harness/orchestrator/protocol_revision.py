@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
 from research_harness.evaluation_vault import sealed_bank_metadata
+from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
 
 from research_harness.orchestrator.research_control import (
     PLANNING_POLICY_VERSION, StaleResearchWork, _digest, _read, _write,
@@ -13,12 +14,15 @@ from research_harness.orchestrator.research_control import (
 from research_harness.orchestrator.research_review import review_research_packet
 
 
-def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes: str, rationale: str, replace_holdout: bool = False) -> dict[str, Any]:
+def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes: str, rationale: str, replace_holdout: bool = False, defer_holdout_generation: bool = False) -> dict[str, Any]:
+    if defer_holdout_generation and not replace_holdout:
+        raise ValueError('Deferred sampling requires retirement of the old holdout.')
     work = current_work(thread)
     if work.get('work_id') == work_id and work.get('status') == 'completed' and work.get('outcome', {}).get('protocol_revision'):
         prior = _read(Path(work['outcome']['protocol_revision']))
         if (prior['protocol']['notes'] != notes or prior['rationale'] != rationale
-                or bool(prior.get('replacement_holdout_bank')) != replace_holdout):
+                or bool(prior.get('replacement_holdout_bank') or prior.get('replacement_sampling_spec')) != replace_holdout
+                or bool(prior.get('replacement_sampling_spec')) != defer_holdout_generation):
             raise ValueError('This work already committed another amendment; plan a new work.')
         return {**work, 'research_work_checkpoint': work_id}
     if (work.get('work_id') != work_id or work.get('status') != 'planned'
@@ -29,6 +33,8 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
     if not notes.strip() or not rationale.strip():
         raise ValueError('An amendment needs replacement protocol notes and a development rationale.')
     production = thread / 'production'
+    if (production / 'confirmation_execution.json').exists():
+        raise ValueError('Confirmation sampling has begun; this protocol cannot be amended.')
     if (thread / 'market/baseline_qualification.json').exists():
         raise ValueError('Baseline assignments are qualified; this development amendment window is closed.')
     state = _read(production / 'tree/search_state.json')
@@ -42,12 +48,15 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
         raise StaleResearchWork('Development evidence changed; call plan_research_work.')
     envelope_path = production / 'feasibility_envelope.json'
     existing = _read(envelope_path)
-    bank = sealed_bank_metadata(thread) if replace_holdout else None
-    if replace_holdout and bank is None:
-        raise ValueError('A server-sealed evaluation bank is required before proposing partition replacement.')
+    bank = sealed_bank_metadata(thread) if replace_holdout and not defer_holdout_generation else None
+    sampling_spec = read_sampling_spec(thread) if defer_holdout_generation else None
+    if replace_holdout and bank is None and sampling_spec is None:
+        raise ValueError('A server-sealed bank or registered future sampling procedure is required.')
     identity = {'work_id': work_id, 'notes': notes, 'rationale': rationale}
     if bank:
         identity['replacement_holdout_bank'] = bank
+    if sampling_spec:
+        identity['replacement_sampling_spec'] = sampling_spec
     directory = production / 'protocol_revisions' / _digest(identity)
     request_path = directory / 'request.json'
     packet = _read(request_path)
@@ -68,10 +77,32 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
             'execution_inventory': execution_inventory(thread),
             'replacement_holdout_bank': bank,
             'protocol_history': approved_protocol_revisions(thread),
+            'replacement_sampling_spec': sampling_spec,
+            'active_sampling_registration': active_sampling_registration(thread),
             'execution_plans': [str(path.resolve()) for path in sorted((production / 'tree').rglob('experiment_plan.json'))],
         }
         _write(request_path, packet)
-    partition_rules = (
+    if sampling_spec:
+        partition_rules = (
+            'This proposal retires ALL previous confirmation banks and registers a fixed future sampling PROCEDURE. '
+            'Its source, inputs, arguments, sample counts and seed law are committed before data collection. '
+            'The harness will freeze the evaluated implementation, checkpoints and measurement program before executing this sampler exactly once. '
+            'A realized bank ID is intentionally unavailable before future random draws. Do not require completed data collection or an access audit '
+            'of nonexistent future data to approve a prospective sampling procedure. The realized bank digest must bind the eventual execution receipt. '
+            'Review the committed sampler and its relevance to the original question. Preserve endpoint meanings, thresholds, statistical units, '
+            'sample counts, uncertainty calculation, qualification and fair comparison. Generation failures abort; no outcome-selected retries. '
+            'Disclose the new population, retirement and access limitations of old banks, and the new registration timing. '
+            'The supplied specification is the authoritative resource identity and is persisted with approval; notes need not retype every hash. '
+            'This approves the future design only, never a realization, method, result or claim. '
+        )
+    elif not replace_holdout and active_sampling_registration(thread):
+        partition_rules = (
+            'Preserve the active, approved future sampling specification in protocol history. No confirmation execution ledger exists. '
+            'The confirmation population is defined by the committed sampler and future random draws; there is no existing confirmation dataset to audit. '
+            'Retired banks must remain excluded. Do not demand creation of future data merely to amend a development method binding. '
+        )
+    else:
+        partition_rules = (
         'This proposal retires the ENTIRE previous confirmation partition and registers the server-sealed replacement bank. '
         'The transaction in this tool is the registration capability; do not rely on historical claims that no such tool exists. '
         'Its concealed content digest has been verified by the harness; inspect public generator/source/provenance only, never private content. '
@@ -86,10 +117,10 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
         'Inspect supplied sampling provenance and distinguish reconstructed records from contemporaneous receipts. '
         'Compare endpoint and qualification definitions with protocol_history when the current notes only contain a termination notice. '
         'Do not approve retrospective confirmation or changes intended to turn an observed failure into a pass. '
-    ) if bank else (
+        ) if bank else (
         'Preserve the held-out partition. Independently inspect executed source and available execution records to establish that the reserved holdout has not been evaluated or inspected. '
         'Absence of a falsifier receipt and author assertions do not establish this. Reject if access history is incomplete or uncertain; do not read holdout outcomes yourself. '
-    )
+        )
     review = review_research_packet(repo, directory / 'review', packet, purpose=(
         'Review a prospective development protocol amendment. Only the notes may change; structured goal, resources and predicate remain identical. '
         'Verify that the same task endpoints, units, success thresholds, dependence-aware uncertainty and fair comparison rules '
@@ -118,6 +149,10 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
         if sealed_bank_metadata(thread) != bank:
             raise StaleResearchWork('Sealed bank changed during protocol review.')
         record['replacement_holdout_bank'] = bank
+    if sampling_spec:
+        if read_sampling_spec(thread) != sampling_spec:
+            raise StaleResearchWork('Future sampling specification changed during review.')
+        record['replacement_sampling_spec'] = sampling_spec
     _write(envelope_path, packet['proposal'])
     if not (directory / 'approved.json').exists():
         _write(directory / 'approved.json', record)

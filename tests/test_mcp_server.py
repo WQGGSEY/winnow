@@ -394,6 +394,7 @@ class MCPServerTests(unittest.TestCase):
             "plan_research_work",
             "resolve_research_work",
             "revise_evaluation_protocol",
+            "execute_confirmation_experiment",
             "develop_research_hypotheses",
             "update_baseline_sources",
             "submit_baseline_qualification",

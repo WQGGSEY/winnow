@@ -1273,7 +1273,7 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "     새로운 실행 전 plan_research_work로 다음 작업의 근거·경쟁 예측·예산을 기록해.",
         "     반환된 work_id와 test를 실행 코드에 적용하고 그 작업의 예산을 넘기지 마.",
         "     kind=analysis는 resolve_research_work로 기존 근거에서 답해. 의미 해석을 위한 실험 코드를 만들지 마.",
-        "     kind=protocol_revision은 revise_evaluation_protocol로 notes 변경안과 근거를 독립 검토에 제출해. 원래 목표·평가 기준·미사용 holdout을 보존하고 변경 이력을 공개해.",
+        "     미래 sampler가 제공되면 replace_holdout=true, defer_holdout_generation=true로 과거 bank를 전부 폐기하고 생성 규칙만 먼저 등록해. kind=protocol_revision은 revise_evaluation_protocol로 notes 변경안과 근거를 독립 검토에 제출해. 원래 목표·평가 기준·미사용 holdout을 보존하고 변경 이력을 공개해.",
         "     한 실행이 끝나면 supervisor가 새 세션에서 결과를 해석하고 다음 작업을 계획한다.",
         "     실행 오류를 과학적 반박으로 해석하지 말고, 동일 관측이면 판별 검사로 원인을 좁혀.",
         "     planned 작업에 거절 사유와 dispatch_request_path가 있으면 저장된 요청의 입력 오류를 고쳐 같은 검사를 재시도해. 실행 전 거절은 새 연구 관측이 아니야.",
@@ -1540,7 +1540,7 @@ def spawn_codex_session(
                 elif event.raw.get('type') == 'item.completed':
                     pending_calls.discard(item['id'])
                     completed_calls += 1
-                    if item.get('tool') in {'execute_baseline_preflight', 'execute_node_experiment', 'resolve_research_work', 'revise_evaluation_protocol'}:
+                    if item.get('tool') in {'execute_baseline_preflight', 'execute_node_experiment', 'resolve_research_work', 'revise_evaluation_protocol', 'execute_confirmation_experiment', 'design_experiment_template'}:
                         for content in (item.get('result') or {}).get('content', []):
                             if content.get('type') == 'text':
                                 try:

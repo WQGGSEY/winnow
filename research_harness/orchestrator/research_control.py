@@ -11,8 +11,9 @@ from research_harness.adapters.codex_cli import CodexCliAdapter
 from research_harness.agent_runtime import AgentPrompt, CompletionRequest
 from research_harness.schemas.validator import validate_named_schema
 from research_harness.evaluation_vault import sealed_bank_metadata
+from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
 
-PLANNING_POLICY_VERSION = 4
+PLANNING_POLICY_VERSION = 6
 
 
 class StaleResearchWork(ValueError):
@@ -120,17 +121,23 @@ def development_evidence(thread: Path) -> dict[str, Any]:
 def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '', transport=None) -> dict[str, Any]:
     from research_harness.orchestrator.hypothesis_development import hypothesis_context
 
+    confirmation = _read(thread / 'production/confirmation_execution.json')
+    if confirmation:
+        return {'status': confirmation['status'], 'work_id': confirmation['work_id'],
+                'next_tool_to_call': 'compute_falsifier_result',
+                'reason': 'Confirmation is reserved; adaptive development is closed.'}
     evidence = development_evidence(thread)
     findings = analysis_findings(thread)
     previous = current_work(thread)
     envelope = _read(thread / 'production/feasibility_envelope.json')
     bank = sealed_bank_metadata(thread)
-    if reconsider_reason and (previous.get('status') != 'planned'
+    sampling = read_sampling_spec(thread)
+    if reconsider_reason and previous.get('planning_policy_version') == PLANNING_POLICY_VERSION and (previous.get('status') != 'planned'
                               or not any(previous.get(key, {}).get('decision') == 'reject'
                                          for key in ('implementation_review', 'protocol_review'))):
         raise ValueError('Reconsideration requires a planned work with rejected implementation feedback or protocol feedback.')
     planning_policy_version = PLANNING_POLICY_VERSION
-    if not reconsider_reason and previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('protocol_digest') == _digest(envelope) and previous.get('evaluation_bank_digest') == _digest(bank) and previous['evidence_digest'] == _digest(evidence):
+    if not reconsider_reason and previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('protocol_digest') == _digest(envelope) and previous.get('evaluation_bank_digest') == _digest(bank) and previous.get('sampling_spec_digest') == _digest(sampling) and previous['evidence_digest'] == _digest(evidence):
         return previous
     if previous.get('status') == 'running':
         # The public caller holds the same writer lock as execution. A remaining
@@ -183,8 +190,12 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
         'goal_contract': _read(thread / 'production/reorientation/goal_contract.json'),
         'research': research, 'implementation_context': implementations, 'measurement_context': measurements,
         'analysis_findings': findings,
+        'prepared_implementations': [_read(path)['outcome'] for path in (thread / 'production/research_control/work').glob('*/work.json')
+                                     if _read(path).get('outcome', {}).get('execution_result') == 'implementation_prepared'],
         'execution_inventory': execution_inventory(thread),
         'sealed_evaluation_bank': bank,
+        'future_confirmation_sampling': sampling,
+        'active_sampling_registration': active_sampling_registration(thread),
         'active_claim': _read(thread / 'production/tree/search_state.json').get('nodes', []),
         'development_evidence': evidence, 'previous_work': previous,
         'diagnostic_required': diagnostic_required, 'max_runtime_seconds': ceiling,
@@ -216,6 +227,10 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'choose protocol_revision before further method selection. revise_evaluation_protocol can independently review a prospective notes amendment '
             'before baseline qualification or final evaluation. It preserves the original goal, resources, held-out partition, endpoint definitions '
             'and thresholds; it cannot retroactively certify results or make a failed test pass. The amendment and its timing remain disclosed. '
+            'If future_confirmation_sampling is available, prefer a prospective protocol revision with replace_holdout=true and defer_holdout_generation=true. '
+            'This retires all existing banks and fixes the sampler before future data collection; the new bank will be drawn only after implementations and checkpoints are frozen. '
+            'Do not request an existing bank ID or historical access audit for data that have not yet been generated. Preserve the full endpoints and statistical procedure. '
+            'The existing design_experiment_template tool can write implementation files without executing them; source paths and hashes can then bind a later protocol amendment. '
             'If sealed_evaluation_bank is available, a protocol revision with replace_holdout=true can propose retiring the entire old partition '
             'and registering the concealed bank prospectively. Its sampling distribution must answer the original question without outcome selection '
             'or lowering the success bar. This is a new confirmation protocol, not retroactive validation. Historical access reconstruction '
@@ -224,6 +239,9 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'or sample uniformly over every game. Assess relevance to the original question and honest scope, not equality to the retired population. '
             'Distinguish missing provenance from an established sampling defect and inspect the supplied sampling_provenance before discarding a bank. '
             'Resolve one uncertainty that changes the next research decision; put other useful questions in deferred_questions. '
+            'Choose implementation when source bytes must be created or repaired before registration or execution. '
+            'Use design_experiment_template with this work_id; it writes a work-specific draft and returns source paths and hashes without running anything. '
+            'A nonexistent program cannot have a prior hash. Prepared implementations are not empirical evidence or approval; inspect them, bind them if required, then execute the smallest useful probe. '
             'Choose analysis for questions answerable by interpreting existing source, definitions or recorded evidence. '
             'Do not write an experiment program to classify the meaning of prose or source semantics. '
             'Choose an execution kind only when new measurements are needed. Analysis cannot establish unmeasured causal or performance claims. '
@@ -241,7 +259,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'Give competing explanations, contrasting observable predictions and the decision each outcome changes. '
             'Select the smallest useful diagnostic before expensive training when validity is uncertain. '
             'Do not prescribe the same full experiment after an unchanged observation; change the discriminating test. '
-            'If diagnostic_required is true, choose diagnostic or analysis to locate the failure, or protocol_revision for a conflicting registration. Otherwise choose analysis, protocol_revision, diagnostic, competence, comparison or replication. '
+            'If diagnostic_required is true, choose diagnostic or analysis to locate the failure, or protocol_revision for a conflicting registration. Otherwise choose analysis, implementation, protocol_revision, diagnostic, competence, comparison or replication. Choose confirmation only after baseline qualification, fixed checkpoints and an executed public reference of the complete final measurement program, with an approved future sampler. '
             'Use an appropriate bounded runtime, at most max_runtime_seconds, and cite only supplied development_evidence or analysis_findings IDs. '
             'Unexpected results can motivate new explanations; do not assume the user-suspected mechanism. '
             'Do not write the learner, approve a scientific claim, change the frozen goal, access holdout or ask a human. '
@@ -260,7 +278,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     available_evidence = evidence.keys() | findings.keys()
     if set(decision['evidence_ids']) - available_evidence or (available_evidence and not decision['evidence_ids']):
         raise ValueError('The work decision must cite existing development execution or source-analysis evidence.')
-    if diagnostic_required and decision['kind'] not in {'diagnostic', 'analysis', 'protocol_revision'}:
+    if diagnostic_required and decision['kind'] not in {'diagnostic', 'analysis', 'protocol_revision', 'implementation'}:
         raise ValueError('An execution failure or unchanged observation requires a discriminating diagnostic.')
     if decision['max_runtime_seconds'] > ceiling:
         raise ValueError('Work exceeds the registered runtime limit.')
@@ -269,6 +287,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'planning_policy_version': planning_policy_version,
             'protocol_digest': _digest(envelope),
             'evaluation_bank_digest': _digest(bank),
+            'sampling_spec_digest': _digest(sampling),
             'decision': decision, 'evidence_digest': _digest(evidence),
             'source_observations': evidence, 'next_tool_to_call': 'execute_baseline_preflight'
             if not (thread / 'market/baseline_qualification.json').exists() else 'design_experiment_template'}
@@ -276,6 +295,12 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
         work['next_tool_to_call'] = 'resolve_research_work'
     elif decision['kind'] == 'protocol_revision':
         work['next_tool_to_call'] = 'revise_evaluation_protocol'
+    elif decision['kind'] == 'implementation':
+        work['next_tool_to_call'] = 'design_experiment_template'
+    elif decision['kind'] == 'confirmation':
+        if not active_sampling_registration(thread) or not (thread / 'market/baseline_qualification.json').exists():
+            raise ValueError('Confirmation requires approved future sampling and qualified baselines.')
+        work['next_tool_to_call'] = 'execute_confirmation_experiment'
     if reconsider_reason:
         previous.update(status='superseded', superseded_by=work['work_id'], reconsider_reason=reconsider_reason)
         _write(thread / 'production/research_control/work' / previous['work_id'] / 'work.json', previous)
@@ -331,12 +356,14 @@ def resolve_research_work(repo: Path, thread: Path, work_id: str) -> dict[str, A
 
 
 def bind_work(thread: Path, work_id: str | None, node_id: str, plan: dict[str, Any], *, scope: str = 'baseline_preflight') -> None:
+    if (thread / 'production/confirmation_execution.json').exists():
+        raise ValueError('Confirmation is reserved; adaptive development is closed.')
     work = current_work(thread)
     if not work or work_id != work.get('work_id') or work.get('status') not in {'planned', 'running'}:
         raise ValueError('Call plan_research_work and supply its work_id before a new execution.')
     if work.get('planning_policy_version') != PLANNING_POLICY_VERSION:
         raise StaleResearchWork('Research planning policy changed; call plan_research_work before execution.')
-    if work['decision']['kind'] in {'analysis', 'protocol_revision'}:
+    if work['decision']['kind'] in {'analysis', 'protocol_revision', 'implementation', 'confirmation'}:
         raise StaleResearchWork(f"This question requires {work['next_tool_to_call']}, not a new experiment.")
     if work.get('protocol_digest') != _digest(_read(thread / 'production/feasibility_envelope.json')):
         raise StaleResearchWork('Registered protocol changed; call plan_research_work before execution.')

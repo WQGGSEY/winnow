@@ -119,9 +119,19 @@ AC_CONTRACT = (
 
 TOOL_DEFINITIONS = [
     {
+        "name": "execute_confirmation_experiment",
+        "description": "Freeze a verified public measurement program and declared checkpoint dependencies, independently review it, replay its public fixture in isolation, then draw the approved future confirmation data and execute once without an intervening agent decision. Requires qualified baselines and planned confirmation work. No training or tuning is permitted. Metric comes from execution artifacts. The program reads RESEARCH_HARNESS_CONFIRMATION_BANK when set; additional_files lists all thread-local dependencies/checkpoints absent from the reference plan.",
+        "inputSchema": {"type": "object", "required": ["thread_id", "work_id", "reference_scope", "reference_node_id", "additional_files"], "properties": {
+            "thread_id": {"type": "string"}, "work_id": {"type": "string"},
+            "reference_scope": {"type": "string", "enum": ["nodes", "baseline_preflight"]},
+            "reference_node_id": {"type": "string"},
+            "additional_files": {"type": "array", "items": {"type": "object", "required": ["path", "sha256"], "properties": {"path": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}, "additionalProperties": False}}
+        }, "additionalProperties": False},
+    },
+    {
         "name": "revise_evaluation_protocol",
-        "description": "Submit replacement protocol notes and a development rationale for independent review of the current protocol_revision work. Only a prospective amendment before qualification/final evaluation is allowed. The goal, resources, structured predicate and endpoint meanings must be preserved. With replace_holdout=true, a server-sealed bank can replace the entire contaminated partition under a new prospective protocol; old cells and results are retired. Previous registration and amendments remain disclosed; this does not approve results.",
-        "inputSchema": {"type": "object", "required": ["thread_id", "work_id", "notes", "rationale"], "properties": {"thread_id": {"type": "string"}, "work_id": {"type": "string"}, "notes": {"type": "string", "minLength": 1}, "rationale": {"type": "string", "minLength": 1}, "replace_holdout": {"type": "boolean", "default": False}}, "additionalProperties": False},
+        "description": "Submit replacement protocol notes and a development rationale for independent review of the current protocol_revision work. Only a prospective amendment before qualification/final evaluation is allowed. The goal, resources, structured predicate and endpoint meanings must be preserved. With replace_holdout=true, a server-sealed bank can replace the entire contaminated partition under a new prospective protocol; old cells and results are retired. With defer_holdout_generation=true, register the provisioned future sampler instead; data are drawn only after implementation/checkpoint freeze. Previous registration and amendments remain disclosed; this does not approve results.",
+        "inputSchema": {"type": "object", "required": ["thread_id", "work_id", "notes", "rationale"], "properties": {"thread_id": {"type": "string"}, "work_id": {"type": "string"}, "notes": {"type": "string", "minLength": 1}, "rationale": {"type": "string", "minLength": 1}, "replace_holdout": {"type": "boolean", "default": False}, "defer_holdout_generation": {"type": "boolean", "default": False}}, "additionalProperties": False},
     },
     {
         "name": "resolve_research_work",
@@ -511,7 +521,7 @@ TOOL_DEFINITIONS = [
         "name": "design_experiment_template",
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
-            "Write the experiment code for the current node. Submit a "
+            "For planned implementation work, supply work_id to write isolated draft source_files without execution or scientific approval; the result records exact paths/hashes and completes this preparation work. Otherwise write the experiment code for the current node. Submit a "
             "plan_metadata dict (task_class, objective, entrypoint, resources, "
             "expected_outputs, baseline_evidence_requirements, source_files). "
             "source_files paths starting with `_lib/` are shared across the "
@@ -553,6 +563,7 @@ TOOL_DEFINITIONS = [
                 "thread_id": {"type": "string"},
                 "node_id": {"type": "string"},
                 "plan_metadata": {"type": "object"},
+                "work_id": {"type": "string"},
             },
         },
     },
@@ -1415,6 +1426,30 @@ def handle_plan_research_work(args: dict[str, Any]) -> dict[str, Any]:
             return {'status': 'planning_failed', 'reason': str(exc), 'next_tool_to_call': 'plan_research_work'}
 
 
+def handle_execute_confirmation_experiment(args: dict[str, Any]) -> dict[str, Any]:
+    from dataclasses import asdict
+    from research_harness.orchestrator.confirmation_execution import execute_confirmation_experiment
+    from research_harness.orchestrator.research_control import StaleResearchWork
+    from research_harness.settings_scoped import resolve_for_thread
+
+    tid = args['thread_id']
+    with _exclusive_adaptive_writer(tid):
+        try:
+            binding = _authoritative_strong_binding(tid)
+            if binding is None:
+                raise ValueError('Confirmation requires an authoritative active direction')
+            return execute_confirmation_experiment(
+                _repo_root(), _thread_dir(tid), work_id=args['work_id'],
+                reference_scope=args['reference_scope'], reference_node_id=args['reference_node_id'],
+                additional_files=args['additional_files'], binding=asdict(binding),
+                settings=resolve_for_thread(_repo_root(), tid),
+            )
+        except StaleResearchWork as exc:
+            return {'status': 'work_required', 'reason': str(exc), 'next_tool_to_call': 'plan_research_work'}
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return {'status': 'rejected', 'reason': str(exc), 'next_tool_to_call': 'execute_confirmation_experiment'}
+
+
 def handle_revise_evaluation_protocol(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.orchestrator.protocol_revision import revise_evaluation_protocol
     from research_harness.orchestrator.research_control import StaleResearchWork
@@ -1423,7 +1458,7 @@ def handle_revise_evaluation_protocol(args: dict[str, Any]) -> dict[str, Any]:
     tid = args['thread_id']
     with _exclusive_adaptive_writer(tid):
         try:
-            return revise_evaluation_protocol(_repo_root(), _thread_dir(tid), work_id=args['work_id'], notes=args['notes'], rationale=args['rationale'], replace_holdout=args.get('replace_holdout', False))
+            return revise_evaluation_protocol(_repo_root(), _thread_dir(tid), work_id=args['work_id'], notes=args['notes'], rationale=args['rationale'], replace_holdout=args.get('replace_holdout', False), defer_holdout_generation=args.get('defer_holdout_generation', False))
         except StaleResearchWork as exc:
             return {'status': 'work_required', 'reason': str(exc), 'next_tool_to_call': 'plan_research_work'}
         except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:
@@ -1525,6 +1560,10 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
         "tree_summary": _read_json(d / "production" / "tree" / "tree_search_summary.json"),
         "intake_to_claim": _read_json(d / "production" / "intake_to_claim_dialog.json"),
     }
+    from research_harness.orchestrator.research_control import PLANNING_POLICY_VERSION
+    if state['research_work'] and state['research_work'].get('planning_policy_version') != PLANNING_POLICY_VERSION:
+        state['research_work'] = {**state['research_work'], 'next_tool_to_call': 'plan_research_work',
+                                  'requires_replanning': True, 'reason': 'Research capabilities changed; old work routing is stale.'}
     if args.get('view', 'current' if thread.get('current_phase') == 'production' else 'full') == 'full':
         return state
     work = dict(state['research_work'])
@@ -2685,6 +2724,12 @@ def _handle_compute_falsifier_result_locked(args: dict[str, Any]) -> dict[str, A
             from contextlib import nullcontext
             from research_harness.orchestrator.confirmation_use import consume_confirmation, digest_confirmation_evidence
 
+            from research_harness.confirmation_sampling import active_sampling_registration
+            if active_sampling_registration(_thread_dir(tid)):
+                from dataclasses import asdict
+                from research_harness.orchestrator.confirmation_execution import verified_confirmation_receipt
+                receipt = verified_confirmation_receipt(_thread_dir(tid), asdict(binding))
+                evidence = {**evidence, "observed": receipt["observed"]}
             engine = _build_blind_research_engine(tid)
             contract = engine.read_goal_contract()
             consume_confirmation(
@@ -3119,6 +3164,38 @@ def _handle_design_experiment_template_locked(args: dict[str, Any]) -> dict[str,
     source_files = plan_meta.get("source_files") or []
     if not isinstance(source_files, list):
         return {"status": "rejected", "reason": "plan_metadata.source_files must be a list"}
+
+    if args.get('work_id'):
+        from research_harness.orchestrator.research_control import current_work, _digest, _write, development_evidence, PLANNING_POLICY_VERSION
+        from research_harness.confirmation_sampling import _hash
+        thread = _thread_dir(tid)
+        work = current_work(thread)
+        if (thread / 'production/confirmation_execution.json').exists():
+            raise ValueError('Confirmation is reserved; implementation changes are closed')
+        if work.get('work_id') != args['work_id'] or work.get('decision', {}).get('kind') != 'implementation':
+            raise ValueError('Supply the current implementation work_id')
+        if work.get('status') == 'completed':
+            if work['outcome']['template_digest'] != _digest(plan_meta):
+                raise ValueError('This work already prepared another implementation')
+            for item in work['outcome']['source_files']:
+                if _hash(Path(item['path'])) != item['sha256']:
+                    raise ValueError('Prepared implementation changed')
+            return {**work, 'research_work_checkpoint': work['work_id']}
+        if (work.get('status') != 'planned' or work.get('planning_policy_version') != PLANNING_POLICY_VERSION
+                or work.get('protocol_digest') != _digest(_read_json(thread / 'production/feasibility_envelope.json'))
+                or work.get('evidence_digest') != _digest(development_evidence(thread))):
+            raise ValueError('Implementation work is stale; call plan_research_work')
+        if not source_files:
+            raise ValueError('Implementation preparation requires source files')
+        draft = thread / 'production/research_control/work' / work['work_id'] / 'implementation'
+        files = write_professor_template(draft, draft, plan_meta)
+        sources = [{'path': str((draft / relative).resolve()), 'sha256': _hash(draft / relative)} for relative in files]
+        work.update(status='completed', outcome={'execution_result': 'implementation_prepared',
+                    'template_digest': _digest(plan_meta), 'source_files': sources,
+                    'new_observation': False, 'scientific_verdict': 'unverified'}, next_tool_to_call='plan_research_work')
+        _write(thread / 'production/research_control/current.json', work)
+        _write(thread / 'production/research_control/work' / work['work_id'] / 'work.json', work)
+        return {**work, 'research_work_checkpoint': work['work_id']}
 
     # (가) Operator-mandated module gate — deterministic, NOT an LLM critic. If the
     # feasibility_envelope declares execution_constraints.required_modules, the
@@ -5041,6 +5118,7 @@ def _paper_evidence_bundle(tid: str, node_dir: Path) -> dict[str, Any]:
         "construct_adversary_report": _read_json(_rebuttal_dir(tid) / "construct_adversary_report.json") or {},
         "goal_contract": _read_json(production / "reorientation" / "goal_contract.json") or {},
         "protocol_revisions": approved_protocol_revisions(_thread_dir(tid)),
+        "confirmation_execution": _read_json(_thread_dir(tid) / "production/confirmation_execution.json") or {},
         "market_brief": _read_json(_thread_dir(tid) / "market" / "market_research_brief.json") or {},
     }
 
@@ -5099,6 +5177,7 @@ def handle_prepare_paper_writing_context(args: dict[str, Any]) -> dict[str, Any]
         "frozen_question": _read_json(production / "frozen_question.json"),
         "goal_contract": _read_json(production / "reorientation" / "goal_contract.json"),
         "protocol_revisions": approved_protocol_revisions(_thread_dir(tid)),
+        "confirmation_execution": _read_json(_thread_dir(tid) / "production/confirmation_execution.json") or {},
         "protocol_disclosure_requirement": "Describe approved development amendments and their timing in the methods. Do not portray an amended design as the original preregistration or use prior results as prospective evidence for the amendment.",
         "market_brief": market_brief,
         "reference_papers": market_brief.get("papers") or [],
@@ -5630,6 +5709,13 @@ def handle_submit_professor_user_goal_attestation(
             from research_harness.memory.baseline_review import require_goal_baseline_approval
             from research_harness.orchestrator.goal_contract import serialize_goal_contract
             require_goal_baseline_approval(_repo_root(), _thread_dir(tid), serialize_goal_contract(contract))
+            from research_harness.confirmation_sampling import active_sampling_registration
+            if active_sampling_registration(_thread_dir(tid)):
+                from dataclasses import asdict
+                from research_harness.orchestrator.confirmation_execution import verified_confirmation_receipt
+                measured = verified_confirmation_receipt(_thread_dir(tid), asdict(strong_binding))
+                if confirmation_evidence_from_result(falsifier_result).get('observed') != measured['observed']:
+                    raise ValueError('Falsifier differs from private confirmation measurement')
             verify_terminal_confirmation(
                 blind_engine.paths.confirmation_use, contract,
                 binding={"contract_id": strong_binding.contract_id,
@@ -5856,6 +5942,10 @@ def handle_submit_professor_user_goal_attestation(
                     or live_manifest.direction_id != live_binding.direction_id
                 ):
                     stale_artifacts.append("active strong binding")
+                if active_sampling_registration(_thread_dir(tid)):
+                    measured = verified_confirmation_receipt(_thread_dir(tid), asdict(live_binding))
+                    if confirmation_evidence_from_result(falsifier_result).get('observed') != measured['observed']:
+                        stale_artifacts.append('private confirmation measurement')
                 if any(
                     live_execution_evidence[key] != strong_receipt[key]
                     for key in (
@@ -6194,6 +6284,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_plan_research_work(args)
             elif name == "resolve_research_work":
                 result = handle_resolve_research_work(args)
+            elif name == "execute_confirmation_experiment":
+                result = handle_execute_confirmation_experiment(args)
             elif name == "revise_evaluation_protocol":
                 result = handle_revise_evaluation_protocol(args)
             elif name == "develop_research_hypotheses":

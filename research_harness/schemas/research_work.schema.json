@@ -16,11 +16,13 @@
       "type": "string",
       "enum": [
         "analysis",
+        "implementation",
         "protocol_revision",
         "diagnostic",
         "competence",
         "comparison",
-        "replication"
+        "replication",
+        "confirmation"
       ]
     },
     "uncertainty": {
