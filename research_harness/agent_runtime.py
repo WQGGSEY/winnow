@@ -5,6 +5,11 @@ from pathlib import Path
 from typing import Any, Literal, Mapping
 
 
+def model_reasoning_effort(model: str) -> str | None:
+    """Explicit model/effort pairs authorized for the harness evaluation."""
+    return {"gpt-5.6-sol": "low", "gpt-5.6-luna": "max"}.get(model)
+
+
 @dataclass(frozen=True)
 class AgentUsage:
     input_tokens: int = 0

@@ -57,7 +57,8 @@ class RecordingRunner:
         )
 
 
-def test_one_shot_command_order_prompt_and_schema(tmp_path: Path) -> None:
+@pytest.mark.parametrize("model,effort", [("gpt-5.6-sol", "low"), ("gpt-5.6-luna", "max")])
+def test_one_shot_command_order_prompt_and_schema(tmp_path: Path, model: str, effort: str) -> None:
     runner = RecordingRunner(_jsonl())
     adapter = CodexCliAdapter(codex_path="/bin/codex", runner=runner)
     schema = tmp_path / "output.schema.json"
@@ -65,7 +66,7 @@ def test_one_shot_command_order_prompt_and_schema(tmp_path: Path) -> None:
     adapter.complete(
         CompletionRequest(
             prompt=AgentPrompt(instructions="follow rules", input="do work"),
-            model="gpt-5.6-sol",
+            model=model,
             output_schema=schema,
             cwd=tmp_path,
         )
@@ -83,6 +84,7 @@ def test_one_shot_command_order_prompt_and_schema(tmp_path: Path) -> None:
         "--json",
     ]
     assert command[-1] == "-"
+    assert f'model_reasoning_effort="{effort}"' in command
     assert command[command.index("--sandbox") + 1] == "read-only"
     assert command[command.index("--output-schema") + 1] == str(schema)
     assert kwargs["input"] == "System instructions:\nfollow rules\n\nUser input:\ndo work"
@@ -182,6 +184,7 @@ def test_production_command_uses_automatic_review_and_per_call_mcp(tmp_path: Pat
     ]
     assert "--ask-for-approval" not in command
     assert "--sandbox" not in command
+    assert 'model_reasoning_effort="low"' in command
     assert 'mcp_servers.research_harness.command="python"' in command
     assert 'mcp_servers.research_harness.args=["-m", "research_harness.mcp_server", "--repo-root", "' in " ".join(command)
     assert 'mcp_servers.research_harness.env.COIN_DATA_DIR="/data/coin"' in command

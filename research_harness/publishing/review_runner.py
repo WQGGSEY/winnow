@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from research_harness.adapters.codex_cli import CodexCliAdapter
-from research_harness.agent_runtime import AgentPrompt, CompletionRequest, CompletionResult
+from research_harness.agent_runtime import AgentPrompt, CompletionRequest, CompletionResult, model_reasoning_effort
 from research_harness.publishing.integrity import json_digest
 from research_harness.publishing.scientific_review import assess_readiness
 from research_harness.schemas.validator import validate_schema
@@ -67,6 +67,7 @@ def _request_identity(request: CompletionRequest, provider: str) -> dict[str, An
     return {
         "provider": provider,
         "model": request.model,
+        "reasoning_effort": model_reasoning_effort(request.model),
         "label": request.label,
         "instructions_sha256": _bytes_digest(request.prompt.instructions.encode()),
         "input_sha256": _bytes_digest(request.prompt.input.encode()),

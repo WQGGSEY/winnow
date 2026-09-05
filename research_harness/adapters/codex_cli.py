@@ -15,6 +15,7 @@ from research_harness.agent_runtime import (
     CompletionResult,
     ResearchHarnessMcp,
     RuntimeAuthResult,
+    model_reasoning_effort,
 )
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
@@ -204,6 +205,9 @@ class CodexCliAdapter:
             "--model",
             model,
         ])
+        effort = model_reasoning_effort(model)
+        if effort is not None:
+            command.extend(["-c", "model_reasoning_effort=" + _toml_string(effort)])
         if mcp is None:
             command.extend(["--sandbox", "read-only"])
         if cwd is not None:
