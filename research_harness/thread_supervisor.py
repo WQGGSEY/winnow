@@ -1180,7 +1180,7 @@ def _last_known_state_summary(repo: Path, tid: str) -> dict[str, object]:
 
 
 def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
-    from research_harness.orchestrator.operator_prompts import list_pending
+    from research_harness.orchestrator.operator_prompts import list_responses
 
     state = _last_known_state_summary(repo, tid)
     mid = state.get("mid_state_nodes") or []
@@ -1189,9 +1189,8 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
     last_ac = state.get("last_ac_decision")
     needs = update_needed_resources_file(repo, tid)
     responses = [
-        {"event_id": item["event_id"], "prompt": item["prompt"], "response": item["response"]}
-        for item in list_pending(repo / "runs" / "threads" / tid)
-        if item.get("status") == "responded"
+        {"event_id": item["event_id"], "prompt": item["prompt"], "response": item["response"], "status": item["status"]}
+        for item in list_responses(repo / "runs" / "threads" / tid)
     ]
 
     executable_overrides: dict[str, object] = {}
@@ -1249,7 +1248,7 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "",
         *needs_block,
         "",
-        "미처리 연구자 답변 (반영 후 get_pending_operator_response로 수신 확인):",
+        "연구자 결정 기록 (consumed도 계속 유효하다. responded만 수신 확인):",
         json.dumps(responses, ensure_ascii=False),
         "",
         "Operator-owned experiment runtime:",
@@ -1694,6 +1693,7 @@ def watch_thread(
                    f"experiment_hard_cap={experiment_hard_cap:.0f}s (longest runner_timeout + margin)")
 
     cycle = 0
+    waiting_for_operator = False
     rate_limit_backoff = rate_limit_backoff_initial
     rate_limit_armed = False  # toggled after a fast-fail cycle
     while True:
@@ -1710,6 +1710,27 @@ def watch_thread(
         if max_cycles is not None and cycle >= max_cycles:
             _log(log_path, f"explicit max_cycles override ({max_cycles}) hit. exiting.")
             return {"status": "max_cycles_exceeded", "cycles": cycle}
+
+        from research_harness.orchestrator.operator_prompts import list_pending
+        pending_decisions = [
+            item for item in list_pending(tdir)
+            if item["status"] == "pending" and item["kind"] == "decision_request"
+        ]
+        if pending_decisions:
+            if not waiting_for_operator:
+                _log(log_path, "awaiting operator decision; research dispatch paused")
+                if (tdir / "thread.json").exists():
+                    from research_harness.frontend.threads import update_thread
+                    update_thread(repo, tid, phase_status="awaiting_input")
+            waiting_for_operator = True
+            time.sleep(min(poll_seconds, 30.0))
+            continue
+        if waiting_for_operator:
+            _log(log_path, "operator decision received; resuming research")
+            if (tdir / "thread.json").exists():
+                from research_harness.frontend.threads import update_thread
+                update_thread(repo, tid, phase_status="running")
+            waiting_for_operator = False
 
         try:
             resumed = advance_resumable_reorientation(repo, tid)

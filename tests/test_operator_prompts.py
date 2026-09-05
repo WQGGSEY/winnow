@@ -96,12 +96,14 @@ def test_event_id_idempotency_via_caller_supplied_id(tmp_path):
     """Caller-supplied event_id lets retries land on the same logical prompt
     rather than spamming new entries each time (used by _escalate_to_operator)."""
     enqueue_prompt(tmp_path, kind="decision_request", prompt="x", event_id="opr_stable")
-    enqueue_prompt(tmp_path, kind="decision_request", prompt="x again", event_id="opr_stable")
+    submit_response(tmp_path, event_id="opr_stable", response="retain original criterion")
+    take_pending_response(tmp_path)
+    enqueue_prompt(tmp_path, kind="decision_request", prompt="x", event_id="opr_stable")
+    assert list_pending(tmp_path) == []
+    with pytest.raises(ValueError, match="different prompt"):
+        enqueue_prompt(tmp_path, kind="decision_request", prompt="x again", event_id="opr_stable")
     pending = list_pending(tmp_path)
-    # Both entries land under the same event_id; the latest enqueue wins
-    # in the folded state.
-    assert len(pending) == 1
-    assert pending[0]["event_id"] == "opr_stable"
+    assert pending == []
 
 
 # --- MCP wrappers ------------------------------------------------------- #

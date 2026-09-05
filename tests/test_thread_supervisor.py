@@ -1576,7 +1576,7 @@ class ResumePromptTests(unittest.TestCase):
             self.assertIn("Reject unsupported attribution", prompt)
             self.assertEqual(list_pending(tdir)[0]["status"], "responded")
             take_pending_response(tdir, event_id=item["event_id"])
-            self.assertNotIn("Reject unsupported attribution", ts.build_resume_prompt(repo, "t1", cycle=3))
+            self.assertIn("Reject unsupported attribution", ts.build_resume_prompt(repo, "t1", cycle=3))
 
     def test_resume_prompt_carries_thread_id_and_anti_lazy_brief(self):
         with TemporaryDirectory() as tmp:
@@ -1648,6 +1648,29 @@ class LockTests(unittest.TestCase):
 
 
 class WatchLoopTests(unittest.TestCase):
+    def test_pending_decision_waits_without_running_research(self):
+        from research_harness.orchestrator.operator_prompts import enqueue_prompt, submit_response
+
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            tdir = _make_thread(repo, "t1")
+            item = enqueue_prompt(tdir, kind="decision_request", prompt="Choose evaluation")
+            answered = False
+            def answer_after_wait(_seconds):
+                nonlocal answered
+                if answered:
+                    return
+                spawn.assert_not_called()
+                advance.assert_not_called()
+                submit_response(tdir, event_id=item["event_id"], response="Keep original criterion")
+                answered = True
+            with mock.patch.object(ts, "spawn_codex_session", return_value=0) as spawn, \
+                 mock.patch.object(ts, "advance_resumable_reorientation", return_value=None) as advance, \
+                 mock.patch.object(ts.time, "sleep", side_effect=answer_after_wait):
+                result = ts.watch_thread(repo, "t1", max_cycles=1)
+            self.assertEqual(spawn.call_count, 1)
+            self.assertEqual(result["status"], "max_cycles_exceeded")
+
     def test_dual_gate_pass_exits_terminal(self):
         # PR8: only dual-gate pass terminates.
         with TemporaryDirectory() as tmp:

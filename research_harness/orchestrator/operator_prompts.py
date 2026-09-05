@@ -54,6 +54,12 @@ def enqueue_prompt(
         raise ValueError("prompt must be a non-empty string")
     options = list(options or [])
     event_id = event_id or f"opr_{uuid.uuid4().hex[:12]}"
+    existing = _fold(thread_dir).get(event_id)
+    if existing is not None:
+        expected = {"kind": kind, "prompt": prompt.strip(), "options": options, "source_rail": source_rail}
+        if any(existing.get(key) != value for key, value in expected.items()):
+            raise ValueError(f"event_id {event_id!r} already belongs to a different prompt")
+        return existing
     record = {
         "event": "enqueued",
         "event_id": event_id,
@@ -109,6 +115,14 @@ def list_pending(thread_dir: Path) -> list[dict[str, Any]]:
         pending.append(record)
     pending.sort(key=lambda r: r.get("created_at") or "")
     return pending
+
+
+def list_responses(thread_dir: Path) -> list[dict[str, Any]]:
+    """Research decisions survive delivery acknowledgements across sessions."""
+    return sorted(
+        (item for item in _fold(thread_dir).values() if "response" in item),
+        key=lambda item: item.get("responded_at") or "",
+    )
 
 
 def take_pending_response(
