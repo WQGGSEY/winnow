@@ -14,6 +14,28 @@
      hx-trigger="supervisor-state-changed from:body"
      {% endif %}
      hx-swap="outerHTML">
+{% if p.preflight_runs %}
+<section class="supervisor-card">
+  <h3>Baseline preparation</h3>
+  <p class="muted">Execution records for baseline development. Scientific approval and publication validation remain separate.</p>
+  <details open>
+    <summary>{{ p.preflight_runs|length }} recorded runs</summary>
+    <table>
+      <thead><tr><th>Run</th><th>Status</th><th>Seconds</th><th>Observed metrics</th></tr></thead>
+      <tbody>
+      {% for run in p.preflight_runs %}
+        <tr>
+          <td><a href="/files/{{ thread.thread_id }}/production/{{ run.artifact }}" target="_blank" rel="noopener">{{ run.node_id }}</a></td>
+          <td>{{ run.status }}</td>
+          <td>{{ run.elapsed_sec if run.elapsed_sec is not none else '—' }}</td>
+          <td>{% for key, value in run.metrics.items() %}{{ key }}: {{ value }}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </details>
+</section>
+{% endif %}
 {# Always-visible graph link — the graph page itself polls and shows an
    empty-state message until the first node lands, so it's safe to surface
    the link the moment a thread exists. #}

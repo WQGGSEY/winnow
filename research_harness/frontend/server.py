@@ -1579,6 +1579,25 @@ def _read_phase_artifacts(
         # Last-activity timestamp across all MCP commits so the UI can
         # show "last update Xs ago" honestly.
         last_activity = 0.0
+        preflight_runs = []
+        for plan_path in (pdir / "tree/baseline_preflight").glob("*/experiment_plan.json"):
+            node_dir = plan_path.parent
+            with contextlib.suppress(OSError, json.JSONDecodeError):
+                report_path = node_dir / "worker_report.json"
+                runner_path = node_dir / "workspace/runner_result.json"
+                report = json.loads(report_path.read_text()) if report_path.exists() else {}
+                runner = json.loads(runner_path.read_text()) if runner_path.exists() else {}
+                updated = max(path.stat().st_mtime for path in (plan_path, report_path, runner_path) if path.exists())
+                last_activity = max(last_activity, updated)
+                preflight_runs.append({
+                    "node_id": node_dir.name,
+                    "status": report.get("status", runner.get("status", "awaiting result")),
+                    "elapsed_sec": runner.get("elapsed_sec"),
+                    "metrics": report.get("metrics", {}),
+                    "artifact": str((report_path if report_path.exists() else plan_path).relative_to(pdir)),
+                    "updated_at": updated,
+                })
+        result["preflight_runs"] = sorted(preflight_runs, key=lambda row: row["updated_at"], reverse=True)
         for cand in [
             pdir / "tree" / "search_state.json",
             pdir / "intake_to_claim_dialog.json",
@@ -1619,6 +1638,7 @@ def _read_phase_artifacts(
             or (pdir / "rebuttal").exists()
             or (pdir / "_drafts").exists()
             or (pdir / "production_run_summary.json").exists()
+            or bool(preflight_runs)
         )
         # MCP-mode progress: list per-node MCP decision files + their
         # mtimes so the operator can see Codex's last action.
