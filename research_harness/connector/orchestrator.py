@@ -106,6 +106,43 @@ def _resolve_knob(settings: Any, key: str, default: int) -> int:
     return default
 
 
+def _perspective_packet(
+    field: dict[str, Any],
+    reading: dict[str, Any],
+    correspondence: list[dict[str, Any]],
+    far_method: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build the canonical P-blind source record for one connector attempt."""
+    content = {
+        "field": field,
+        "reading": {
+            "reading": reading["reading"],
+            "field_mechanism": reading["field_mechanism"],
+            "predicted_behavior": reading["predicted_behavior"],
+        },
+        "correspondence": correspondence,
+        "far_method": (
+            {
+                "query": far_method["query"],
+                "papers": far_method["papers"],
+                "warnings": far_method["warnings"],
+            }
+            if far_method is not None
+            else None
+        ),
+    }
+    digest = hashlib.sha256(
+        json.dumps(
+            content, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        "packet_id": f"perspective_{digest}",
+        "digest": f"sha256:{digest}",
+        **content,
+    }
+
+
 def run_domain_connector(
     repo_root: Path,
     grilling_session: dict[str, Any],
@@ -276,6 +313,7 @@ def run_domain_connector(
             "prune1_passed": False,
             "num_pairs": 0,
             "reduced": False,
+            "perspective_packet": None,
             "error": None,
         }
         emit({"type": "field_start", "index": fields_tried, **field_meta})
@@ -295,6 +333,9 @@ def run_domain_connector(
             _add_usage(p1["usage"])
             attempt["prune1_passed"] = p1["passed"]
             attempt["num_pairs"] = p1["num_pairs"]
+            attempt["perspective_packet"] = _perspective_packet(
+                field_meta, reading, p1["correspondence"], None
+            )
             emit({"type": "prune1_done", "code": field_meta["code"],
                   "passed": p1["passed"], "num_pairs": p1["num_pairs"]})
             if p1["passed"]:
@@ -303,6 +344,13 @@ def run_domain_connector(
                 )
                 emit({"type": "market_done", "code": field_meta["code"],
                       "num_papers": material["num_papers"]})
+                packet = _perspective_packet(
+                    field_meta, reading, p1["correspondence"], material
+                )
+                attempt["perspective_packet"] = packet
+                if not material["papers"]:
+                    attempts.append(attempt)
+                    continue
                 red = reduce_to_claim(
                     grilling_session, reading, p1, method_research=material,
                     model=model, codex_path=detected_codex,
@@ -318,6 +366,8 @@ def run_domain_connector(
                         "claim_contract": red["claim_contract"],
                         "far_ness_note": red["far_ness_note"],
                         "method_num_papers": material["num_papers"],
+                        "perspective_packet_id": packet["packet_id"],
+                        "perspective_packet_digest": packet["digest"],
                     })
                     emit({"type": "claim_kept", "code": field_meta["code"],
                           "kept": len(claims), "quota": quota,

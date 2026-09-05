@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -24,6 +25,16 @@ _ROUTE = [
 ]
 
 _EMPTY_FEED = b'<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"></feed>'
+_FAR_METHOD_FEED = b'''<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>Replicator Dynamics on Networks</title>
+    <summary>We analyze replicator dynamics over interaction graphs.</summary>
+    <published>2021-03-01T00:00:00Z</published>
+    <id>http://arxiv.org/abs/2103.00001</id>
+    <link href="http://arxiv.org/abs/2103.00001" rel="alternate" type="text/html"/>
+  </entry>
+</feed>'''
 
 # A de-domained abstraction with NONE of P's domain terms (stock/market/equity/
 # returns/order/flow/predict) — so the firewall scan passes on the first try.
@@ -132,6 +143,10 @@ _REDUCE_DECLINE = dict(_REDUCE_OK, reducible=False)
 
 
 def _fetcher(url):
+    return _FAR_METHOD_FEED
+
+
+def _empty_fetcher(url):
     return _EMPTY_FEED
 
 
@@ -162,6 +177,53 @@ def test_happy_path_keeps_quota_claims_and_writes_valid_session(tmp_path):
     # written file is schema-valid and on disk.
     written = json.loads((tmp_path / "connector" / "connector_session.json").read_text())
     validate_named_schema("connector_session", written)
+
+
+def test_persists_canonical_p_blind_source_packet_and_claim_reference(tmp_path):
+    fake = RoutingFakeCodex({
+        "abstraction": _ABSTRACTION_OK, "reading": _READING_OK,
+        "prune1": _PRUNE1_PASS, "reduction": _REDUCE_OK,
+    })
+    out = run_domain_connector(
+        REPO_ROOT, _valid_grilling(), run_dir=tmp_path / "connector",
+        billing_ack=True, execution_ack=True, command_runner=fake,
+        http_fetcher=_fetcher, quota=1, max_fields_tried=1, field_seed=1,
+    )
+
+    packet = out.session["attempts"][0]["perspective_packet"]
+    assert packet["reading"] == _READING_OK
+    assert packet["correspondence"] == _PRUNE1_PASS["correspondence"]
+    assert packet["far_method"]["papers"][0]["title"] == "Replicator Dynamics on Networks"
+    assert packet["far_method"]["warnings"] == []
+    assert "replicator dynamics" in packet["far_method"]["query"].lower()
+    assert "correspondence_table" not in packet
+    assert "claim_under_test" not in packet
+
+    canonical = {key: value for key, value in packet.items() if key not in {"packet_id", "digest"}}
+    expected = hashlib.sha256(
+        json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    assert packet["packet_id"] == f"perspective_{expected}"
+    assert packet["digest"] == f"sha256:{expected}"
+    assert out.claims[0]["perspective_packet_id"] == packet["packet_id"]
+    assert out.claims[0]["perspective_packet_digest"] == packet["digest"]
+
+
+def test_empty_far_method_search_cannot_yield_kept_claim(tmp_path):
+    fake = RoutingFakeCodex({
+        "abstraction": _ABSTRACTION_OK, "reading": _READING_OK,
+        "prune1": _PRUNE1_PASS, "reduction": _REDUCE_OK,
+    })
+    out = run_domain_connector(
+        REPO_ROOT, _valid_grilling(), run_dir=tmp_path / "connector",
+        billing_ack=True, execution_ack=True, command_runner=fake,
+        http_fetcher=_empty_fetcher, quota=1, max_fields_tried=1, field_seed=1,
+    )
+
+    assert out.session["status"] == "completed_no_claims"
+    assert out.claims == []
+    assert out.session["attempts"][0]["perspective_packet"]["far_method"]["papers"] == []
+    assert [call["kind"] for call in fake.calls].count("reduction") == 0
 
 
 def test_firewall_p_absent_from_p_blind_steps(tmp_path):

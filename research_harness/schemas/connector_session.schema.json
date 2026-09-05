@@ -69,7 +69,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["field", "prune1_passed", "num_pairs", "reduced", "error"],
+        "required": ["field", "prune1_passed", "num_pairs", "reduced", "perspective_packet", "error"],
         "properties": {
           "field": {
             "type": "object",
@@ -84,6 +84,70 @@
           "prune1_passed": { "type": "boolean" },
           "num_pairs": { "type": "integer", "minimum": 0 },
           "reduced": { "type": "boolean" },
+          "perspective_packet": {
+            "type": ["object", "null"],
+            "required": ["packet_id", "digest", "field", "reading", "correspondence", "far_method"],
+            "properties": {
+              "packet_id": { "type": "string", "pattern": "^perspective_[a-f0-9]{64}$" },
+              "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+              "field": {
+                "type": "object",
+                "required": ["code", "name", "archive"],
+                "properties": {
+                  "code": { "type": "string" },
+                  "name": { "type": "string" },
+                  "archive": { "type": "string" }
+                },
+                "additionalProperties": false
+              },
+              "reading": {
+                "type": "object",
+                "required": ["reading", "field_mechanism", "predicted_behavior"],
+                "properties": {
+                  "reading": { "type": "string", "minLength": 1 },
+                  "field_mechanism": { "type": "string", "minLength": 1 },
+                  "predicted_behavior": { "type": "string", "minLength": 1 }
+                },
+                "additionalProperties": false
+              },
+              "correspondence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["abstraction_element", "reading_counterpart"],
+                  "properties": {
+                    "abstraction_element": { "type": "string" },
+                    "reading_counterpart": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "far_method": {
+                "type": ["object", "null"],
+                "required": ["query", "papers", "warnings"],
+                "properties": {
+                  "query": { "type": "string", "minLength": 1 },
+                  "papers": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["title", "url", "year", "abstract"],
+                      "properties": {
+                        "title": { "type": ["string", "null"] },
+                        "url": { "type": ["string", "null"] },
+                        "year": { "type": ["integer", "string", "null"] },
+                        "abstract": { "type": ["string", "null"] }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "warnings": { "type": "array", "items": { "type": "string" } }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
           "error": { "type": ["string", "null"] }
         },
         "additionalProperties": false
@@ -93,7 +157,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["field", "claim_contract", "far_ness_note", "method_num_papers"],
+        "required": ["field", "claim_contract", "far_ness_note", "method_num_papers", "perspective_packet_id", "perspective_packet_digest"],
         "properties": {
           "field": {
             "type": "object",
@@ -122,7 +186,9 @@
             "additionalProperties": false
           },
           "far_ness_note": { "type": "string" },
-          "method_num_papers": { "type": "integer", "minimum": 0 }
+          "method_num_papers": { "type": "integer", "minimum": 1 },
+          "perspective_packet_id": { "type": "string", "pattern": "^perspective_[a-f0-9]{64}$" },
+          "perspective_packet_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
         },
         "additionalProperties": false
       }
