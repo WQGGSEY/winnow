@@ -138,13 +138,15 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "execute_baseline_preflight",
-        "description": "While baseline qualification is pending, write and execute ONE baseline implementation using an experiment_plan and node object. The harness assigns workspace, binds the operator input snapshot, enforces compute limits, runs LocalRunner, and returns replayable evidence. Use exactly one baseline_evidence_requirement and report only that baseline key. This is execution evidence, not scientific approval. Implement methods yourself after retrieving primary sources; lack of existing implementation is work to do.",
+        "description": "While baseline qualification is pending, write and execute ONE baseline implementation. Prefer request_path: save or edit a JSON request file inside this thread containing node, experiment_plan, role and work_id, then pass its absolute path instead of retransmitting the entire source code. Inline objects also work. Use a new node ID when changing a previously executed plan; completed receipts are immutable. The harness assigns workspace, binds the operator input snapshot, enforces compute limits, runs LocalRunner, and returns replayable evidence. Use exactly one baseline_evidence_requirement and report only that baseline key. This is execution evidence, not scientific approval. Implement methods yourself after retrieving primary sources; lack of existing implementation is work to do.",
         "inputSchema": {
-            "type": "object", "required": ["thread_id", "node", "experiment_plan", "role"],
+            "type": "object", "required": ["thread_id"],
+            "anyOf": [{"required": ["request_path"]}, {"required": ["node", "experiment_plan", "role"]}],
             "properties": {
                 "thread_id": {"type": "string"}, "node": load_schema("node"), "experiment_plan": load_schema("experiment_plan"),
                 "role": {"type": "string", "enum": ["current_best_known", "naive", "random_or_null"]},
                 "work_id": {"type": "string", "description": "work_id returned by plan_research_work; required for a new execution."},
+                "request_path": {"type": "string", "description": "Absolute path of the saved request JSON inside this thread. Do not also supply inline node or plan."},
             },
         },
     },
@@ -3934,7 +3936,7 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.runner.baseline_preflight import execute_baseline_preflight
     from research_harness.memory.baseline_review import baseline_roles_frozen
     from research_harness.settings_scoped import resolve_for_thread
-    from research_harness.orchestrator.research_control import bind_work, finish_work
+    from research_harness.orchestrator.research_control import bind_work, current_work, finish_work
 
     tid = args["thread_id"]
     with _exclusive_adaptive_writer(tid):
@@ -3942,6 +3944,15 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
             return {"status": "rejected", "reason": "baseline preparation is closed for the approved baseline roles"}
         bound = False
         try:
+            if args.get('request_path'):
+                if 'node' in args or 'experiment_plan' in args:
+                    raise ValueError('Use request_path or inline node/plan, not both.')
+                request_path = Path(args['request_path']).resolve()
+                request_path.relative_to(_thread_dir(tid).resolve())
+                request = _read_json(request_path)
+                if not isinstance(request, dict) or request.get('thread_id', tid) != tid:
+                    raise ValueError('Saved dispatch request must be an object for this thread.')
+                args = {**request, 'thread_id': tid}
             node_id = args['node']['id']
             path = _thread_dir(tid) / 'production/tree/baseline_preflight' / node_id
             path.resolve().relative_to((_thread_dir(tid) / 'production/tree/baseline_preflight').resolve())
@@ -3956,6 +3967,18 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
             return finish_work(_thread_dir(tid), result) if bound else result
         except (OSError, ValueError, KeyError, TypeError) as exc:
             result = {"status": "rejected", "reason": f"baseline preflight failed: {exc}", "next_tool_to_call": "plan_research_work"}
+            work = current_work(_thread_dir(tid))
+            if not bound and work.get('status') == 'planned' and args.get('work_id') == work.get('work_id'):
+                request_path = (_thread_dir(tid) / 'production/research_control/work' / work['work_id'] / 'dispatch_request.json').resolve()
+                _write_json_atomic(request_path, args)
+                work['outcome'] = {'execution_result': 'rejected', 'reason': result['reason'],
+                                   'observation': None, 'new_observation': False, 'scientific_verdict': 'unverified',
+                                   'dispatch_request_path': str(request_path)}
+                _write_json_atomic(request_path.parent / 'work.json', work)
+                _write_json_atomic(_thread_dir(tid) / 'production/research_control/current.json', work)
+                return {**result, 'work_id': work['work_id'], 'dispatch_request_path': str(request_path),
+                        'next_tool_to_call': 'execute_baseline_preflight',
+                        'next_step': 'Correct the saved request and retry the same work; no new experiment ran.'}
             return finish_work(_thread_dir(tid), result) if bound else result
 
 

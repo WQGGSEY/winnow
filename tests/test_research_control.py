@@ -59,7 +59,7 @@ def fixture(tmp_path):
     return thread, tree, node, plan, requirement['role']
 
 
-def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_path):
+def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_path, monkeypatch):
     thread, tree, node, plan, role = fixture(tmp_path)
     planner = Planner()
     work = plan_research_work(REPO, thread, transport=planner)
@@ -72,7 +72,16 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     with pytest.raises(ValueError, match='budget'):
         bind_work(thread, work['work_id'], node['id'], expensive)
     bind_work(thread, work['work_id'], node['id'], plan)
-    result = execute_baseline_preflight(REPO, thread, node=node, plan=plan, role=role, settings={})
+    from research_harness import mcp_server
+    from research_harness import settings_scoped
+    monkeypatch.setattr(mcp_server, '_repo_root', lambda: REPO)
+    monkeypatch.setattr(mcp_server, '_thread_dir', lambda tid: thread)
+    monkeypatch.setattr(settings_scoped, 'resolve_for_thread', lambda repo, tid: {})
+    request_path = thread / 'dispatch.json'
+    request_path.write_text(json.dumps({'node': node, 'experiment_plan': plan, 'role': role, 'work_id': work['work_id']}))
+    outside = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(tmp_path / 'outside.json')})
+    assert outside['status'] == 'rejected'
+    result = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
     checkpoint = finish_work(thread, result)
     assert checkpoint['research_work_checkpoint'] == work['work_id']
     assert checkpoint['next_tool_to_call'] == 'plan_research_work'
@@ -87,6 +96,14 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     assert packet['diagnostic_required']
     assert packet['previous_work']['outcome']['observation']['execution_status'] == 'failed'
     assert next_work['decision']['evidence_ids'] == [node['id']]
+    plan['source_files'][0]['content'] += '\n# corrected request\n'
+    request_path.write_text(json.dumps({'node': node, 'experiment_plan': plan, 'role': role, 'work_id': next_work['work_id']}))
+    rejected = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
+    assert rejected['status'] == 'rejected'
+    assert 'new node ID' in rejected['reason']
+    assert current_work(thread)['status'] == 'planned'
+    assert current_work(thread)['outcome']['reason'] == rejected['reason']
+    assert Path(rejected['dispatch_request_path']).is_absolute()
 
 
 def test_restart_reconciles_reserved_work_and_never_reads_final_holdout(tmp_path):
