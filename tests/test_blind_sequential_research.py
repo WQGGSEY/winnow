@@ -1488,6 +1488,10 @@ def test_fresh_thread_without_search_state_materializes_one_active_node(
             return dossier
 
         monkeypatch.setattr(compiler, "load_baseline_dossier", pending_dossier)
+        envelope_path = thread_dir / "production/feasibility_envelope.json"
+        envelope = json.loads(envelope_path.read_text())
+        envelope["external_falsifier"]["registered_by"] = "adversary_pass"
+        envelope_path.write_text(json.dumps(envelope))
     acquisition = _Acquisition()
     engine = BlindSequentialResearch(
         repo_root=REPO_ROOT,

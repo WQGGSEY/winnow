@@ -51,7 +51,7 @@
             },
             "registered_by": {
               "type": "string",
-              "enum": ["operator", "supervisor_bootstrap"]
+              "enum": ["operator", "supervisor_bootstrap", "adversary_pass"]
             }
           },
           "additionalProperties": false
