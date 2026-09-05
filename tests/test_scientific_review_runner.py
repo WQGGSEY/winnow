@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from research_harness.agent_runtime import AgentUsage, CompletionResult
+from research_harness.publishing.manuscript import resolve_anchor
 from research_harness.publishing.review_runner import (
     ScientificReviewRunError,
     replay_scientific_reviews,
@@ -46,7 +47,9 @@ def _publication(tmp_path: Path) -> Path:
     (publication / "_drafts").mkdir(parents=True)
     (publication / "paper.html").write_text("<html><p>Complete paper</p></html>")
     ledger = {
-        "sections": {"experiments": [{"anchor": "worker_report.metrics.return", "source_sha256": "a" * 64, "value_sha256": "b" * 64}]},
+        "sections": {"experiments": [resolve_anchor(
+            {"worker_report": {"metrics": {"return": 12.5}}}, "worker_report.metrics.return",
+        )]},
         "citations": {"closest": {"source": {"title": "Prior work"}, "sha256": "c" * 64}},
     }
     (publication / "_drafts" / "evidence_ledger.json").write_text(json.dumps(ledger))
@@ -63,6 +66,9 @@ def test_runs_two_isolated_reviews_and_replays_readiness(tmp_path: Path) -> None
     assert all(request.allow_local_tools is False for request in transport.requests)
     assert transport.requests[0].cwd != transport.requests[1].cwd
     assert all("Complete paper" in request.prompt.input for request in transport.requests)
+    for request in transport.requests:
+        evidence = json.loads(request.prompt.input)["evidence_ledger"]["sections"]["experiments"]
+        assert evidence[0]["value"] == 12.5
     assert result["readiness"]["ready"] is True
     assert result["readiness"]["review_execution_provenance"] == "harness_verified"
 

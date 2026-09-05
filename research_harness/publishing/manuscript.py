@@ -36,7 +36,7 @@ def resolve_anchor(bundle: dict[str, Any], anchor: str) -> dict[str, Any]:
         if type(value) is bool and type(expected) is not bool or value != expected:
             raise ManuscriptError(f"anchor value differs from evidence: {anchor}")
     return {"anchor": path, "source_sha256": json_digest(bundle[parts[0]]),
-            "value_sha256": json_digest(value)}
+            "value_sha256": json_digest(value), "value": value}
 
 
 class _Links(HTMLParser):
