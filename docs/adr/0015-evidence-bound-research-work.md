@@ -27,6 +27,16 @@ the decision and the evidence packet. Execution binds the node, scope and plan
 digest. An outdated plan, mismatched work ID or runtime exceeding the work budget
 cannot dispatch a new experiment. Completed preflight receipts remain replayable.
 
+Each work selects one decision-changing uncertainty and explicitly defers other
+questions. Deferred items cannot become requirements of its implementation review.
+Source interpretation, definitions and questions answerable from existing records
+use `kind=analysis` and `resolve_research_work`. The independent reader records a
+sourced answer with limitations or identifies the missing evidence. No runner
+report or new empirical observation is fabricated for such an analysis. Its
+completion is replayable and triggers the same automatic next-work checkpoint.
+Planning policy revisions invalidate stale planned work at dispatch as well as
+at selection; input correction cannot bypass an evidence-driven replan.
+
 A request rejected before a job manifest exists returns to `planned` with the
 same work identity. Its rejection reason and the absolute path of its saved
 dispatch request remain available for correction. No execution checkpoint is

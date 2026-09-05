@@ -9,6 +9,7 @@ from research_harness.orchestrator.demo import _demo_node
 from research_harness.orchestrator.experiment_plan import build_demo_experiment_plan
 from research_harness.orchestrator.research_control import (
     bind_work, current_work, development_evidence, finish_work, plan_research_work,
+    resolve_research_work,
 )
 from research_harness.runner.baseline_preflight import execute_baseline_preflight
 
@@ -35,6 +36,7 @@ class Planner:
                  'decision_if_observed': 'Measure learning competence.'},
             ],
             'test': 'Compare an independent replay with stored measurements.',
+            'deferred_questions': ['Does a valid learner improve the team outcome?'],
             'next_if_inconclusive': 'Inspect the first divergence in the raw trace.',
             'max_runtime_seconds': self.budget,
         }
@@ -180,3 +182,26 @@ def test_invalid_measurements_do_not_turn_runtime_into_research_evidence(tmp_pat
     report['metrics']['runner_elapsed_sec'] = 99
     report_path.write_text(json.dumps(report))
     assert development_evidence(thread)[node['id']]['observation_digest'] == first['observation_digest']
+
+
+def test_analysis_resolves_existing_evidence_without_fabricating_execution(tmp_path, monkeypatch):
+    from research_harness.orchestrator import research_review
+    thread, tree, node, plan, _ = fixture(tmp_path)
+    work = plan_research_work(REPO, thread, transport=Planner('analysis'))
+    assert work['next_tool_to_call'] == 'resolve_research_work'
+    with pytest.raises(ValueError, match='resolve_research_work'):
+        bind_work(thread, work['work_id'], node['id'], plan)
+    calls = []
+    def review(repo, directory, packet, *, purpose):
+        calls.append(packet)
+        return {'request_sha256': 'analysis', 'assessment': {'decision': 'approve',
+                'reason': 'The source declares one epoch per update; competence is unmeasured.',
+                'evidence': ['source method definition'], 'required_work': []}}
+    monkeypatch.setattr(research_review, 'review_research_packet', review)
+    result = resolve_research_work(REPO, thread, work['work_id'])
+    assert result == resolve_research_work(REPO, thread, work['work_id'])
+    assert len(calls) == 1
+    assert result['outcome']['execution_result'] == 'analysis_completed'
+    assert not result['outcome']['new_observation']
+    assert result['outcome']['scientific_verdict'] == 'unverified'
+    assert not list(tree.rglob('worker_report.json'))

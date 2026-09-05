@@ -364,6 +364,7 @@ class MCPServerTests(unittest.TestCase):
         self.assertIn("primary_dataset.relative_path", design_tool["description"])
         core_expected = {
             "plan_research_work",
+            "resolve_research_work",
             "develop_research_hypotheses",
             "update_baseline_sources",
             "submit_baseline_qualification",
@@ -454,7 +455,8 @@ class MCPServerTests(unittest.TestCase):
                                              ("running", "plan_research_work"),
                                              ("completed", "plan_research_work")]:
                         with self.subTest(work_status=status):
-                            work_path.write_text(json.dumps({"status": status, "next_tool_to_call": "execute_baseline_preflight"}))
+                            from research_harness.orchestrator.research_control import PLANNING_POLICY_VERSION
+                            work_path.write_text(json.dumps({"status": status, "planning_policy_version": PLANNING_POLICY_VERSION, "next_tool_to_call": "execute_baseline_preflight"}))
                             preparation = srv.handle_get_next_admissible_node({"thread_id": tid})
                             self.assertEqual(preparation["status"], "preparation_work")
                             self.assertEqual(preparation["next_tool_to_call"], expected)

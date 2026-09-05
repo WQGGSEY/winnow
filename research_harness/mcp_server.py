@@ -119,6 +119,11 @@ AC_CONTRACT = (
 
 TOOL_DEFINITIONS = [
     {
+        "name": "resolve_research_work",
+        "description": "Resolve a planned analysis work from existing sources and artifacts. The harness reads the evidence and records a sourced answer or the smallest missing observation. No new experiment, baseline approval or scientific claim approval is implied.",
+        "inputSchema": {"type": "object", "required": ["thread_id", "work_id"], "properties": {"thread_id": {"type": "string"}, "work_id": {"type": "string"}}, "additionalProperties": False},
+    },
+    {
         "name": "plan_research_work",
         "description": "Choose one evidence-bound research work unit before a new execution. The harness interprets development results, distinguishes implementation problems from scientific hypotheses, records competing predictions and a bounded test. Resume the returned work_id; after execution plan the next unit from the new evidence. No human approval or scientific claim approval is implied.",
         "inputSchema": {"type": "object", "required": ["thread_id"], "properties": {"thread_id": {"type": "string"}}, "additionalProperties": False},
@@ -1405,6 +1410,20 @@ def handle_plan_research_work(args: dict[str, Any]) -> dict[str, Any]:
             return {'status': 'planning_failed', 'reason': str(exc), 'next_tool_to_call': 'plan_research_work'}
 
 
+def handle_resolve_research_work(args: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.orchestrator.research_control import resolve_research_work, StaleResearchWork
+    from research_harness.adapters.codex_cli import CodexCliError
+
+    tid = args['thread_id']
+    with _exclusive_adaptive_writer(tid):
+        try:
+            return resolve_research_work(_repo_root(), _thread_dir(tid), args['work_id'])
+        except StaleResearchWork as exc:
+            return {'status': 'work_required', 'reason': str(exc), 'next_tool_to_call': 'plan_research_work'}
+        except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:
+            return {'status': 'analysis_failed', 'reason': str(exc), 'next_tool_to_call': 'resolve_research_work'}
+
+
 def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     from research_harness.runner.baseline_preflight import baseline_preparation_state
     from research_harness.orchestrator.research_control import current_work
@@ -2142,11 +2161,11 @@ def _handle_get_next_admissible_node_locked(
     contract = _read_json(_thread_dir(tid) / 'production/reorientation/goal_contract.json') or {}
     if (contract.get('baseline_evidence') == [] and authoritative_node_id in nodes_by_id
             and not (_thread_dir(tid) / 'market/baseline_qualification.json').exists()):
-        from research_harness.orchestrator.research_control import current_work
+        from research_harness.orchestrator.research_control import PLANNING_POLICY_VERSION, current_work
         work = current_work(_thread_dir(tid))
         return {'status': 'preparation_work', 'node_id': authoritative_node_id,
                 'research_work': work,
-                'next_tool_to_call': work['next_tool_to_call'] if work.get('status') == 'planned' else 'plan_research_work',
+                'next_tool_to_call': work['next_tool_to_call'] if work.get('status') == 'planned' and work.get('planning_policy_version') == PLANNING_POLICY_VERSION else 'plan_research_work',
                 'reason': 'The claim exists, but comparative evidence needs qualified baselines. Resolve the recorded research uncertainty; submit qualification when the development evidence supports it. Do not repeat claim critic reviews while this prerequisite is pending.'}
 
     for node in state["nodes"]:
@@ -3938,7 +3957,7 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.runner.baseline_preflight import execute_baseline_preflight
     from research_harness.memory.baseline_review import baseline_roles_frozen
     from research_harness.settings_scoped import resolve_for_thread
-    from research_harness.orchestrator.research_control import bind_work, current_work, finish_work
+    from research_harness.orchestrator.research_control import StaleResearchWork, bind_work, current_work, finish_work
     from research_harness.adapters.codex_cli import CodexCliError
 
     tid = args.get('thread_id')
@@ -4006,6 +4025,8 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
             return finish_work(_thread_dir(tid), result) if bound else result
         except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:
             result = {"status": "rejected", "reason": f"baseline preflight failed: {exc}", "next_tool_to_call": "plan_research_work"}
+            if isinstance(exc, StaleResearchWork):
+                return {**result, 'status': 'work_required'}
             work = current_work(_thread_dir(tid))
             if not bound and work.get('status') == 'planned' and args.get('work_id') == work.get('work_id'):
                 request_path = (_thread_dir(tid) / 'production/research_control/work' / work['work_id'] / 'dispatch_request.json').resolve()
@@ -6156,6 +6177,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_get_research_state(args, settings)
             elif name == "plan_research_work":
                 result = handle_plan_research_work(args)
+            elif name == "resolve_research_work":
+                result = handle_resolve_research_work(args)
             elif name == "develop_research_hypotheses":
                 result = handle_develop_research_hypotheses(args)
             elif name == "get_next_admissible_node":

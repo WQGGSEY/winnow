@@ -678,7 +678,7 @@
       document.getElementById('research-work-review').textContent = work.implementation_review
         ? `Implementation review: ${work.implementation_review.decision} · ${work.implementation_review.reason}` : '';
       document.getElementById('research-work-outcome').textContent = work.outcome
-        ? `${work.outcome.execution_result} · ${work.outcome.new_observation ? 'New observation recorded' : 'No new observation recorded'} · claim unverified`
+        ? `${work.outcome.execution_result} · ${work.outcome.new_observation ? 'New observation recorded' : 'No new observation recorded'} · claim unverified${work.outcome.analysis ? ' · ' + work.outcome.analysis.reason : ''}`
         : '';
       const state = withHypotheses(data.tree_state || { nodes: [] }, data.hypothesis_nodes);
       preparation = data.preparation || {};

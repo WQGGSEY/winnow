@@ -11,6 +11,12 @@ from research_harness.adapters.codex_cli import CodexCliAdapter
 from research_harness.agent_runtime import AgentPrompt, CompletionRequest
 from research_harness.schemas.validator import validate_named_schema
 
+PLANNING_POLICY_VERSION = 2
+
+
+class StaleResearchWork(ValueError):
+    pass
+
 
 def _read(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text()) if path.exists() else {}
@@ -76,7 +82,8 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
 
     evidence = development_evidence(thread)
     previous = current_work(thread)
-    if previous.get('status') == 'planned' and previous['evidence_digest'] == _digest(evidence):
+    planning_policy_version = PLANNING_POLICY_VERSION
+    if previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous['evidence_digest'] == _digest(evidence):
         return previous
     if previous.get('status') == 'running':
         # The public caller holds the same writer lock as execution. A remaining
@@ -84,7 +91,7 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
         report = _read(thread / 'production/tree' / previous['binding'].get('scope', 'baseline_preflight') / previous['binding']['node_id'] / 'worker_report.json')
         finish_work(thread, {'status': 'executed' if report.get('status') == 'completed' else 'interrupted'})
         previous = current_work(thread)
-        if previous.get('status') == 'planned' and previous['evidence_digest'] == _digest(evidence):
+        if previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous['evidence_digest'] == _digest(evidence):
             return previous
     envelope = _read(thread / 'production/feasibility_envelope.json')
     ceiling = envelope['compute_budget']['max_runner_seconds_per_node']
@@ -123,6 +130,7 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
                                         'truncated': len(raw) > 8000})
             measurements[key] = details
     packet = {
+        'planning_policy_version': planning_policy_version,
         'research': research, 'implementation_context': implementations, 'measurement_context': measurements,
         'active_claim': _read(thread / 'production/tree/search_state.json').get('nodes', []),
         'development_evidence': evidence, 'previous_work': previous,
@@ -139,6 +147,13 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
     else:
         instructions = (
             'Choose ONE next research work unit using the supplied development evidence. '
+            'Resolve one uncertainty that changes the next research decision; put other useful questions in deferred_questions. '
+            'Choose analysis for questions answerable by interpreting existing source, definitions or recorded evidence. '
+            'Do not write an experiment program to classify the meaning of prose or source semantics. '
+            'Choose an execution kind only when new measurements are needed. Analysis cannot establish unmeasured causal or performance claims. '
+            'Do not combine data reconstruction, source audits, estimator validation and historical reconciliation into one composite pass condition. '
+            'An invalid earlier diagnostic may be set aside with an explicit limitation; reconstructing every historical row is not automatically a prerequisite to new research. '
+            'Prefer a small informative probe over exhaustive certification. Preserve scientific claim gates, but do not demand that every uncertainty be resolved before testing learning competence. '
             'Separate implementation validity, measurement validity, learning competence, and the scientific hypothesis. '
             'A crash is not a refuted hypothesis; a successful exit is not a qualified method. '
             'Interpret the latest result and state which uncertainty now blocks the research decision. '
@@ -150,7 +165,7 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
             'Give competing explanations, contrasting observable predictions and the decision each outcome changes. '
             'Select the smallest useful diagnostic before expensive training when validity is uncertain. '
             'Do not prescribe the same full experiment after an unchanged observation; change the discriminating test. '
-            'If diagnostic_required is true, choose diagnostic. Otherwise choose diagnostic, competence, comparison or replication. '
+            'If diagnostic_required is true, choose diagnostic or analysis to locate the failure. Otherwise choose analysis, diagnostic, competence, comparison or replication. '
             'Use an appropriate bounded runtime, at most max_runtime_seconds, and cite only supplied development_evidence IDs. '
             'Unexpected results can motivate new explanations; do not assume the user-suspected mechanism. '
             'Do not write the learner, approve a scientific claim, change the frozen goal, access holdout or ask a human. '
@@ -168,26 +183,70 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
     validate_named_schema('research_work', decision)
     if set(decision['evidence_ids']) - evidence.keys() or (evidence and not decision['evidence_ids']):
         raise ValueError('The work decision must cite existing development execution evidence.')
-    if diagnostic_required and decision['kind'] != 'diagnostic':
+    if diagnostic_required and decision['kind'] not in {'diagnostic', 'analysis'}:
         raise ValueError('An execution failure or unchanged observation requires a discriminating diagnostic.')
     if decision['max_runtime_seconds'] > ceiling:
         raise ValueError('Work exceeds the registered runtime limit.')
     _write(response_path, decision)
     work = {'work_id': _digest({'packet': packet, 'decision': decision}), 'status': 'planned',
+            'planning_policy_version': planning_policy_version,
             'decision': decision, 'evidence_digest': _digest(evidence),
             'source_observations': evidence, 'next_tool_to_call': 'execute_baseline_preflight'
             if not (thread / 'market/baseline_qualification.json').exists() else 'design_experiment_template'}
+    if decision['kind'] == 'analysis':
+        work['next_tool_to_call'] = 'resolve_research_work'
     _write(thread / 'production/research_control/current.json', work)
     _write(thread / 'production/research_control/work' / work['work_id'] / 'work.json', work)
     return work
+
+
+def resolve_research_work(repo: Path, thread: Path, work_id: str) -> dict[str, Any]:
+    from research_harness.orchestrator.research_review import review_research_packet
+
+    work = current_work(thread)
+    if work.get('work_id') == work_id and work.get('status') == 'completed' and work.get('outcome', {}).get('analysis'):
+        return {**work, 'research_work_checkpoint': work_id}
+    if work.get('work_id') != work_id or work.get('status') != 'planned' or work['decision']['kind'] != 'analysis':
+        raise ValueError('Resolve the current planned analysis work only.')
+    if work.get('planning_policy_version') != PLANNING_POLICY_VERSION:
+        raise StaleResearchWork('Research planning policy changed; call plan_research_work before analysis.')
+    evidence = development_evidence(thread)
+    if work['evidence_digest'] != _digest(evidence):
+        raise StaleResearchWork('New evidence arrived; call plan_research_work before analysis.')
+    directory = thread / 'production/research_control/work' / work_id / 'analysis'
+    packet = {'question': work['decision'], 'development_evidence': evidence,
+              'thread_dir': str(thread.resolve()),
+              'development_artifacts': {key: str((thread / value['report_path']).resolve()) for key, value in evidence.items()}}
+    record = review_research_packet(repo, directory, packet, purpose=(
+        'Resolve this single research uncertainty from existing source and artifacts, without running a new experiment. '
+        'Use read-only inspection of cited sources. State the answer and its limitations in reason, and exact supporting source locations in evidence. '
+        'Approve means this narrow question can be answered from the existing record; it does not approve a baseline, scientific claim or paper. '
+        'Reject if a new measurement or missing source is necessary and specify the smallest required work. '
+        'Do not turn semantic interpretation into a keyword classifier or demand a new program to restate existing source. '
+        'Distinguish the implemented estimator and its declared conventions from your preferred representation. '
+        'Do not infer unmeasured learning competence or causal improvements. Deferred questions are outside this decision. '
+        'Do not inspect final holdout or external-falsifier outcomes, launch training, write code or modify artifacts.'
+    ))
+    work.update(status='completed', outcome={
+        'execution_result': 'analysis_completed' if record['assessment']['decision'] == 'approve' else 'analysis_inconclusive',
+        'analysis': record['assessment'], 'receipt_path': str((directory / record['request_sha256'] / 'review.json').resolve()),
+        'new_observation': False, 'scientific_verdict': 'unverified',
+    }, next_tool_to_call='plan_research_work')
+    _write(thread / 'production/research_control/current.json', work)
+    _write(thread / 'production/research_control/work' / work_id / 'work.json', work)
+    return {**work, 'research_work_checkpoint': work_id}
 
 
 def bind_work(thread: Path, work_id: str | None, node_id: str, plan: dict[str, Any], *, scope: str = 'baseline_preflight') -> None:
     work = current_work(thread)
     if not work or work_id != work.get('work_id') or work.get('status') not in {'planned', 'running'}:
         raise ValueError('Call plan_research_work and supply its work_id before a new execution.')
+    if work.get('planning_policy_version') != PLANNING_POLICY_VERSION:
+        raise StaleResearchWork('Research planning policy changed; call plan_research_work before execution.')
+    if work['decision']['kind'] == 'analysis':
+        raise StaleResearchWork('This question requires resolve_research_work, not a new experiment.')
     if work.get('status') == 'planned' and work['evidence_digest'] != _digest(development_evidence(thread)):
-        raise ValueError('New evidence arrived; call plan_research_work before execution.')
+        raise StaleResearchWork('New evidence arrived; call plan_research_work before execution.')
     if plan['resources']['timeout_sec'] > work['decision']['max_runtime_seconds']:
         raise ValueError('Execution exceeds this work unit budget; implement the selected smaller test.')
     binding = {'node_id': node_id, 'plan_digest': _digest(plan), 'scope': scope}
@@ -218,6 +277,7 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
                                         for key, value in work['source_observations'].items()}}
     review = review_research_packet(repo, directory, packet, purpose=(
         'Whether this proposed implementation performs the selected bounded research test. '
+        'Questions listed in deferred_questions are outside this work and must not become preconditions for its execution. '
         'This is a pre-execution method check, not scientific approval; do not require positive results or finished training. '
         'Trace code, actual imports and data provenance. When the work calls for the actual learner, collector or replay, '
         'a separately rewritten surrogate or hardcoded provenance table does not satisfy it. '

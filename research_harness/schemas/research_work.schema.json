@@ -7,6 +7,7 @@
     "interpretation",
     "alternatives",
     "test",
+    "deferred_questions",
     "next_if_inconclusive",
     "max_runtime_seconds"
   ],
@@ -14,6 +15,7 @@
     "kind": {
       "type": "string",
       "enum": [
+        "analysis",
         "diagnostic",
         "competence",
         "comparison",
@@ -65,7 +67,13 @@
     },
     "test": {
       "type": "string",
+      "description": "One minimal procedure resolving the selected uncertainty. Do not bundle independently useful audits into a composite success condition.",
       "minLength": 1
+    },
+    "deferred_questions": {
+      "type": "array", "maxItems": 5,
+      "description": "Other relevant questions intentionally outside this work unit; these are not required to accept this diagnostic's result.",
+      "items": {"type": "string", "minLength": 1}
     },
     "next_if_inconclusive": {
       "type": "string",
