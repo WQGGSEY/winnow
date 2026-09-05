@@ -191,7 +191,8 @@ TOOL_DEFINITIONS = [
             "Use a fresh command_id for each intended step. When the result is "
             "direction_ready, inspect direction.data_needs and call this tool "
             "again with a new command_id plus one ordered acquisition entry per "
-            "need. Registered candidates reference a pinned adapter_id. Public "
+            'need. A registered candidate is exactly {"kind":"registered_adapter","adapter_id":"..."}; '
+            "the harness resolves its pinned snapshot, so do not add snapshot_id. Public "
             "candidates may use public_api, public_page, or robots-compliant "
             "crawl. A checkpoint is resumable and is not a scientific result."
         ),
@@ -220,7 +221,31 @@ TOOL_DEFINITIONS = [
                                     "need_index": {"type": "integer", "minimum": 0},
                                     "candidates": {
                                         "type": "array",
-                                        "items": {"type": "object"},
+                                        "items": {
+                                            "oneOf": [
+                                                {
+                                                    "type": "object", "required": ["kind", "adapter_id"],
+                                                    "properties": {
+                                                        "kind": {"const": "registered_adapter"},
+                                                        "adapter_id": {"type": "string", "minLength": 1},
+                                                    },
+                                                    "additionalProperties": False,
+                                                },
+                                                {
+                                                    "type": "object", "required": ["kind", "uri"],
+                                                    "properties": {
+                                                        "kind": {"enum": ["public_api", "public_page", "crawl"]},
+                                                        "uri": {"type": "string", "minLength": 1},
+                                                        "credential_profile_name": {"type": ["string", "null"]},
+                                                        "license_evidence": {"type": ["string", "null"]},
+                                                        "crawl_max_pages": {"type": "integer", "minimum": 1, "maximum": 1000},
+                                                        "crawl_max_depth": {"type": "integer", "minimum": 0, "maximum": 10},
+                                                        "crawl_max_total_bytes": {"type": "integer", "minimum": 1, "maximum": 1073741824},
+                                                    },
+                                                    "additionalProperties": False,
+                                                },
+                                            ],
+                                        },
                                     },
                                 },
                             },
@@ -2210,6 +2235,7 @@ def _handle_get_next_admissible_node_locked(
     response = {
         "status": "ok",
         "active_stage": "blind_sequential_research",
+        "next_tool_to_call": "design_experiment_template",
         "node_id": nid,
         "node_type": node.get("type"),
         "depth": depth,

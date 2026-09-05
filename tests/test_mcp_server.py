@@ -81,6 +81,23 @@ def test_protocol_installs_only_after_review_and_routes_to_claim_generation(tmp_
     assert installed["max_attestable_status"] == "goal_achieved"
 
 
+def test_acquisition_tool_exposes_registered_candidate_shape():
+    from research_harness.schemas.validator import SchemaValidationError, validate_schema
+    tool = next(t for t in srv.TOOL_DEFINITIONS if t["name"] == "advance_research")
+    candidate = {"kind": "registered_adapter", "adapter_id": "game"}
+    args = {"thread_id": "t1", "command_id": "acquire", "acquisition": {
+        "needs": [{"need_index": 0, "candidates": [candidate]}],
+    }}
+    validate_schema(tool["inputSchema"], args)
+    candidate["snapshot_id"] = "as_unnecessary"
+    with unittest.TestCase().assertRaises(SchemaValidationError):
+        validate_schema(tool["inputSchema"], args)
+    del candidate["snapshot_id"]
+    del candidate["kind"]
+    with unittest.TestCase().assertRaises(SchemaValidationError):
+        validate_schema(tool["inputSchema"], args)
+
+
 def test_selector_rechecks_changed_preparation_and_checkpoint(tmp_path, monkeypatch):
     tid = "thread_resume"
     tdir = tmp_path / "runs/threads" / tid
@@ -474,6 +491,7 @@ class MCPServerTests(unittest.TestCase):
                 srv._thread_dir = orig
             self.assertEqual(r["status"], "ok")
             self.assertEqual(r["node_type"], "capability")
+            self.assertEqual(r["next_tool_to_call"], "design_experiment_template")
 
     def test_get_next_admissible_node_bootstraps_blind_engine_when_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
