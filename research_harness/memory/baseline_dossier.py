@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -56,17 +58,25 @@ def validate_baseline_dossier(
 
     base_dir = base_dir or dossier_path(repo_root, str(dossier["id"])).parent
     candidate_ids = {candidate["id"] for candidate in dossier["candidates_index"]}
-    selected_id = dossier["selected"]["candidate_id"]
-    if selected_id not in candidate_ids:
-        raise BaselineDossierError(f"selected candidate_id not in candidates_index: {selected_id}")
-
+    selected = dossier["selected"]
     decisions = {candidate["decision"] for candidate in dossier["candidates_index"]}
-    missing_decisions = sorted(REQUIRED_DECISIONS - decisions)
-    if missing_decisions:
-        raise BaselineDossierError(
-            "baseline dossier missing required candidate decisions: "
-            + ", ".join(missing_decisions)
-        )
+    if selected is None:
+        if decisions != {"unqualified"}:
+            raise BaselineDossierError(
+                "an unselected dossier may contain only unqualified candidates"
+            )
+    else:
+        selected_id = selected["candidate_id"]
+        if selected_id not in candidate_ids:
+            raise BaselineDossierError(
+                f"selected candidate_id not in candidates_index: {selected_id}"
+            )
+        missing_decisions = sorted(REQUIRED_DECISIONS - decisions)
+        if missing_decisions:
+            raise BaselineDossierError(
+                "baseline dossier missing required candidate decisions: "
+                + ", ".join(missing_decisions)
+            )
 
     for candidate in dossier["candidates_index"]:
         detail_file = candidate["detail_file"]
@@ -92,6 +102,10 @@ def build_baseline_resolution_report(
     output_path: Path,
 ) -> dict[str, Any]:
     dossier = load_baseline_dossier(repo_root, dossier_id)
+    if dossier["selected"] is None:
+        raise BaselineDossierError(
+            "baseline candidates are unqualified; validate a qualification record first"
+        )
     candidates_by_decision = {
         candidate["decision"]: candidate["id"] for candidate in dossier["candidates_index"]
     }
@@ -124,3 +138,106 @@ def build_baseline_resolution_report(
     lines.extend(f"- {tag}" for tag in report["risk_tags"])
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return report
+
+
+def validate_baseline_selection(
+    repo_root: Path,
+    dossier: dict[str, Any],
+    qualification: dict[str, Any],
+    *,
+    artifact_root: Path,
+    dossier_base_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Validate comparable, executed baseline assignments.
+
+    This proves that all required roles use the same declared comparison and
+    that each result points to an execution artifact with matching bytes. It
+    does not prove that a method is scientifically suitable for the role.
+    """
+    validate_baseline_dossier(repo_root, dossier, base_dir=dossier_base_dir)
+    validate_named_schema("baseline_qualification", qualification)
+    if qualification["dossier_id"] != dossier["id"]:
+        raise BaselineDossierError("qualification dossier_id does not match dossier")
+
+    assignments = qualification["assignments"]
+    required_roles = {"current_best_known", "naive", "random_or_null"}
+    roles = [assignment["role"] for assignment in assignments]
+    if len(assignments) != len(required_roles) or set(roles) != required_roles:
+        raise BaselineDossierError(
+            "qualification must assign each required baseline role exactly once"
+        )
+
+    candidate_ids = {candidate["id"] for candidate in dossier["candidates_index"]}
+    source_support = {
+        source["id"]: set(source["supports"]) for source in dossier["source_index"]
+    }
+    comparison = assignments[0]["comparison"]
+    artifact_root = artifact_root.resolve()
+    selected: dict[str, str] = {}
+
+    for assignment in assignments:
+        candidate_id = assignment["candidate_id"]
+        if candidate_id not in candidate_ids:
+            raise BaselineDossierError(
+                f"qualified candidate is not in dossier: {candidate_id}"
+            )
+        if assignment["comparison"] != comparison:
+            raise BaselineDossierError(
+                "baseline comparisons must use the same task, data, split, budget, and metric"
+            )
+        for source_id in assignment["source_ids"]:
+            if source_id not in source_support:
+                raise BaselineDossierError(f"unknown qualification source_id: {source_id}")
+            if candidate_id not in source_support[source_id]:
+                raise BaselineDossierError(
+                    f"source {source_id} does not support candidate {candidate_id}"
+                )
+
+        receipt = assignment["reproducibility_receipt"]
+        if receipt["exit_code"] != 0:
+            raise BaselineDossierError(
+                f"baseline execution failed for candidate {candidate_id}"
+            )
+        if receipt["metric_id"] != comparison["metric_id"]:
+            raise BaselineDossierError(
+                f"receipt metric does not match comparison for candidate {candidate_id}"
+            )
+        artifact = Path(receipt["artifact_path"])
+        if not artifact.is_absolute():
+            artifact = artifact_root / artifact
+        artifact = artifact.resolve()
+        try:
+            artifact.relative_to(artifact_root)
+        except ValueError as exc:
+            raise BaselineDossierError(
+                f"execution artifact is outside artifact_root: {artifact}"
+            ) from exc
+        if not artifact.is_file():
+            raise BaselineDossierError(f"execution artifact missing: {artifact}")
+        digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        if digest != receipt["artifact_sha256"]:
+            raise BaselineDossierError(
+                f"execution artifact digest mismatch for candidate {candidate_id}"
+            )
+        try:
+            artifact_result = json.loads(artifact.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise BaselineDossierError(
+                f"execution artifact is not JSON for candidate {candidate_id}"
+            ) from exc
+        metrics = artifact_result.get("metrics") if isinstance(artifact_result, dict) else None
+        if not isinstance(metrics, dict) or metrics.get(receipt["metric_id"]) != receipt["metric_value"]:
+            raise BaselineDossierError(
+                f"execution artifact does not contain the receipted metric for candidate {candidate_id}"
+            )
+        selected[assignment["role"]] = candidate_id
+
+    return {
+        "dossier_id": dossier["id"],
+        "comparison": comparison,
+        "assignments": selected,
+        "qualification_limit": (
+            "structural comparability and artifact integrity verified; "
+            "scientific role suitability requires review"
+        ),
+    }

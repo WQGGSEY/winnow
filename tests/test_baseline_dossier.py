@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import shutil
 import tempfile
 import unittest
@@ -11,6 +12,7 @@ from research_harness.memory.baseline_dossier import (
     build_baseline_resolution_report,
     dossier_path,
     load_baseline_dossier,
+    validate_baseline_selection,
     validate_baseline_dossier,
 )
 from research_harness.schemas.validator import validate_named_schema
@@ -20,6 +22,76 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class BaselineDossierTests(unittest.TestCase):
+    def _unqualified_dossier(self, root: Path) -> dict:
+        candidates_dir = root / "candidates"
+        candidates_dir.mkdir()
+        candidate_ids = ["c_best", "c_naive", "c_null"]
+        for candidate_id in candidate_ids:
+            (candidates_dir / f"{candidate_id}.md").write_text(candidate_id)
+        return {
+            "id": "bd_test",
+            "created_at": "2026-09-05",
+            "query": "test baseline candidates",
+            "problem_scope": {"task": "task"},
+            "selected": None,
+            "candidates_index": [
+                {
+                    "id": candidate_id,
+                    "method": candidate_id,
+                    "decision": "unqualified",
+                    "reason_tags": ["discovered"],
+                    "detail_file": f"candidates/{candidate_id}.md",
+                }
+                for candidate_id in candidate_ids
+            ],
+            "source_index": [
+                {
+                    "id": f"s{index}",
+                    "url": f"https://example.com/{candidate_id}",
+                    "accessed_at": "2026-09-05",
+                    "supports": [candidate_id],
+                }
+                for index, candidate_id in enumerate(candidate_ids, 1)
+            ],
+            "refresh_policy": {"required_before": ["promotion"]},
+        }
+
+    def _qualification(self, artifact: Path) -> dict:
+        digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        roles = ["current_best_known", "naive", "random_or_null"]
+        candidates = ["c_best", "c_naive", "c_null"]
+        return {
+            "dossier_id": "bd_test",
+            "assignments": [
+                {
+                    "role": role,
+                    "candidate_id": candidate,
+                    "source_ids": [f"s{index}"],
+                    "comparison": {
+                        "task_id": "task-v1",
+                        "dataset_id": "data-v1",
+                        "split_id": "test-v1",
+                        "budget_id": "budget-v1",
+                        "metric_id": "accuracy",
+                    },
+                    "implementation": {
+                        "kind": "repository",
+                        "identifier": f"https://example.com/{candidate}",
+                        "version": "commit-123",
+                    },
+                    "reproducibility_receipt": {
+                        "artifact_path": artifact.name,
+                        "artifact_sha256": digest,
+                        "command": ["python", "evaluate.py", candidate],
+                        "exit_code": 0,
+                        "metric_id": "accuracy",
+                        "metric_value": 0.5,
+                    },
+                }
+                for index, (role, candidate) in enumerate(zip(roles, candidates), 1)
+            ],
+        }
+
     def test_packaged_dossier_is_available_without_operator_memory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             dossier = load_baseline_dossier(
@@ -102,6 +174,54 @@ class BaselineDossierTests(unittest.TestCase):
 
         with self.assertRaisesRegex(BaselineDossierError, "http"):
             validate_baseline_dossier(REPO_ROOT, dossier)
+
+    def test_unqualified_candidates_require_a_separate_selection_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dossier = self._unqualified_dossier(root)
+            validate_baseline_dossier(root, dossier, base_dir=root)
+            self.assertIsNone(dossier["selected"])
+            self.assertEqual(
+                {candidate["decision"] for candidate in dossier["candidates_index"]},
+                {"unqualified"},
+            )
+
+    def test_selection_requires_comparable_executed_baselines(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifact = root / "result.json"
+            artifact.write_text('{"metrics": {"accuracy": 0.5}}')
+            dossier = self._unqualified_dossier(root)
+            qualification = self._qualification(artifact)
+
+            result = validate_baseline_selection(
+                root, dossier, qualification, artifact_root=root, dossier_base_dir=root
+            )
+
+            self.assertEqual(result["assignments"]["current_best_known"], "c_best")
+            self.assertIn("scientific role suitability", result["qualification_limit"])
+
+    def test_selection_rejects_mismatched_comparison_and_artifact_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifact = root / "result.json"
+            artifact.write_text('{"metrics": {"accuracy": 0.5}}')
+            dossier = self._unqualified_dossier(root)
+            qualification = self._qualification(artifact)
+            qualification["assignments"][1]["comparison"]["split_id"] = "other"
+            with self.assertRaisesRegex(BaselineDossierError, "same task"):
+                validate_baseline_selection(
+                    root, dossier, qualification, artifact_root=root, dossier_base_dir=root
+                )
+
+            qualification = self._qualification(artifact)
+            qualification["assignments"][2]["reproducibility_receipt"][
+                "artifact_sha256"
+            ] = "0" * 64
+            with self.assertRaisesRegex(BaselineDossierError, "digest mismatch"):
+                validate_baseline_selection(
+                    root, dossier, qualification, artifact_root=root, dossier_base_dir=root
+                )
 
 
 if __name__ == "__main__":

@@ -681,8 +681,8 @@ def _build_baseline_dossier(
         _CandidatePaper(paper=paper, role_hint=_role_hint_for(paper, extracted))
         for paper in papers
     ]
-    candidates, selected_candidate = _assign_candidates(extracted, paper_candidates)
-    source_index = _build_source_index(papers, today)
+    candidates = _assign_candidates(extracted, paper_candidates)
+    source_index = _build_source_index(papers, candidates, today)
 
     if write_to_memory:
         dossier_dir = repo_root / "memory" / "baseline_dossiers"
@@ -716,16 +716,7 @@ def _build_baseline_dossier(
             "node_type": extracted["node_type"],
             "claim_under_test": extracted["claim_under_test"],
         },
-        "selected": {
-            "method": selected_candidate["method"],
-            "role": "current_best_known",
-            "candidate_id": selected_candidate["id"],
-            "one_paragraph_reason": selected_candidate["reason"],
-            "evidence_tags": selected_candidate.get("evidence_tags") or [
-                "automated_market_research",
-            ],
-            "risk_tags": selected_candidate.get("risk_tags") or ["operator_should_review"],
-        },
+        "selected": None,
         "candidates_index": candidates_index,
         "source_index": source_index,
         "refresh_policy": {
@@ -763,14 +754,8 @@ def _role_hint_for(paper: dict[str, Any], extracted: dict[str, Any]) -> str | No
 def _assign_candidates(
     extracted: dict[str, Any],
     candidate_papers: list[_CandidatePaper],
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Construct the three required candidate decisions (selected, naive, null).
-
-    The first relevant paper gets the current-best slot. Naive and null slots
-    prefer matching papers from the search if available; otherwise the harness
-    falls back to placeholders derived from grilling.mandatory_baselines so
-    that the dossier always satisfies invariants.
-    """
+) -> list[dict[str, Any]]:
+    """Keep search results and requested controls as unqualified candidates."""
 
     fallback_baselines = list(extracted.get("mandatory_baselines") or [])
     naive_hint = _first_or(fallback_baselines, 1, "BM25 or simple supervised baseline")
@@ -786,8 +771,8 @@ def _assign_candidates(
         candidates.append(
             _candidate_from_paper(
                 selected_paper,
-                decision="selected",
-                role="current_best_known",
+                decision="unqualified",
+                role="candidate",
                 fallback_method=str(fallback_baselines[0]) if fallback_baselines else "current best",
                 reason="Top-ranked search result for the grilled claim.",
             )
@@ -797,8 +782,8 @@ def _assign_candidates(
             _placeholder_candidate(
                 cid="c_current_best_placeholder",
                 method=str(fallback_baselines[0]) if fallback_baselines else "current best (placeholder)",
-                decision="selected",
-                role="current_best_known",
+                decision="unqualified",
+                role="candidate",
                 reason="No automated paper found; operator must review.",
             )
         )
@@ -807,8 +792,8 @@ def _assign_candidates(
         candidates.append(
             _candidate_from_paper(
                 naive_paper,
-                decision="selected_as_naive",
-                role="naive",
+                decision="unqualified",
+                role="candidate",
                 fallback_method=naive_hint,
                 reason="Matched naive baseline heuristic from grilling.",
             )
@@ -818,8 +803,8 @@ def _assign_candidates(
             _placeholder_candidate(
                 cid="c_naive_placeholder",
                 method=naive_hint,
-                decision="selected_as_naive",
-                role="naive",
+                decision="unqualified",
+                role="candidate",
                 reason="Operator must attach a naive baseline reference.",
             )
         )
@@ -828,8 +813,8 @@ def _assign_candidates(
         candidates.append(
             _candidate_from_paper(
                 null_paper,
-                decision="selected_as_random_or_null",
-                role="random_or_null",
+                decision="unqualified",
+                role="candidate",
                 fallback_method=null_hint,
                 reason="Matched random/null heuristic from grilling.",
             )
@@ -839,8 +824,8 @@ def _assign_candidates(
             _placeholder_candidate(
                 cid="c_null_placeholder",
                 method=null_hint,
-                decision="selected_as_random_or_null",
-                role="random_or_null",
+                decision="unqualified",
+                role="candidate",
                 reason="No random/null paper found; operator must review.",
             )
         )
@@ -853,7 +838,7 @@ def _assign_candidates(
         seen_ids.add(candidate["id"])
         deduped.append(candidate)
 
-    return deduped, deduped[0]
+    return deduped
 
 
 def _pick_paper(
@@ -920,7 +905,14 @@ def _placeholder_candidate(
     }
 
 
-def _build_source_index(papers: list[dict[str, Any]], today: str) -> list[dict[str, Any]]:
+def _build_source_index(
+    papers: list[dict[str, Any]], candidates: list[dict[str, Any]], today: str
+) -> list[dict[str, Any]]:
+    candidate_ids_by_paper = {
+        candidate.get("source_paper_id"): candidate["id"]
+        for candidate in candidates
+        if candidate.get("source_paper_id")
+    }
     source_index = []
     for index, paper in enumerate(papers, start=1):
         url = paper.get("url") or ""
@@ -931,7 +923,7 @@ def _build_source_index(papers: list[dict[str, Any]], today: str) -> list[dict[s
                 "id": f"s{index}",
                 "url": url,
                 "accessed_at": today,
-                "supports": [paper["id"]],
+                "supports": [candidate_ids_by_paper.get(paper["id"], paper["id"])],
             }
         )
     if not source_index:
@@ -1002,21 +994,24 @@ def _render_dossier_yaml(dossier: dict[str, Any]) -> str:
     ]
     for key, value in dossier["problem_scope"].items():
         lines.append(f"  {key}: {json.dumps(str(value))}")
-    lines.extend(
-        [
-            "selected:",
-            f"  method: {json.dumps(selected['method'])}",
-            f"  role: {selected['role']}",
-            f"  candidate_id: {selected['candidate_id']}",
-            f"  one_paragraph_reason: {json.dumps(selected['one_paragraph_reason'])}",
-            "  evidence_tags:",
-        ]
-    )
-    for tag in selected["evidence_tags"]:
-        lines.append(f"    - {json.dumps(str(tag))}")
-    lines.append("  risk_tags:")
-    for tag in selected["risk_tags"]:
-        lines.append(f"    - {json.dumps(str(tag))}")
+    if selected is None:
+        lines.append("selected: null")
+    else:
+        lines.extend(
+            [
+                "selected:",
+                f"  method: {json.dumps(selected['method'])}",
+                f"  role: {selected['role']}",
+                f"  candidate_id: {selected['candidate_id']}",
+                f"  one_paragraph_reason: {json.dumps(selected['one_paragraph_reason'])}",
+                "  evidence_tags:",
+            ]
+        )
+        for tag in selected["evidence_tags"]:
+            lines.append(f"    - {json.dumps(str(tag))}")
+        lines.append("  risk_tags:")
+        for tag in selected["risk_tags"]:
+            lines.append(f"    - {json.dumps(str(tag))}")
 
     lines.append("candidates_index:")
     for candidate in candidates_index:

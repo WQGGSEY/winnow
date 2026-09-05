@@ -197,12 +197,21 @@ class MarketResearchTests(unittest.TestCase):
                 enable_google_scholar=False,
             )
 
-            self.assertEqual(outcome.dossier["selected"]["role"], "current_best_known")
+            self.assertIsNone(outcome.dossier["selected"])
             decisions = {c["decision"] for c in outcome.dossier["candidates_index"]}
-            self.assertEqual(
-                decisions,
-                {"selected", "selected_as_naive", "selected_as_random_or_null"},
-            )
+            self.assertEqual(decisions, {"unqualified"})
+            self.assertEqual(len(outcome.dossier["candidates_index"]), 3)
+            supported = {
+                support
+                for source in outcome.dossier["source_index"]
+                for support in source["supports"]
+            }
+            retrieved_candidate_ids = {
+                candidate["id"]
+                for candidate in outcome.dossier["candidates_index"]
+                if "placeholder" not in candidate["id"]
+            }
+            self.assertLessEqual(retrieved_candidate_ids, supported)
             validate_named_schema("baseline_dossier", outcome.dossier)
             self.assertTrue(
                 outcome.brief["baseline_dossier_id"].startswith("bd_grill_test_001_")

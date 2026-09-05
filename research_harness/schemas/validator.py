@@ -21,6 +21,7 @@ SCHEMA_FILES = {
     "ac_decision": "ac_decision.schema.json",
     "invocation_envelope": "invocation_envelope.schema.json",
     "baseline_dossier": "baseline_dossier.schema.json",
+    "baseline_qualification": "baseline_qualification.schema.json",
     "manual_live_smoke_plan": "manual_live_smoke_plan.schema.json",
     "live_node_dispatch": "live_node_dispatch.schema.json",
     "live_reduction_apply_summary": "live_reduction_apply_summary.schema.json",

@@ -19,7 +19,7 @@
     "query": { "type": "string", "minLength": 1 },
     "problem_scope": { "type": "object" },
     "selected": {
-      "type": "object",
+      "type": ["object", "null"],
       "required": [
         "method",
         "role",
@@ -53,7 +53,10 @@
         "properties": {
           "id": { "type": "string" },
           "method": { "type": "string" },
-          "decision": { "type": "string" },
+          "decision": {
+            "type": "string",
+            "enum": ["unqualified", "selected", "selected_as_naive", "selected_as_random_or_null"]
+          },
           "reason_tags": {
             "type": "array",
             "items": { "type": "string" },
@@ -98,4 +101,3 @@
   },
   "additionalProperties": false
 }
-
