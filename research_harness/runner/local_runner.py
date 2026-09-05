@@ -228,18 +228,17 @@ class LocalRunner:
 
         started = time.monotonic()
         try:
-            completed = subprocess.run(
-                isolated_runner_command(command, workspace),
-                cwd=workspace,
-                capture_output=True,
-                text=True,
-                timeout=timeout_sec,
-                check=False,
-                env=child_env,
-            )
+            with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open("w", encoding="utf-8") as stderr:
+                completed = subprocess.run(
+                    isolated_runner_command(command, workspace),
+                    cwd=workspace,
+                    stdout=stdout,
+                    stderr=stderr,
+                    timeout=timeout_sec,
+                    check=False,
+                    env=child_env,
+                )
             elapsed_sec = round(time.monotonic() - started, 6)
-            stdout_path.write_text(_output_text(completed.stdout), encoding="utf-8")
-            stderr_path.write_text(_output_text(completed.stderr), encoding="utf-8")
             status = "completed" if completed.returncode == 0 else "failed"
             result = self._runner_result(
                 manifest,
@@ -258,10 +257,8 @@ class LocalRunner:
                 input_evidence=input_evidence,
                 environment_overrides=environment_overrides,
             )
-        except subprocess.TimeoutExpired as exc:
+        except subprocess.TimeoutExpired:
             elapsed_sec = round(time.monotonic() - started, 6)
-            stdout_path.write_text(_output_text(exc.stdout), encoding="utf-8")
-            stderr_path.write_text(_output_text(exc.stderr), encoding="utf-8")
             result = self._runner_result(
                 manifest,
                 workspace,
@@ -361,11 +358,3 @@ class LocalRunner:
         if configured is None:
             return manifest_timeout
         return min(manifest_timeout, int(configured))
-
-
-def _output_text(value: str | bytes | None) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return value

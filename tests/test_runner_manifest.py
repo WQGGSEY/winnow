@@ -135,7 +135,7 @@ class RunnerManifestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "run"
             manifest = build_demo_job_manifest(_demo_node(), run_dir)
-            manifest["entrypoint"]["args"] = ["-c", "print('runner-ok')"]
+            manifest["entrypoint"]["args"] = ["-c", "from pathlib import Path\nprint('runner-ok', flush=True)\nassert Path('stdout.log').read_text() == 'runner-ok\\n'"]
 
             result = LocalRunner(run_dir).execute(manifest)
 
