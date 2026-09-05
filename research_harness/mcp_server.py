@@ -1462,6 +1462,13 @@ def handle_revise_evaluation_protocol(args: dict[str, Any]) -> dict[str, Any]:
         except StaleResearchWork as exc:
             return {'status': 'work_required', 'reason': str(exc), 'next_tool_to_call': 'plan_research_work'}
         except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:
+            from research_harness.orchestrator.research_control import current_work, _write
+            thread = _thread_dir(tid)
+            work = current_work(thread)
+            if work.get('work_id') == args['work_id'] and work.get('status') == 'planned':
+                work.update(protocol_review_error=str(exc), reconsideration_available=True)
+                _write(thread / 'production/research_control/current.json', work)
+                _write(thread / 'production/research_control/work' / work['work_id'] / 'work.json', work)
             return {'status': 'rejected', 'reason': str(exc), 'next_tool_to_call': 'revise_evaluation_protocol'}
 
 

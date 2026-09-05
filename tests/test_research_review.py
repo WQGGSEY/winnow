@@ -24,3 +24,9 @@ def test_independent_review_reuses_only_matching_evidence_and_rejects_unresolved
         complete.return_value = CompletionResult(text=json.dumps(assessment), usage=AgentUsage(), thread_id="review-session")
         with pytest.raises(ValueError, match="unresolved required work"):
             review_research_packet(repo, tmp_path, {"source": "third"}, purpose="baseline")
+
+        assessment.update(required_work=[], next_steps=['Run Q1-Q3 before future training.'])
+        complete.return_value = CompletionResult(text=json.dumps(assessment), usage=AgentUsage(), thread_id='review-session')
+        future = review_research_packet(repo, tmp_path, {'source': 'fourth'}, purpose='prospective protocol')
+        assert future['assessment']['decision'] == 'approve'
+        assert future['assessment']['next_steps'] == ['Run Q1-Q3 before future training.']

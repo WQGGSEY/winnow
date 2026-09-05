@@ -141,7 +141,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     envelope = _read(thread / 'production/feasibility_envelope.json')
     bank = sealed_bank_metadata(thread)
     sampling = read_sampling_spec(thread)
-    if reconsider_reason and previous.get('planning_policy_version') == PLANNING_POLICY_VERSION and (previous.get('status') != 'planned'
+    if reconsider_reason and not previous.get('protocol_review_error') and previous.get('planning_policy_version') == PLANNING_POLICY_VERSION and (previous.get('status') != 'planned'
                               or not any(previous.get(key, {}).get('decision') == 'reject'
                                          for key in ('implementation_review', 'protocol_review'))):
         raise ValueError('Reconsideration requires a planned work with rejected implementation feedback or protocol feedback.')

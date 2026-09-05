@@ -157,6 +157,7 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
     if not (directory / 'approved.json').exists():
         _write(directory / 'approved.json', record)
     work.pop('reconsideration_available', None)
+    work.pop('protocol_review_error', None)
     work['protocol_review'] = {**review['assessment'], 'request_path': str(request_path.resolve())}
     work.update(status='completed', outcome={
         'execution_result': 'protocol_revised', 'protocol_revision': str((directory / 'approved.json').resolve()),

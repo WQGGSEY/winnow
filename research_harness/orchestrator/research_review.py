@@ -26,9 +26,11 @@ def review_research_packet(repo: Path, directory: Path, packet: dict[str, Any], 
         "of held-out evaluation from development and resource feasibility. Review a prospective protocol as a design: "
         "do not require completed baseline qualification, positive development results, or execution of its holdout. "
         "Missing implementations are later work, not grounds to reject an otherwise executable evaluation design. "
-        "This protocol precedes direction generation and must be candidate-blind: do not demand a selected intervention, "
+        "For an INITIAL task-level protocol before direction generation, require candidate-blind outcomes: do not demand a selected intervention, "
         "candidate architecture, or completed learning curve before approving task-level outcomes and evaluation rules. "
-        "Candidate-specific experimental details are reviewed later. Protocol registration is a two-step transaction: "
+        "For a later experiment, implementation freeze, or prospective development amendment, candidate/comparator source and checkpoint bindings can be appropriate. "
+        "Keep the frozen task goal and success criterion distinct from these method bindings; recording a fixed implementation does not itself redefine the goal. "
+        "Apply the decision-specific scope supplied below. Protocol registration is a two-step transaction: "
         "you review the submitted proposal, then the harness installs it atomically if approved. Do not demand that the "
         "proposal already appear in the current authoritative envelope, or ask the agent to directly edit harness-owned "
         "registration files before approval. Required work must be actionable before this decision. "
@@ -36,7 +38,8 @@ def review_research_packet(repo: Path, directory: Path, packet: dict[str, Any], 
         "limits; contamination, post-hoc outcome selection, and undefined statistical units remain reasons to reject. An arbitrary "
         "threshold, successful process exit or author's assurance is not approval evidence. "
         "Approve only if the evidence supports this specific decision. Otherwise reject "
-        "with concrete artifact references and actionable required work. Do not require "
+        "with concrete artifact references and actionable required work. required_work means blocking defects BEFORE this decision; it must be empty on approval. "
+        "Put non-blocking FUTURE tasks in next_steps. For example, approving a prospective protocol does not qualify a baseline: future Q1-Q3 checks belong in next_steps, not required_work. Do not require "
         "positive scientific results or prove novelty to qualify a correctly implemented baseline. "
         "Do not write code, change artifacts, or weaken the research objective. Return JSON. "
         f"Decision under review: {purpose}"
@@ -61,7 +64,7 @@ def analyze_research_packet(repo: Path, directory: Path, packet: dict[str, Any],
 
 
 def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, instructions: str, schema_name: str) -> dict[str, Any]:
-    request_data = {"model": "gpt-5.6-sol", "reasoning_effort": "low", "instructions": instructions, "packet": packet, "response_schema": schema_name}
+    request_data = {"model": "gpt-5.6-sol", "reasoning_effort": "low", "instructions": instructions, "packet": packet, "response_schema": schema_name, "response_schema_sha256": hashlib.sha256((repo / "research_harness/schemas" / f"{schema_name}.schema.json").read_bytes()).hexdigest()}
     serialized = json.dumps(request_data, sort_keys=True, ensure_ascii=False)
     digest = hashlib.sha256(serialized.encode()).hexdigest()
     destination = directory / digest
