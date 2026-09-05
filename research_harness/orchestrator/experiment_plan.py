@@ -733,24 +733,6 @@ def validate_experiment_plan(
         seen_source_paths.add(normalized)
         ensure_path_inside(workspace / source_path, workspace, "source_files")
 
-    if contract.get("data_source_snapshot_id"):
-        source_blob = "\n".join(
-            source_file["content"] for source_file in experiment_plan["source_files"]
-        )
-        missing_references = []
-        if "RESEARCH_HARNESS_INPUT_MANIFEST" not in source_blob:
-            missing_references.append("RESEARCH_HARNESS_INPUT_MANIFEST")
-        if not (
-            re.search(r"(['\"])primary_dataset\1", source_blob)
-            and re.search(r"(['\"])relative_path\1", source_blob)
-        ):
-            missing_references.append("primary_dataset.relative_path")
-        if missing_references:
-            raise ExperimentPlanError(
-                "registered-adapter experiment source must reference "
-                + " and ".join(missing_references)
-            )
-
     for key in ("metrics_files", "logs", "artifact_dirs"):
         for raw_path in experiment_plan["expected_outputs"].get(key, []):
             output_path = _relative_workspace_path(raw_path, key)

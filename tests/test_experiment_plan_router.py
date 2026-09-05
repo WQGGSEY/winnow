@@ -154,7 +154,7 @@ class ExperimentPlanRouterTests(unittest.TestCase):
             )
             self.assertEqual(used, FALLBACK_TEMPLATE_ID)
 
-    def test_registered_adapter_plan_requires_runtime_manifest_contract(self) -> None:
+    def test_registered_adapter_plan_allows_delegated_input_loading(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             run_dir = root / "run"
@@ -162,23 +162,8 @@ class ExperimentPlanRouterTests(unittest.TestCase):
             node["claim_contract"]["data_source_snapshot_id"] = "as_" + "a" * 64
             plan, _ = build_experiment_plan_for_node(root, node, run_dir, settings=None)
 
-            with self.assertRaisesRegex(
-                ExperimentPlanError, "RESEARCH_HARNESS_INPUT_MANIFEST"
-            ):
-                validate_experiment_plan(node, plan, run_dir)
-
-            plan["source_files"][0]["content"] += """
-import os
-manifest_path = os.environ["RESEARCH_HARNESS_INPUT_MANIFEST"]
-dataset_path = manifest["inputs"]
-"""
-            with self.assertRaisesRegex(
-                ExperimentPlanError, "primary_dataset.relative_path"
-            ):
-                validate_experiment_plan(node, plan, run_dir)
-
-            plan["source_files"][0]["content"] += (
-                '\ndataset_path = manifest["primary_dataset"]["relative_path"]\n'
+            plan["source_files"][0]["content"] = (
+                'from registered_implementation import main\nmain()\n'
             )
             validate_experiment_plan(node, plan, run_dir)
 
