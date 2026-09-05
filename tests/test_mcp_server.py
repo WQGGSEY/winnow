@@ -44,6 +44,43 @@ def test_preflight_tool_advertises_the_experiment_validation_contract(tmp_path):
         validate_schema(protocol_tool["inputSchema"], proposal)
 
 
+def test_protocol_installs_only_after_review_and_routes_to_claim_generation(tmp_path, monkeypatch):
+    from copy import deepcopy
+    from tests.test_feasibility_envelope import _valid_envelope
+
+    tid = "t1"
+    tdir = tmp_path / "runs/threads" / tid
+    path = tdir / "production/feasibility_envelope.json"
+    path.parent.mkdir(parents=True)
+    original = _valid_envelope()
+    original["operator_intent"]["target_deploy_grade_scope"] = "directional"
+    path.write_text(json.dumps(original))
+    proposal = deepcopy(original)
+    proposal["external_falsifier"] = {
+        "kind": "real_holdout", "holdout_source_id": "wq_snapshot",
+        "predicate": {"metric": "utility", "op": ">=", "threshold": 0.1},
+    }
+    decisions = iter(["reject", "approve"])
+
+    def review(repo, directory, packet, **kwargs):
+        assert json.loads(path.read_text()) == original
+        assert packet["registration_state"] == "proposed_not_installed"
+        assert packet["proposal"] == proposal
+        return {"assessment": {"decision": next(decisions)}}
+
+    monkeypatch.setattr("research_harness.orchestrator.research_review.review_research_packet", review)
+    with srv._repo_root_scope(tmp_path):
+        args = {"thread_id": tid, "envelope": proposal}
+        assert srv.handle_submit_feasibility_envelope(args, {})["status"] == "rejected"
+        assert json.loads(path.read_text()) == original
+        result = srv.handle_submit_feasibility_envelope(args, {})
+    assert result["status"] == "ok"
+    assert result["next_tool_to_call"] == "advance_research"
+    installed = json.loads(path.read_text())
+    assert installed["external_falsifier"]["registered_by"] == "adversary_pass"
+    assert installed["max_attestable_status"] == "goal_achieved"
+
+
 def test_selector_rechecks_changed_preparation_and_checkpoint(tmp_path, monkeypatch):
     tid = "thread_resume"
     tdir = tmp_path / "runs/threads" / tid

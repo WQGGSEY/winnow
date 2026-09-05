@@ -2359,6 +2359,8 @@ def handle_submit_feasibility_envelope(args: dict[str, Any], settings: dict[str,
         for path in sorted((tdir / "production/tree/baseline_preflight").glob("*/worker_report.json")):
             evidence[str(path)] = _read_json(path)
         packet = {"proposal": env, "resource_envelope": existing,
+                  "registration_state": "proposed_not_installed",
+                  "commit_on_approval": "The harness atomically installs the reviewed envelope and stamps its registrant and attestation ceiling after approval. The agent cannot install it before this review.",
                   "research_problem": _read_json(tdir / "thread.json"),
                   "baseline_qualification": _read_json(tdir / "market/baseline_qualification.json"),
                   "development_evidence": evidence}
@@ -2462,18 +2464,16 @@ def _register_feasibility_envelope(
                 "proposed": proposed_fields,
             }
     env_path.parent.mkdir(parents=True, exist_ok=True)
-    env_path.write_text(
-        json.dumps(env, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    _write_json_atomic(env_path, env)
     return {
         "status": "ok",
         "envelope_path": str(env_path),
         "registered_real_adapters": sorted(registered),
         "target_scope": target,
         "max_attestable_status": env["max_attestable_status"],
+        "next_tool_to_call": "advance_research",
         "next_step": (
-            "Now call design_initial_claim_contract. The claim's "
+            "Call advance_research to freeze the success bar and generate the research claim. The claim's "
             "deploy_grade_scope MUST fit this envelope (deployment requires "
             "real_adapter; feasibility allows synthetic with bridging; "
             "directional is methodology-hint only). "
