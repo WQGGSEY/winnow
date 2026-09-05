@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/research_harness/scientific_review.schema.json",
+  "title": "ScientificReviewRecord",
+  "type": "object",
+  "required": ["version", "review_id", "manuscript_sha256", "evidence_ledger_sha256", "reviewer", "assessments", "objections"],
+  "properties": {
+    "version": {"type": "integer", "const": 1},
+    "review_id": {"type": "string", "minLength": 1},
+    "manuscript_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "evidence_ledger_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "reviewer": {
+      "type": "object",
+      "required": ["reviewer_id", "provider", "model", "invocation_sha256"],
+      "properties": {
+        "reviewer_id": {"type": "string", "minLength": 1},
+        "provider": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "invocation_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "assessments": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["category", "judgment", "evidence_ids", "citation_ids"],
+        "properties": {
+          "category": {"type": "string", "enum": ["importance", "closest_work", "argument_completeness", "reproducibility", "limitations"]},
+          "judgment": {"type": "string", "minLength": 1},
+          "evidence_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "citation_ids": {"type": "array", "items": {"type": "string", "minLength": 1}}
+        },
+        "additionalProperties": false
+      }
+    },
+    "objections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["objection_id", "category", "blocking", "status", "statement", "resolution", "evidence_ids", "citation_ids"],
+        "properties": {
+          "objection_id": {"type": "string", "minLength": 1},
+          "category": {"type": "string", "enum": ["importance", "closest_work", "argument_completeness", "reproducibility", "limitations"]},
+          "blocking": {"type": "boolean"},
+          "status": {"type": "string", "enum": ["open", "resolved", "accepted_limitation"]},
+          "statement": {"type": "string", "minLength": 1},
+          "resolution": {"type": "string"},
+          "evidence_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "citation_ids": {"type": "array", "items": {"type": "string", "minLength": 1}}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
