@@ -1277,7 +1277,7 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "     한 실행이 끝나면 supervisor가 새 세션에서 결과를 해석하고 다음 작업을 계획한다.",
         "     실행 오류를 과학적 반박으로 해석하지 말고, 동일 관측이면 판별 검사로 원인을 좁혀.",
         "     planned 작업에 거절 사유와 dispatch_request_path가 있으면 저장된 요청의 입력 오류를 고쳐 같은 검사를 재시도해. 실행 전 거절은 새 연구 관측이 아니야.",
-        "     구현 검토가 필요한 기록의 부재나 검사 자체의 한계를 드러내면 plan_research_work(reconsider_reason=...)로 절차를 재검토해. 목표와 기존 근거를 보존하고 불가능한 검사 구현을 반복하지 마.",
+        "     구현 또는 프로토콜 검토가 필요한 기록의 부재나 절차의 한계를 드러내면 plan_research_work(reconsider_reason=...)로 절차를 재검토해. 목표와 기존 근거를 보존하고 불가능한 검사 구현을 반복하지 마.",
         "  2. needed_resources가 있으면 advance_research의 획득 경계로 해결해.",
         "     frozen bar를 좁히지 말고 checkpoint 또는 hard_external_block을 보존해.",
         "     기준선 승인은 claim 생성의 선행 조건이 아니다. 정식 노드가 없으면",

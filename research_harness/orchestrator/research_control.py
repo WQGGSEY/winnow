@@ -103,8 +103,9 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     previous = current_work(thread)
     envelope = _read(thread / 'production/feasibility_envelope.json')
     if reconsider_reason and (previous.get('status') != 'planned'
-                              or previous.get('implementation_review', {}).get('decision') != 'reject'):
-        raise ValueError('Reconsideration requires a planned work with rejected implementation feedback.')
+                              or not any(previous.get(key, {}).get('decision') == 'reject'
+                                         for key in ('implementation_review', 'protocol_review'))):
+        raise ValueError('Reconsideration requires a planned work with rejected implementation feedback or protocol feedback.')
     planning_policy_version = PLANNING_POLICY_VERSION
     if not reconsider_reason and previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('protocol_digest') == _digest(envelope) and previous['evidence_digest'] == _digest(evidence):
         return previous
@@ -179,7 +180,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'Use read-only inspection of referenced development sources when needed to check which records actually exist. '
             'Missing telemetry is unknown, not zero observed events. Source inspection and historical access reconstruction may need analysis, '
             'not a new experiment that merely searches source literals. Do not execute training, modify files or inspect holdout data while planning. '
-            'When reconsider_reason is present, reassess the rejected implementation feedback and the feasibility of the selected test. '
+            'When reconsider_reason is present, reassess the rejected implementation or protocol feedback and the feasibility of the selected test. '
             'Preserve the research objective and previous evidence, but change the procedure or work kind when the prior test cannot answer it. '
             'This supersedes a plan, not a scientific hypothesis; an input rejection is not an empirical observation. '
             'Read the full registered_protocol, including its notes. Its method, split and evaluation restrictions constrain this study. '

@@ -116,6 +116,12 @@ from its persisted report or recorded as interrupted, without calling it a
 scientific failure. Per-work history remains under `production/research_control`.
 These records never directly promote or prune the active claim.
 
+Rejected protocol amendments also persist their review in the planned work.
+The next cycle can revise the proposal or reconsider the procedure with that
+feedback. A rejection creates no measurement or scientific verdict. In the live
+Pacman run, losing this feedback hid confirmed holdout contamination from the
+next cycle and led it to submit the same source-binding amendment again.
+
 The allowlisted development packet reads baseline preflight reports and formal
 node reports bound through ResearchWork. It does not read external-falsifier or
 final holdout result files. Report content remains unverified scientific support:

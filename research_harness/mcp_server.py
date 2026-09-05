@@ -131,7 +131,7 @@ TOOL_DEFINITIONS = [
     {
         "name": "plan_research_work",
         "description": "Choose one evidence-bound research work unit before a new execution. The harness interprets development results, distinguishes implementation problems from scientific hypotheses, records competing predictions and a bounded test. Resume the returned work_id; after execution plan the next unit from the new evidence. No human approval or scientific claim approval is implied.",
-        "inputSchema": {"type": "object", "required": ["thread_id"], "properties": {"thread_id": {"type": "string"}, "reconsider_reason": {"type": "string", "minLength": 1, "description": "Use after implementation rejection reveals missing evidence or an unsuitable test. Preserve the objective and evidence while reconsidering the procedure instead of retrying an impossible implementation."}}, "additionalProperties": False},
+        "inputSchema": {"type": "object", "required": ["thread_id"], "properties": {"thread_id": {"type": "string"}, "reconsider_reason": {"type": "string", "minLength": 1, "description": "Use after implementation or protocol rejection reveals missing evidence or an unsuitable procedure. Preserve the objective and evidence while reconsidering the procedure instead of retrying an impossible implementation."}}, "additionalProperties": False},
     },
     {
         "name": "develop_research_hypotheses",

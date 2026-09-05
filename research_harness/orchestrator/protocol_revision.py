@@ -72,7 +72,12 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
         'The previous protocol and its failure history will remain disclosed. Do not call this the original preregistration or approve any scientific claim.'
     ))
     if review['assessment']['decision'] != 'approve':
+        work.update(protocol_review={**review['assessment'], 'request_path': str(request_path.resolve())},
+                    reconsideration_available=True)
+        _write(production / 'research_control/current.json', work)
+        _write(production / 'research_control/work' / work_id / 'work.json', work)
         return {'status': 'rejected', 'review': review, 'work_id': work_id,
+                'reconsideration_available': True,
                 'next_tool_to_call': 'revise_evaluation_protocol'}
     if _read(envelope_path) != existing or _digest(development_evidence(thread)) != work['evidence_digest']:
         raise StaleResearchWork('Protocol or evidence changed during review; call plan_research_work.')

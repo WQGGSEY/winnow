@@ -285,6 +285,10 @@ def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tm
     kwargs = {'work_id': work['work_id'], 'notes': 'Any qualified method; identical endpoints and untouched partition.',
               'rationale': 'The original method lock conflicts with development method selection.'}
     assert protocol_revision.revise_evaluation_protocol(REPO, thread, **kwargs)['status'] == 'rejected'
+    rejected = current_work(thread)
+    assert rejected['status'] == 'planned'
+    assert rejected['protocol_review']['required_work'] == ['Preserve the endpoint meaning.']
+    assert rejected['reconsideration_available']
     assert json.loads(path.read_text()) == original
     result = protocol_revision.revise_evaluation_protocol(REPO, thread, **kwargs)
     assert json.loads(path.read_text()) == {**original, 'notes': kwargs['notes']}
@@ -302,18 +306,19 @@ def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tm
         protocol_revision.revise_evaluation_protocol(REPO, thread, **{**kwargs, 'work_id': work['work_id'], 'notes': 'Another change'})
 
 
-def test_reconsideration_keeps_rejected_plan_and_does_not_create_observations(tmp_path):
+@pytest.mark.parametrize('review_key', ['implementation_review', 'protocol_review'])
+def test_reconsideration_keeps_rejected_plan_and_does_not_create_observations(tmp_path, review_key):
     thread, tree, _, _, _ = fixture(tmp_path)
     work = plan_research_work(REPO, thread, transport=Planner())
     with pytest.raises(ValueError, match='rejected implementation feedback'):
         plan_research_work(REPO, thread, reconsider_reason='Missing telemetry.', transport=Planner('analysis'))
-    work.update(implementation_review={'decision': 'reject', 'reason': 'Missing reset logs cannot establish zero access.'})
+    work[review_key] = {'decision': 'reject', 'reason': 'Missing reset logs cannot establish zero access.'}
     (thread / 'production/research_control/current.json').write_text(json.dumps(work))
     planner = Planner('analysis')
     revised = plan_research_work(REPO, thread, reconsider_reason='Inspect available source provenance instead of inventing telemetry.', transport=planner)
     assert revised['next_tool_to_call'] == 'resolve_research_work'
     assert revised['evidence_digest'] == work['evidence_digest']
-    assert planner.calls[0]['previous_work']['implementation_review'] == work['implementation_review']
+    assert planner.calls[0]['previous_work'][review_key] == work[review_key]
     assert planner.calls[0]['reconsider_reason']
     old = json.loads((thread / 'production/research_control/work' / work['work_id'] / 'work.json').read_text())
     assert old['status'] == 'superseded'
