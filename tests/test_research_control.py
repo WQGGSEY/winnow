@@ -31,7 +31,7 @@ def test_execution_inventory_includes_preparation_without_reading_measurements(t
 
 
 class Planner:
-    def __init__(self, kind='diagnostic', budget=10):
+    def __init__(self, kind='diagnostic_experiment', budget=10):
         self.calls = []
         self.kind = kind
         self.budget = budget

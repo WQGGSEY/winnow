@@ -13,7 +13,7 @@ from research_harness.schemas.validator import validate_named_schema
 from research_harness.evaluation_vault import sealed_bank_metadata
 from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
 
-PLANNING_POLICY_VERSION = 6
+PLANNING_POLICY_VERSION = 7
 
 
 class StaleResearchWork(ValueError):
@@ -256,6 +256,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'A nonexistent program cannot have a prior hash. Prepared implementations are not empirical evidence or approval; inspect them, bind them if required, then execute the smallest useful probe. '
             'Choose analysis for questions answerable by interpreting existing source, definitions or recorded evidence. '
             'Do not write an experiment program to classify the meaning of prose or source semantics. '
+            'diagnostic_experiment always runs a program to obtain new measurements. Source-only inspection of schemas, serializers, or code is analysis even when it diagnoses a bug. '
             'Choose an execution kind only when new measurements are needed. Analysis cannot establish unmeasured causal or performance claims. '
             'Do not combine data reconstruction, source audits, estimator validation and historical reconciliation into one composite pass condition. '
             'An invalid earlier diagnostic may be set aside with an explicit limitation; reconstructing every historical row is not automatically a prerequisite to new research. '
@@ -271,7 +272,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'Give competing explanations, contrasting observable predictions and the decision each outcome changes. '
             'Select the smallest useful diagnostic before expensive training when validity is uncertain. '
             'Do not prescribe the same full experiment after an unchanged observation; change the discriminating test. '
-            'If diagnostic_required is true, choose diagnostic or analysis to locate the failure, or protocol_revision for a conflicting registration. Otherwise choose analysis, implementation, protocol_revision, diagnostic, competence, comparison or replication. Choose confirmation only after baseline qualification, fixed checkpoints and an executed public reference of the complete final measurement program, with an approved future sampler. '
+            'If diagnostic_required is true, choose diagnostic_experiment or analysis to locate the failure, or protocol_revision for a conflicting registration. Otherwise choose analysis, implementation, protocol_revision, diagnostic_experiment, competence, comparison or replication. Choose confirmation only after baseline qualification, fixed checkpoints and an executed public reference of the complete final measurement program, with an approved future sampler. '
             'Use an appropriate bounded runtime, at most max_runtime_seconds, and cite only available_evidence_ids. Prepared implementation references establish source existence, not execution or scientific validity. '
             'Unexpected results can motivate new explanations; do not assume the user-suspected mechanism. '
             'Do not write the learner, approve a scientific claim, change the frozen goal, access holdout or ask a human. '
@@ -289,7 +290,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     validate_named_schema('research_work', decision)
     if set(decision['evidence_ids']) - available_evidence or (available_evidence and not decision['evidence_ids']):
         raise ValueError('The work decision must cite existing development execution or source-analysis evidence.')
-    if diagnostic_required and decision['kind'] not in {'diagnostic', 'analysis', 'protocol_revision', 'implementation'}:
+    if diagnostic_required and decision['kind'] not in {'diagnostic_experiment', 'analysis', 'protocol_revision', 'implementation'}:
         raise ValueError('An execution failure or unchanged observation requires a discriminating diagnostic.')
     if decision['max_runtime_seconds'] > ceiling:
         raise ValueError('Work exceeds the registered runtime limit.')
