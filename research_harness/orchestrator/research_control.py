@@ -430,13 +430,19 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         raise ValueError('Implementation review requires the bound research work.')
     prior = work.get('implementation_review', {})
     plan_digest = _digest(plan)
-    review_policy_version = 4
+    review_policy_version = 5
     if prior.get('plan_digest') == plan_digest and prior.get('policy_version') == review_policy_version:
         if prior['decision'] != 'approve':
             raise ValueError('Work implementation needs revision: ' + json.dumps(prior, ensure_ascii=False))
         return
     directory = thread / 'production/research_control/work' / work_id / 'implementation_reviews'
     packet = {'work_decision': work['decision'], 'node': node, 'experiment_plan': plan,
+              'runner_contract': {
+                  'timeout_sec': plan['resources']['timeout_sec'],
+                  'timing_owner': 'LocalRunner subprocess timeout and runner_result.json elapsed_sec',
+                  'timeout_outcome': 'timeout; child metrics are not completed scientific evidence',
+                  'source_materialization': 'source_files content is written to workspace-relative paths before launch',
+              },
               'source_diagnostics': python_source_diagnostics(plan['source_files']),
               'analysis_findings': analysis_findings(thread),
               'prepared_implementations': prepared_implementations(thread),
@@ -456,6 +462,10 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         'Reject tautological self-comparisons and fabricated observations. Verify feature dimensions and decision-time semantics '
         'against referenced implementation when those are the subject of the test. Source paths may be inspected; '
         'the new workspace is materialized after this review, so do not require it to exist yet. '
+        'Use runner_contract for execution guarantees. LocalRunner enforces the subprocess timeout and records total elapsed time, '
+        'including child artifact emission; timed-out child metrics cannot qualify a method. '
+        'Do not require a child to time its own final artifact write inside that same artifact or duplicate the external hard timeout. '
+        'Child timers may describe phases, but the runner receipt governs whole-job runtime. '
         'Do not read final holdout or external-falsifier results. Return actionable changes to this implementation, not a new research question. '
         'Check prior objections against the revised code and reassess whether those objections were justified. '
         'Every mandatory change must follow from the selected test, declared objective, or cited method semantics. '
