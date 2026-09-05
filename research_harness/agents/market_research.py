@@ -761,72 +761,72 @@ def _assign_candidates(
     naive_hint = _first_or(fallback_baselines, 1, "BM25 or simple supervised baseline")
     null_hint = _first_or(fallback_baselines, 2, "random ranking / null hypothesis")
 
-    selected_paper = candidate_papers[0].paper if candidate_papers else None
     naive_paper = _pick_paper(candidate_papers, "naive")
     null_paper = _pick_paper(candidate_papers, "random_or_null")
 
-    candidates: list[dict[str, Any]] = []
-
-    if selected_paper is not None:
-        candidates.append(
-            _candidate_from_paper(
-                selected_paper,
-                decision="unqualified",
-                role="candidate",
-                fallback_method=str(fallback_baselines[0]) if fallback_baselines else "current best",
-                reason="Top-ranked search result for the grilled claim.",
-            )
+    candidates = [
+        _candidate_from_paper(
+            entry.paper,
+            decision="unqualified",
+            role="candidate",
+            fallback_method="retrieved baseline candidate",
+            reason="Retrieved for the grilled claim; qualification has not run.",
         )
-    else:
+        for entry in candidate_papers
+    ]
+
+    if not candidate_papers:
         candidates.append(
             _placeholder_candidate(
                 cid="c_current_best_placeholder",
                 method=str(fallback_baselines[0]) if fallback_baselines else "current best (placeholder)",
                 decision="unqualified",
                 role="candidate",
-                reason="No automated paper found; operator must review.",
+                reason="No automated paper found; operator must supply a sourced candidate.",
             )
         )
 
-    if naive_paper is not None and naive_paper["id"] != candidates[0]["id"]:
-        candidates.append(
-            _candidate_from_paper(
-                naive_paper,
-                decision="unqualified",
-                role="candidate",
-                fallback_method=naive_hint,
-                reason="Matched naive baseline heuristic from grilling.",
-            )
-        )
-    else:
+    existing_ids = {candidate["id"] for candidate in candidates}
+    if naive_paper is None:
         candidates.append(
             _placeholder_candidate(
                 cid="c_naive_placeholder",
                 method=naive_hint,
                 decision="unqualified",
                 role="candidate",
-                reason="Operator must attach a naive baseline reference.",
+                reason="Operator must attach a sourced naive baseline candidate.",
+            )
+        )
+    elif "c_" + _slug(naive_paper["id"])[:48] not in existing_ids:
+        candidates.append(
+            _candidate_from_paper(
+                naive_paper,
+                decision="unqualified",
+                role="candidate",
+                fallback_method=naive_hint,
+                reason="Retrieved as a possible naive baseline; qualification has not run.",
             )
         )
 
-    if null_paper is not None and null_paper["id"] not in {c["id"] for c in candidates}:
-        candidates.append(
-            _candidate_from_paper(
-                null_paper,
-                decision="unqualified",
-                role="candidate",
-                fallback_method=null_hint,
-                reason="Matched random/null heuristic from grilling.",
-            )
-        )
-    else:
+    existing_ids = {candidate["id"] for candidate in candidates}
+    if null_paper is None:
         candidates.append(
             _placeholder_candidate(
                 cid="c_null_placeholder",
                 method=null_hint,
                 decision="unqualified",
                 role="candidate",
-                reason="No random/null paper found; operator must review.",
+                reason="Operator must attach a sourced random or null baseline candidate.",
+            )
+        )
+    elif "c_" + _slug(null_paper["id"])[:48] not in existing_ids:
+        candidates.append(
+            _candidate_from_paper(
+                null_paper,
+                decision="unqualified",
+                role="candidate",
+                fallback_method=null_hint,
+                reason="Retrieved as a possible random or null baseline; qualification has not run.",
             )
         )
 

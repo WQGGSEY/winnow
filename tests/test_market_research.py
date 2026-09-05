@@ -217,6 +217,28 @@ class MarketResearchTests(unittest.TestCase):
                 outcome.brief["baseline_dossier_id"].startswith("bd_grill_test_001_")
             )
 
+    def test_discovery_preserves_later_papers_as_selectable_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            http = _FakeHttp(
+                {"http://export.arxiv.org/api/query": SAMPLE_ARXIV_XML.encode("utf-8")}
+            )
+            pdf = _FakeHttp({"http://arxiv.org/pdf/": b"%PDF-1.4 fake"})
+            outcome = self._run(
+                tmp=Path(tmp), http=http, pdf=pdf, enable_google_scholar=False
+            )
+
+            candidates = outcome.dossier["candidates_index"]
+            second_paper_candidate = candidates[1]
+            self.assertIn("BM25 Baseline Revisited", second_paper_candidate["method"])
+            self.assertNotEqual(second_paper_candidate["id"], candidates[0]["id"])
+            supporting_sources = [
+                source["id"]
+                for source in outcome.dossier["source_index"]
+                if second_paper_candidate["id"] in source["supports"]
+            ]
+            self.assertTrue(supporting_sources)
+            self.assertEqual(second_paper_candidate["decision"], "unqualified")
+
     def test_write_to_memory_creates_dossier_files_that_load_back(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"

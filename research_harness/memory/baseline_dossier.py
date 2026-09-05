@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import date
 from pathlib import Path
@@ -151,8 +150,8 @@ def validate_baseline_selection(
     """Validate comparable, executed baseline assignments.
 
     This proves that all required roles use the same declared comparison and
-    that each result points to an execution artifact with matching bytes. It
-    does not prove that a method is scientifically suitable for the role.
+    that the canonical runner verifier can rebuild each result. It does not
+    prove that a method is scientifically suitable for the role.
     """
     validate_baseline_dossier(repo_root, dossier, base_dir=dossier_base_dir)
     validate_named_schema("baseline_qualification", qualification)
@@ -166,24 +165,41 @@ def validate_baseline_selection(
         raise BaselineDossierError(
             "qualification must assign each required baseline role exactly once"
         )
+    assigned_candidates = [assignment["candidate_id"] for assignment in assignments]
+    if len(set(assigned_candidates)) != len(assigned_candidates):
+        raise BaselineDossierError(
+            "qualification must use a distinct candidate for each baseline role"
+        )
 
     candidate_ids = {candidate["id"] for candidate in dossier["candidates_index"]}
     source_support = {
         source["id"]: set(source["supports"]) for source in dossier["source_index"]
     }
     comparison = assignments[0]["comparison"]
+    if any(assignment["comparison"] != comparison for assignment in assignments[1:]):
+        raise BaselineDossierError(
+            "baseline comparisons must use the same task, data, split, budget, and metric"
+        )
     artifact_root = artifact_root.resolve()
     selected: dict[str, str] = {}
+    execution_bindings: dict[str, dict[str, str]] = {}
+
+    def execution_path(raw: str, label: str) -> Path:
+        path = Path(raw)
+        if not path.is_absolute():
+            path = artifact_root / path
+        path = path.resolve()
+        try:
+            path.relative_to(artifact_root)
+        except ValueError as exc:
+            raise BaselineDossierError(f"{label} is outside artifact_root: {path}") from exc
+        return path
 
     for assignment in assignments:
         candidate_id = assignment["candidate_id"]
         if candidate_id not in candidate_ids:
             raise BaselineDossierError(
                 f"qualified candidate is not in dossier: {candidate_id}"
-            )
-        if assignment["comparison"] != comparison:
-            raise BaselineDossierError(
-                "baseline comparisons must use the same task, data, split, budget, and metric"
             )
         for source_id in assignment["source_ids"]:
             if source_id not in source_support:
@@ -194,48 +210,48 @@ def validate_baseline_selection(
                 )
 
         receipt = assignment["reproducibility_receipt"]
-        if receipt["exit_code"] != 0:
-            raise BaselineDossierError(
-                f"baseline execution failed for candidate {candidate_id}"
-            )
         if receipt["metric_id"] != comparison["metric_id"]:
             raise BaselineDossierError(
                 f"receipt metric does not match comparison for candidate {candidate_id}"
             )
-        artifact = Path(receipt["artifact_path"])
-        if not artifact.is_absolute():
-            artifact = artifact_root / artifact
-        artifact = artifact.resolve()
         try:
-            artifact.relative_to(artifact_root)
-        except ValueError as exc:
-            raise BaselineDossierError(
-                f"execution artifact is outside artifact_root: {artifact}"
-            ) from exc
-        if not artifact.is_file():
-            raise BaselineDossierError(f"execution artifact missing: {artifact}")
-        digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
-        if digest != receipt["artifact_sha256"]:
-            raise BaselineDossierError(
-                f"execution artifact digest mismatch for candidate {candidate_id}"
+            node = json.loads(execution_path(receipt["node_path"], "node_path").read_text())
+            experiment_plan = json.loads(
+                execution_path(receipt["experiment_plan_path"], "experiment_plan_path").read_text()
             )
-        try:
-            artifact_result = json.loads(artifact.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            worker_report = json.loads(
+                execution_path(receipt["worker_report_path"], "worker_report_path").read_text()
+            )
+            from research_harness.orchestrator.strong_result import (
+                verify_strong_execution_evidence,
+            )
+            execution_evidence = verify_strong_execution_evidence(
+                node=node,
+                experiment_plan=experiment_plan,
+                worker_report=worker_report,
+                node_dir=execution_path(receipt["node_dir"], "node_dir"),
+                tree_dir=execution_path(receipt["tree_dir"], "tree_dir"),
+            )
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
             raise BaselineDossierError(
-                f"execution artifact is not JSON for candidate {candidate_id}"
+                f"runner evidence is invalid for candidate {candidate_id}: {exc}"
             ) from exc
-        metrics = artifact_result.get("metrics") if isinstance(artifact_result, dict) else None
+        metrics = worker_report.get("metrics") if isinstance(worker_report, dict) else None
         if not isinstance(metrics, dict) or metrics.get(receipt["metric_id"]) != receipt["metric_value"]:
             raise BaselineDossierError(
                 f"execution artifact does not contain the receipted metric for candidate {candidate_id}"
             )
         selected[assignment["role"]] = candidate_id
+        execution_bindings[assignment["role"]] = {
+            "job_manifest_sha256": execution_evidence["job_manifest_sha256"],
+            "runner_result_sha256": execution_evidence["runner_result_sha256"],
+        }
 
     return {
         "dossier_id": dossier["id"],
         "comparison": comparison,
         "assignments": selected,
+        "execution_bindings": execution_bindings,
         "qualification_limit": (
             "structural comparability and artifact integrity verified; "
             "scientific role suitability requires review"

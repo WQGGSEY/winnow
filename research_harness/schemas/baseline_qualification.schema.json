@@ -40,12 +40,13 @@
           },
           "reproducibility_receipt": {
             "type": "object",
-            "required": ["artifact_path", "artifact_sha256", "command", "exit_code", "metric_id", "metric_value"],
+            "required": ["node_path", "experiment_plan_path", "worker_report_path", "node_dir", "tree_dir", "metric_id", "metric_value"],
             "properties": {
-              "artifact_path": { "type": "string", "minLength": 1 },
-              "artifact_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-              "command": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
-              "exit_code": { "type": "integer" },
+              "node_path": { "type": "string", "minLength": 1 },
+              "experiment_plan_path": { "type": "string", "minLength": 1 },
+              "worker_report_path": { "type": "string", "minLength": 1 },
+              "node_dir": { "type": "string", "minLength": 1 },
+              "tree_dir": { "type": "string", "minLength": 1 },
               "metric_id": { "type": "string", "minLength": 1 },
               "metric_value": { "type": "number" }
             },

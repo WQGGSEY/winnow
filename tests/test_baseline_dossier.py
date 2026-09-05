@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from research_harness.memory.baseline_dossier import (
@@ -56,8 +56,15 @@ class BaselineDossierTests(unittest.TestCase):
             "refresh_policy": {"required_before": ["promotion"]},
         }
 
-    def _qualification(self, artifact: Path) -> dict:
-        digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    def _qualification(self, root: Path) -> dict:
+        node_dir = root / "tree" / "nodes" / "n_baseline"
+        workspace = node_dir / "workspace"
+        workspace.mkdir(parents=True, exist_ok=True)
+        (node_dir / "node.json").write_text('{"id": "n_baseline"}')
+        (node_dir / "experiment_plan.json").write_text('{"plan_id": "p_baseline"}')
+        (node_dir / "worker_report.json").write_text(
+            '{"metrics": {"accuracy": 0.5}}'
+        )
         roles = ["current_best_known", "naive", "random_or_null"]
         candidates = ["c_best", "c_naive", "c_null"]
         return {
@@ -80,10 +87,11 @@ class BaselineDossierTests(unittest.TestCase):
                         "version": "commit-123",
                     },
                     "reproducibility_receipt": {
-                        "artifact_path": artifact.name,
-                        "artifact_sha256": digest,
-                        "command": ["python", "evaluate.py", candidate],
-                        "exit_code": 0,
+                        "node_path": "tree/nodes/n_baseline/node.json",
+                        "experiment_plan_path": "tree/nodes/n_baseline/experiment_plan.json",
+                        "worker_report_path": "tree/nodes/n_baseline/worker_report.json",
+                        "node_dir": "tree/nodes/n_baseline",
+                        "tree_dir": "tree",
                         "metric_id": "accuracy",
                         "metric_value": 0.5,
                     },
@@ -189,39 +197,48 @@ class BaselineDossierTests(unittest.TestCase):
     def test_selection_requires_comparable_executed_baselines(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            artifact = root / "result.json"
-            artifact.write_text('{"metrics": {"accuracy": 0.5}}')
             dossier = self._unqualified_dossier(root)
-            qualification = self._qualification(artifact)
+            qualification = self._qualification(root)
+            qualification["assignments"][0]["candidate_id"] = "c_naive"
+            qualification["assignments"][0]["source_ids"] = ["s2"]
+            qualification["assignments"][1]["candidate_id"] = "c_best"
+            qualification["assignments"][1]["source_ids"] = ["s1"]
 
-            result = validate_baseline_selection(
-                root, dossier, qualification, artifact_root=root, dossier_base_dir=root
-            )
+            with mock.patch(
+                "research_harness.orchestrator.strong_result.verify_strong_execution_evidence",
+                return_value={
+                    "job_manifest_sha256": "1" * 64,
+                    "runner_result_sha256": "2" * 64,
+                },
+            ) as verify:
+                result = validate_baseline_selection(
+                    root, dossier, qualification, artifact_root=root, dossier_base_dir=root
+                )
 
-            self.assertEqual(result["assignments"]["current_best_known"], "c_best")
+            self.assertEqual(result["assignments"]["current_best_known"], "c_naive")
             self.assertIn("scientific role suitability", result["qualification_limit"])
+            self.assertEqual(verify.call_count, 3)
 
     def test_selection_rejects_mismatched_comparison_and_artifact_digest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            artifact = root / "result.json"
-            artifact.write_text('{"metrics": {"accuracy": 0.5}}')
             dossier = self._unqualified_dossier(root)
-            qualification = self._qualification(artifact)
+            qualification = self._qualification(root)
             qualification["assignments"][1]["comparison"]["split_id"] = "other"
             with self.assertRaisesRegex(BaselineDossierError, "same task"):
                 validate_baseline_selection(
                     root, dossier, qualification, artifact_root=root, dossier_base_dir=root
                 )
 
-            qualification = self._qualification(artifact)
-            qualification["assignments"][2]["reproducibility_receipt"][
-                "artifact_sha256"
-            ] = "0" * 64
-            with self.assertRaisesRegex(BaselineDossierError, "digest mismatch"):
-                validate_baseline_selection(
-                    root, dossier, qualification, artifact_root=root, dossier_base_dir=root
-                )
+            qualification = self._qualification(root)
+            with mock.patch(
+                "research_harness.orchestrator.strong_result.verify_strong_execution_evidence",
+                side_effect=ValueError("runner command mismatch"),
+            ):
+                with self.assertRaisesRegex(BaselineDossierError, "runner evidence"):
+                    validate_baseline_selection(
+                        root, dossier, qualification, artifact_root=root, dossier_base_dir=root
+                    )
 
 
 if __name__ == "__main__":
