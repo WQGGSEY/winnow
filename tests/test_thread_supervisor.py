@@ -1665,6 +1665,25 @@ class LockTests(unittest.TestCase):
 
 
 class WatchLoopTests(unittest.TestCase):
+    def test_updated_pending_work_resumes_after_normal_exit_without_idle(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            tdir = _make_thread(repo, 't1')
+            calls = []
+            def spawn_work(prompt, **kwargs):
+                calls.append(prompt)
+                path = tdir / 'production/research_control/current.json'
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps({'status': 'planned', 'review_revision': len(calls)}))
+                return 0
+            with mock.patch.object(ts, 'spawn_codex_session', side_effect=spawn_work), \
+                 mock.patch.object(ts, 'advance_resumable_reorientation', return_value=None), \
+                 mock.patch.object(ts, 'mcp_idle_seconds', return_value=0), \
+                 mock.patch.object(ts.time, 'sleep', side_effect=AssertionError('pending work waited for idle')):
+                result = ts.watch_thread(repo, 't1', max_cycles=2)
+            self.assertEqual(result['cycles'], 2)
+            self.assertEqual(len(calls), 2)
+
     def test_historical_pending_decision_does_not_pause_research(self):
         from research_harness.orchestrator.operator_prompts import enqueue_prompt
 

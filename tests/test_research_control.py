@@ -99,6 +99,7 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     assert not (thread / 'production/tree/baseline_preflight' / node['id'] / 'job_manifest.json').exists()
     assert mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})['status'] == 'rejected'
     assert len(reviewed) == 1
+    assert revision['reconsideration_available']
     plan['source_files'][0]['content'] += '\n# revised measurement path\n'
     request_path.write_text(json.dumps({'node': node, 'experiment_plan': plan, 'role': role, 'work_id': work['work_id']}))
     result = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
@@ -289,3 +290,22 @@ def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tm
     (thread / 'production/falsifier_result.json').write_text('{}')
     with pytest.raises(ValueError, match='Final evaluation'):
         protocol_revision.revise_evaluation_protocol(REPO, thread, **{**kwargs, 'work_id': work['work_id'], 'notes': 'Another change'})
+
+
+def test_reconsideration_keeps_rejected_plan_and_does_not_create_observations(tmp_path):
+    thread, tree, _, _, _ = fixture(tmp_path)
+    work = plan_research_work(REPO, thread, transport=Planner())
+    with pytest.raises(ValueError, match='rejected implementation feedback'):
+        plan_research_work(REPO, thread, reconsider_reason='Missing telemetry.', transport=Planner('analysis'))
+    work.update(implementation_review={'decision': 'reject', 'reason': 'Missing reset logs cannot establish zero access.'})
+    (thread / 'production/research_control/current.json').write_text(json.dumps(work))
+    planner = Planner('analysis')
+    revised = plan_research_work(REPO, thread, reconsider_reason='Inspect available source provenance instead of inventing telemetry.', transport=planner)
+    assert revised['next_tool_to_call'] == 'resolve_research_work'
+    assert revised['evidence_digest'] == work['evidence_digest']
+    assert planner.calls[0]['previous_work']['implementation_review'] == work['implementation_review']
+    assert planner.calls[0]['reconsider_reason']
+    old = json.loads((thread / 'production/research_control/work' / work['work_id'] / 'work.json').read_text())
+    assert old['status'] == 'superseded'
+    assert old['superseded_by'] == revised['work_id']
+    assert not list(tree.rglob('worker_report.json'))

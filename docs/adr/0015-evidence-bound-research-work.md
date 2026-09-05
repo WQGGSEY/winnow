@@ -60,6 +60,14 @@ paper writer receives them, the methods section must anchor each amendment, and
 the publication receipt covers the amendment records. An amendment grants no
 scientific approval and cannot turn prior development into preregistered evidence.
 
+After an implementation rejection, `plan_research_work(reconsider_reason=...)`
+can replace an unsuitable procedure. The planner can inspect development source
+with read-only tools. The rejected plan remains in history with its feedback and
+replacement ID; reconsideration creates no observation or claim verdict. Ordinary
+input errors still resume the same work. When a successful agent turn updates
+unfinished work, the supervisor continues without the former idle wait. A normal
+exit alone, without a durable work update, does not count as progress.
+
 A request rejected before a job manifest exists returns to `planned` with the
 same work identity. Its rejection reason and the absolute path of its saved
 dispatch request remain available for correction. No execution checkpoint is

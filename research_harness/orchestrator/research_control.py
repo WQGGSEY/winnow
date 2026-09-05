@@ -77,14 +77,17 @@ def development_evidence(thread: Path) -> dict[str, Any]:
     return evidence
 
 
-def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str, Any]:
+def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '', transport=None) -> dict[str, Any]:
     from research_harness.orchestrator.hypothesis_development import hypothesis_context
 
     evidence = development_evidence(thread)
     previous = current_work(thread)
     envelope = _read(thread / 'production/feasibility_envelope.json')
+    if reconsider_reason and (previous.get('status') != 'planned'
+                              or previous.get('implementation_review', {}).get('decision') != 'reject'):
+        raise ValueError('Reconsideration requires a planned work with rejected implementation feedback.')
     planning_policy_version = PLANNING_POLICY_VERSION
-    if previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('protocol_digest') == _digest(envelope) and previous['evidence_digest'] == _digest(evidence):
+    if not reconsider_reason and previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('protocol_digest') == _digest(envelope) and previous['evidence_digest'] == _digest(evidence):
         return previous
     if previous.get('status') == 'running':
         # The public caller holds the same writer lock as execution. A remaining
@@ -132,6 +135,8 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
     packet = {
         'planning_policy_version': planning_policy_version,
         'registered_protocol': envelope,
+        'reconsider_reason': reconsider_reason,
+        'thread_dir': str(thread.resolve()),
         'goal_contract': _read(thread / 'production/reorientation/goal_contract.json'),
         'research': research, 'implementation_context': implementations, 'measurement_context': measurements,
         'active_claim': _read(thread / 'production/tree/search_state.json').get('nodes', []),
@@ -149,6 +154,12 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
     else:
         instructions = (
             'Choose ONE next research work unit using the supplied development evidence. '
+            'Use read-only inspection of referenced development sources when needed to check which records actually exist. '
+            'Missing telemetry is unknown, not zero observed events. Source inspection and historical access reconstruction may need analysis, '
+            'not a new experiment that merely searches source literals. Do not execute training, modify files or inspect holdout data while planning. '
+            'When reconsider_reason is present, reassess the rejected implementation feedback and the feasibility of the selected test. '
+            'Preserve the research objective and previous evidence, but change the procedure or work kind when the prior test cannot answer it. '
+            'This supersedes a plan, not a scientific hypothesis; an input rejection is not an empirical observation. '
             'Read the full registered_protocol, including its notes. Its method, split and evaluation restrictions constrain this study. '
             'Do not silently change a registered comparator, candidate or metric. If development needs a method change barred by an earlier protocol, '
             'choose protocol_revision before further method selection. revise_evaluation_protocol can independently review a prospective notes amendment '
@@ -181,7 +192,7 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
         with tempfile.TemporaryDirectory(prefix='research-work-') as temporary:
             response = (transport or CodexCliAdapter()).complete(CompletionRequest(
                 prompt=AgentPrompt(instructions=instructions, input=json.dumps(packet, ensure_ascii=False)),
-                model='gpt-5.6-sol', timeout_seconds=240, allow_local_tools=False,
+                model='gpt-5.6-sol', timeout_seconds=240, allow_local_tools=True,
                 output_schema=repo / 'research_harness/schemas/research_work.schema.json',
                 cwd=Path(temporary), label='research work decision',
             ))
@@ -205,6 +216,9 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
         work['next_tool_to_call'] = 'resolve_research_work'
     elif decision['kind'] == 'protocol_revision':
         work['next_tool_to_call'] = 'revise_evaluation_protocol'
+    if reconsider_reason:
+        previous.update(status='superseded', superseded_by=work['work_id'], reconsider_reason=reconsider_reason)
+        _write(thread / 'production/research_control/work' / previous['work_id'] / 'work.json', previous)
     _write(thread / 'production/research_control/current.json', work)
     _write(thread / 'production/research_control/work' / work['work_id'] / 'work.json', work)
     return work
@@ -344,7 +358,10 @@ def finish_work(thread: Path, result: dict[str, Any]) -> dict[str, Any]:
     _write(thread / 'production/research_control/current.json', work)
     _write(thread / 'production/research_control/work' / work['work_id'] / 'work.json', work)
     if dispatch_rejected:
+        can_reconsider = work.get('implementation_review', {}).get('decision') == 'reject'
         return {**result, 'work_id': work['work_id'], 'next_tool_to_call': work['next_tool_to_call'],
                 'dispatch_request_path': work['outcome'].get('dispatch_request_path'),
-                'next_step': 'Correct the rejected execution input and retry the same research work; no experiment ran.'}
+                'reconsideration_available': can_reconsider,
+                'next_step': ('Apply the implementation feedback. If it reveals missing evidence or an unsuitable test, call plan_research_work with reconsider_reason to revise the procedure; no experiment ran.'
+                              if can_reconsider else 'Correct the rejected execution input and retry the same research work; no experiment ran.')}
     return {**result, 'research_work_checkpoint': work['work_id'], 'next_tool_to_call': 'plan_research_work'}

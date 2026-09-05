@@ -131,7 +131,7 @@ TOOL_DEFINITIONS = [
     {
         "name": "plan_research_work",
         "description": "Choose one evidence-bound research work unit before a new execution. The harness interprets development results, distinguishes implementation problems from scientific hypotheses, records competing predictions and a bounded test. Resume the returned work_id; after execution plan the next unit from the new evidence. No human approval or scientific claim approval is implied.",
-        "inputSchema": {"type": "object", "required": ["thread_id"], "properties": {"thread_id": {"type": "string"}}, "additionalProperties": False},
+        "inputSchema": {"type": "object", "required": ["thread_id"], "properties": {"thread_id": {"type": "string"}, "reconsider_reason": {"type": "string", "minLength": 1, "description": "Use after implementation rejection reveals missing evidence or an unsuitable test. Preserve the objective and evidence while reconsidering the procedure instead of retrying an impossible implementation."}}, "additionalProperties": False},
     },
     {
         "name": "develop_research_hypotheses",
@@ -1410,7 +1410,7 @@ def handle_plan_research_work(args: dict[str, Any]) -> dict[str, Any]:
     tid = args['thread_id']
     with _exclusive_adaptive_writer(tid):
         try:
-            return plan_research_work(_repo_root(), _thread_dir(tid))
+            return plan_research_work(_repo_root(), _thread_dir(tid), reconsider_reason=args.get('reconsider_reason', ''))
         except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:
             return {'status': 'planning_failed', 'reason': str(exc), 'next_tool_to_call': 'plan_research_work'}
 

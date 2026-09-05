@@ -1277,6 +1277,7 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "     한 실행이 끝나면 supervisor가 새 세션에서 결과를 해석하고 다음 작업을 계획한다.",
         "     실행 오류를 과학적 반박으로 해석하지 말고, 동일 관측이면 판별 검사로 원인을 좁혀.",
         "     planned 작업에 거절 사유와 dispatch_request_path가 있으면 저장된 요청의 입력 오류를 고쳐 같은 검사를 재시도해. 실행 전 거절은 새 연구 관측이 아니야.",
+        "     구현 검토가 필요한 기록의 부재나 검사 자체의 한계를 드러내면 plan_research_work(reconsider_reason=...)로 절차를 재검토해. 목표와 기존 근거를 보존하고 불가능한 검사 구현을 반복하지 마.",
         "  2. needed_resources가 있으면 advance_research의 획득 경계로 해결해.",
         "     frozen bar를 좁히지 말고 checkpoint 또는 hard_external_block을 보존해.",
         "     기준선 승인은 claim 생성의 선행 조건이 아니다. 정식 노드가 없으면",
@@ -1765,10 +1766,12 @@ def watch_thread(
     _log(log_path, f"stall watchdog: stall_timeout={DEFAULT_CODEX_STALL_TIMEOUT:.0f}s "
                    f"experiment_hard_cap={experiment_hard_cap:.0f}s (longest runner_timeout + margin)")
 
+    from research_harness.orchestrator.research_control import current_work
+
     cycle = 0
     rate_limit_backoff = rate_limit_backoff_initial
     rate_limit_armed = False  # toggled after a fast-fail cycle
-    work_unit_yielded = False
+    resume_without_idle = False
     while True:
         terminal, outcome = is_terminal(repo, tid)
         if terminal:
@@ -1824,7 +1827,7 @@ def watch_thread(
         # auto-bootstrap, which would otherwise force a full max_idle wait before
         # the first spawn (the ~10-min cold-start delay). Spawn cycle #1
         # immediately; the idle gate governs only subsequent (resume) cycles.
-        if cycle > 0 and idle <= max_idle_seconds and not work_unit_yielded:
+        if cycle > 0 and idle <= max_idle_seconds and not resume_without_idle:
             # Recent activity — MCP still being driven. Wait.
             time.sleep(poll_seconds)
             continue
@@ -1837,7 +1840,9 @@ def watch_thread(
         if cycle == 1:
             _log(log_path, "cycle #1: cold start, starting Codex immediately (idle gate applies from cycle #2)")
         else:
-            _log(log_path, f"cycle #{cycle}: idle={idle:.0f}s > {max_idle_seconds:.0f}s, starting Codex")
+            _log(log_path, f"cycle #{cycle}: starting Codex to continue unfinished work" if resume_without_idle
+                 else f"cycle #{cycle}: idle={idle:.0f}s > {max_idle_seconds:.0f}s, starting Codex")
+        work_before = current_work(tdir)
         spawn_started = time.time()
         try:
             exit_code = spawn_codex_session(
@@ -1852,6 +1857,9 @@ def watch_thread(
             )
             spawn_elapsed = time.time() - spawn_started
             work_unit_yielded = exit_code == WORK_UNIT_EXIT_CODE
+            work_after = current_work(tdir)
+            pending_work_written = exit_code == 0 and work_after != work_before and work_after.get('status') in {'planned', 'completed'}
+            resume_without_idle = work_unit_yielded or pending_work_written
             _log(
                 log_path,
                 f"cycle #{cycle}: Codex subprocess exited code={exit_code} after {spawn_elapsed:.1f}s",
@@ -1859,8 +1867,12 @@ def watch_thread(
             # PR8 rate-limit detection. A real Codex session normally runs
             # at least several minutes (MCP tool calls + reasoning). A
             # sub-30s exit usually means auth/rate-limit/binary failure.
+            if interrupted['flag']:
+                continue
             if work_unit_yielded:
                 _log(log_path, 'work unit checkpoint: interpreting durable evidence in the next cycle.')
+            elif pending_work_written:
+                _log(log_path, 'unfinished research work was updated; continuing without an idle wait.')
             elif spawn_elapsed < RATE_LIMIT_FAST_FAIL_SECONDS:
                 rate_limit_armed = True
                 _log(
@@ -1881,7 +1893,7 @@ def watch_thread(
                 rate_limit_armed = False
                 rate_limit_backoff = rate_limit_backoff_initial
         except Exception as exc:  # noqa: BLE001
-            work_unit_yielded = False
+            resume_without_idle = False
             _log(log_path, f"cycle #{cycle}: spawn raised {type(exc).__name__}: {exc}")
             time.sleep(min(60.0, poll_seconds * 2))
 
