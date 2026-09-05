@@ -16,6 +16,25 @@ from unittest import mock
 import research_harness.mcp_server as srv
 
 
+def test_preflight_tool_advertises_the_experiment_validation_contract(tmp_path):
+    from research_harness.orchestrator.demo import _demo_node
+    from research_harness.orchestrator.experiment_plan import build_demo_experiment_plan
+    from research_harness.schemas.validator import SchemaValidationError, validate_schema
+
+    node = _demo_node()
+    plan = build_demo_experiment_plan(node, tmp_path)
+    tool = next(t for t in srv.TOOL_DEFINITIONS if t["name"] == "execute_baseline_preflight")
+    arguments = {"thread_id": "thread_test", "node": node, "experiment_plan": plan, "role": "current_best_known"}
+    validate_schema(tool["inputSchema"], arguments)
+    plan["task_class"] = "train_eval"
+    with unittest.TestCase().assertRaisesRegex(SchemaValidationError, "task_class"):
+        validate_schema(tool["inputSchema"], arguments)
+    plan["task_class"] = "training"
+    del plan["failure_index_hints"]
+    with unittest.TestCase().assertRaisesRegex(SchemaValidationError, "failure_index_hints"):
+        validate_schema(tool["inputSchema"], arguments)
+
+
 def test_selector_rechecks_changed_preparation_and_checkpoint(tmp_path, monkeypatch):
     tid = "thread_resume"
     tdir = tmp_path / "runs/threads" / tid

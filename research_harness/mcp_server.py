@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from research_harness.config import load_settings
+from research_harness.schemas.validator import load_schema
 from research_harness.orchestrator.llm_orchestrator.persona_validator import (
     validate_camera_ready_directives,
     validate_claim_contract,
@@ -122,7 +123,7 @@ TOOL_DEFINITIONS = [
         "description": "Update this thread's unqualified literature dossier before goal freezing. Supply a full baseline_dossier object and candidate_details mapping each candidate ID to source/method analysis text. The harness assigns all file paths. This does not approve a baseline. Use this tool instead of editing dossier files through the shell.",
         "inputSchema": {
             "type": "object", "required": ["thread_id", "dossier", "candidate_details"],
-            "properties": {"thread_id": {"type": "string"}, "dossier": {"type": "object"}, "candidate_details": {"type": "object", "additionalProperties": {"type": "string"}}},
+            "properties": {"thread_id": {"type": "string"}, "dossier": load_schema("baseline_dossier"), "candidate_details": {"type": "object", "additionalProperties": {"type": "string"}}},
         },
     },
     {
@@ -131,7 +132,7 @@ TOOL_DEFINITIONS = [
         "inputSchema": {
             "type": "object", "required": ["thread_id", "node", "experiment_plan", "role"],
             "properties": {
-                "thread_id": {"type": "string"}, "node": {"type": "object"}, "experiment_plan": {"type": "object"},
+                "thread_id": {"type": "string"}, "node": load_schema("node"), "experiment_plan": load_schema("experiment_plan"),
                 "role": {"type": "string", "enum": ["current_best_known", "naive", "random_or_null"]},
             },
         },
