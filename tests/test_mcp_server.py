@@ -16,6 +16,46 @@ from unittest import mock
 import research_harness.mcp_server as srv
 
 
+def test_paper_render_rechecks_evidence_after_attestation(tmp_path):
+    from tests.test_sakana_paper import _build_inputs
+    from tests.test_thread_supervisor import _write_verified_terminal_state
+
+    tid = "thread_publication"
+    tdir = tmp_path / "runs" / "threads" / tid
+    (tdir / "production").mkdir(parents=True)
+    _write_verified_terminal_state(tdir)
+    publication = tdir / "production" / "publication"
+    publication.mkdir()
+    _, _, _, figures, outline, sections = _build_inputs(publication)
+    drafts = publication / "_drafts"
+    (drafts / "sections").mkdir(parents=True)
+    (drafts / "outline.json").write_text(json.dumps(outline))
+    (drafts / "figures.json").write_text(json.dumps(figures))
+    for sid, section in sections.items():
+        (drafts / "sections" / f"{sid}.json").write_text(json.dumps(section))
+    with srv._repo_root_scope(tmp_path):
+        missing_references = srv.handle_render_final_paper({"thread_id": tid})
+        assert missing_references["status"] == "rejected"
+        assert "references" in missing_references["reason"]
+        for sid in ("abstract", "references"):
+            outline["section_outline"].append({"section_id": sid, "title": sid.title()})
+            (drafts / "sections" / f"{sid}.json").write_text(
+                json.dumps({"prose_html": f"<p>Fixture {sid}.</p>"})
+            )
+        (drafts / "outline.json").write_text(json.dumps(outline))
+        assert srv.handle_render_final_paper({"thread_id": tid})["status"] == "ok"
+        report_path = next((tdir / "production" / "tree" / "nodes").glob("*/worker_report.json"))
+        report = json.loads(report_path.read_text())
+        report["metrics"]["unverified_change"] = 999.0
+        report_path.write_text(json.dumps(report))
+        paper = publication / "paper.html"
+        paper.write_text("previous verified manuscript")
+        result = srv.handle_render_final_paper({"thread_id": tid})
+    assert result["status"] == "rejected"
+    assert "strong" in result["reason"].lower()
+    assert paper.read_text() == "previous verified manuscript"
+
+
 def _patch_thread_dir(tmp: Path):
     """Point _thread_dir at our tempdir for the duration of one test."""
     orig = srv._thread_dir

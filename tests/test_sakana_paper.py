@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from html.parser import HTMLParser
+
 import pytest
 
 from research_harness.publishing.figures import render_figure
@@ -89,9 +91,12 @@ def test_paper_assembles_with_mental_model(tmp_path):
     )
     assert {a["output"] for a in dispatch["rendered_artifacts"]} == {"paper_html", "interactive_html", "slides_html"}
     html = (tmp_path / "paper.html").read_text(encoding="utf-8")
-    assert "mental-model-card" in html
-    assert "methodology-card" in html
-    assert "Add canary in method." in html
+    summary = (tmp_path / "interactive_summary.html").read_text(encoding="utf-8")
+    assert "Add canary in method." not in html
+    assert "Add canary in method." in summary
+    assert "Research Harness — Practitioner-Reviewed Pipeline" not in html
+    assert "n_root" not in html
+    assert "n_root" in summary
 
 
 def test_paper_rejects_empty_mental_model(tmp_path):
@@ -106,14 +111,18 @@ def test_paper_rejects_empty_mental_model(tmp_path):
         )
 
 
-def test_paper_rejects_zero_figures(tmp_path):
+def test_paper_allows_text_only_manuscript(tmp_path):
     wr, ac, rev, figs, outline, sections = _build_inputs(tmp_path)
-    with pytest.raises(SakanaPaperError, match="figure"):
-        render_sakana_paper(
-            outline=outline, sections=sections, figures_registry={},
-            ac_decision=ac, camera_ready_revision=rev, orchestrator_reduction={},
-            rebuttal_reviews=[], node={}, worker_report=wr, output_dir=tmp_path,
-        )
+    outline["figure_specs"] = []
+    for section in sections.values():
+        section["embedded_figure_ids"] = []
+        section["prose_html"] = "<p>A proof without figures.</p>"
+    render_sakana_paper(
+        outline=outline, sections=sections, figures_registry={},
+        ac_decision=ac, camera_ready_revision=rev, orchestrator_reduction={},
+        rebuttal_reviews=[], node={}, worker_report=wr, output_dir=tmp_path,
+    )
+    assert "A proof without figures." in (tmp_path / "paper.html").read_text()
 
 
 def test_paper_rejects_unregistered_figure_reference(tmp_path):
@@ -138,3 +147,48 @@ def test_paper_sanitizer_strips_script_tags(tmp_path):
     html = (tmp_path / "paper.html").read_text(encoding="utf-8")
     assert "<script>" not in html
     assert "&lt;script&gt;" in html
+
+
+def test_paper_preserves_figure_and_citation_urls(tmp_path):
+    wr, ac, rev, figs, outline, sections = _build_inputs(tmp_path)
+    sections["method"]["prose_html"] += (
+        '<a href="https://example.org/paper?a=1&amp;b=2">Reference</a>'
+    )
+    render_sakana_paper(
+        outline=outline, sections=sections, figures_registry=figs,
+        ac_decision=ac, camera_ready_revision=rev, orchestrator_reduction={},
+        rebuttal_reviews=[], node={}, worker_report=wr, output_dir=tmp_path,
+    )
+
+    class Links(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.images = []
+            self.links = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "img":
+                self.images.append(dict(attrs).get("src"))
+            if tag == "a":
+                self.links.append(dict(attrs).get("href"))
+
+    parsed = Links()
+    parsed.feed((tmp_path / "paper.html").read_text(encoding="utf-8"))
+    assert parsed.images and all(src == "figures/f_baseline.png" for src in parsed.images)
+    assert "https://example.org/paper?a=1&b=2" in parsed.links
+
+
+def test_paper_preserves_authored_appendix_and_numbers_body_from_one(tmp_path):
+    wr, ac, rev, figs, outline, sections = _build_inputs(tmp_path)
+    outline["section_outline"].insert(0, {"section_id": "abstract", "title": "Abstract"})
+    outline["section_outline"].append({"section_id": "supplementary", "title": "Proof details"})
+    sections["abstract"] = {"prose_html": "<p>Authored abstract.</p>"}
+    sections["supplementary"] = {"prose_html": "<p>The full proof is retained here.</p>"}
+    render_sakana_paper(
+        outline=outline, sections=sections, figures_registry=figs,
+        ac_decision=ac, camera_ready_revision=rev, orchestrator_reduction={},
+        rebuttal_reviews=[], node={}, worker_report=wr, output_dir=tmp_path,
+    )
+    paper = (tmp_path / "paper.html").read_text(encoding="utf-8")
+    assert "1. Introduction" in paper
+    assert "The full proof is retained here." in paper

@@ -30,7 +30,7 @@
     "mental_model_statement": {
       "type": "string",
       "minLength": 80,
-      "description": "The single good mental model this paper gives the reader, in 2-4 sentences. This text appears as a highlighted card immediately after the abstract. Operator language, not jargon."
+      "description": "The central explanation the paper gives the reader, in 2-4 sentences. Used for writing guidance and the internal report."
     },
     "section_outline": {
       "type": "array",
@@ -70,8 +70,8 @@
     },
     "figure_specs": {
       "type": "array",
-      "minItems": 1,
-      "description": "Server-rendered figures the paper will use. Must register at least one — a Sakana-v2-style paper without figures is not a paper, it's a memo. Each item is also validated against paper_figure_request.schema by the handler.",
+      "minItems": 0,
+      "description": "Server-rendered figures the paper will use, if any. Theory papers need not include figures. Each item is also validated against paper_figure_request.schema by the handler.",
       "items": { "type": "object" }
     },
     "table_specs": {

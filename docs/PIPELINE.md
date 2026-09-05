@@ -105,6 +105,15 @@ real-holdout falsifier, rebuttal acceptance, and a verified user-goal
 attestation. Only that receipt can commit `goal_achieved` and allow
 `render_final_paper`. Negative evidence has no publication terminal.
 
+The paper writer can read the verified completed node after its active attempt
+closes. Rendering rechecks the strong evidence under the writer lock. It
+requires authored abstract and references sections. `paper.html` is a manuscript
+preview; internal reviews and state records appear in `interactive_summary.html`.
+Authored appendices remain in the manuscript. Figure-free manuscripts are allowed.
+These checks do not establish conference submission readiness. The remaining
+evidence, bibliography, PDF and publication-binding gaps are recorded in the
+[paper-readiness audit](research/paper-readiness-audit.md).
+
 The production supervisor starts a fresh Codex JSONL session for each cycle.
 It passes the repository MCP command, arguments, and environment through
 per-invocation `-c mcp_servers.research_harness...` options, so production does

@@ -1,23 +1,6 @@
-"""Sakana-v2-style ICML paper assembler.
+"""Assemble a manuscript preview and a separate internal research report.
 
-The deterministic publishing/paper_html.py renderer was a state-bundle
-dump. This assembler is different: it takes LLM-written sections (via
-submit_paper_section), server-rendered figures (via register_paper_figure),
-the mental_model_statement from the camera-ready revision, and the AC's
-camera-ready directives, and stitches them into a real two-column ICML
-HTML paper.
-
-Key invariants enforced:
-- The mental_model_statement appears as a highlighted card immediately
-  after the abstract. A paper without a mental model is rejected.
-- At least one figure must be embedded somewhere in the body.
-- Sections that reference figure_ids must reference figures that exist
-  in the figures_registry.
-- HTML in submitted prose is sanitized to a whitelist of safe tags.
-
-Layout: ICML \\twocolumn body for sections 1..N; single-column blocks
-for abstract, mental_model card, impact statement, references, and
-supplementary state bundle.
+HTML rendering does not establish scientific or conference submission readiness.
 """
 
 from __future__ import annotations
@@ -25,17 +8,42 @@ from __future__ import annotations
 import html as html_lib
 import json
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 
 class SakanaPaperError(ValueError):
     pass
 
 
-# Whitelist of tags we accept inside submitted prose. Anything else is
-# stripped at sanitize time — we keep paragraphs/tables/figures/links
-# but drop scripts/styles/iframes/etc.
+PAPER_WRITING_REQUIREMENTS = (
+    "Write a self-contained research manuscript for an external reviewer. "
+    "The original problem, contribution, and closest prior work must be explicit.",
+    "Include authored abstract and references sections. Verify each cited paper's "
+    "metadata and what it supports. Internal reviews and lessons are not publications.",
+    "Explain the actual method using definitions, assumptions, algorithm details, "
+    "and equations as needed. A runner invocation is not a description of the method.",
+    "For empirical claims, describe data, splits, model selection, baselines and "
+    "matched budgets. Report measured results, uncertainty, and relevant ablations. "
+    "If evidence is absent, request experiments; do not invent it or pad the prose.",
+    "For theoretical claims, state precise assumptions and results, provide complete "
+    "proofs, and distinguish proven statements from conjectures. Figures are optional.",
+    "Trace quantitative claims and figure data to the supplied execution artifacts. "
+    "An evidence anchor must resolve to actual evidence, not just look like a path.",
+    "State limitations and the scope of the claim. Write an actual impact statement "
+    "when the target venue requires it; pipeline provenance is not an impact analysis.",
+    "Put complete proofs, implementation details and additional results in authored "
+    "supplementary sections. Internal AC scores, revision directives, local paths and "
+    "state JSON belong in the internal report, not in the submission manuscript.",
+    "HTML is a manuscript preview. Conference readiness also requires a chosen "
+    "venue, year and track, the official template, compiled PDF, verified bibliography, "
+    "anonymized supplementary artifacts and the required scientific review.",
+)
+
+
+# Disallowed tags are escaped. Only the listed attributes survive parsing.
 _ALLOWED_TAGS = {
     "p", "h3", "h4", "ul", "ol", "li", "strong", "em", "code", "pre",
     "table", "thead", "tbody", "tr", "th", "td", "figure", "figcaption",
@@ -50,39 +58,57 @@ _ALLOWED_ATTRS = {
 }
 
 
-def _sanitize_html(prose: str) -> str:
-    """Conservative HTML sanitizer for submitted section prose.
+class _SafeHTML(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.parts: list[str] = []
 
-    We accept a small whitelist of tags and attributes. Disallowed tags
-    have their angle brackets escaped so they render as visible text
-    rather than executing. Attributes outside the whitelist are dropped.
-    """
-    def replace_tag(match: re.Match[str]) -> str:
-        is_close = bool(match.group(1))
-        tag_name = match.group(2).lower()
-        attrs_str = match.group(3) or ""
-        if tag_name not in _ALLOWED_TAGS:
-            return html_lib.escape(match.group(0))
-        if is_close:
-            return f"</{tag_name}>"
-        allowed_attrs = _ALLOWED_ATTRS.get(tag_name, set())
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag not in _ALLOWED_TAGS:
+            self.parts.append(html_lib.escape(self.get_starttag_text()))
+            return
+        allowed_attrs = _ALLOWED_ATTRS.get(tag, set())
         clean_attrs: list[str] = []
-        for attr_match in re.finditer(
-            r'([a-zA-Z][a-zA-Z0-9_-]*)\s*=\s*"([^"]*)"', attrs_str
-        ):
-            name = attr_match.group(1).lower()
-            value = attr_match.group(2)
-            if name in allowed_attrs:
-                # Disallow javascript: URLs in href/src
-                if name in {"href", "src"} and value.strip().lower().startswith("javascript:"):
+        seen: set[str] = set()
+        for name, value in attrs:
+            if name not in allowed_attrs or value is None or name in seen:
+                continue
+            seen.add(name)
+            if name in {"href", "src"}:
+                normalized = re.sub(r"[\x00-\x20\x7f]", "", value)
+                try:
+                    scheme = urlsplit(normalized).scheme.lower()
+                except ValueError:
                     continue
-                clean_attrs.append(f'{name}="{html_lib.escape(value, quote=True)}"')
+                if scheme not in {"", "http", "https", "mailto"}:
+                    continue
+                if name == "src" and (scheme or normalized.startswith("//")):
+                    continue
+            clean_attrs.append(f'{name}="{html_lib.escape(value, quote=True)}"')
         joined = (" " + " ".join(clean_attrs)) if clean_attrs else ""
-        is_void = tag_name in {"img", "br", "hr"}
-        suffix = " />" if is_void else ">"
-        return f"<{tag_name}{joined}{suffix}"
+        suffix = " />" if tag in {"img", "br", "hr"} else ">"
+        self.parts.append(f"<{tag}{joined}{suffix}")
 
-    return re.sub(r"<(/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>", replace_tag, prose)
+    def handle_endtag(self, tag: str) -> None:
+        closing = f"</{tag}>"
+        if tag not in {"img", "br", "hr"}:
+            self.parts.append(closing if tag in _ALLOWED_TAGS else html_lib.escape(closing))
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(html_lib.escape(data, quote=False))
+
+    def handle_entityref(self, name: str) -> None:
+        self.parts.append(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        self.parts.append(f"&#{name};")
+
+
+def _sanitize_html(prose: str) -> str:
+    parser = _SafeHTML()
+    parser.feed(prose)
+    parser.close()
+    return "".join(parser.parts)
 
 
 def _esc(s: str) -> str:
@@ -179,7 +205,7 @@ def render_sakana_paper(
     worker_report: dict[str, Any],
     output_dir: Path,
 ) -> dict[str, Any]:
-    """Assemble the ICML two-column HTML paper from LLM submissions.
+    """Assemble a manuscript preview from submitted sections.
 
     Returns a publication_dispatch shape so the frontend's existing
     `Published artifacts` section can list the outputs without changes.
@@ -198,19 +224,15 @@ def render_sakana_paper(
     missing_fids = sorted(referenced_ids - set(figures_registry.keys()))
     if missing_fids:
         raise SakanaPaperError(f"sections reference unregistered figures: {missing_fids}")
-    if not figures_registry:
-        raise SakanaPaperError(
-            "at least one figure must be registered — a Sakana-v2-style paper without figures is a memo"
-        )
-
     title = outline.get("title") or node.get("claim_contract", {}).get("claim_under_test", "Untitled")
     abstract = sections.get("abstract", {}).get("prose_html") or outline.get("abstract_seed", "")
     abstract_sanitized = _sanitize_html(abstract)
 
-    # Two-column body sections in outline order (excluding meta sections).
+    # Body sections follow the outline; meta sections render separately.
     META_SECTIONS = {"abstract", "impact_statement", "references", "supplementary"}
     body_sections_html: list[str] = []
-    for i, sec_spec in enumerate(outline["section_outline"], start=1):
+    contents: list[str] = []
+    for sec_spec in outline["section_outline"]:
         sid = sec_spec["section_id"]
         if sid in META_SECTIONS:
             continue
@@ -219,20 +241,23 @@ def render_sakana_paper(
             raise SakanaPaperError(f"section {sid!r} was in outline but never submitted")
         sec_title = sec_spec.get("title") or sid.replace("_", " ").title()
         prose = _sanitize_html(section["prose_html"])
-        mml = section.get("mental_model_link", "")
-        mml_html = (
-            f"<p class='mental-model-link'><em>How this connects to the mental model:</em> "
-            f"{_esc(mml)}</p>" if mml else ""
-        )
+        heading = f"{len(body_sections_html) + 1}. {_esc(sec_title)}"
+        contents.append(f"<a href='#{_esc(sid)}'>{heading}</a>")
         body_sections_html.append(
-            f"<section><h2>{i}. {_esc(sec_title)}</h2>{mml_html}{prose}</section>"
+            f"<section id='{_esc(sid)}'><h2>{heading}</h2>{prose}</section>"
         )
 
     # Meta sections rendered separately (single-column blocks).
     impact_section = sections.get("impact_statement")
     references_section = sections.get("references")
+    supplementary_section = sections.get("supplementary")
+    supplementary_html = (
+        "<section class='singlecolumn' id='supplementary'><h2>Appendix</h2>"
+        f"{_sanitize_html(supplementary_section['prose_html'])}</section>"
+        if supplementary_section else ""
+    )
 
-    # AC + reviewer panel (always shown, single-column).
+    # Internal review material belongs in the companion report.
     directives_html = _render_directives_table(ac_decision.get("camera_ready_directives", []))
     reviewer_summary = _render_critic_summary(rebuttal_reviews)
     next_actions_block = _render_next_actions(rebuttal_reviews)
@@ -256,13 +281,6 @@ def render_sakana_paper(
             + "</section>"
         )
 
-    # Mental model card — highlighted block between abstract and intro.
-    mental_model_card = (
-        "<section class='mental-model-card'>"
-        "<h2>Mental model this paper gives you</h2>"
-        f"<p>{_esc(mental_model)}</p></section>"
-    )
-
     css = _ICML_CSS
 
     # State bundle for supplementary (JSON pretty-printed).
@@ -279,13 +297,7 @@ def render_sakana_paper(
     impact_html = (
         f"<section class='singlecolumn'><h2>Impact Statement</h2>"
         f"{_sanitize_html(impact_section['prose_html'])}</section>"
-        if impact_section else
-        "<section class='singlecolumn'><h2>Impact Statement</h2>"
-        "<p>This research was generated under the research_harness MCP pipeline, "
-        "with deterministic critic routing, LLM-driven practitioner reviewers, "
-        "an AC that emits camera-ready directives even on accept, and a paper writer "
-        "that requires an explicit mental model. Every claim, score, directive, "
-        "and revision is persisted under the run directory for full auditability.</p></section>"
+        if impact_section else ""
     )
     references_html = (
         f"<section class='singlecolumn'><h2>References</h2>"
@@ -300,10 +312,12 @@ def render_sakana_paper(
 <title>{_esc(title)}</title>
 <style>{css}</style>
 </head><body class="icml-paper">
+<nav class="preview-notice" aria-label="Preview information">
+  <span>Manuscript preview · venue formatting and submission checks pending</span>
+  <a href="interactive_summary.html">Internal research report</a>
+</nav>
 <header class="paper-header">
   <h1>{_esc(title)}</h1>
-  <div class="authors">Research Harness — Practitioner-Reviewed Pipeline</div>
-  <div class="affiliation">Sakana-v2 mirror under MCP-driven reasoning</div>
 </header>
 
 <section class="abstract">
@@ -311,36 +325,17 @@ def render_sakana_paper(
   <div class="abstract-body">{abstract_sanitized}</div>
 </section>
 
-{mental_model_card}
-
-{methodology_html}
+<nav class="contents" aria-label="Contents">{''.join(contents)}</nav>
 
 <main class="twocolumn">
 {''.join(body_sections_html)}
 </main>
 
-<section class="singlecolumn camera-ready-card">
-  <h2>Area-Chair camera-ready directives</h2>
-  <p class="muted">Directives the Professor folded into this revision. Even on accept,
-    the AC names rebuttal-surfaced insights that must shape camera-ready.</p>
-  {directives_html}
-</section>
-
-<section class="singlecolumn">
-  {reviewer_summary}
-  {next_actions_block}
-</section>
-
 {impact_html}
 
 {references_html}
 
-<section class="singlecolumn supplementary">
-  <h2>Supplementary — full state bundle</h2>
-  <details><summary>Click to expand JSON</summary>
-    <pre class='state-bundle'>{supp_json}</pre>
-  </details>
-</section>
+{supplementary_html}
 
 </body></html>
 """
@@ -350,7 +345,16 @@ def render_sakana_paper(
     # Also write a minimal interactive_summary.html (slides shown separately).
     interactive_path = output_dir / "interactive_summary.html"
     interactive_path.write_text(
-        _render_interactive_summary(title, mental_model, ac_decision, rebuttal_reviews, figures_registry),
+        _render_interactive_summary(
+            title, mental_model, ac_decision, rebuttal_reviews, figures_registry,
+            audit_html=(
+                methodology_html
+                + "<section class='camera-ready-card'><h2>Internal revision directives</h2>"
+                + directives_html + "</section>" + reviewer_summary + next_actions_block
+                + "<details><summary>Internal evidence and review record</summary>"
+                + f"<pre class='state-bundle'>{supp_json}</pre></details>"
+            ),
+        ),
         encoding="utf-8",
     )
     slides_path = output_dir / "slides_summary.html"
@@ -388,6 +392,8 @@ def _render_interactive_summary(
     ac_decision: dict[str, Any],
     reviews: list[dict[str, Any]],
     figures_registry: dict[str, dict[str, Any]],
+    *,
+    audit_html: str = "",
 ) -> str:
     figs = "".join(
         f"<figure><img src='figures/{fid}.png' alt='{_esc(meta.get('caption', ''))}'>"
@@ -403,12 +409,16 @@ def _render_interactive_summary(
         for r in reviews
     )
     return (
-        f"<!doctype html><html><head><meta charset='utf-8'><title>{_esc(title)} — interactive</title>"
+        f"<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        f"<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        f"<title>{_esc(title)} — internal report</title>"
         f"<style>{_ICML_CSS}</style></head><body class='interactive-page'>"
+        "<p><a href='paper.html'>Manuscript preview</a> · Internal review, not an external acceptance</p>"
         f"<h1>{_esc(title)}</h1>"
         f"<section class='mental-model-card'><h2>Mental model</h2><p>{_esc(mental_model)}</p></section>"
         f"<section><h2>Figures</h2>{figs}</section>"
         f"<section><h2>Reviewer take</h2>{reviews_html}</section>"
+        f"{audit_html}"
         "</body></html>"
     )
 
@@ -444,9 +454,11 @@ def _render_slides(
 
 _ICML_CSS = """
 :root { --ink:#111; --muted:#666; --accent:#2845a8; --hl-bg:#eef3ff; --warn:#c25450; }
-body.icml-paper { font-family: 'Georgia', serif; color: var(--ink); max-width: 1100px;
-  margin: 0 auto; padding: 32px 48px 80px; line-height: 1.5; font-size: 13.5px; }
-body.icml-paper h1 { font-size: 1.7em; line-height: 1.25; text-align: center; margin: 0 0 0.4em 0; }
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body.icml-paper, body.interactive-page { font-family: 'Georgia', serif; color: var(--ink); max-width: 850px;
+  margin: 0 auto; padding: 28px 48px 80px; line-height: 1.65; font-size: 16px; overflow-wrap: anywhere; }
+body.icml-paper h1 { font-size: 2em; line-height: 1.25; text-align: center; margin: 1.3em 0 0.7em; }
 body.icml-paper h2 { font-size: 1.15em; margin: 1.4em 0 0.6em 0; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
 body.icml-paper h3 { font-size: 1.0em; margin: 1.2em 0 0.5em 0; }
 .paper-header { text-align: center; margin-bottom: 1.2em; }
@@ -465,9 +477,15 @@ body.icml-paper h3 { font-size: 1.0em; margin: 1.2em 0 0.5em 0; }
 .methodology-card .verdict-provides { color:#2e7d2e; font-weight: 600; }
 .methodology-card .verdict-partial { color:#b88a00; font-weight: 600; }
 .methodology-card .verdict-absent { color: var(--warn); font-weight: 600; }
-main.twocolumn { column-count: 2; column-gap: 28px; }
-main.twocolumn section { break-inside: avoid-column; }
-main.twocolumn h2 { break-after: avoid-column; }
+main.twocolumn { column-count: 1; }
+main.twocolumn h2 { break-after: avoid; }
+.preview-notice { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px;
+  font: 12px/1.5 system-ui, sans-serif; color: var(--muted); border-bottom: 1px solid #ddd; padding-bottom: 12px; }
+.contents { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 24px 0;
+  font: 13px/1.5 system-ui, sans-serif; border-bottom: 1px solid #ddd; padding-bottom: 18px; }
+a { color: var(--accent); text-underline-offset: 3px; overflow-wrap: anywhere; }
+p { margin: 0.7em 0; }
+section { scroll-margin-top: 20px; }
 .singlecolumn { column-count: 1; margin-top: 2em; }
 .mental-model-link { color: var(--accent); font-size: 0.95em; margin: 0 0 0.5em 0; }
 .camera-ready-card table.directives th, .camera-ready-card table.directives td {
@@ -480,8 +498,23 @@ figure { margin: 14px auto; text-align: center; }
 figure img { max-width: 100%; border:1px solid #eee; }
 figcaption { font-size: 0.88em; color: var(--muted); padding: 4px 0; }
 pre.state-bundle { font-size: 0.78em; background:#fafafa; padding: 12px; overflow:auto; }
-table { border-collapse: collapse; margin: 8px 0; }
-table th { background:#f3f3f3; }
+table { border-collapse: collapse; margin: 16px 0; width: 100%; font-size: 0.9em; }
+table th { border-top: 2px solid #333; border-bottom: 1px solid #aaa; text-align: left; }
+table th, table td { padding: 7px 10px; }
+table tbody tr:last-child td { border-bottom: 2px solid #333; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  body.icml-paper, body.interactive-page { padding: 20px; font-size: 15px; }
+  body.icml-paper h1 { font-size: 1.65em; }
+  table { display: block; overflow-x: auto; }
+}
+@media print {
+  @page { margin: 20mm; }
+  body.icml-paper { max-width: none; padding: 0; font-size: 10pt; line-height: 1.4; }
+  .preview-notice, .contents { display: none; }
+  figure, table { break-inside: avoid; }
+  a { color: inherit; }
+}
 """
 
 

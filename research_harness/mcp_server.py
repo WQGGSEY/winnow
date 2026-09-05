@@ -3732,7 +3732,9 @@ def _figures_dir(tid: str) -> Path:
     return _publication_dir(tid) / "figures"
 
 
-def _resolve_promoted_node(tid: str, override_id: str | None = None) -> dict[str, Any]:
+def _resolve_promoted_node(
+    tid: str, override_id: str | None = None, *, allow_completed: bool = False,
+) -> dict[str, Any]:
     state_path = _thread_dir(tid) / "production" / "tree" / "search_state.json"
     state = _read_json(state_path)
     if not state:
@@ -3742,6 +3744,12 @@ def _resolve_promoted_node(tid: str, override_id: str | None = None) -> dict[str
         raise ValueError("no promoted nodes yet — rebuttal requires a promoted root")
     nodes_by_id = {node["id"]: node for node in state["nodes"]}
     target = _authoritative_active_node_id(tid)
+    if target is None and allow_completed:
+        from research_harness.thread_supervisor import is_terminal
+
+        verified, _ = is_terminal(_repo_root(), tid, require_rendered=False)
+        if verified:
+            target = state["adaptive"]["strong_result_receipt"]["promoted_node_id"]
     if target is None or target not in promoted:
         raise ValueError("the authoritative blind node is not promoted")
     if override_id is not None and override_id != target:
@@ -4732,8 +4740,10 @@ def _paper_dir(tid: str) -> Path:
 
 
 def handle_prepare_paper_writing_context(args: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.publishing.sakana_paper import PAPER_WRITING_REQUIREMENTS
+
     tid = args["thread_id"]
-    ctx = _resolve_promoted_node(tid)
+    ctx = _resolve_promoted_node(tid, allow_completed=True)
     rebuttal_dir = _rebuttal_dir(tid)
     reviews_dir = rebuttal_dir / "rebuttal_reviews"
     reviews = []
@@ -4751,13 +4761,16 @@ def handle_prepare_paper_writing_context(args: dict[str, Any]) -> dict[str, Any]
         }
     node_dir = _thread_dir(tid) / "production" / "tree" / "nodes" / ctx["promoted_id"]
     worker_report = _read_json(node_dir / "worker_report.json") or {}
+    production = _thread_dir(tid) / "production"
+    market = _thread_dir(tid) / "market"
+    market_brief = _read_json(market / "market_research_brief.json") or {}
+    analysis_path = market / "baseline_analysis.md"
 
     # Surface keys available for figure data_spec lookups.
     metric_keys = sorted((worker_report.get("metrics") or {}).keys())
     baseline_keys = sorted((worker_report.get("baselines") or {}).keys())
 
-    # PR4: surface cumulative memory (prior failures + active lessons) so
-    # the paper writer can cite them in related work / limitations.
+    # Internal lessons provide review context, not citable external literature.
     repo = _repo_root()
     active_lessons: list[dict[str, Any]] = []
     try:
@@ -4772,6 +4785,16 @@ def handle_prepare_paper_writing_context(args: dict[str, Any]) -> dict[str, Any]
         "promoted_node_id": ctx["promoted_id"],
         "node": ctx["node"],
         "worker_report": worker_report,
+        "experiment_plan": _read_json(node_dir / "experiment_plan.json"),
+        "runner_result": _read_json(node_dir / "workspace" / "runner_result.json"),
+        "falsifier_result": _read_json(rebuttal_dir / "falsifier_result.json"),
+        "construct_adversary_report": _read_json(rebuttal_dir / "construct_adversary_report.json"),
+        "frozen_question": _read_json(production / "frozen_question.json"),
+        "goal_contract": _read_json(production / "reorientation" / "goal_contract.json"),
+        "market_brief": market_brief,
+        "reference_papers": market_brief.get("papers") or [],
+        "baseline_analysis_md": analysis_path.read_text(encoding="utf-8") if analysis_path.exists() else None,
+        "writing_requirements": list(PAPER_WRITING_REQUIREMENTS),
         "rebuttal_reviews": reviews,
         "orchestrator_reduction": reduction,
         "ac_decision": ac,
@@ -4831,7 +4854,7 @@ def handle_register_paper_figure(args: dict[str, Any]) -> dict[str, Any]:
             "reason": f"figure_id {req['figure_id']!r} not in submitted outline. expected: {sorted(expected_ids)}",
         }
 
-    ctx = _resolve_promoted_node(tid)
+    ctx = _resolve_promoted_node(tid, allow_completed=True)
     node_dir = _thread_dir(tid) / "production" / "tree" / "nodes" / ctx["promoted_id"]
     worker_report = _read_json(node_dir / "worker_report.json") or {}
     ac = _read_json(_rebuttal_dir(tid) / "ac_decision.json") or {}
@@ -5592,9 +5615,22 @@ def handle_submit_professor_user_goal_attestation(
 
 
 def handle_render_final_paper(args: dict[str, Any]) -> dict[str, Any]:
+    with _exclusive_adaptive_writer(args["thread_id"]):
+        return _handle_render_final_paper_locked(args)
+
+
+def _handle_render_final_paper_locked(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.publishing.sakana_paper import render_sakana_paper, SakanaPaperError
+    from research_harness.thread_supervisor import is_terminal
 
     tid = args["thread_id"]
+    verified, _ = is_terminal(_repo_root(), tid, require_rendered=False)
+    if not verified:
+        return {
+            "status": "rejected",
+            "reason": "paper render requires a currently verified strong result; "
+                      "finish or repair the evidence and goal attestation first",
+        }
     # DUAL GATE: both AC accept/revise AND user_goal_attestation.achieved=true
     # must hold before paper render is allowed. Either gate alone is insufficient.
     ac_pre = _read_json(_rebuttal_dir(tid) / "ac_decision.json") or {}
@@ -5636,6 +5672,12 @@ def handle_render_final_paper(args: dict[str, Any]) -> dict[str, Any]:
     section_files = sorted(sections_dir.glob("*.json")) if sections_dir.exists() else []
     expected = {s["section_id"] for s in outline["section_outline"]}
     submitted = {p.stem for p in section_files}
+    required_sections = {"abstract", "references"}
+    if not required_sections <= expected:
+        return {
+            "status": "rejected",
+            "reason": "final manuscript outline requires authored abstract and references sections",
+        }
     missing = sorted(expected - submitted)
     if missing:
         return {"status": "rejected", "reason": f"missing sections: {missing}"}
@@ -5649,7 +5691,7 @@ def handle_render_final_paper(args: dict[str, Any]) -> dict[str, Any]:
     reviews_dir = rebuttal_dir / "rebuttal_reviews"
     reviews = [_read_json(p) for p in sorted(reviews_dir.glob("*.json"))] if reviews_dir.exists() else []
 
-    ctx = _resolve_promoted_node(tid)
+    ctx = _resolve_promoted_node(tid, allow_completed=True)
     node_dir = _thread_dir(tid) / "production" / "tree" / "nodes" / ctx["promoted_id"]
     worker_report = _read_json(node_dir / "worker_report.json") or {}
 
