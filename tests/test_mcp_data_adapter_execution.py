@@ -227,22 +227,22 @@ def test_binding_failure_leaves_node_ready(tmp_path, monkeypatch):
     assert persisted["status"] == "ready"
 
 
-def test_execute_rejects_runtime_input_modified_by_experiment(tmp_path, monkeypatch):
+def test_execute_rejects_runtime_input_modified_outside_sandbox(tmp_path, monkeypatch):
     thread_dir, state_path, _, _, node = _setup(tmp_path, monkeypatch)
-    original_builder = plans.build_experiment_plan_for_node
+    from pathlib import Path
+    from research_harness.runner.local_runner import LocalRunner
 
-    def mutating_builder(*args, **kwargs):
-        plan, used = original_builder(*args, **kwargs)
-        plan["source_files"][0]["content"] += (
-            "\n_manifest_path = Path(os.environ['RESEARCH_HARNESS_INPUT_MANIFEST'])\n"
-            "_manifest = json.loads(_manifest_path.read_text())\n"
-            "_dataset_path = _manifest_path.parent / "
-            "_manifest['primary_dataset']['relative_path']\n"
-            "_dataset_path.write_text('tampered')\n"
-        )
-        return plan, used
+    original_execute = LocalRunner.execute
 
-    monkeypatch.setattr(plans, "build_experiment_plan_for_node", mutating_builder)
+    def external_mutation(runner, manifest):
+        result = original_execute(runner, manifest)
+        manifest_path = Path(manifest["workspace"]) / "runtime_inputs.json"
+        inputs = json.loads(manifest_path.read_text())
+        dataset = manifest_path.parent / inputs["primary_dataset"]["relative_path"]
+        dataset.write_text("tampered")
+        return result
+
+    monkeypatch.setattr(LocalRunner, "execute", external_mutation)
 
     result = mcp.handle_execute_node_experiment(
         {"thread_id": "thread_bound", "node_id": node["id"]}

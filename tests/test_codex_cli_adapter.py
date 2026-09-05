@@ -162,7 +162,7 @@ def test_auth_accepts_chatgpt_and_redacts_raw_status() -> None:
     assert runner.calls[0][0] == ["codex", "login", "status"]
 
 
-def test_production_command_uses_automatic_review_and_per_call_mcp(tmp_path: Path) -> None:
+def test_production_command_uses_read_only_shell_and_per_call_mcp(tmp_path: Path) -> None:
     adapter = CodexCliAdapter(codex_path="codex")
     command = adapter._build_exec_command(
         request=None,
@@ -175,18 +175,20 @@ def test_production_command_uses_automatic_review_and_per_call_mcp(tmp_path: Pat
         ),
     )
 
-    assert command[:6] == [
+    assert command[:7] == [
         "codex",
-        "--approve-for-me",
+        "--ask-for-approval",
+        "never",
         "exec",
         "--ephemeral",
         "--ignore-user-config",
         "--ignore-rules",
     ]
-    assert "--ask-for-approval" not in command
-    assert "--sandbox" not in command
+    assert "--approve-for-me" not in command
+    assert command[command.index("--sandbox") + 1] == "read-only"
     assert 'model_reasoning_effort="low"' in command
     assert 'mcp_servers.research_harness.command="python"' in command
+    assert 'mcp_servers.research_harness.default_tools_approval_mode="approve"' in command
     assert 'mcp_servers.research_harness.args=["-m", "research_harness.mcp_server", "--repo-root", "' in " ".join(command)
     assert 'mcp_servers.research_harness.env.COIN_DATA_DIR="/data/coin"' in command
     assert command[-1] == "-"

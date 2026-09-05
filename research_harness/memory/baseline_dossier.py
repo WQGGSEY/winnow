@@ -36,7 +36,8 @@ def load_baseline_dossier(repo_root: Path, dossier_id: str) -> dict[str, Any]:
     path = dossier_path(repo_root, dossier_id)
     if not path.exists():
         raise BaselineDossierError(f"baseline dossier not found: {dossier_id}")
-    dossier = load_yaml(path)
+    text = path.read_text(encoding="utf-8")
+    dossier = json.loads(text) if text.lstrip().startswith("{") else load_yaml(path)
     if not isinstance(dossier, dict):
         raise BaselineDossierError("baseline dossier must be a map")
     validate_baseline_dossier(repo_root, dossier, base_dir=path.parent)

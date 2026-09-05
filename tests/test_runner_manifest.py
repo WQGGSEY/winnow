@@ -15,6 +15,37 @@ from research_harness.workers.workspace import WorkspaceGuardError
 
 
 class RunnerManifestTests(unittest.TestCase):
+    def test_experiment_cannot_modify_validator_or_inputs(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            root = Path(tmp)
+            validator = root / "validator.py"
+            validator.write_text("original")
+            manifest = build_demo_job_manifest(_demo_node(), root / "run")
+            workspace = Path(manifest["workspace"])
+            inputs = workspace / "inputs"
+            inputs.mkdir()
+            game = inputs / "game.py"
+            game.write_text("original")
+            (workspace / "escape").symlink_to(validator)
+            source = (
+                "from pathlib import Path\n"
+                "for path in [Path('escape'), Path('inputs/game.py')]:\n"
+                "    assert path.read_text() == 'original'\n"
+                "    try:\n"
+                "        path.write_text('tampered')\n"
+                "    except OSError:\n"
+                "        pass\n"
+                "    else:\n"
+                "        raise AssertionError('protected file was writable')\n"
+                "Path('result.txt').write_text('experiment output')\n"
+            )
+            (workspace / "experiment.py").write_text(source)
+            result = LocalRunner(root / "run").execute(manifest)
+            self.assertEqual(result["status"], "completed", Path(result["stderr_path"]).read_text())
+            self.assertEqual(validator.read_text(), "original")
+            self.assertEqual(game.read_text(), "original")
+            self.assertEqual((workspace / "result.txt").read_text(), "experiment output")
+
     def test_demo_job_manifest_is_schema_valid_and_runner_valid(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "run"

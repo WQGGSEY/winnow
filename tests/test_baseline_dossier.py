@@ -23,6 +23,34 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class BaselineDossierTests(unittest.TestCase):
+    def test_source_update_assigns_paths_and_cannot_approve_or_rewrite_frozen_goal(self) -> None:
+        import json
+        from research_harness.memory.baseline_review import update_baseline_sources
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dossier = self._unqualified_dossier(root)
+            thread = root / "thread"
+            (thread / "market").mkdir(parents=True)
+            (thread / "market/market_research_brief.json").write_text(json.dumps({"baseline_dossier_id": dossier["id"]}))
+            details = {c["id"]: "primary source analysis" for c in dossier["candidates_index"]}
+            dossier["candidates_index"][0]["detail_file"] = "../../validator.py"
+            result = update_baseline_sources(root, thread, dossier, details)
+            self.assertFalse(result["scientific_approval"])
+            stored = load_baseline_dossier(root, dossier["id"])
+            self.assertIsNone(stored["selected"])
+            self.assertFalse((root / "validator.py").exists())
+            self.assertTrue(all(c["detail_file"].startswith("bd_test/") for c in stored["candidates_index"]))
+            dossier["selected"] = {"candidate_id": "c_best"}
+            with self.assertRaisesRegex(ValueError, "cannot select or approve"):
+                update_baseline_sources(root, thread, dossier, details)
+            dossier["selected"] = None
+            frozen = thread / "production/reorientation/goal_contract.json"
+            frozen.parent.mkdir(parents=True)
+            frozen.write_text("{}")
+            with self.assertRaisesRegex(ValueError, "frozen"):
+                update_baseline_sources(root, thread, dossier, details)
+
     def _unqualified_dossier(self, root: Path) -> dict:
         candidates_dir = root / "candidates"
         candidates_dir.mkdir()

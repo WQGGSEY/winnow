@@ -29,6 +29,13 @@ The older market and refiner agents remain available only for historical runs.
 `research_harness.research_runner` is the high-level CLI that drives this. Live
 Codex invocations remain behind subscription-quota and execution acknowledgements.
 
+Local experiment execution requires Linux with `bubblewrap` (`bwrap` on PATH).
+Experiments can write their assigned workspace and private temporary files; staged
+inputs and the rest of the filesystem are read-only. Network access is disabled
+inside experiments. Fetch research inputs through the harness acquisition tools.
+The research agent's shell is read-only; submit code and literature updates through
+the corresponding MCP tools.
+
 ## Included
 
 - Claim-centered node schema and runtime envelope.

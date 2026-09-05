@@ -181,7 +181,7 @@ class CodexCliAdapter:
             cwd = request.cwd
         if not model:
             raise ValueError("Codex requests require a model")
-        approval = ["--approve-for-me"] if mcp is not None else ["--ask-for-approval", "never"]
+        approval = ["--ask-for-approval", "never"]
         command = [
             self._codex_path,
         ]
@@ -209,8 +209,7 @@ class CodexCliAdapter:
         effort = model_reasoning_effort(model)
         if effort is not None:
             command.extend(["-c", "model_reasoning_effort=" + _toml_string(effort)])
-        if mcp is None:
-            command.extend(["--sandbox", "read-only"])
+        command.extend(["--sandbox", "read-only"])
         if cwd is not None:
             command.extend(["--cd", str(cwd)])
         if request is not None and request.output_schema is not None:
@@ -222,6 +221,8 @@ class CodexCliAdapter:
                     "mcp_servers.research_harness.command=" + _toml_string(mcp.command),
                     "-c",
                     "mcp_servers.research_harness.args=" + json.dumps(list(mcp.args)),
+                    "-c",
+                    'mcp_servers.research_harness.default_tools_approval_mode="approve"',
                 ]
             )
             for key, value in sorted(mcp.environment.items()):

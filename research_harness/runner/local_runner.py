@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -20,6 +21,29 @@ from research_harness.workers.workspace import WorkspaceGuardError, ensure_path_
 
 class RunnerValidationError(ValueError):
     """Raised when a deterministic runner manifest is unsafe or invalid."""
+
+
+def isolated_runner_command(command: list[str], workspace: Path) -> list[str]:
+    """Allow experiment writes only inside its workspace and private temporary files."""
+    bubblewrap = shutil.which("bwrap")
+    if bubblewrap is None:
+        raise RunnerValidationError("LocalRunner requires bubblewrap for experiment isolation")
+    if shutil.which(command[0]) is None:
+        raise FileNotFoundError(command[0])
+    launch = [
+        bubblewrap, "--die-with-parent", "--new-session",
+        "--ro-bind", "/", "/", "--unshare-net", "--unshare-pid", "--unshare-ipc",
+        "--proc", "/proc", "--dev", "/dev",
+        "--tmpfs", "/tmp", "--bind", str(workspace), str(workspace),
+    ]
+    for device in [Path("/dev/dxg"), *Path("/dev").glob("nvidia*")]:
+        if device.exists():
+            launch.extend(["--dev-bind", str(device), str(device)])
+    for name in ("inputs", "runtime_inputs.json"):
+        path = workspace / name
+        if path.exists():
+            launch.extend(["--ro-bind", str(path), str(path)])
+    return [*launch, "--chdir", str(workspace), "--", *command]
 
 
 def resolve_runner_command(
@@ -205,7 +229,7 @@ class LocalRunner:
         started = time.monotonic()
         try:
             completed = subprocess.run(
-                command,
+                isolated_runner_command(command, workspace),
                 cwd=workspace,
                 capture_output=True,
                 text=True,

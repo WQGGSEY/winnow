@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -89,8 +90,10 @@ class LiveGateTests(unittest.TestCase):
             self.assertFalse(plan["billing_guard"]["ack_ok"])
 
     def test_missing_cli_is_reported_before_auth(self) -> None:
+        real_which = shutil.which
         with tempfile.TemporaryDirectory() as tmp, patch(
-            "research_harness.workers.live_gate.shutil.which", return_value=None
+            "research_harness.workers.live_gate.shutil.which",
+            side_effect=lambda name: None if name == "codex" else real_which(name),
         ):
             plan = build_manual_live_smoke_plan(
                 REPO_ROOT,
