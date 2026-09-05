@@ -166,10 +166,10 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "execute_baseline_preflight",
-        "description": "While baseline qualification is pending, write and execute ONE baseline implementation. To revise a saved dispatch, use its absolute request_path plus updates (path segments and new value), without retransmitting unchanged source code or writing files from the read-only shell. Example update: {path:[node,id],value:new_id}; also update experiment_plan.node_id. Inline objects work for initial requests. Use a new node ID when changing a previously executed plan; completed receipts are immutable. The harness binds the operator input snapshot, enforces compute limits and runs LocalRunner. Use exactly one baseline_evidence_requirement and report only that baseline key. This is execution evidence, not scientific approval. Implement methods yourself after retrieving primary sources.",
+        "description": "While baseline qualification is pending, write and execute ONE baseline implementation. Prefer supplying experiment_plan without node: the harness derives operational metadata, input snapshot, and the identical claim contract automatically. An explicit node remains subject to exact contract validation. To revise a saved dispatch, use its absolute request_path plus updates (path segments and new value), without retransmitting unchanged source code or writing files from the read-only shell. To change node identity, update experiment_plan.node_id; update node.id as well only if the saved request supplied an explicit node. Inline objects work for initial requests. Use a new node ID when changing a previously executed plan; completed receipts are immutable. The harness binds the operator input snapshot, enforces compute limits and runs LocalRunner. Use exactly one baseline_evidence_requirement and report only that baseline key. This is execution evidence, not scientific approval. Implement methods yourself after retrieving primary sources.",
         "inputSchema": {
             "type": "object",
-            "anyOf": [{"required": ["request_path"]}, {"required": ["thread_id", "node", "experiment_plan", "role"]}],
+            "anyOf": [{"required": ["request_path"]}, {"required": ["thread_id", "experiment_plan", "role"]}],
             "properties": {
                 "thread_id": {"type": "string"}, "node": load_schema("node"), "experiment_plan": load_schema("experiment_plan"),
                 "role": {"type": "string", "enum": ["current_best_known", "naive", "random_or_null"]},
@@ -4066,7 +4066,7 @@ def handle_submit_baseline_qualification(args: dict[str, Any]) -> dict[str, Any]
 
 
 def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
-    from research_harness.runner.baseline_preflight import execute_baseline_preflight
+    from research_harness.runner.baseline_preflight import build_preflight_node, execute_baseline_preflight
     from research_harness.memory.baseline_review import baseline_roles_frozen
     from research_harness.settings_scoped import resolve_for_thread
     from research_harness.orchestrator.research_control import StaleResearchWork, bind_work, current_work, finish_work
@@ -4122,7 +4122,8 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
                 args = {**request, 'thread_id': tid}
             elif args.get('updates'):
                 raise ValueError('Dispatch updates require request_path.')
-            node_id = args['node']['id']
+            node = args['node'] if 'node' in args else build_preflight_node(_thread_dir(tid), args['experiment_plan'])
+            node_id = node['id']
             path = _thread_dir(tid) / 'production/tree/baseline_preflight' / node_id
             path.resolve().relative_to((_thread_dir(tid) / 'production/tree/baseline_preflight').resolve())
             if not (path / 'worker_report.json').exists():
@@ -4130,7 +4131,7 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
                 bound = True
                 _write_json_atomic(_thread_dir(tid) / 'production/research_control/work' / args['work_id'] / 'dispatch_request.json', args)
             result = execute_baseline_preflight(
-                _repo_root(), _thread_dir(tid), node=args["node"], plan=args["experiment_plan"],
+                _repo_root(), _thread_dir(tid), node=node, plan=args["experiment_plan"],
                 role=args["role"], settings=resolve_for_thread(_repo_root(), tid),
                 research_work_id=args.get('work_id'),
             )

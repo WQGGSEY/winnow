@@ -14,6 +14,37 @@ from research_harness.runtime_inputs import bind_runtime_input
 from research_harness.schemas.validator import validate_named_schema
 
 
+def build_preflight_node(thread_dir: Path, plan: dict[str, Any]) -> dict[str, Any]:
+    """Derive preparation metadata without duplicating the author's experiment contract."""
+    from research_harness.orchestrator.adaptive_search import build_research_goal
+
+    def read(relative: str) -> dict[str, Any]:
+        path = thread_dir / relative
+        return json.loads(path.read_text()) if path.exists() else {}
+
+    envelope = read('production/feasibility_envelope.json')
+    goal = read('production/tree/search_state.json').get('adaptive', {}).get('goal')
+    if not goal:
+        goal = build_research_goal(thread=read('thread.json'),
+                                  grilling=read('grilling/grilling_session.json'), envelope=envelope)
+    contract = {key: plan[key] for key in (
+        'claim_under_test', 'mandatory_baselines', 'success_criteria', 'disproof_conditions')}
+    intent = envelope.get('operator_intent', {})
+    contract.update({key: intent[key] for key in ('data_source_anchor', 'data_source_snapshot_id') if key in intent})
+    contract['deploy_grade_scope'] = intent.get('target_deploy_grade_scope', 'directional')
+    node = {
+        'id': plan['node_id'], 'type': 'operational', 'status': 'ready',
+        'domain': plan['objective'], 'stage': 'experimentation', 'claim_contract': contract,
+        'lineage': {'root_goal_id': goal['id'], 'covers_goal_facets': [],
+                    'inherited_assumptions': [], 'introduced_assumptions': [], 'taste_constraints_applied': []},
+        'baseline_refs': [], 'runtime_profile': {'worker_type': 'experiment_worker', 'timeout_policy': 'hard'},
+        'failure_retrieval': {'query_tags': plan['failure_index_hints']['risk_tags'], 'selected_fail_files': []},
+        'outputs': {'artifacts': [], 'verdict': None},
+    }
+    validate_named_schema('node', node)
+    return node
+
+
 def baseline_preparation_state(thread_dir: Path) -> dict[str, Any]:
     """Project preparation receipts without treating them as claim evidence."""
     root = thread_dir / 'production/tree/baseline_preflight'

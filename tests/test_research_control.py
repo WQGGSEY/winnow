@@ -75,7 +75,8 @@ def fixture(tmp_path):
     return thread, tree, node, plan, requirement['role']
 
 
-def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_path, monkeypatch):
+@pytest.mark.parametrize('explicit_node', [True, False])
+def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_path, monkeypatch, explicit_node):
     thread, tree, node, plan, role = fixture(tmp_path)
     planner = Planner()
     work = plan_research_work(REPO, thread, transport=planner)
@@ -104,7 +105,7 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
         }}
     monkeypatch.setattr(research_review, 'review_research_packet', review)
     request_path = thread / 'dispatch.json'
-    request_path.write_text(json.dumps({'node': node, 'experiment_plan': plan, 'role': role, 'work_id': work['work_id']}))
+    request_path.write_text(json.dumps({**({'node': node} if explicit_node else {}), 'experiment_plan': plan, 'role': role, 'work_id': work['work_id']}))
     outside = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(tmp_path / 'outside.json')})
     assert outside['status'] == 'rejected'
     revision = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
@@ -132,7 +133,7 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     assert packet['previous_work']['outcome']['observation']['execution_status'] == 'failed'
     assert next_work['decision']['evidence_ids'] == [node['id']]
     plan['source_files'][0]['content'] += '\n# corrected request\n'
-    request_path.write_text(json.dumps({'node': node, 'experiment_plan': plan, 'role': role, 'work_id': next_work['work_id']}))
+    request_path.write_text(json.dumps({**({'node': node} if explicit_node else {}), 'experiment_plan': plan, 'role': role, 'work_id': next_work['work_id']}))
     rejected = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
     assert rejected['status'] == 'rejected'
     assert 'new node ID' in rejected['reason']
@@ -141,8 +142,8 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     assert Path(rejected['dispatch_request_path']).is_absolute()
     corrected = mcp_server.handle_execute_baseline_preflight({
         'request_path': rejected['dispatch_request_path'],
-        'updates': [{'path': ['node', 'id'], 'value': 'n_corrected'},
-                    {'path': ['experiment_plan', 'node_id'], 'value': 'n_corrected'},
+        'updates': ([{'path': ['node', 'id'], 'value': 'n_corrected'}] if explicit_node else []) +
+                   [{'path': ['experiment_plan', 'node_id'], 'value': 'n_corrected'},
                     {'path': ['experiment_plan', 'plan_id'], 'value': 'plan_corrected'},
                     {'path': ['experiment_plan', 'source_files', 0, 'purpose'], 'value': 'Corrected measurement diagnostic.'}],
     })

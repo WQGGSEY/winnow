@@ -54,6 +54,8 @@ def test_preflight_tool_advertises_the_experiment_validation_contract(tmp_path):
     tool = next(t for t in srv.TOOL_DEFINITIONS if t["name"] == "execute_baseline_preflight")
     arguments = {"thread_id": "thread_test", "node": node, "experiment_plan": plan, "role": "current_best_known"}
     validate_schema(tool["inputSchema"], arguments)
+    del arguments['node']
+    validate_schema(tool["inputSchema"], arguments)
     plan["task_class"] = "train_eval"
     with unittest.TestCase().assertRaisesRegex(SchemaValidationError, "task_class"):
         validate_schema(tool["inputSchema"], arguments)
