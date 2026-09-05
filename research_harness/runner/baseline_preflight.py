@@ -89,7 +89,8 @@ def execute_baseline_preflight(
         contract = node['claim_contract']
         for key in ('data_source_anchor', 'data_source_snapshot_id'):
             if contract.get(key) != intent.get(key):
-                raise ValueError('preflight must use the operator-selected input snapshot')
+                raise ValueError(f'preflight must use the operator-selected input snapshot: '
+                                 f'{key} must be {intent.get(key)!r}, got {contract.get(key)!r}')
         snapshot = require_thread_snapshot(thread_dir, adapter_id=intent['data_source_anchor'], snapshot_id=intent['data_source_snapshot_id'])
         plan['inputs'] = bind_runtime_input(snapshot=snapshot, workspace=workspace, repo_root=repo)
     node_dir.mkdir(parents=True, exist_ok=True)

@@ -27,6 +27,13 @@ the decision and the evidence packet. Execution binds the node, scope and plan
 digest. An outdated plan, mismatched work ID or runtime exceeding the work budget
 cannot dispatch a new experiment. Completed preflight receipts remain replayable.
 
+A request rejected before a job manifest exists returns to `planned` with the
+same work identity. Its rejection reason and the absolute path of its saved
+dispatch request remain available for correction. No execution checkpoint is
+issued. The Pacman E2E exposed why this distinction matters: input-snapshot and
+duplicated success-criteria errors were being mistaken for completed work, so
+the next planner changed the scientific test despite receiving no observation.
+
 `finish_work` records the actual runner/report observation and whether its
 measurement/error signature differs from the preceding observations. This is
 called `new_observation`, never scientific progress or qualification. Source-code
@@ -57,7 +64,7 @@ observations even if later work changes disk state. Old two-field reservations
 remain readable. The private closed-attempt ledger and final holdout are not
 injected into generation. Novelty checks and one-active-attempt binding remain.
 
-Supervisor sessions yield after an execution tool completes, or after 16 completed
+Supervisor sessions yield after an execution tool returns a durable work checkpoint, or after 16 completed
 MCP calls with no pending MCP call. They never yield in the middle of an execution.
 The result is written to the event log before termination. A dedicated internal
 exit code distinguishes an intentional work checkpoint from rate limits or a

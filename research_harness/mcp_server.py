@@ -3921,6 +3921,7 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
             if not (path / 'worker_report.json').exists():
                 bind_work(_thread_dir(tid), args.get('work_id'), node_id, args['experiment_plan'])
                 bound = True
+                _write_json_atomic(_thread_dir(tid) / 'production/research_control/work' / args['work_id'] / 'dispatch_request.json', args)
             result = execute_baseline_preflight(
                 _repo_root(), _thread_dir(tid), node=args["node"], plan=args["experiment_plan"],
                 role=args["role"], settings=resolve_for_thread(_repo_root(), tid),

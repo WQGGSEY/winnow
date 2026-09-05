@@ -100,3 +100,20 @@ def test_restart_reconciles_reserved_work_and_never_reads_final_holdout(tmp_path
     assert following['status'] == 'planned'
     assert 'DO_NOT_USE' not in json.dumps(planner.calls)
     assert planner.calls[0]['previous_work']['status'] == 'completed'
+
+
+def test_dispatch_rejection_preserves_question_and_allows_corrected_input(tmp_path):
+    thread, _, node, plan, _ = fixture(tmp_path)
+    planner = Planner()
+    work = plan_research_work(REPO, thread, transport=planner)
+    bind_work(thread, work['work_id'], node['id'], plan)
+    result = finish_work(thread, {'status': 'rejected', 'reason': 'preflight must use the operator-selected input snapshot'})
+    resumed = plan_research_work(REPO, thread, transport=planner)
+    assert resumed['work_id'] == work['work_id']
+    assert resumed['status'] == 'planned'
+    assert resumed['outcome']['reason'] == result['reason']
+    assert 'research_work_checkpoint' not in result
+    assert len(planner.calls) == 1
+    corrected = copy.deepcopy(plan)
+    corrected['inputs'] = []
+    bind_work(thread, work['work_id'], node['id'], corrected)

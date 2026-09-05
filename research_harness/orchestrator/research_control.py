@@ -182,11 +182,25 @@ def finish_work(thread: Path, result: dict[str, Any]) -> dict[str, Any]:
     evidence = development_evidence(thread)
     new = evidence.get(work['binding']['node_id'])
     previous = {e['observation_digest'] for e in work['source_observations'].values()}
+    node_dir = thread / 'production/tree' / work['binding'].get('scope', 'baseline_preflight') / work['binding']['node_id']
+    dispatch_rejected = result.get('status') == 'rejected' and new is None and not (node_dir / 'job_manifest.json').exists()
     work.update(status='completed', outcome={
         'execution_result': result.get('status'), 'observation': new,
+        'reason': result.get('reason'),
         'new_observation': bool(new and new['observation_digest'] not in previous),
         'scientific_verdict': 'unverified',
     }, next_tool_to_call='plan_research_work')
+    if dispatch_rejected:
+        work.update(status='planned', next_tool_to_call='execute_baseline_preflight'
+                    if work['binding'].get('scope', 'baseline_preflight') == 'baseline_preflight' else 'execute_node_experiment')
+        del work['binding']
+        request_path = thread / 'production/research_control/work' / work['work_id'] / 'dispatch_request.json'
+        if request_path.exists():
+            work['outcome']['dispatch_request_path'] = str(request_path.resolve())
     _write(thread / 'production/research_control/current.json', work)
     _write(thread / 'production/research_control/work' / work['work_id'] / 'work.json', work)
+    if dispatch_rejected:
+        return {**result, 'work_id': work['work_id'], 'next_tool_to_call': work['next_tool_to_call'],
+                'dispatch_request_path': work['outcome'].get('dispatch_request_path'),
+                'next_step': 'Correct the rejected execution input and retry the same research work; no experiment ran.'}
     return {**result, 'research_work_checkpoint': work['work_id'], 'next_tool_to_call': 'plan_research_work'}

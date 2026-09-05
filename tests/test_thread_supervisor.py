@@ -1761,7 +1761,7 @@ class WatchLoopTests(unittest.TestCase):
             fake = Path(tmp) / "fake_codex.py"
             event = {"type": "item.completed", "item": {"id": "run1", "type": "mcp_tool_call",
                      "server": "research_harness", "tool": "execute_baseline_preflight",
-                     "arguments": {}, "result": {}, "status": "completed"}}
+                     "arguments": {}, "result": {"content": [{"type": "text", "text": '{"research_work_checkpoint":"work1"}'}]}, "status": "completed"}}
             pending = {"type": "item.started", "item": {"id": "read2", "type": "mcp_tool_call",
                        "server": "research_harness", "tool": "get_research_state", "arguments": {}}}
             completed = {"type": "item.completed", "item": {**pending['item'], "result": {}, "status": "completed"}}
