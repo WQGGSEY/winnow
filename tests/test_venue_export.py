@@ -72,10 +72,10 @@ def _export(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, archive: Path):
         sections=[
             {
                 "title": "Introduction",
-                "prose_html": "<p>The result is grounded in a compiled package.</p><img src='curve.png' alt='Measured curve'><table id='t_results'></table>",
+                "prose_html": "<h3>Evidence</h3><figure><img src='figures/curve.png' alt='Measured curve'><figcaption>Ignored HTML caption</figcaption></figure><p>The result is grounded in a compiled package.</p><table id='t_results'></table>",
             },
         ],
-        appendix_sections=[{"title": "Appendix", "latex": "Additional proof detail.", "latex_verified": True}],
+        appendix_sections=[{"title": "Appendix", "latex": "Additional proof detail.", "trusted_latex": True}],
         bibliography=[
             {
                 "id": "smith2026",
@@ -86,7 +86,21 @@ def _export(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, archive: Path):
             }
         ],
         figure_files={"curve": figure},
-        tables={"t_results": {"latex": "\\begin{table}[t]\\centering\\caption{Verified table}\\begin{tabular}{ll}A&B\\\\\\end{tabular}\\end{table}", "source_digest": "abc123"}},
+        worker_report={
+            "node_id": "n1",
+            "status": "completed",
+            "metrics": {"success_rate": 0.92},
+            "baselines": {"current_best": 0.8},
+        },
+        table_specs={
+            "t_results": {
+                "caption": "Evidence table",
+                "rows": [
+                    {"label": "Success rate", "source": "metrics", "key": "success_rate"},
+                    {"label": "Current best", "source": "baselines", "key": "current_best"},
+                ],
+            }
+        },
         output_dir=tmp_path / "out",
         template_zip_path=archive,
     )
@@ -105,7 +119,8 @@ def test_export_compiles_pinned_template_and_records_artifact_contract(tmp_path,
     assert receipt["main_pages"] >= 1
     assert "\\cite{smith2026}" in paper
     assert "figures/curve.png" in paper
-    assert "Verified table" in paper
+    assert "Evidence table" in paper
+    assert r"metrics.success\_rate" in paper
     assert "Smith, Alex and Jones, Sam" in bib
     assert (out / "figures" / "curve.png").exists()
     assert (out / "paper.pdf").stat().st_size > 0
@@ -129,6 +144,16 @@ def test_missing_bibliography_fields_are_rejected(tmp_path, monkeypatch):
         )
 
 
+def test_table_specs_are_generated_from_worker_report():
+    table = ve.table_from_evidence(
+        {"node_id": "n1", "status": "completed", "metrics": {"accuracy": 0.75}, "baselines": {}},
+        {"id": "t_accuracy", "caption": "Accuracy", "rows": [{"label": "Accuracy", "source": "metrics", "key": "accuracy"}]},
+    )
+    assert "Accuracy" in table["latex"]
+    assert "0.75" in table["latex"]
+    assert len(table["source_digest"]) == 64
+
+
 def test_arxiv_without_venue_renders_misc_not_inproceedings():
     bib = ve._render_bibtex([
         {"id": "arxivx", "title": "X", "authors": ["Doe, Jane"], "year": 2026, "arxiv_id": "2601.00001"}
@@ -150,7 +175,7 @@ def test_math_in_html_raises_and_authored_latex_requires_verified_marker(tmp_pat
             output_dir=tmp_path / "bad",
             template_zip_path=archive,
         )
-    with pytest.raises(ve.UnsupportedManuscriptContent, match="latex_verified"):
+    with pytest.raises(ve.UnsupportedManuscriptContent, match="trusted_latex"):
         ve.export_venue_package(
             target=ve.VenueTarget("iclr", 2026, "main"),
             title="Anonymous Learning System With Verified Evidence",
@@ -164,7 +189,7 @@ def test_math_in_html_raises_and_authored_latex_requires_verified_marker(tmp_pat
         target=ve.VenueTarget("iclr", 2026, "main"),
         title="Anonymous Learning System With Verified Evidence",
         abstract="<p>Abstract cites <a href='#ref_x'>X</a>.</p>",
-        sections=[{"title": "Theory", "latex": "Use $x$ without conversion loss.", "latex_verified": True}],
+        sections=[{"title": "Theory", "latex": "Use $x$ without conversion loss.", "trusted_latex": True}],
         bibliography=[{"id": "x", "title": "X", "authors": "Doe, Jane", "year": 2026, "url": "https://example.test/x"}],
         output_dir=tmp_path / "good",
         template_zip_path=archive,
@@ -180,7 +205,7 @@ def test_cvpr_writes_appendix_only_to_supplement(tmp_path, monkeypatch):
         title="Anonymous Learning System With Verified Evidence",
         abstract="<p>Abstract cites <a href='#ref_x'>X</a>.</p>",
         sections=[{"title": "Body", "prose_html": "<p>Body.</p>"}],
-        appendix_sections=[{"title": "Proof", "latex": "Supplement only.", "latex_verified": True}],
+        appendix_sections=[{"title": "Proof", "latex": "Supplement only.", "trusted_latex": True}],
         bibliography=[{"id": "x", "title": "X", "authors": "Doe, Jane", "year": 2026, "url": "https://example.test/x"}],
         output_dir=tmp_path / "cvpr-out",
         template_zip_path=archive,

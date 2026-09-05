@@ -7,6 +7,7 @@ import html
 import json
 import re
 import shutil
+import os
 import subprocess
 import zipfile
 from dataclasses import dataclass
@@ -30,6 +31,7 @@ class UnsupportedManuscriptContent(VenueExportError):
 
 PROFILE_PATH = Path(__file__).with_name("venue_templates") / "profiles.json"
 _MAIN_END_LABEL = "rhMainEnd"
+_DEFAULT_TEXMF_HOME = Path.home() / ".cache" / "research-harness" / "texmf"
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,17 +72,17 @@ def export_venue_package(
     impact_statement: str | None = None,
     checklist_tex: str | None = None,
     figure_files: Mapping[str, Path | str] | None = None,
-    tables: Mapping[str, Mapping[str, Any]] | None = None,
+    worker_report: Mapping[str, Any] | None = None,
+    table_specs: Mapping[str, Mapping[str, Any]] | None = None,
     template_cache_dir: Path | None = None,
     template_zip_path: Path | None = None,
 ) -> dict[str, Any]:
     """Build a venue package and compile a PDF.
 
     HTML sections may cite bibliography entries with ``<a href="#ref_id">`` and
-    embed explicitly supplied artifacts with ``<img src="fig_id">`` or
-    ``<table id="table_id"></table>``. Raw LaTeX sections are accepted only when
-    the caller marks that field as already verified, so this exporter is not a
-    silent evidence bypass.
+    embed explicitly supplied artifacts with ``<img src="figures/fig_id.png">``
+    or ``<table id="table_id"></table>``. Table TeX is generated from selected
+    worker-report evidence by this module; callers do not provide table LaTeX.
     """
 
     profile = _profile_for(target)
@@ -92,9 +94,10 @@ def export_venue_package(
         template_zip_path=template_zip_path,
     )
     _copy_template_files(template_root, output_dir)
+    _ensure_texmf_packages(profile)
     assets = RenderAssets(
         figures=_copy_figure_files(figure_files or {}, output_dir),
-        tables=_normalize_tables(tables or {}),
+        tables=_tables_from_specs(worker_report, table_specs or {}),
     )
     tex = _render_latex(
         profile=profile,
@@ -236,17 +239,81 @@ def _copy_figure_files(figures: Mapping[str, Path | str], output_dir: Path) -> d
     return copied
 
 
-def _normalize_tables(tables: Mapping[str, Mapping[str, Any]]) -> dict[str, str]:
-    normalized: dict[str, str] = {}
-    for table_id, table_value in tables.items():
+def _tables_from_specs(
+    worker_report: Mapping[str, Any] | None,
+    table_specs: Mapping[str, Mapping[str, Any]],
+) -> dict[str, str]:
+    if table_specs and worker_report is None:
+        raise VenueExportError("table_specs require worker_report")
+    rendered: dict[str, str] = {}
+    for table_id, spec in table_specs.items():
         key = _clean_asset_id(table_id, "table")
-        if not table_value.get("source_digest"):
-            raise VenueExportError(f"table {key!r} requires source_digest provenance")
-        latex = str(table_value.get("latex") or "")
-        if not latex.strip():
-            raise VenueExportError(f"table {key!r} requires latex")
-        normalized[key] = latex.strip()
-    return normalized
+        spec_with_id = dict(spec)
+        spec_with_id.setdefault("id", key)
+        table = table_from_evidence(worker_report or {}, spec_with_id)
+        rendered[key] = table["latex"]
+    return rendered
+
+
+def table_from_evidence(worker_report: Mapping[str, Any], table_spec: Mapping[str, Any]) -> dict[str, str]:
+    """Render a LaTeX table from explicit worker-report metric/baseline rows."""
+
+    table_id = _clean_asset_id(str(table_spec.get("id") or ""), "table")
+    caption = str(table_spec.get("caption") or table_id).strip()
+    rows = table_spec.get("rows")
+    if not isinstance(rows, list) or not rows:
+        raise VenueExportError(f"table {table_id!r} requires non-empty rows")
+    selected_rows: list[dict[str, str]] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise VenueExportError(f"table {table_id!r} row must be an object")
+        label = str(row.get("label") or row.get("key") or "").strip()
+        source = str(row.get("source") or "metrics").strip()
+        key = str(row.get("key") or "").strip()
+        if source not in {"metrics", "baselines"}:
+            raise VenueExportError(f"table {table_id!r} row source must be metrics or baselines")
+        if not label or not key:
+            raise VenueExportError(f"table {table_id!r} row requires label and key")
+        values = worker_report.get(source)
+        if not isinstance(values, Mapping) or key not in values:
+            raise VenueExportError(f"table {table_id!r} missing worker_report.{source}.{key}")
+        selected_rows.append({"label": label, "source": source, "key": key, "value": _format_table_value(values[key])})
+    digest_payload = {
+        "table_id": table_id,
+        "node_id": worker_report.get("node_id"),
+        "status": worker_report.get("status"),
+        "rows": selected_rows,
+    }
+    source_digest = hashlib.sha256(
+        json.dumps(digest_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    body = "\\\\\n".join(
+        f"{_latex_text(row['label'])} & {_latex_text(row['source'] + '.' + row['key'])} & {_latex_text(row['value'])}"
+        for row in selected_rows
+    )
+    latex = (
+        "\\begin{table}[t]\n"
+        "\\centering\n"
+        f"\\caption{{{_latex_text(caption)}}}\n"
+        f"\\label{{tab:{table_id}}}\n"
+        "\\begin{tabular}{lll}\n"
+        "\\toprule\n"
+        "Measurement & Source & Value\\\\\n"
+        "\\midrule\n"
+        f"{body}\\\\\n"
+        "\\bottomrule\n"
+        "\\end{tabular}\n"
+        "\\end{table}"
+    )
+    return {"latex": latex, "source_digest": source_digest}
+
+
+def _format_table_value(value: Any) -> str:
+    if isinstance(value, float):
+        return f"{value:.6g}"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, sort_keys=True, ensure_ascii=False)
+    return str(value)
 
 
 def _clean_asset_id(value: str, kind: str) -> str:
@@ -330,14 +397,14 @@ def _required_statements(profile: dict[str, Any]) -> list[str]:
 def _section_to_latex(section: dict[str, Any], assets: RenderAssets) -> str:
     title = _latex_text(str(section.get("title") or section.get("section_id") or "Section"))
     if section.get("latex"):
-        if section.get("latex_verified") is not True:
-            raise UnsupportedManuscriptContent("section['latex'] requires latex_verified=true provenance")
+        if section.get("trusted_latex") is not True:
+            raise UnsupportedManuscriptContent("section['latex'] is an internal trusted_latex escape hatch and still requires downstream artifact review")
         return f"\\section{{{title}}}\n{section['latex']}"
     return f"\\section{{{title}}}\n{_html_to_latex(str(section.get('prose_html') or ''), assets)}"
 
 
 class _LatexHTML(HTMLParser):
-    allowed = {"p", "strong", "em", "code", "ul", "ol", "li", "br", "a", "img", "table"}
+    allowed = {"p", "strong", "em", "code", "ul", "ol", "li", "br", "a", "img", "figure", "figcaption", "table", "h3", "h4"}
 
     def __init__(self, assets: RenderAssets) -> None:
         super().__init__(convert_charrefs=True)
@@ -345,6 +412,7 @@ class _LatexHTML(HTMLParser):
         self.parts: list[str] = []
         self._cite_depth = 0
         self._skip_table_depth = 0
+        self._skip_figure_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag not in self.allowed:
@@ -364,6 +432,12 @@ class _LatexHTML(HTMLParser):
             self.parts.append("\\item ")
         elif tag == "br":
             self.parts.append("\\\\\n")
+        elif tag in {"h3", "h4"}:
+            self.parts.append("\n\\paragraph{")
+        elif tag == "figure":
+            pass
+        elif tag == "figcaption":
+            self._skip_figure_depth += 1
         elif tag == "a":
             href = attr.get("href") or ""
             if not href.startswith("#ref_"):
@@ -396,21 +470,25 @@ class _LatexHTML(HTMLParser):
             self.parts.append("}")
         elif tag in {"ul", "ol"}:
             self.parts.append("\\end{itemize}\n")
+        elif tag in {"h3", "h4"}:
+            self.parts.append("}\n")
         elif tag == "a" and self._cite_depth:
             self._cite_depth -= 1
+        elif tag == "figcaption" and self._skip_figure_depth:
+            self._skip_figure_depth -= 1
         elif tag == "table" and self._skip_table_depth:
             self._skip_table_depth -= 1
 
     def handle_data(self, data: str) -> None:
-        if self._cite_depth:
+        if self._cite_depth or self._skip_figure_depth:
             return
         if self._skip_table_depth:
             if data.strip():
-                raise UnsupportedManuscriptContent("HTML tables must be empty placeholders resolved from the verified tables mapping")
+                raise UnsupportedManuscriptContent("HTML tables must be empty placeholders resolved from evidence table_specs")
             return
         if any(marker in data for marker in ("$", "\\(", "\\[", "\\begin{")):
             raise UnsupportedManuscriptContent(
-                "math or raw TeX was found in prose_html; provide verified section['latex'] so math is not stripped or escaped"
+                "math or raw TeX was found in prose_html; use the internal trusted_latex escape hatch only after artifact binding"
             )
         self.parts.append(_latex_text(data))
 
@@ -419,6 +497,8 @@ def _figure_id_from_src(value: str) -> str:
     raw = value.strip()
     if not raw:
         raise VenueExportError("figure src is required")
+    if raw.startswith("figures/"):
+        raw = raw.removeprefix("figures/")
     stem = Path(raw).stem if any(raw.lower().endswith(ext) for ext in (".pdf", ".png", ".jpg", ".jpeg")) else raw
     return _clean_asset_id(stem, "figure")
 
@@ -511,6 +591,37 @@ def _bib_value(value: str) -> str:
     return str(value).replace("\\", "").replace("{", "").replace("}", "")
 
 
+def _ensure_texmf_packages(profile: Mapping[str, Any]) -> None:
+    for package in profile.get("texmf_packages") or []:
+        name = str(package.get("name") or "")
+        if not name:
+            raise VenueExportError("TeX package provisioning entry requires name")
+        files = package.get("files")
+        if not isinstance(files, list) or not files:
+            raise VenueExportError(f"TeX package {name!r} requires pinned files")
+        for file_entry in files:
+            if not isinstance(file_entry, Mapping):
+                raise VenueExportError(f"TeX package {name!r} file entry must be an object")
+            relative = Path(str(file_entry.get("path") or ""))
+            if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+                raise VenueExportError(f"TeX package {name!r} has invalid file path {relative}")
+            destination = _DEFAULT_TEXMF_HOME / relative
+            if destination.exists() and _file_sha256(destination) == file_entry.get("sha256"):
+                continue
+            request = Request(str(file_entry["url"]), headers={"User-Agent": "research-harness/venue-export"})
+            data = urlopen(request, timeout=60).read()
+            digest = hashlib.sha256(data).hexdigest()
+            if digest != file_entry.get("sha256"):
+                raise VenueExportError(f"TeX package {name} digest mismatch for {relative}: {digest} != {file_entry.get('sha256')}")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(data)
+
+
+def _latex_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["TEXMFHOME"] = str(_DEFAULT_TEXMF_HOME)
+    return env
+
 def _compile(output_dir: Path, jobname: str, *, main_page_limit: int | None) -> dict[str, Any]:
     tex_file = f"{jobname}.tex"
     commands = [["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "-no-shell-escape", tex_file]]
@@ -524,7 +635,7 @@ def _compile(output_dir: Path, jobname: str, *, main_page_limit: int | None) -> 
         if command[0] == "bibtex" and not _aux_has_bibliography(output_dir / f"{jobname}.aux"):
             logs.append({"command": command, "returncode": None, "output_tail": "skipped: no bibliography in aux"})
             continue
-        result = subprocess.run(command, cwd=output_dir, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
+        result = subprocess.run(command, cwd=output_dir, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120, env=_latex_env())
         logs.append({"command": command, "returncode": result.returncode, "output_tail": result.stdout[-4000:]})
         if result.returncode != 0:
             raise VenueExportError(f"LaTeX command failed: {' '.join(command)}\n{result.stdout[-2000:]}")

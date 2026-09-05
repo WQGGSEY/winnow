@@ -48,7 +48,7 @@
     "venue": "colt",
     "year": 2026,
     "track": "main",
-    "supported": false,
+    "supported": true,
     "template_url": "https://learningtheory.org/colt2026/colt2026-style.zip",
     "template_sha256": "e4e93d8bd2ebd681e0c2617f0410200acb92a0dc1c0da66f3c5342608ef47212",
     "rules_source_url": "https://learningtheory.org/colt2026/cfp.html",
@@ -58,7 +58,32 @@
     "requires_impact_statement": false,
     "requires_checklist": false,
     "appendix_policy": "all proof details needed to substantiate results must be included, possibly in appendices",
-    "unsupported_reason": "Official COLT 2026 class requires algorithm2e.sty, which is not available in the verified local TeX environment; target is pinned but not advertised as compilable."
+    "texmf_packages": [
+      {
+        "name": "algorithm2e",
+        "version": "5.2",
+        "license": "LPPL",
+        "license_source_url": "https://ctan.org/pkg/algorithm2e?lang=en",
+        "source_url": "https://ctan.org/tex-archive/macros/latex/contrib/algorithm2e?lang=en",
+        "files": [
+          {
+            "path": "tex/latex/algorithm2e/algorithm2e.sty",
+            "url": "https://mirrors.ctan.org/macros/latex/contrib/algorithm2e/tex/algorithm2e.sty",
+            "sha256": "a17e47f93a2a5d35763dc9f5a026184c16fad432ef5d77a9c9abf2ad39b1b92c"
+          },
+          {
+            "path": "doc/latex/algorithm2e/README",
+            "url": "https://mirrors.ctan.org/macros/latex/contrib/algorithm2e/README",
+            "sha256": "0d15fa155fba7404a769ecaa7f861bb10119918475d6b329626f9d7733bd2af5"
+          },
+          {
+            "path": "doc/latex/algorithm2e/algorithm2e.tex",
+            "url": "https://mirrors.ctan.org/macros/latex/contrib/algorithm2e/doc/algorithm2e.tex",
+            "sha256": "10c1f38b8bc7cd4398e0e2c39b9c77c275e9386f1bb8bdd123174f8fca5ff179"
+          }
+        ]
+      }
+    ]
   },
   "neurips-2026-main": {
     "venue": "neurips",
