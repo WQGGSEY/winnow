@@ -138,7 +138,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "execute_baseline_preflight",
-        "description": "While baseline qualification is pending, write and execute ONE baseline implementation. Prefer request_path: save or edit a JSON request file inside this thread containing node, experiment_plan, role and work_id, then pass its absolute path instead of retransmitting the entire source code. Inline objects also work. Use a new node ID when changing a previously executed plan; completed receipts are immutable. The harness assigns workspace, binds the operator input snapshot, enforces compute limits, runs LocalRunner, and returns replayable evidence. Use exactly one baseline_evidence_requirement and report only that baseline key. This is execution evidence, not scientific approval. Implement methods yourself after retrieving primary sources; lack of existing implementation is work to do.",
+        "description": "While baseline qualification is pending, write and execute ONE baseline implementation. To revise a saved dispatch, use its absolute request_path plus updates (path segments and new value), without retransmitting unchanged source code or writing files from the read-only shell. Example update: {path:[node,id],value:new_id}; also update experiment_plan.node_id. Inline objects work for initial requests. Use a new node ID when changing a previously executed plan; completed receipts are immutable. The harness binds the operator input snapshot, enforces compute limits and runs LocalRunner. Use exactly one baseline_evidence_requirement and report only that baseline key. This is execution evidence, not scientific approval. Implement methods yourself after retrieving primary sources.",
         "inputSchema": {
             "type": "object", "required": ["thread_id"],
             "anyOf": [{"required": ["request_path"]}, {"required": ["node", "experiment_plan", "role"]}],
@@ -147,6 +147,8 @@ TOOL_DEFINITIONS = [
                 "role": {"type": "string", "enum": ["current_best_known", "naive", "random_or_null"]},
                 "work_id": {"type": "string", "description": "work_id returned by plan_research_work; required for a new execution."},
                 "request_path": {"type": "string", "description": "Absolute path of the saved request JSON inside this thread. Do not also supply inline node or plan."},
+                "updates": {"type": "array", "maxItems": 32, "items": {"type": "object", "required": ["path", "value"], "additionalProperties": False,
+                    "properties": {"path": {"type": "array", "minItems": 1, "items": {"type": "string"}}, "value": {}}}},
             },
         },
     },
@@ -3937,6 +3939,7 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.memory.baseline_review import baseline_roles_frozen
     from research_harness.settings_scoped import resolve_for_thread
     from research_harness.orchestrator.research_control import bind_work, current_work, finish_work
+    from research_harness.adapters.codex_cli import CodexCliError
 
     tid = args["thread_id"]
     with _exclusive_adaptive_writer(tid):
@@ -3952,7 +3955,32 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
                 request = _read_json(request_path)
                 if not isinstance(request, dict) or request.get('thread_id', tid) != tid:
                     raise ValueError('Saved dispatch request must be an object for this thread.')
+                updates = args.get('updates', [])
+                if not isinstance(updates, list) or len(updates) > 32:
+                    raise ValueError('Dispatch updates must be an array of at most 32 replacements.')
+                for update in updates:
+                    keys = update['path']
+                    if not isinstance(keys, list) or not keys or not all(isinstance(key, str) for key in keys) or keys[0] not in {'node', 'experiment_plan', 'role', 'work_id'}:
+                        raise ValueError('Updates may only change dispatch node, plan, role or work_id.')
+                    target = request
+                    for key in keys[:-1]:
+                        if isinstance(target, list):
+                            index = int(key)
+                            if index < 0 or index >= len(target):
+                                raise ValueError('Dispatch update index is outside its array.')
+                            target = target[index]
+                        else:
+                            target = target[key]
+                    if isinstance(target, list):
+                        index = int(keys[-1])
+                        if index < 0 or index >= len(target):
+                            raise ValueError('Dispatch update index is outside its array.')
+                        target[index] = update['value']
+                    else:
+                        target[keys[-1]] = update['value']
                 args = {**request, 'thread_id': tid}
+            elif args.get('updates'):
+                raise ValueError('Dispatch updates require request_path.')
             node_id = args['node']['id']
             path = _thread_dir(tid) / 'production/tree/baseline_preflight' / node_id
             path.resolve().relative_to((_thread_dir(tid) / 'production/tree/baseline_preflight').resolve())
@@ -3963,9 +3991,10 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
             result = execute_baseline_preflight(
                 _repo_root(), _thread_dir(tid), node=args["node"], plan=args["experiment_plan"],
                 role=args["role"], settings=resolve_for_thread(_repo_root(), tid),
+                research_work_id=args.get('work_id'),
             )
             return finish_work(_thread_dir(tid), result) if bound else result
-        except (OSError, ValueError, KeyError, TypeError) as exc:
+        except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:
             result = {"status": "rejected", "reason": f"baseline preflight failed: {exc}", "next_tool_to_call": "plan_research_work"}
             work = current_work(_thread_dir(tid))
             if not bound and work.get('status') == 'planned' and args.get('work_id') == work.get('work_id'):

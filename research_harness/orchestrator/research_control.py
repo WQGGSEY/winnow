@@ -55,8 +55,10 @@ def development_evidence(thread: Path) -> dict[str, Any]:
         error = stderr.read_text(errors='replace').strip().splitlines()[-1:] if stderr.exists() else []
         observation = {
             'execution_status': runner.get('status'),
+            'measurement_status': report.get('status'),
+            'measurement_error': (report.get('failure_record_candidate') or {}).get('reason') if report.get('status') != 'completed' else None,
             'comparison_status': report.get('baseline_evidence_status', {}).get('overall'),
-            'metrics': report.get('metrics', {}) if runner.get('status') == 'completed' else {},
+            'metrics': report.get('metrics', {}) if runner.get('status') == 'completed' and report.get('status') == 'completed' else {},
             'error': error,
         }
         evidence[path.parent.name] = {
@@ -85,7 +87,8 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
     envelope = _read(thread / 'production/feasibility_envelope.json')
     ceiling = envelope['compute_budget']['max_runner_seconds_per_node']
     latest = list(evidence.values())[-1:] or [{}]
-    diagnostic_required = latest[0].get('execution_status') not in (None, 'completed')
+    diagnostic_required = (latest[0].get('execution_status') not in (None, 'completed') or
+                           latest[0].get('measurement_status') not in (None, 'completed'))
     duplicate_observation = (len(evidence) >= 2 and
                              list(evidence.values())[-1]['observation_digest'] == list(evidence.values())[-2]['observation_digest'])
     diagnostic_required = (diagnostic_required or
@@ -97,13 +100,28 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
         for key, value in research['baseline_method_notes'].items()
     }
     implementations = {}
+    measurements = {}
     for key, observation in list(evidence.items())[-2:]:
         plan = _read((thread / observation['report_path']).parent / 'experiment_plan.json')
         source = json.dumps(plan.get('source_files', []), ensure_ascii=False)
         implementations[key] = {'source_excerpt': source if len(source) <= 32000 else source[:16000] + '\n[MIDDLE OMITTED]\n' + source[-16000:],
                                 'truncated': len(source) > 32000}
+        if observation['execution_status'] == 'completed' and observation['measurement_status'] == 'completed':
+            workspace = Path(plan['workspace']).resolve()
+            details = []
+            for relative in plan.get('expected_outputs', {}).get('metrics_files', [])[:3]:
+                path = (workspace / relative).resolve()
+                path.relative_to(workspace)
+                path.relative_to(thread.resolve())
+                if path.is_file() and path.suffix == '.json':
+                    payload = _read(path).get('details')
+                    if payload is not None:
+                        raw = json.dumps(payload, ensure_ascii=False)
+                        details.append({'path': str(path), 'excerpt': raw if len(raw) <= 8000 else raw[:4000] + '\n[MIDDLE OMITTED]\n' + raw[-4000:],
+                                        'truncated': len(raw) > 8000})
+            measurements[key] = details
     packet = {
-        'research': research, 'implementation_context': implementations,
+        'research': research, 'implementation_context': implementations, 'measurement_context': measurements,
         'active_claim': _read(thread / 'production/tree/search_state.json').get('nodes', []),
         'development_evidence': evidence, 'previous_work': previous,
         'diagnostic_required': diagnostic_required, 'max_runtime_seconds': ceiling,
@@ -123,6 +141,9 @@ def plan_research_work(repo: Path, thread: Path, *, transport=None) -> dict[str,
             'A crash is not a refuted hypothesis; a successful exit is not a qualified method. '
             'Interpret the latest result and state which uncertainty now blocks the research decision. '
             'Inspect the supplied implementation excerpts for circular measurements and mismatches. '
+            'Use measured field-level details to distinguish where an aggregate discrepancy arose. '
+            'Before calling a discrepancy a defect, justify the reference semantics against the intended algorithm or estimator; '
+            'an intentional policy restriction or different valid representation is a competing explanation, not automatically a bug. '
             'A truncated source is incomplete evidence; use a targeted implementation audit when necessary. '
             'Give competing explanations, contrasting observable predictions and the decision each outcome changes. '
             'Select the smallest useful diagnostic before expensive training when validity is uncertain. '
@@ -173,6 +194,42 @@ def bind_work(thread: Path, work_id: str | None, node_id: str, plan: dict[str, A
     work.update(status='running', binding=binding)
     _write(thread / 'production/research_control/current.json', work)
     _write(thread / 'production/research_control/work' / work_id / 'work.json', work)
+
+
+def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dict[str, Any], plan: dict[str, Any]) -> None:
+    from research_harness.orchestrator.research_review import review_research_packet
+
+    work = current_work(thread)
+    if work.get('work_id') != work_id or work.get('binding', {}).get('node_id') != node['id']:
+        raise ValueError('Implementation review requires the bound research work.')
+    prior = work.get('implementation_review', {})
+    plan_digest = _digest(plan)
+    if prior.get('plan_digest') == plan_digest:
+        if prior['decision'] != 'approve':
+            raise ValueError('Work implementation needs revision: ' + json.dumps(prior, ensure_ascii=False))
+        return
+    directory = thread / 'production/research_control/work' / work_id / 'implementation_reviews'
+    packet = {'work_decision': work['decision'], 'node': node, 'experiment_plan': plan,
+              'prior_objections': prior.get('required_work', []),
+              'development_artifacts': {key: str((thread / value['report_path']).resolve())
+                                        for key, value in work['source_observations'].items()}}
+    review = review_research_packet(repo, directory, packet, purpose=(
+        'Whether this proposed implementation performs the selected bounded research test. '
+        'This is a pre-execution method check, not scientific approval; do not require positive results or finished training. '
+        'Trace code, actual imports and data provenance. When the work calls for the actual learner, collector or replay, '
+        'a separately rewritten surrogate or hardcoded provenance table does not satisfy it. '
+        'Reject tautological self-comparisons and fabricated observations. Verify feature dimensions and decision-time semantics '
+        'against referenced implementation when those are the subject of the test. Source paths may be inspected; '
+        'the new workspace is materialized after this review, so do not require it to exist yet. '
+        'Do not read final holdout or external-falsifier results. Return actionable changes to this implementation, not a new research question. '
+        'Check prior objections against the revised code. Do not add requirements unrelated to the selected bounded test.'
+    ))
+    work['implementation_review'] = {**review['assessment'], 'plan_digest': plan_digest,
+                                    'receipt_path': str((directory / review['request_sha256'] / 'review.json').resolve())}
+    _write(thread / 'production/research_control/current.json', work)
+    _write(thread / 'production/research_control/work' / work_id / 'work.json', work)
+    if review['assessment']['decision'] != 'approve':
+        raise ValueError('Work implementation needs revision: ' + json.dumps(work['implementation_review'], ensure_ascii=False))
 
 
 def finish_work(thread: Path, result: dict[str, Any]) -> dict[str, Any]:

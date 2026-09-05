@@ -67,7 +67,7 @@ def baseline_preparation_state(thread_dir: Path) -> dict[str, Any]:
 
 def execute_baseline_preflight(
     repo: Path, thread_dir: Path, *, node: dict[str, Any], plan: dict[str, Any],
-    role: str, settings: dict[str, Any],
+    role: str, settings: dict[str, Any], research_work_id: str | None = None,
 ) -> dict[str, Any]:
     node = json.loads(json.dumps(node))
     plan = json.loads(json.dumps(plan))
@@ -107,6 +107,9 @@ def execute_baseline_preflight(
         if elapsed + timeout > budget['max_total_node_hours'] * 3600:
             raise ValueError('preflight exceeds remaining registered compute budget')
         manifest = build_job_manifest_from_experiment_plan(node, plan, tree, preflight_role=role)
+        if research_work_id is not None:
+            from research_harness.orchestrator.research_control import review_work_implementation
+            review_work_implementation(repo, thread_dir, research_work_id, node, plan)
         for name, value in [('node.json', node), ('experiment_plan.json', plan), ('job_manifest.json', manifest)]:
             (node_dir / name).write_text(json.dumps(value, indent=2) + '\n')
         result = LocalRunner(tree, settings=settings).execute(manifest)

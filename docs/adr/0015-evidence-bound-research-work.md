@@ -34,6 +34,14 @@ issued. The Pacman E2E exposed why this distinction matters: input-snapshot and
 duplicated success-criteria errors were being mistaken for completed work, so
 the next planner changed the scientific test despite receiving no observation.
 
+Saved requests can be revised through path/value updates in the execution tool;
+the execution agent's shell remains read-only. After structural validation and
+before starting a new preparation job, an independent Sol low review checks that
+the proposed code implements the selected test. Its receipt binds the exact work
+decision and plan. A rewritten surrogate cannot stand in for an audit explicitly
+requiring the actual collector. Rejection keeps the work planned and provides
+required changes; it neither refutes the claim nor requests human approval.
+
 `finish_work` records the actual runner/report observation and whether its
 measurement/error signature differs from the preceding observations. This is
 called `new_observation`, never scientific progress or qualification. Source-code
@@ -42,6 +50,11 @@ The next planner interprets the outcome with its original predictions. It must
 cite real evidence IDs. Execution errors, interrupted execution and identical
 non-replication observations require a diagnostic work unit. Replication is not
 rejected merely because measurements agree.
+
+Runner completion and measurement validity are separate observations. Invalid
+metric output carries its validation error and no fallback runtime metrics as
+research data. Completed, validated measurement details are supplied as bounded,
+explicitly truncated excerpts so aggregate differences can be traced to fields.
 
 The public planning and execution operations share the existing cross-process
 writer lock. A reserved work encountered by a new planning call is reconciled

@@ -675,6 +675,8 @@
         `${work.status || 'Not planned'}${decision.kind ? ' · ' + decision.kind : ''}`;
       document.getElementById('research-work-question').textContent = decision.uncertainty || '';
       document.getElementById('research-work-test').textContent = decision.test || '';
+      document.getElementById('research-work-review').textContent = work.implementation_review
+        ? `Implementation review: ${work.implementation_review.decision} · ${work.implementation_review.reason}` : '';
       document.getElementById('research-work-outcome').textContent = work.outcome
         ? `${work.outcome.execution_result} · ${work.outcome.new_observation ? 'New observation recorded' : 'No new observation recorded'} · claim unverified`
         : '';

@@ -74,13 +74,31 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     bind_work(thread, work['work_id'], node['id'], plan)
     from research_harness import mcp_server
     from research_harness import settings_scoped
+    from research_harness.orchestrator import research_review
     monkeypatch.setattr(mcp_server, '_repo_root', lambda: REPO)
     monkeypatch.setattr(mcp_server, '_thread_dir', lambda tid: thread)
     monkeypatch.setattr(settings_scoped, 'resolve_for_thread', lambda repo, tid: {})
+    reviewed = []
+    def review(repo, directory, packet, *, purpose):
+        reviewed.append(packet)
+        return {'request_sha256': 'review', 'assessment': {
+            'decision': 'reject' if len(reviewed) == 1 else 'approve',
+            'reason': 'Check the actual measurement path.', 'evidence': ['experiment.py'],
+            'required_work': ['Use the actual implementation.'] if len(reviewed) == 1 else [],
+        }}
+    monkeypatch.setattr(research_review, 'review_research_packet', review)
     request_path = thread / 'dispatch.json'
     request_path.write_text(json.dumps({'node': node, 'experiment_plan': plan, 'role': role, 'work_id': work['work_id']}))
     outside = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(tmp_path / 'outside.json')})
     assert outside['status'] == 'rejected'
+    revision = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
+    assert revision['status'] == 'rejected'
+    assert current_work(thread)['status'] == 'planned'
+    assert not (thread / 'production/tree/baseline_preflight' / node['id'] / 'job_manifest.json').exists()
+    assert mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})['status'] == 'rejected'
+    assert len(reviewed) == 1
+    plan['source_files'][0]['content'] += '\n# revised measurement path\n'
+    request_path.write_text(json.dumps({'node': node, 'experiment_plan': plan, 'role': role, 'work_id': work['work_id']}))
     result = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
     checkpoint = finish_work(thread, result)
     assert checkpoint['research_work_checkpoint'] == work['work_id']
@@ -104,6 +122,14 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     assert current_work(thread)['status'] == 'planned'
     assert current_work(thread)['outcome']['reason'] == rejected['reason']
     assert Path(rejected['dispatch_request_path']).is_absolute()
+    corrected = mcp_server.handle_execute_baseline_preflight({
+        'thread_id': 'thread', 'request_path': rejected['dispatch_request_path'],
+        'updates': [{'path': ['node', 'id'], 'value': 'n_corrected'},
+                    {'path': ['experiment_plan', 'node_id'], 'value': 'n_corrected'},
+                    {'path': ['experiment_plan', 'plan_id'], 'value': 'plan_corrected'}],
+    })
+    assert corrected['status'] == 'execution_failed'
+    assert current_work(thread)['binding']['node_id'] == 'n_corrected'
 
 
 def test_restart_reconciles_reserved_work_and_never_reads_final_holdout(tmp_path):
@@ -134,3 +160,21 @@ def test_dispatch_rejection_preserves_question_and_allows_corrected_input(tmp_pa
     corrected = copy.deepcopy(plan)
     corrected['inputs'] = []
     bind_work(thread, work['work_id'], node['id'], corrected)
+
+
+def test_invalid_measurements_do_not_turn_runtime_into_research_evidence(tmp_path):
+    thread, _, node, plan, role = fixture(tmp_path)
+    payload = {'metrics': {'agreement': 0.0}, 'unexpected_observations': ['invalid observation shape']}
+    plan['source_files'][0]['content'] = "from pathlib import Path\nPath('artifacts').mkdir(exist_ok=True)\nPath('artifacts/metrics.json').write_text(" + repr(json.dumps(payload)) + ")\n"
+    result = execute_baseline_preflight(REPO, thread, node=node, plan=plan, role=role, settings={})
+    assert result['status'] == 'execution_failed'
+    first = development_evidence(thread)[node['id']]
+    assert first['execution_status'] == 'completed'
+    assert first['measurement_status'] == 'failed'
+    assert first['measurement_error']
+    assert first['metrics'] == {}
+    report_path = thread / first['report_path']
+    report = json.loads(report_path.read_text())
+    report['metrics']['runner_elapsed_sec'] = 99
+    report_path.write_text(json.dumps(report))
+    assert development_evidence(thread)[node['id']]['observation_digest'] == first['observation_digest']
