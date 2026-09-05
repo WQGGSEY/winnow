@@ -48,7 +48,7 @@ class LiveGateTests(unittest.TestCase):
                 "research_harness.workers.codex_stdout_ingest",
             )
             self.assertIn("--output-schema", plan["manual_command"])
-            self.assertIn("--sandbox", plan["manual_command"])
+            self.assertIn('default_permissions="research-development"', plan["manual_command"])
             self.assertNotIn("--max-budget-usd", plan["manual_command"])
 
             plan_path = Path(tmp) / "live" / "manual_live_smoke_plan.json"

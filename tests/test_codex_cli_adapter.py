@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import subprocess
+import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,42 @@ from research_harness.agent_runtime import (
     ResearchHarnessMcp,
 )
 from research_harness.adapters.codex_cli import CodexCliAdapter, CodexCliError
+
+
+@pytest.mark.parametrize('backend', ['codex', 'runner'])
+def test_development_subprocess_cannot_read_evaluation_vault(tmp_path, monkeypatch, backend):
+    from research_harness import evaluation_vault
+    from research_harness.runner.local_runner import isolated_runner_command
+
+    if shutil.which('codex' if backend == 'codex' else 'bwrap') is None:
+        pytest.skip('Sandbox executable is unavailable')
+    monkeypatch.setattr(evaluation_vault, 'evaluation_vault_root', lambda: tmp_path / 'private')
+    private = evaluation_vault.ensure_evaluation_vault() / 'canary.txt'
+    private.write_text('held-out canary')
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    public = workspace / 'public.txt'
+    public.write_text('development input')
+    script = (
+        'from pathlib import Path\n'
+        f'assert Path({str(public)!r}).read_text() == "development input"\n'
+        'try:\n'
+        f'    Path({str(private)!r}).read_text()\n'
+        'except (PermissionError, FileNotFoundError):\n'
+        '    print("private read blocked")\n'
+        'else:\n'
+        '    raise AssertionError("private evaluation input exposed")\n'
+    )
+    command = [sys.executable, '-c', script]
+    if backend == 'runner':
+        command = isolated_runner_command(command, workspace)
+    else:
+        adapter_command = CodexCliAdapter()._build_exec_command(request=None, model='gpt-5.6-sol', cwd=workspace)
+        profile = adapter_command[adapter_command.index('default_permissions="research-development"') - 1:adapter_command.index('--cd')]
+        command = ['codex', 'sandbox', *profile, '--', *command]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == 'private read blocked'
 
 
 def _jsonl(message: str = "done") -> str:
@@ -85,7 +123,7 @@ def test_one_shot_command_order_prompt_and_schema(tmp_path: Path, model: str, ef
     ]
     assert command[-1] == "-"
     assert f'model_reasoning_effort="{effort}"' in command
-    assert command[command.index("--sandbox") + 1] == "read-only"
+    assert 'default_permissions="research-development"' in command
     assert "--skip-git-repo-check" in command
     assert command[command.index("--output-schema") + 1] == str(schema)
     assert kwargs["input"] == "System instructions:\nfollow rules\n\nUser input:\ndo work"
@@ -185,7 +223,7 @@ def test_production_command_uses_read_only_shell_and_per_call_mcp(tmp_path: Path
         "--ignore-rules",
     ]
     assert "--approve-for-me" not in command
-    assert command[command.index("--sandbox") + 1] == "read-only"
+    assert 'default_permissions="research-development"' in command
     assert 'model_reasoning_effort="low"' in command
     assert 'mcp_servers.research_harness.command="python"' in command
     assert 'mcp_servers.research_harness.default_tools_approval_mode="approve"' in command

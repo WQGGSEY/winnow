@@ -196,6 +196,12 @@ def _fingerprint_file(path: Path) -> tuple[str, int]:
 
 
 def fingerprint_path(path: Path) -> tuple[str, int, int]:
+    from research_harness.evaluation_vault import reject_private_evaluation_input
+
+    try:
+        reject_private_evaluation_input(path)
+    except ValueError as exc:
+        raise AdapterError(str(exc)) from exc
     path = path.expanduser()
     if path.is_symlink():
         raise AdapterError(f"source is a symlink: {path}")

@@ -24,6 +24,18 @@ def _entry(source, **overrides):
     }
 
 
+def test_evaluation_vault_cannot_be_snapshotted_as_development_data(tmp_path, monkeypatch):
+    from research_harness import evaluation_vault
+    from research_harness.data_adapters import fingerprint_path
+
+    monkeypatch.setattr(evaluation_vault, 'evaluation_vault_root', lambda: tmp_path / 'private')
+    private = evaluation_vault.ensure_evaluation_vault() / 'data.txt'
+    private.write_text('private data')
+    for path in (private, private.parent, tmp_path):
+        with pytest.raises(AdapterError, match='Private evaluation storage'):
+            fingerprint_path(path)
+
+
 def _write_settings(repo, project, operator=None):
     (repo / "settings.json").write_text(
         json.dumps({"data_adapters": {"registered": project}}), encoding="utf-8"

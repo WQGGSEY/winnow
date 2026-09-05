@@ -14,6 +14,7 @@ from research_harness.acquisition.cache import ContentAddressedCache
 from research_harness.acquisition.model import PinnedNodeManifest
 from research_harness.data_adapters import AdapterError, fingerprint_path
 from research_harness.datasets import materialize
+from research_harness.evaluation_vault import reject_private_evaluation_input
 from research_harness.schemas.validator import SchemaValidationError, validate_named_schema
 from research_harness.workers.workspace import WorkspaceGuardError, ensure_path_inside
 
@@ -57,6 +58,10 @@ def _verify_content(path: Path, expected_digest: str) -> tuple[int, int]:
 
 
 def _stage(source: Path, target: Path, expected_digest: str) -> None:
+    try:
+        reject_private_evaluation_input(source)
+    except ValueError as exc:
+        raise RuntimeInputError(str(exc)) from exc
     if target.exists():
         try:
             _verify_content(target, expected_digest)

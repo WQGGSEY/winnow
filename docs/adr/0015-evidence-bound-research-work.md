@@ -129,6 +129,21 @@ a successful process or a numeric metric can still be methodologically invalid.
 This boundary cannot prove that arbitrary agent-authored code never accessed a
 held-out sample; the existing input and evaluation integrity checks still matter.
 
+New private evaluation inputs can be stored under
+`~/.local/share/research-harness/evaluation-vault`. Development Codex commands
+use a read-only filesystem profile with an exact deny rule for this directory.
+LocalRunner masks it with an empty mount after binding its workspace. Adapter
+snapshotting and runtime staging reject the vault and its ancestor directories,
+so private inputs cannot be copied into a development snapshot through those
+paths. This does not repair previously exposed inputs or implement final
+evaluation access. A trusted final evaluator and a prospective replacement
+protocol are still required before using a new bank for confirmation.
+
+The profile follows the [Codex filesystem permission rules](https://learn.chatgpt.com/docs/permissions).
+Live command probes confirm that public files remain readable while private
+canary reads fail through both Codex sandbox and LocalRunner. These probes verify
+the access boundary, not scientific independence or publication readiness.
+
 New direction reservations include the development packet when available. Every
 fourth draw omits it and explores the independently sampled perspective. This is
 an initial explicit exploration allocation, not an empirically optimized ratio.

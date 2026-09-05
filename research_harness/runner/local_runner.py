@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from research_harness.evaluation_vault import ensure_evaluation_vault
+
 from research_harness.schemas.validator import SchemaValidationError, validate_named_schema
 from research_harness.runtime_inputs import (
     RuntimeInputError,
@@ -43,6 +45,7 @@ def isolated_runner_command(command: list[str], workspace: Path) -> list[str]:
         path = workspace / name
         if path.exists():
             launch.extend(["--ro-bind", str(path), str(path)])
+    launch.extend(["--tmpfs", str(ensure_evaluation_vault())])
     return [*launch, "--chdir", str(workspace), "--", *command]
 
 

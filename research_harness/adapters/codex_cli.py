@@ -7,6 +7,8 @@ from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
+from research_harness.evaluation_vault import ensure_evaluation_vault
+
 from research_harness.agent_runtime import (
     AgentEvent,
     AgentPrompt,
@@ -209,7 +211,12 @@ class CodexCliAdapter:
         effort = model_reasoning_effort(model)
         if effort is not None:
             command.extend(["-c", "model_reasoning_effort=" + _toml_string(effort)])
-        command.extend(["--sandbox", "read-only"])
+        vault = ensure_evaluation_vault()
+        command.extend([
+            "-c", 'default_permissions="research-development"',
+            "-c", 'permissions.research-development.filesystem={\":root\"="read",'
+            + _toml_string(str(vault)) + '="deny"}',
+        ])
         if cwd is not None:
             command.extend(["--cd", str(cwd)])
         if request is not None and request.output_schema is not None:
