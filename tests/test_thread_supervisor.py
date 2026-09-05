@@ -1648,52 +1648,20 @@ class LockTests(unittest.TestCase):
 
 
 class WatchLoopTests(unittest.TestCase):
-    def test_answer_resumes_next_cycle_without_idle_delay(self):
-        from research_harness.orchestrator.operator_prompts import enqueue_prompt, submit_response
+    def test_historical_pending_decision_does_not_pause_research(self):
+        from research_harness.orchestrator.operator_prompts import enqueue_prompt
 
         with TemporaryDirectory() as tmp:
             repo = Path(tmp)
             tdir = _make_thread(repo, "t1")
-            prompt = None
-            def first_cycle(*args, **kwargs):
-                nonlocal prompt
-                if prompt is None:
-                    prompt = enqueue_prompt(tdir, kind="decision_request", prompt="Choose evaluation")
-                return 0
-            def answer(seconds):
-                if sleeps.call_count > 1:
-                    self.fail("operator response was followed by an idle wait")
-                submit_response(tdir, event_id=prompt["event_id"], response="Keep criterion")
-            with mock.patch.object(ts, "spawn_codex_session", side_effect=first_cycle) as spawn, \
-                 mock.patch.object(ts, "advance_resumable_reorientation", return_value=None), \
-                 mock.patch.object(ts, "mcp_idle_seconds", return_value=0), \
-                 mock.patch.object(ts.time, "time", side_effect=iter(range(0, 100000, 100))), \
-                 mock.patch.object(ts.time, "sleep", side_effect=answer) as sleeps:
-                result = ts.watch_thread(repo, "t1", max_cycles=2)
-            self.assertEqual(spawn.call_count, 2)
-            self.assertEqual(result["status"], "max_cycles_exceeded")
-
-    def test_pending_decision_waits_without_running_research(self):
-        from research_harness.orchestrator.operator_prompts import enqueue_prompt, submit_response
-
-        with TemporaryDirectory() as tmp:
-            repo = Path(tmp)
-            tdir = _make_thread(repo, "t1")
-            item = enqueue_prompt(tdir, kind="decision_request", prompt="Choose evaluation")
-            answered = False
-            def answer_after_wait(_seconds):
-                nonlocal answered
-                if answered:
-                    return
-                spawn.assert_not_called()
-                advance.assert_not_called()
-                submit_response(tdir, event_id=item["event_id"], response="Keep original criterion")
-                answered = True
+            enqueue_prompt(tdir, kind="decision_request", prompt="Choose evaluation")
             with mock.patch.object(ts, "spawn_codex_session", return_value=0) as spawn, \
-                 mock.patch.object(ts, "advance_resumable_reorientation", return_value=None) as advance, \
-                 mock.patch.object(ts.time, "sleep", side_effect=answer_after_wait):
+                 mock.patch.object(ts, "advance_resumable_reorientation", return_value=None), \
+                 mock.patch.object(ts.time, "time", side_effect=iter(range(0, 100000, 100))), \
+                 mock.patch.object(ts.time, "sleep") as sleep:
                 result = ts.watch_thread(repo, "t1", max_cycles=1)
             self.assertEqual(spawn.call_count, 1)
+            sleep.assert_not_called()
             self.assertEqual(result["status"], "max_cycles_exceeded")
 
     def test_dual_gate_pass_exits_terminal(self):

@@ -34,6 +34,21 @@ class ServerSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("Pick or create a thread", resp.text)
 
+    def test_production_has_no_human_decision_gate(self) -> None:
+        from research_harness.orchestrator.operator_prompts import enqueue_prompt
+
+        thread = threads.create_thread(self.repo, user_goal="autonomous research")
+        tid = thread["thread_id"]
+        threads.update_thread(self.repo, tid, current_phase="production")
+        enqueue_prompt(threads.threads_root(self.repo) / tid,
+                       kind="decision_request", prompt="Old pending decision")
+        page = self.client.get(f"/threads/{tid}")
+        self.assertEqual(page.status_code, 200)
+        self.assertNotIn("Operator decision needed", page.text)
+        self.assertNotIn("Old pending decision", page.text)
+        for endpoint in ("operator_input", "baseline_review", "feasibility_envelope"):
+            self.assertEqual(self.client.post(f"/api/threads/{tid}/{endpoint}", json={}).status_code, 404)
+
     def test_empty_graph_exposes_baseline_preparation_without_claims(self) -> None:
         thread = threads.create_thread(self.repo, user_goal="baseline diagnosis")
         tid = thread["thread_id"]

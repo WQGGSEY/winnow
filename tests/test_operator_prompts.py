@@ -1,4 +1,4 @@
-"""Unit tests for the operator_prompts queue + the MCP wrappers."""
+"""Unit tests for the operator_prompts queue historical records."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-import research_harness.mcp_server as M
 from research_harness.orchestrator.operator_prompts import (
     enqueue_prompt,
     list_pending,
@@ -107,45 +106,3 @@ def test_event_id_idempotency_via_caller_supplied_id(tmp_path):
 
 
 # --- MCP wrappers ------------------------------------------------------- #
-
-
-def test_mcp_enqueue_handler_writes_queue_file(tmp_path, monkeypatch):
-    monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
-    tid = "t_mcp"
-    out = M.handle_enqueue_operator_prompt({
-        "thread_id": tid, "kind": "decision_request",
-        "prompt": "what now?", "options": ["a", "b"],
-        "source_rail": "rail_x",
-    })
-    assert out["status"] == "ok"
-    assert out["event_id"].startswith("opr_")
-    pending = list_pending(tmp_path / "runs" / "threads" / tid)
-    assert len(pending) == 1
-
-
-def test_mcp_get_pending_returns_empty_when_no_response(tmp_path, monkeypatch):
-    monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
-    tid = "t_mcp"
-    M.handle_enqueue_operator_prompt({
-        "thread_id": tid, "kind": "decision_request", "prompt": "p",
-    })
-    out = M.handle_get_pending_operator_response({"thread_id": tid})
-    assert out["status"] == "empty"
-
-
-def test_mcp_get_pending_consumes_responded_prompt(tmp_path, monkeypatch):
-    monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
-    tid = "t_mcp"
-    enq = M.handle_enqueue_operator_prompt({
-        "thread_id": tid, "kind": "decision_request", "prompt": "p",
-    })
-    submit_response(
-        tmp_path / "runs" / "threads" / tid,
-        event_id=enq["event_id"], response="proceed",
-    )
-    out = M.handle_get_pending_operator_response({"thread_id": tid})
-    assert out["status"] == "ok"
-    assert out["response"] == "proceed"
-    # Now consumed — second poll returns empty.
-    again = M.handle_get_pending_operator_response({"thread_id": tid})
-    assert again["status"] == "empty"

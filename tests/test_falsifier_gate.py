@@ -481,7 +481,7 @@ def _base_envelope(tid, **overrides):
 def test_submit_envelope_stamps_unverified_screen_when_no_falsifier(tmp_path, monkeypatch):
     monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / "runs" / "threads" / tid)
     tid = "t_env"
-    out = M.register_operator_feasibility_envelope(
+    out = M._register_feasibility_envelope(
         {"thread_id": tid, "envelope": _base_envelope(tid)},
         settings={"data_adapters": {"registered": []}},
     )
@@ -503,7 +503,7 @@ def test_submit_envelope_stamps_goal_achieved_with_falsifier_and_overwrites_oper
         external_falsifier=_xgen_falsifier(),
         max_attestable_status="unverified_screen",  # operator lie — must be overwritten
     )
-    out = M.register_operator_feasibility_envelope(
+    out = M._register_feasibility_envelope(
         {"thread_id": tid, "envelope": env},
         settings={"data_adapters": {"registered": []}},
     )
@@ -511,16 +511,35 @@ def test_submit_envelope_stamps_goal_achieved_with_falsifier_and_overwrites_oper
     assert out["max_attestable_status"] == "goal_achieved"
 
 
-def test_agent_cannot_register_its_own_falsifier(tmp_path, monkeypatch):
+def test_protocol_is_independently_reviewed_without_human_approval(tmp_path, monkeypatch):
+    from research_harness.orchestrator import research_review
+
     monkeypatch.setattr(M, "_thread_dir", lambda tid: tmp_path / tid)
     env = _base_envelope("t", external_falsifier=_xgen_falsifier())
-    env["external_falsifier"]["registered_by"] = "supervisor_bootstrap"
-    out = M.handle_submit_feasibility_envelope(
-        {"thread_id": "t", "envelope": env}, settings={}
-    )
-    assert out["status"] == "awaiting_operator"
-    assert not (tmp_path / "t/production/feasibility_envelope.json").exists()
-    assert (tmp_path / "t/production/feasibility_envelope_proposal.json").exists()
+    production = tmp_path / "t/production"
+    production.mkdir(parents=True)
+    path = production / "feasibility_envelope.json"
+    original = _base_envelope("t")
+    path.write_text(json.dumps(original))
+    review = {"assessment": {"decision": "reject", "reason": "unjustified criterion", "required_work": ["justify threshold"]}}
+    monkeypatch.setattr(research_review, "review_research_packet", lambda *a, **kw: review)
+    result = M.handle_submit_feasibility_envelope({"thread_id": "t", "envelope": env}, settings={})
+    assert result["status"] == "rejected"
+    assert json.loads(path.read_text()) == original
+    review["assessment"].update(decision="approve", required_work=[])
+    result = M.handle_submit_feasibility_envelope({"thread_id": "t", "envelope": env}, settings={})
+    assert result["status"] == "ok"
+    assert json.loads(path.read_text())["external_falsifier"]["registered_by"] == "adversary_pass"
+    assert not (production / "operator_prompts.jsonl").exists()
+    (production / "reorientation").mkdir()
+    (production / "reorientation/goal_contract.json").write_text("{}")
+    env["external_falsifier"]["predicate"]["threshold"] = 0.001
+    frozen = path.read_bytes()
+    assert M.handle_submit_feasibility_envelope({"thread_id": "t", "envelope": env}, settings={})["status"] == "rejected"
+    assert path.read_bytes() == frozen
+    (production / "reorientation/goal_contract.json").unlink()
+    env["compute_budget"]["max_total_node_hours"] = original["compute_budget"]["max_total_node_hours"] + 1
+    assert M.handle_submit_feasibility_envelope({"thread_id": "t", "envelope": env}, settings={})["status"] == "rejected"
 
 
 # --- supervisor bootstrap default --------------------------------------- #

@@ -89,25 +89,6 @@ class SupervisorRoutesTests(unittest.TestCase):
         app = fserver.create_app(repo_root=repo)
         return TestClient(app)
 
-    def test_operator_registers_envelope_and_frozen_contract_rejects_change(self):
-        from tests.test_falsifier_gate import _base_envelope, _xgen_falsifier
-
-        with TemporaryDirectory() as tmp:
-            repo = _setup_repo(Path(tmp))
-            client = self._client(repo)
-            env = _base_envelope("thread_t1", external_falsifier=_xgen_falsifier())
-            url = "/api/threads/thread_t1/feasibility_envelope"
-            response = client.post(url, json={"envelope": env})
-            self.assertEqual(response.status_code, 200, response.text)
-            prod = repo / "runs/threads/thread_t1/production"
-            original = (prod / "feasibility_envelope.json").read_bytes()
-            self.assertEqual(json.loads(original)["external_falsifier"]["registered_by"], "operator")
-            (prod / "reorientation").mkdir()
-            (prod / "reorientation/goal_contract.json").write_text("{}")
-            env["external_falsifier"]["predicate"]["threshold"] = 0.001
-            self.assertEqual(client.post(url, json={"envelope": env}).status_code, 409)
-            self.assertEqual((prod / "feasibility_envelope.json").read_bytes(), original)
-
     def test_start_rejects_invalid_scope(self):
         with TemporaryDirectory() as tmp:
             repo = _setup_repo(Path(tmp))

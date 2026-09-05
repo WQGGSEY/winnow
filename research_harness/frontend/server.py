@@ -426,67 +426,6 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
         await session.emit({"type": "user_reply", "text": reply})
         return JSONResponse({"ok": True})
 
-    @app.get("/api/threads/{thread_id}/operator_prompts")
-    async def operator_prompts_list(thread_id: str) -> JSONResponse:
-        from research_harness.orchestrator.operator_prompts import list_pending
-        _require_thread(s.repo_root, thread_id)
-        tdir = s.repo_root / "runs" / "threads" / thread_id
-        return JSONResponse({"pending": list_pending(tdir)})
-
-    @app.post("/api/threads/{thread_id}/operator_input")
-    async def operator_input_submit(thread_id: str, req: Request) -> JSONResponse:
-        from research_harness.orchestrator.operator_prompts import submit_response
-        _require_thread(s.repo_root, thread_id)
-        form = await req.form()
-        event_id = (form.get("event_id") or "").strip()
-        response = (form.get("response") or "").strip()
-        if not event_id:
-            raise HTTPException(400, "event_id is required")
-        if not response:
-            raise HTTPException(400, "response must not be empty")
-        tdir = s.repo_root / "runs" / "threads" / thread_id
-        try:
-            submit_response(tdir, event_id=event_id, response=response)
-        except ValueError as exc:
-            raise HTTPException(409, str(exc)) from exc
-        return JSONResponse({"ok": True, "event_id": event_id})
-
-    @app.post("/api/threads/{thread_id}/feasibility_envelope")
-    async def register_feasibility_envelope(thread_id: str, req: Request) -> JSONResponse:
-        from research_harness.mcp_server import register_operator_feasibility_envelope
-        from research_harness.orchestrator.blind_mcp_adapter import adaptive_writer_lock
-        from research_harness.settings_scoped import resolve_for_thread
-
-        _require_thread(s.repo_root, thread_id)
-        body = await req.json()
-        if not isinstance(body, dict) or not isinstance(body.get("envelope"), dict):
-            raise HTTPException(400, "envelope object is required")
-        tdir = s.repo_root / "runs" / "threads" / thread_id
-        with adaptive_writer_lock(tdir):
-            result = register_operator_feasibility_envelope(
-                {"thread_id": thread_id, "envelope": body["envelope"]},
-                resolve_for_thread(s.repo_root, thread_id), thread_dir=tdir,
-            )
-        return JSONResponse(result, status_code=409 if result["status"] == "rejected" else 200)
-
-    @app.post("/api/threads/{thread_id}/baseline_review")
-    async def baseline_review(thread_id: str, req: Request) -> JSONResponse:
-        from research_harness.memory.baseline_review import review_baselines
-        from research_harness.orchestrator.blind_mcp_adapter import adaptive_writer_lock
-
-        _require_thread(s.repo_root, thread_id)
-        body = await req.json()
-        try:
-            tdir = s.repo_root / "runs/threads" / thread_id
-            with adaptive_writer_lock(tdir):
-                result = review_baselines(
-                    s.repo_root, tdir,
-                    proposal_digest=body["proposal_digest"], decision=body["decision"], reason=body["reason"],
-                )
-        except (OSError, ValueError, KeyError, TypeError) as exc:
-            raise HTTPException(409, str(exc)) from exc
-        return JSONResponse(result)
-
     @app.post("/api/threads/{thread_id}/{phase}/retry")
     async def phase_retry(thread_id: str, phase: str, req: Request) -> JSONResponse:
         """Re-run a phase that ended in ``phase_status == "failed"``.
@@ -1630,12 +1569,6 @@ def _read_phase_artifacts(
                     for row in adapter_status_rows(repo_root)
                     if row.get("status") == "ready"
                 ]
-        with contextlib.suppress(Exception):
-            from research_harness.orchestrator.operator_prompts import list_pending
-            tdir = repo_root / "runs" / "threads" / thread_id
-            pending = list_pending(tdir)
-            if pending:
-                result["pending_operator_prompts"] = pending
         paper_path = pdir / "publication" / "paper.html"
         result["publication_exists"] = paper_path.exists()
         # "production has activity" = at least one MCP-produced file under

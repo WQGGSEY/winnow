@@ -132,59 +132,6 @@
     </details>
   {% endif %}
 
-  {# Hands-free operator decisions and missing-context requests. Render
-     pending prompts as inline answer cards. The form POSTs back to
-     /operator_input which writes
-     the response into operator_prompts.jsonl; the Codex subprocess
-     polls get_pending_operator_response to consume it. #}
-  {% if p.pending_operator_prompts %}
-    <section class="operator-prompts-card">
-      <h3>⚠️ Operator decision needed
-        <span class="muted" style="font-size:12px;">
-          ({{ p.pending_operator_prompts|length }} pending)
-        </span>
-      </h3>
-      {% for prompt in p.pending_operator_prompts %}
-        <article class="operator-prompt"
-                 data-event-id="{{ prompt.event_id }}"
-                 data-status="{{ prompt.status }}">
-          <header>
-            <strong>{{ prompt.kind }}</strong>
-            {% if prompt.source_rail %}
-              <span class="muted">· from {{ prompt.source_rail }}</span>
-            {% endif %}
-            <span class="muted" style="float:right;">{{ prompt.created_at }}</span>
-          </header>
-          <p class="operator-prompt-body">{{ prompt.prompt }}</p>
-          {% if prompt.status == "responded" %}
-            <p class="operator-prompt-response muted">
-              ↳ already responded: <em>{{ prompt.response }}</em>
-              (waiting for Codex to consume)
-            </p>
-          {% else %}
-            <form class="operator-prompt-form"
-                  hx-post="/api/threads/{{ thread.thread_id }}/operator_input"
-                  hx-trigger="submit"
-                  hx-swap="none">
-              <input type="hidden" name="event_id" value="{{ prompt.event_id }}">
-              {% if prompt.options %}
-                <div class="operator-prompt-options">
-                  {% for opt in prompt.options %}
-                    <button type="button" class="btn-chip"
-                            data-fill-response="{{ opt }}">{{ opt }}</button>
-                  {% endfor %}
-                </div>
-              {% endif %}
-              <textarea name="response" rows="3" required
-                        placeholder="Your decision (free text; Codex receives this verbatim)"></textarea>
-              <button type="submit" class="btn">Send to harness</button>
-            </form>
-          {% endif %}
-        </article>
-      {% endfor %}
-    </section>
-  {% endif %}
-
   {# Live-tail log surfaces. When the supervisor is running, we render
      empty <pre> placeholders that the body-level SupervisorLogStream
      fills via SSE (no 4s panel-poll latency). When idle, we fall back

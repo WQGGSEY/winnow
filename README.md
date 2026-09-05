@@ -183,6 +183,16 @@ grilling and connector, then start the supervisor from the production panel.
 Each invocation receives the repository MCP configuration directly; no global
 MCP registration is required. See `docs/MCP_OPERATIONS.md`.
 
+Production proceeds without human decision requests or approval forms. Baseline
+qualification and evaluation-protocol registration invoke an independent Sol low
+reviewer. It receives the implementation and execution evidence, persists its
+assessment, and returns required work to the research agent when it rejects a
+proposal. Approval applies to the reviewed evidence; changing the evidence
+requires another review. Protocol review cannot expand initialized resources or
+change a frozen goal. Historical operator feedback remains available as context,
+but unanswered legacy prompts do not pause the supervisor. Review failures do not
+count as approval, and publication still requires the research validation gates.
+
 ## Experiment Plan Templates (per-domain, directory-based)
 
 Real experiment code lives in user-owned template directories listed in

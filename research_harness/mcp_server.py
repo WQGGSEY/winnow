@@ -139,10 +139,10 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "submit_baseline_qualification",
-        "description": "Before freezing the goal, qualify sourced baseline candidates using replayable preflight execution artifacts under production/tree. Research ranking alone does not assign baseline roles.",
+        "description": "Before freezing the goal, qualify sourced baseline candidates using replayable preflight execution artifacts under production/tree. An independent harness reviewer checks the exact implementation and evidence. Rejection returns required work; no human approval is requested.",
         "inputSchema": {
             "type": "object", "required": ["thread_id", "qualification"],
-            "properties": {"thread_id": {"type": "string"}, "qualification": {"type": "object"}},
+            "properties": {"thread_id": {"type": "string"}, "qualification": load_schema("baseline_qualification")},
         },
     },
     {
@@ -298,9 +298,10 @@ TOOL_DEFINITIONS = [
             "operator's target deploy_grade_scope. This anchors every "
             "subsequent claim: 'deployment' scope is blocked when no real "
             "adapter is registered, 'live LLM' oracle is blocked when no "
-            "billing_ack is set, etc. This tool writes a proposal and requests "
-            "an operator decision. It does not change the registered envelope. "
-            "Only the operator frontend can register the reviewed criterion."
+            "billing_ack is set, etc. An independent harness reviewer evaluates "
+            "the proposed protocol and registers it if approved. Rejections "
+            "return actionable findings. Initialized resources, compute ceilings "
+            "and frozen research goals cannot be expanded through this tool."
         ),
         "inputSchema": {
             "type": "object",
@@ -858,63 +859,6 @@ TOOL_DEFINITIONS = [
                 "attestation": {
                     "type": "object",
                     "description": "UserGoalAttestation object — see user_goal_attestation.schema.json.",
-                },
-            },
-        },
-    },
-    {
-        "name": "enqueue_operator_prompt",
-        "description": (
-            f"{PROFESSOR_CONTRACT}\n\n"
-            "Hands-free operator coordination channel for a genuine decision "
-            "or missing context that cannot be resolved from durable state. "
-            "The frontend renders "
-            "pending prompts in the production phase view; the operator's "
-            "free-text response lands back via get_pending_operator_response. "
-            "Fire-and-forget — does not block; caller polls separately."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["thread_id", "kind", "prompt"],
-            "properties": {
-                "thread_id": {"type": "string"},
-                "kind": {
-                    "type": "string",
-                    "enum": ["decision_request", "context_request"],
-                },
-                "prompt": {"type": "string", "minLength": 1},
-                "options": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Optional list of suggested operator responses (rendered as quick-pick chips).",
-                },
-                "source_rail": {"type": "string"},
-                "event_id": {
-                    "type": "string",
-                    "description": "Stable id for idempotent retry. Auto-generated when omitted.",
-                },
-            },
-        },
-    },
-    {
-        "name": "get_pending_operator_response",
-        "description": (
-            f"{PROFESSOR_CONTRACT}\n\n"
-            "Polled by the Codex subprocess to consume operator "
-            "responses to prompts previously enqueued via "
-            "enqueue_operator_prompt. Returns the oldest responded prompt "
-            "(or the one matching event_id if supplied) and marks it as "
-            "consumed in the queue log. Returns status=='empty' when "
-            "nothing is ready — caller should wait and try again."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["thread_id"],
-            "properties": {
-                "thread_id": {"type": "string"},
-                "event_id": {
-                    "type": "string",
-                    "description": "Consume this specific event_id; otherwise the oldest responded prompt is taken.",
                 },
             },
         },
@@ -2363,9 +2307,10 @@ def handle_resume_production_state(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def handle_submit_feasibility_envelope(args: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    """The research agent proposes resources and criteria; it cannot register them."""
-    from research_harness.orchestrator.operator_prompts import enqueue_prompt
+    """Independently review evaluation criteria within the existing resource envelope."""
+    from research_harness.orchestrator.research_review import review_research_packet
     from research_harness.schemas.validator import validate_named_schema
+    from research_harness.adapters.codex_cli import CodexCliError
 
     tid = args["thread_id"]
     env = args["envelope"]
@@ -2375,29 +2320,43 @@ def handle_submit_feasibility_envelope(args: dict[str, Any], settings: dict[str,
         return {"status": "rejected", "reason": f"schema validation failed: {exc}"}
     if env.get("thread_id") != tid:
         return {"status": "rejected", "reason": "envelope thread_id mismatch"}
-    tdir = _thread_dir(tid)
-    existing = _read_json(tdir / "production" / "feasibility_envelope.json")
-    if existing == env:
-        return {"status": "ok", "reason": "unchanged operator registration"}
-    proposal_path = tdir / "production" / "feasibility_envelope_proposal.json"
-    _write_json_atomic(proposal_path, env)
-    event = enqueue_prompt(
-        tdir, kind="decision_request",
-        prompt="Review the proposed feasibility envelope and evaluation criterion before registration: " + str(proposal_path),
-        source_rail="feasibility_registration",
-        event_id="opr_envelope_" + hashlib.sha256(json.dumps(env, sort_keys=True).encode()).hexdigest()[:16],
-    )
-    return {
-        "status": "awaiting_operator", "event_id": event["event_id"],
-        "proposal_path": str(proposal_path),
-        "reason": "Only the operator frontend can register criteria. A proposal or textual reply does not change the active envelope.",
-    }
+    with _exclusive_adaptive_writer(tid):
+        tdir = _thread_dir(tid)
+        existing = _read_json(tdir / "production/feasibility_envelope.json")
+        if existing == env:
+            return {"status": "ok", "reason": "unchanged registration"}
+        if not existing:
+            return {"status": "rejected", "reason": "Supervisor must initialize the resource envelope before protocol review."}
+        if (tdir / "production/reorientation/goal_contract.json").exists():
+            return {"status": "rejected", "reason": "goal contract is frozen; start a new research revision"}
+        for field in ("data_sources_available", "llm_oracles_available", "runtime_capabilities", "operator_intent", "execution_constraints"):
+            if env.get(field) != existing.get(field):
+                return {"status": "rejected", "reason": f"Protocol submission cannot change initialized {field}."}
+        if any(value > existing["compute_budget"][key] for key, value in env["compute_budget"].items()):
+            return {"status": "rejected", "reason": "Protocol submission cannot increase the compute budget."}
+        evidence = {}
+        for path in sorted((tdir / "production/tree/baseline_preflight").glob("*/worker_report.json")):
+            evidence[str(path)] = _read_json(path)
+        packet = {"proposal": env, "resource_envelope": existing,
+                  "research_problem": _read_json(tdir / "thread.json"),
+                  "baseline_qualification": _read_json(tdir / "market/baseline_qualification.json"),
+                  "development_evidence": evidence}
+        try:
+            review = review_research_packet(
+                _repo_root(), tdir / "production/protocol_reviews", packet,
+                purpose="Register meaningful prospective evaluation criteria, independent of inspected development results.",
+            )
+        except (OSError, ValueError, CodexCliError) as exc:
+            return {"status": "rejected", "reason": f"Independent protocol review failed: {exc}"}
+        if review["assessment"]["decision"] != "approve":
+            return {"status": "rejected", "review": review, "next_step": "Revise the protocol to resolve the review findings and resubmit."}
+        return _register_feasibility_envelope(args, settings, thread_dir=tdir)
 
 
-def register_operator_feasibility_envelope(
+def _register_feasibility_envelope(
     args: dict[str, Any], settings: dict[str, Any], *, thread_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Operator entry point, deliberately absent from the MCP tool registry."""
+    """Persist a protocol after independent review; not an exposed tool."""
     from research_harness.schemas.validator import validate_named_schema
     tid = args["thread_id"]
     tdir = thread_dir if thread_dir is not None else _thread_dir(tid)
@@ -2409,7 +2368,7 @@ def register_operator_feasibility_envelope(
     if env["thread_id"] != tid:
         return {"status": "rejected", "reason": "envelope thread_id mismatch"}
     if env.get("external_falsifier", {}).get("kind", "none") != "none":
-        env["external_falsifier"]["registered_by"] = "operator"
+        env["external_falsifier"]["registered_by"] = "adversary_pass"
 
     # Cross-check: 'deployment' target requires at least one real_adapter
     # data source. (We catch this at envelope-submission time too, not just
@@ -3830,6 +3789,7 @@ def handle_update_baseline_sources(args: dict[str, Any]) -> dict[str, Any]:
 
 def handle_submit_baseline_qualification(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.memory.baseline_review import propose_baselines
+    from research_harness.adapters.codex_cli import CodexCliError
 
     tid = args["thread_id"]
     with _exclusive_adaptive_writer(tid):
@@ -3838,7 +3798,7 @@ def handle_submit_baseline_qualification(args: dict[str, Any]) -> dict[str, Any]
         qualification = args["qualification"]
         try:
             return propose_baselines(_repo_root(), _thread_dir(tid), qualification)
-        except (OSError, ValueError, KeyError, TypeError) as exc:
+        except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:
             return {"status": "rejected", "reason": f"baseline qualification failed: {exc}"}
 
 
@@ -4681,50 +4641,6 @@ def _compute_ac_downclamp_signals(
             "user_goal_anchors_unbound: " + " | ".join(str(t) for t in truncated) + suffix
         )
     return reasons
-
-
-def handle_enqueue_operator_prompt(args: dict[str, Any]) -> dict[str, Any]:
-    from research_harness.orchestrator.operator_prompts import enqueue_prompt
-
-    tid = args["thread_id"]
-    try:
-        record = enqueue_prompt(
-            _thread_dir(tid),
-            kind=args["kind"],
-            prompt=args["prompt"],
-            options=args.get("options"),
-            source_rail=args.get("source_rail"),
-            event_id=args.get("event_id"),
-        )
-    except ValueError as exc:
-        return {"status": "rejected", "reason": str(exc)}
-    return {
-        "status": "ok",
-        "event_id": record["event_id"],
-        "next_step": (
-            "Poll get_pending_operator_response to consume the operator's "
-            "reply once it lands."
-        ),
-    }
-
-
-def handle_get_pending_operator_response(args: dict[str, Any]) -> dict[str, Any]:
-    from research_harness.orchestrator.operator_prompts import take_pending_response
-
-    tid = args["thread_id"]
-    record = take_pending_response(_thread_dir(tid), event_id=args.get("event_id"))
-    if record is None:
-        return {"status": "empty"}
-    return {
-        "status": "ok",
-        "event_id": record["event_id"],
-        "kind": record["kind"],
-        "prompt": record["prompt"],
-        "response": record["response"],
-        "source_rail": record.get("source_rail"),
-        "created_at": record["created_at"],
-        "responded_at": record.get("responded_at"),
-    }
 
 
 def handle_submit_ac_decision(args: dict[str, Any]) -> dict[str, Any]:
@@ -6089,10 +6005,6 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_submit_paper_section(args)
             elif name == "submit_professor_user_goal_attestation":
                 result = handle_submit_professor_user_goal_attestation(args)
-            elif name == "enqueue_operator_prompt":
-                result = handle_enqueue_operator_prompt(args)
-            elif name == "get_pending_operator_response":
-                result = handle_get_pending_operator_response(args)
             elif name == "render_final_paper":
                 result = handle_render_final_paper(args)
             else:

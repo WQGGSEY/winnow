@@ -343,6 +343,8 @@ class MCPServerTests(unittest.TestCase):
             "submit_construct_adversary_report",
         }
         retired = {
+            "enqueue_operator_prompt",
+            "get_pending_operator_response",
             "propose_alternative_root_directions",
             "render_honest_failure_paper",
             "revise_root_after_reject",
@@ -352,13 +354,9 @@ class MCPServerTests(unittest.TestCase):
             "select_strongest_survivor",
             "snapshot_root_terminal",
         }
-        operator_prompt_expected = {
-            "enqueue_operator_prompt",
-            "get_pending_operator_response",
-        }
         self.assertEqual(
             core_expected | practitioner_expected | dual_gate_expected
-            | envelope_expected | operator_prompt_expected,
+            | envelope_expected,
             names,
         )
         self.assertTrue(retired.isdisjoint(names))

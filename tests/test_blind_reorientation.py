@@ -384,9 +384,12 @@ def test_contract_uses_qualified_roles_and_can_select_second_candidate(
             "runner_result_sha256": "2" * 64,
         },
     ):
-        from research_harness.memory.baseline_review import propose_baselines, review_baselines
-        proposal = propose_baselines(tmp_path, tree.parent.parent, qualification)
-        review_baselines(tmp_path, tree.parent.parent, proposal_digest=proposal["proposal_digest"], decision="approve", reason="fixture scientific review")
+        from research_harness.memory.baseline_review import propose_baselines
+        with mock.patch("research_harness.memory.baseline_review.review_research_packet", return_value={
+            "reviewer": "independent-research-review", "request_sha256": "a" * 64,
+            "assessment": {"decision": "approve", "reason": "fixture scientific review", "evidence": ["fixture implementation"], "required_work": []},
+        }):
+            propose_baselines(tmp_path, tree.parent.parent, qualification)
         source = goal_contract_input_from_artifacts(
             repo_root=tmp_path,
             baseline_dossier_id="bd_qualified_test",

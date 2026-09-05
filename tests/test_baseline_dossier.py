@@ -255,7 +255,7 @@ class BaselineDossierTests(unittest.TestCase):
             self.assertEqual(verify.call_count, 3)
 
     def test_scientific_rejection_survives_identical_resubmission(self) -> None:
-        from research_harness.memory.baseline_review import propose_baselines, review_baselines
+        from research_harness.memory.baseline_review import propose_baselines
         import json
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -265,19 +265,25 @@ class BaselineDossierTests(unittest.TestCase):
             tdir = root / "thread"
             (tdir / "market").mkdir(parents=True)
             (tdir / "market/market_research_brief.json").write_text(json.dumps({"baseline_dossier_id": "bd_test"}))
+            for assignment in qualification['assignments']:
+                for key in ('experiment_plan_path', 'worker_report_path'):
+                    path = tdir / 'production/tree' / assignment['reproducibility_receipt'][key]
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text('{}')
             with mock.patch("research_harness.memory.baseline_review.load_baseline_dossier", return_value=dossier), \
                  mock.patch("research_harness.memory.baseline_review.dossier_path", return_value=root / "bd_test.yaml"), \
-                 mock.patch("research_harness.memory.baseline_review.validate_baseline_selection", return_value={"execution_bindings": {}}):
+                 mock.patch("research_harness.memory.baseline_review.validate_baseline_selection", return_value={"execution_bindings": {}}), \
+                 mock.patch("research_harness.memory.baseline_review.review_research_packet", return_value={"reviewer": "independent-research-review", "request_sha256": "a" * 64, "assessment": {"decision": "reject", "reason": "Fixed policy does not implement the cited learning method", "evidence": ["experiment plan"], "required_work": ["Implement the method"]}}) as reviewer:
                 proposal = propose_baselines(root, tdir, qualification)
-                self.assertEqual(proposal["status"], "awaiting_operator")
+                self.assertEqual(proposal["status"], "rejected")
                 self.assertFalse((tdir / "market/baseline_qualification.json").exists())
-                review_baselines(root, tdir, proposal_digest=proposal["proposal_digest"], decision="reject", reason="Fixed policy does not implement the cited learning method")
                 repeated = propose_baselines(root, tdir, qualification)
                 self.assertEqual(repeated["status"], "rejected")
                 self.assertFalse((tdir / "market/baseline_qualification.json").exists())
+                self.assertEqual(reviewer.call_count, 1)
                 (root / "candidates/c_best.md").write_text("changed method evidence")
-                with self.assertRaisesRegex(ValueError, "changed since"):
-                    review_baselines(root, tdir, proposal_digest=proposal["proposal_digest"], decision="approve", reason="old review")
+                propose_baselines(root, tdir, qualification)
+                self.assertEqual(reviewer.call_count, 2)
 
     def test_selection_rejects_mismatched_comparison_and_runner_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -118,7 +118,7 @@
     },
     "external_falsifier": {
       "type": "object",
-      "description": "ADR 0006: the harness-owned check that goal-achievement is graded against, registered BEFORE the claim is designed and OWNED by the operator (or supervisor auto-bootstrap acting as operator stand-in) — never by the production tree-search. 'kind=none' (or absence) caps max_attestable_status at 'unverified_screen': achieved=true becomes structurally impossible. A passing falsifier_result computed against holdout_source_id is the only path to achieved=true.",
+      "description": "ADR 0006: the harness-owned check that goal-achievement is graded against, registered BEFORE the claim is designed and registered by an independent harness reviewer or supervisor bootstrap. The production agent proposes criteria but cannot approve them. 'kind=none' (or absence) caps max_attestable_status at 'unverified_screen': achieved=true becomes structurally impossible. A passing falsifier_result computed against holdout_source_id is the only path to achieved=true.",
       "required": ["kind"],
       "properties": {
         "kind": {
@@ -144,7 +144,7 @@
         "registered_by": {
           "type": "string",
           "enum": ["operator", "supervisor_bootstrap", "adversary_pass"],
-          "description": "Who registered this falsifier. 'worker' is intentionally absent from the enum — the success-seeking run must not author its own falsifier."
+          "description": "Who registered this falsifier. adversary_pass denotes independent protocol review; operator is retained for historical records. The proposing worker cannot approve its own falsifier."
         }
       },
       "additionalProperties": false

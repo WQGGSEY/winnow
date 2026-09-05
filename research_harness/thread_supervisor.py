@@ -1248,7 +1248,7 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "",
         *needs_block,
         "",
-        "연구자 결정 기록 (consumed도 계속 유효하다. responded만 수신 확인):",
+        "과거 연구자 피드백 (기록으로 참고하고 새 승인이나 답변을 기다리지 마):",
         json.dumps(responses, ensure_ascii=False),
         "",
         "Operator-owned experiment runtime:",
@@ -1269,7 +1269,7 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "     실험 코드는 execute_baseline_preflight 또는 design_experiment_template로 제출해.",
         "     하네스 검증기나 운영자 설정 오류는 근거와 함께 보고하고 직접 수정하지 마.",
         "     논문 메타데이터만 있는 것은 추가 검색이 필요한 상태다. 접근 실패를",
-        "     실제로 확인한 자원만 external block으로 보고하고 필요한 결정을 질문해.",
+        "     실제로 확인한 자원만 external block으로 기록해. 사람의 답변을 기다리지 마.",
         "  3. get_next_admissible_node를 호출해. 권위 있는 blind active node가 있으면",
         "     그 노드만 재개하고, 없으면 advance_research로 새 방향을 준비한다.",
         "  4. checkpointed이면 응답의 expected_revision과 checkpoint_id를 유지한",
@@ -1296,8 +1296,8 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "",
         "Feasibility envelope (PR7, supervisor 자동 작성):",
         "  - feasibility_envelope.json이 production/ 에 이미 supervisor가 자동 작성한 상태.",
-        "    submit_feasibility_envelope 다시 호출할 필요 없음. 그냥 거기 declared된",
-        "    data_sources / llm_oracles / compute_budget / operator_intent 안에서 claim 설계.",
+        "    평가 프로토콜 등록이 필요하면 submit_feasibility_envelope로 독립 리뷰를 받아.",
+        "    초기 data_sources / llm_oracles / compute_budget / operator_intent 안에서 claim 설계.",
         "    envelope 못 맞추면 validate_claim_fits_envelope이 reject.",
         "  - envelope에 적힌 target_deploy_grade_scope을 claim_contract.deploy_grade_scope에",
         "    그대로 박고, data_source_anchor도 envelope에 적힌 real_adapter id 또는",
@@ -1313,6 +1313,10 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "historical honest_failure를 완료로 취급하지 마. 새 작업이 불가능하면",
         "advance_research가 반환한 checkpoint 또는 hard_external_block을 남겨.",
         "",
+        "Production은 human hands-off다. 연구 판단은 직접 수행하고 독립 리뷰의 거절은 수정과 재실험으로 해결해.",
+        "과거 미응답 operator prompt는 대기 조건이 아니다. 필요한 가정과 근거를 기록하고 계속해.",
+        "submit_baseline_qualification은 독립 리뷰를 실행한다. 승인되면 계속하고 거절이면 구체적 결함을 수정해.",
+        "평가 프로토콜은 submit_feasibility_envelope로 독립 심사 후 등록해. 계산 한도와 고정 목표는 바꾸지 마.",
         "지금 시작:",
     ]
     return "\n".join(lines)
@@ -1709,7 +1713,6 @@ def watch_thread(
                    f"experiment_hard_cap={experiment_hard_cap:.0f}s (longest runner_timeout + margin)")
 
     cycle = 0
-    waiting_for_operator = False
     rate_limit_backoff = rate_limit_backoff_initial
     rate_limit_armed = False  # toggled after a fast-fail cycle
     while True:
@@ -1726,28 +1729,6 @@ def watch_thread(
         if max_cycles is not None and cycle >= max_cycles:
             _log(log_path, f"explicit max_cycles override ({max_cycles}) hit. exiting.")
             return {"status": "max_cycles_exceeded", "cycles": cycle}
-
-        from research_harness.orchestrator.operator_prompts import list_pending
-        pending_decisions = [
-            item for item in list_pending(tdir)
-            if item["status"] == "pending" and item["kind"] == "decision_request"
-        ]
-        if pending_decisions:
-            if not waiting_for_operator:
-                _log(log_path, "awaiting operator decision; research dispatch paused")
-                if (tdir / "thread.json").exists():
-                    from research_harness.frontend.threads import update_thread
-                    update_thread(repo, tid, phase_status="awaiting_input")
-            waiting_for_operator = True
-            time.sleep(min(poll_seconds, 30.0))
-            continue
-        operator_resumed = waiting_for_operator
-        if waiting_for_operator:
-            _log(log_path, "operator decision received; resuming research")
-            if (tdir / "thread.json").exists():
-                from research_harness.frontend.threads import update_thread
-                update_thread(repo, tid, phase_status="running")
-            waiting_for_operator = False
 
         try:
             resumed = advance_resumable_reorientation(repo, tid)
@@ -1789,7 +1770,7 @@ def watch_thread(
         # auto-bootstrap, which would otherwise force a full max_idle wait before
         # the first spawn (the ~10-min cold-start delay). Spawn cycle #1
         # immediately; the idle gate governs only subsequent (resume) cycles.
-        if cycle > 0 and not operator_resumed and idle <= max_idle_seconds:
+        if cycle > 0 and idle <= max_idle_seconds:
             # Recent activity — MCP still being driven. Wait.
             time.sleep(poll_seconds)
             continue
@@ -1801,8 +1782,6 @@ def watch_thread(
         prompt = build_resume_prompt(repo, tid, cycle)
         if cycle == 1:
             _log(log_path, "cycle #1: cold start, starting Codex immediately (idle gate applies from cycle #2)")
-        elif operator_resumed:
-            _log(log_path, f"cycle #{cycle}: operator response received, starting Codex immediately")
         else:
             _log(log_path, f"cycle #{cycle}: idle={idle:.0f}s > {max_idle_seconds:.0f}s, starting Codex")
         spawn_started = time.time()
