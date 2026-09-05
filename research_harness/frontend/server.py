@@ -779,6 +779,11 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
             )
 
         signals_sent: list[str] = []
+        def mark_stopped() -> None:
+            thread = _require_thread(s.repo_root, thread_id)
+            if thread["current_phase"] == "production" and thread["phase_status"] != "complete":
+                threads.update_thread(s.repo_root, thread_id, phase_status="idle")
+
         try:
             os.kill(pid, signal.SIGTERM)
             signals_sent.append("SIGTERM")
@@ -788,6 +793,7 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
                 lock_path.unlink()
             except OSError:
                 pass
+            mark_stopped()
             return JSONResponse(
                 {"ok": True, "signaled_pid": pid, "signals_sent": [], "note": "pid already dead; cleaned stale lock"}
             )
@@ -816,6 +822,7 @@ def _register_routes(app: FastAPI, s: AppState) -> None:
         except OSError:
             pass
 
+        mark_stopped()
         return JSONResponse(
             {"ok": True, "stopped_pid": pid, "signals_sent": signals_sent}
         )

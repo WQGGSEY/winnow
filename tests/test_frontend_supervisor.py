@@ -320,6 +320,7 @@ class SupervisorRoutesTests(unittest.TestCase):
                 if len(c.args) >= 2 and c.args[1] == fserver.signal.SIGTERM
             ]
             self.assertGreaterEqual(len(sigterms), 1)
+            self.assertEqual(fserver.threads.load_thread(repo, "thread_t1")["phase_status"], "idle")
 
     def test_stop_succeeds_when_process_already_dead(self):
         """If SIGTERM raises ProcessLookupError immediately, route
@@ -338,6 +339,7 @@ class SupervisorRoutesTests(unittest.TestCase):
             self.assertEqual(r.json()["signals_sent"], [])
             # stale lock removed
             self.assertFalse(lock.exists())
+            self.assertEqual(fserver.threads.load_thread(repo, "thread_t1")["phase_status"], "idle")
 
     def test_start_rejects_when_publication_paper_exists(self):
         # PR10b: resume is disabled once publication artifact exists.
