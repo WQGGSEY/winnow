@@ -20,10 +20,14 @@ trace_hash = hashlib.sha256()
 steps = 0
 score_changes = 0
 food_changes = 0
-for board in sorted((module.Path(sys.argv[2]).parent / "layouts").glob("*.lay")):
+conditions = [{"layout": board.stem} for board in sorted((module.Path(sys.argv[2]).parent / "layouts").glob("*.lay"))]
+conditions += [{"layout_seed": seed} for seed in (12345, 54321)]
+for condition in conditions:
     for seed in range(4):
         rng = random.Random(seed)
-        state = sim.reset(layout=board.stem, seed=seed)
+        global_rng = random.getstate()
+        state = sim.reset(**condition, seed=seed)
+        assert random.getstate() == global_rng
         while not state["terminal"]:
             before = state
             state = sim.step(agent=state["current_agent"], action=rng.choice(state["legal_actions"]))

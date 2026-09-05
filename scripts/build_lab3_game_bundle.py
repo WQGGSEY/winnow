@@ -22,7 +22,7 @@ def build(source_repo: Path, output: Path) -> dict:
         raise ValueError("Output must be a new directory; stale inputs are not allowed")
     files = {}
     source_hashes = {}
-    names = ["capture.py", "game.py", "layout.py", "util.py"]
+    names = ["capture.py", "game.py", "layout.py", "util.py", "mazeGenerator.py"]
     names += [f"layouts/{name}Capture.lay" for name in LAYOUTS]
     for name in names:
         raw = subprocess.run(

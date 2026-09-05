@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import io
+from contextlib import redirect_stdout
 from pathlib import Path
 import random
 import sys
 
 import capture
+import mazeGenerator
 from layout import Layout
 
 
@@ -17,14 +20,26 @@ class Simulator:
         self.turn = 0
         self.total_food = 0
 
-    def reset(self, *, layout="defaultCapture", seed=0, max_moves=1200, starting_agent=None):
-        if not isinstance(layout, str) or not layout.isidentifier():
+    def reset(self, *, layout=None, layout_seed=None, seed=0, max_moves=1200, starting_agent=None):
+        if layout_seed is not None and (type(layout_seed) is not int or layout_seed <= 0):
+            raise ValueError("layout_seed must be a positive integer")
+        if layout_seed is not None and layout is not None:
+            raise ValueError("choose a bundled layout or layout_seed, not both")
+        if layout is not None and (not isinstance(layout, str) or not layout.isidentifier()):
             raise ValueError("layout must be a bundled layout name without extension")
         if type(seed) is not int or type(max_moves) is not int or max_moves <= 0:
             raise ValueError("seed must be an integer and max_moves a positive integer")
         if starting_agent is not None and (type(starting_agent) is not int or starting_agent not in (0, 1)):
             raise ValueError("starting_agent must be 0, 1, or null, matching Lab3 start rules")
-        text = (Path(__file__).parent / "layouts" / f"{layout}.lay").read_text()
+        if layout_seed is None:
+            text = (Path(__file__).parent / "layouts" / f"{layout or 'defaultCapture'}.lay").read_text()
+        else:
+            rng_state = random.getstate()
+            try:
+                with redirect_stdout(io.StringIO()):
+                    text = mazeGenerator.generateMaze(layout_seed)
+            finally:
+                random.setstate(rng_state)
         board = Layout(text.splitlines())
         if len(board.agentPositions) != 4:
             raise ValueError("The simulator requires a four-agent layout")
