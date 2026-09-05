@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -82,6 +83,41 @@ class SupervisorStateTests(unittest.TestCase):
             state = fserver._read_supervisor_state(repo, "thread_t1")
             self.assertEqual(len(state["log_tail"]), 30)
             self.assertEqual(state["log_tail"][-1], "line 49")
+
+    def test_log_views_keep_results_and_errors_without_tool_noise(self):
+        with TemporaryDirectory() as tmp:
+            repo = _setup_repo(Path(tmp))
+            tdir = repo / "runs/threads/thread_t1"
+            supervisor = "[2026-09-05 17:00:00] supervisor starting\n[2026-09-05 17:00:00] max_idle=600\n[2026-09-05 17:00:00] stall watchdog: stall_timeout=600\n"
+            subprocess = "[17:00:00] message> Baseline rejected; fixing the transition.\n" + "[17:00:01] tool> command_execution\n[17:00:01] status> item.started\n" * 220
+            subprocess += "[17:00:02] status> turn.failed\n[17:00:02] diagnostic> Connection reset\n"
+            (tdir / "supervisor.log").write_text(supervisor)
+            path = tdir / "codex_subprocess.log"
+            path.write_text(subprocess)
+            state = fserver._read_supervisor_state(repo, "thread_t1")
+            self.assertEqual(len(state["log_tail"]), 1)
+            self.assertEqual(len(state["subprocess_log_tail"]), 3)
+
+            async def inspect_stream():
+                stream = fserver._tail_supervisor_logs(tdir)
+                try:
+                    await anext(stream)  # connection heartbeat
+                    snapshot = await anext(stream)
+                    self.assertNotIn("max_idle", snapshot)
+                    snapshot = await anext(stream)
+                    self.assertIn("Baseline rejected", snapshot)
+                    self.assertIn("turn.failed", snapshot)
+                    self.assertNotIn("tool>", snapshot)
+                    with path.open("a") as output:
+                        output.write("[17:01:00] tool> research_harness\n[17:01:00] status> item.started\n[17:01:01] message> Experiment completed\n")
+                    update = await asyncio.wait_for(anext(stream), timeout=2)
+                    self.assertIn("Experiment completed", update)
+                    self.assertNotIn("tool>", update)
+                finally:
+                    await stream.aclose()
+
+            asyncio.run(inspect_stream())
+            self.assertIn("tool> command_execution", path.read_text())
 
 
 class SupervisorRoutesTests(unittest.TestCase):
