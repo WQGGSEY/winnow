@@ -204,6 +204,7 @@ class CodexCliAdapter:
             "--json",
             "--model",
             model,
+            "--skip-git-repo-check",
         ])
         effort = model_reasoning_effort(model)
         if effort is not None:

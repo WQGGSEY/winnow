@@ -463,6 +463,19 @@ def test_generation_is_blind_and_command_retry_is_idempotent(tmp_path: Path) -> 
     assert isinstance(state.phase, AcquisitionReserved)
 
 
+def test_generation_failure_preserves_diagnostic_for_retry(tmp_path: Path) -> None:
+    class BrokenGenerator:
+        def generate(self, request):
+            raise RuntimeError("invalid direction response")
+
+    engine = _engine(tmp_path, BrokenGenerator(), _Acquisition())
+    result = engine.advance_research(command_id="failed-generation")
+    assert result["status"] == "checkpointed"
+    assert result["generation_error"]["type"] == "RuntimeError"
+    assert result["generation_error"]["message"] == "invalid direction response"
+    assert engine.advance_research(command_id="failed-generation") == result
+
+
 def test_intake_claim_is_absent_until_generated_direction_owns_node_claim(
     tmp_path: Path,
 ) -> None:

@@ -462,6 +462,7 @@ class BlindSequentialResearch:
                     )
                     return plan.result
             if isinstance(plan, _GenerationPlan):
+                generation_error = None
                 try:
                     draft = invoke_direction_generator(
                         plan.request,
@@ -472,7 +473,8 @@ class BlindSequentialResearch:
                         plan.closed_fingerprints,
                         self._structural_assessor,
                     )
-                except Exception:
+                except Exception as exc:
+                    generation_error = {"type": type(exc).__name__, "message": str(exc)[:4000]}
                     external_result: DirectionDraft | None = None
                     external_decision: DirectionNoveltyDecision | None = None
                 else:
@@ -490,6 +492,8 @@ class BlindSequentialResearch:
                     )
                     if committed is None:
                         continue
+                    if generation_error is not None:
+                        committed.result["generation_error"] = generation_error
                     self._commit_transition(
                         command_id,
                         input_digest,

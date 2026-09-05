@@ -86,6 +86,7 @@ def test_one_shot_command_order_prompt_and_schema(tmp_path: Path, model: str, ef
     assert command[-1] == "-"
     assert f'model_reasoning_effort="{effort}"' in command
     assert command[command.index("--sandbox") + 1] == "read-only"
+    assert "--skip-git-repo-check" in command
     assert command[command.index("--output-schema") + 1] == str(schema)
     assert kwargs["input"] == "System instructions:\nfollow rules\n\nUser input:\ndo work"
 
