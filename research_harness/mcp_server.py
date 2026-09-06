@@ -3250,7 +3250,7 @@ def _handle_design_experiment_template_locked(args: dict[str, Any]) -> dict[str,
             for item in existing['source_files']:
                 if _hash(Path(item['path'])) != item['sha256']:
                     raise ValueError('Prepared implementation changed')
-            return {**work, 'research_work_checkpoint': work['work_id'], 'preparation_checkpoint': template_digest}
+            return {**work, 'preparation_checkpoint': template_digest}
         work_dir = thread / 'production/research_control/work' / work['work_id']
         draft = work_dir / 'implementation_revisions' / template_digest
         files = write_professor_template(draft, draft, plan_meta)
@@ -3268,7 +3268,7 @@ def _handle_design_experiment_template_locked(args: dict[str, Any]) -> dict[str,
         work['prepared_implementation'] = prepared
         _write(thread / 'production/research_control/current.json', work)
         _write(thread / 'production/research_control/work' / work['work_id'] / 'work.json', work)
-        return {**work, 'research_work_checkpoint': work['work_id'], 'preparation_checkpoint': template_digest}
+        return {**work, 'preparation_checkpoint': template_digest}
 
     # (가) Operator-mandated module gate — deterministic, NOT an LLM critic. If the
     # feasibility_envelope declares execution_constraints.required_modules, the

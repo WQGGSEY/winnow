@@ -457,6 +457,8 @@ def test_source_preparation_preserves_scientific_work_and_revision_bytes(tmp_pat
             'plan_metadata': {'source_files': [{'path': 'prepared.py', 'content': "raise RuntimeError('must not execute during preparation')\n"}]}}
     prepared = mcp_server.handle_design_experiment_template(args)
     revision = prepared['prepared_implementation']
+    assert prepared['preparation_checkpoint'] == revision['template_digest']
+    assert 'research_work_checkpoint' not in prepared
     source = revision['source_files'][0]
     assert _hash(Path(source['path'])) == source['sha256']
     assert revision['new_observation'] is False

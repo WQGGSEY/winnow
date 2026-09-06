@@ -1810,11 +1810,15 @@ class WatchLoopTests(unittest.TestCase):
             event = {"type": "item.completed", "item": {"id": "run1", "type": "mcp_tool_call",
                      "server": "research_harness", "tool": "execute_baseline_preflight",
                      "arguments": {}, "result": {"content": [{"type": "text", "text": '{"research_work_checkpoint":"work1"}'}]}, "status": "completed"}}
+            preparation = {"type": "item.completed", "item": {"id": "prepare1", "type": "mcp_tool_call",
+                           "server": "research_harness", "tool": "design_experiment_template", "arguments": {},
+                           "result": {"content": [{"type": "text", "text": '{"status":"planned","preparation_checkpoint":"source1"}'}]}, "status": "completed"}}
             pending = {"type": "item.started", "item": {"id": "read2", "type": "mcp_tool_call",
                        "server": "research_harness", "tool": "get_research_state", "arguments": {}}}
             completed = {"type": "item.completed", "item": {**pending['item'], "result": {}, "status": "completed"}}
             marker = Path(tmp) / "pending_finished"
             fake.write_text("#!/usr/bin/env python3\nimport time\nfrom pathlib import Path\n"
+                            + "print(" + repr(json.dumps(preparation)) + ", flush=True)\ntime.sleep(0.2)\n"
                             + "print(" + repr(json.dumps(pending)) + ", flush=True)\n"
                             + "print(" + repr(json.dumps(event)) + ", flush=True)\ntime.sleep(0.2)\n"
                             + "Path(" + repr(str(marker)) + ").touch()\n"
