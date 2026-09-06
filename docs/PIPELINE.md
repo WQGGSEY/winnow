@@ -72,11 +72,22 @@ never become live roots. This structural boundary does not prove that retained
 free text is semantically strategy-free.
 
 `advance_research` is the only direction-control operation. Exactly one
-`DirectionAttempt` may be active. A generation request contains only the
-frozen contract and one harness-sampled random perspective. It never contains
-the failed node, failure prose, private lessons, acquired resources, or prior
-directions. After generation, private novelty and safety gates compare the
+`DirectionAttempt` may be active. A generation request contains the frozen
+contract and one harness-sampled random perspective. Three out of four draws
+also receive development observations and the working research brief; the
+fourth retains a blind exploration context. Final holdout outcomes remain
+excluded. After generation, private novelty and safety gates compare the
 six-axis fingerprint against closed attempts.
+
+Within an attempt, `ResearchWork` connects the current uncertainty, competing
+predictions, executable procedure and interpretation of the previous result.
+Missing or zero eligible-observation counts prevent an informative interpretation
+of the selected empirical test. Interpretation and selection share one planner
+call. A source-acquisition analysis uses `retrieve_research_source` before
+`resolve_research_work`, through the existing public HTTP/cache boundary.
+Bibliographic references can acquire primary text during manuscript revision
+without reopening confirmation. See [the pre-E2E reasoning record](research/pre-e2e-reasoning.md)
+for counterfactuals and the limits of offline verification.
 
 ```
 advance_research
@@ -139,9 +150,8 @@ run's own metrics      funded construct-           real-referent falsifier
 
 `transfer_valid` (= `goal_achieved`, i.e. usable for the user's *real*
 decision) is **unconstructable air-gapped** — the system is constitutionally
-silent about the gap it cannot measure. The only entrance is a **single real
-scalar the operator registers**: `compute_falsifier_result(evidence={observed})`
-with a `real_holdout` falsifier whose `holdout_source_id` is a registered
-`real_adapter` (`settings.json.data_adapters.registered`). The harness trusts
-that scalar (air-gapped — it cannot verify it) and owns only the frozen
-predicate and the deterministic pass/fail. See ADR 0006, 0007, 0008.
+silent about the gap it cannot measure. Current prospective confirmation additionally binds the registered sampling
+procedure, frozen executable inputs, actual execution and computed statistic.
+The original operator-supplied scalar interface is not a description of that
+current evidence path. See `orchestrator/confirmation_execution.py` and
+`thread_supervisor.is_terminal` for the active receipt checks.

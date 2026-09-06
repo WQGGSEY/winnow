@@ -1,5 +1,27 @@
 # Architecture
 
+## Active autonomous research path
+
+The current MCP runtime uses `blind_sequential_research` for direction attempts
+and `research_control` for development work within a direction. The tree and
+legacy worker descriptions below explain supporting structures; they are not a
+complete description of the current scheduler.
+
+A ResearchWork records a selected uncertainty, competing predictions, required
+observations and evidence references. The next planning call interprets its
+completed result before selecting more work. `research_knowledge` projects this
+history into a working brief for planning, hypothesis development and writing.
+Neither an interpretation nor a completed worker report validates a claim.
+
+Development implementation reviews decide whether the selected procedure can
+run. They must cite applicable requirements for blocking changes. Qualification,
+prospective confirmation and publication review retain their separate authority.
+Work and manuscript references can acquire primary sources through the shared
+HTTP policy and cache boundary without creating another direction attempt.
+
+The pre-E2E reasoning record in `docs/research/pre-e2e-reasoning.md` distinguishes
+implemented transitions from scientific capabilities that remain unverified.
+
 ## Design Boundary
 
 The harness is not a direct fork-port of Sakana AI Scientist-v2. It is a

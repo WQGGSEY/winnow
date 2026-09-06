@@ -3,6 +3,34 @@
 Project glossary. Definitions only — no implementation details, no spec, no
 roadmap. Update inline when a term is resolved during a grilling session.
 
+## GoalContract
+
+The immutable problem-level question, success bar and final evidence requirements.
+It is distinct from a development procedure and from a proposed explanation.
+Current production requires a real holdout; a Lean artifact alone does not create
+a theory-only terminal.
+
+## DirectionAttempt
+
+One active research direction bound to a formal claim node. Its lifecycle is
+separate from the many development jobs needed to investigate it.
+
+## ResearchWork
+
+One bounded analysis, protocol revision or empirical procedure with competing
+predictions. Before the next work, the planner interprets the previous completed
+work against those predictions. This development judgment is not claim approval.
+Empirical work declares the eligible-observation counts necessary to interpret
+its selected test. Nonempty counts do not establish statistical power or validity.
+
+## working research brief
+
+A projection of work, claim links, evidence dependencies and result
+interpretations, available before publication gates. The default prompt contains
+a bounded recent view; full records remain available for targeted reading.
+Historical records without interpretations are explicitly marked uninterpreted,
+not retroactively summarized as scientific knowledge.
+
 ## dataset
 
 Any **external artifact a research experiment depends on**, not just data.
