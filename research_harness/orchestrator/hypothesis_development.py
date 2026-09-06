@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from research_harness.adapters.codex_cli import CodexCliAdapter
-from research_harness.agent_runtime import AgentPrompt, CompletionRequest
+from research_harness.agent_runtime import research_model, model_reasoning_effort, AgentPrompt, CompletionRequest
 from research_harness.memory.baseline_dossier import dossier_path, load_baseline_dossier
 from research_harness.schemas.validator import load_schema, validate_named_schema
 
@@ -138,7 +138,7 @@ def develop_hypotheses(repo: Path, thread: Path, *, revision_request: str = '', 
         with tempfile.TemporaryDirectory(prefix='research-hypotheses-') as temporary:
             result = client.complete(CompletionRequest(
                 prompt=AgentPrompt(instructions=instructions, input=json.dumps(submitted, ensure_ascii=False)),
-                model='gpt-5.6-sol', timeout_seconds=240,
+                model=research_model(), timeout_seconds=240,
                 output_schema=schema_path.resolve(),
                 cwd=Path(temporary), label=f'hypothesis-{stage}', allow_local_tools=False,
             ))
@@ -167,7 +167,7 @@ def develop_hypotheses(repo: Path, thread: Path, *, revision_request: str = '', 
             if any(item['ready_for_test'] and item['required_changes'] for item in response['assessments']):
                 _write(run / f'{stage}.rejected.json', {'response': response, 'validation_error': 'Resolve required changes or mark the candidate not ready for test.'})
                 raise ValueError('test-ready candidates cannot have unresolved required changes')
-        _write(path, {'model': 'gpt-5.6-sol', 'reasoning_effort': 'low', 'instructions': instructions,
+        _write(path, {'model': research_model(), 'reasoning_effort': model_reasoning_effort(research_model()), 'instructions': instructions,
                       'input': submitted, 'response': response, 'usage': result.usage.as_dict(), 'thread_id': result.thread_id})
         return response
 

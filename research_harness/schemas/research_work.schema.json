@@ -14,7 +14,9 @@
     "previous_result",
     "source_mode",
     "required_observations",
-    "hypothesis_ids"
+    "hypothesis_ids",
+    "inquiry_mode",
+    "solution_path"
   ],
   "properties": {
     "protocol_change": {
@@ -55,7 +57,7 @@
     },
     "alternatives": {
       "type": "array",
-      "minItems": 2,
+      "minItems": 0,
       "maxItems": 4,
       "items": {
         "type": "object",
@@ -207,6 +209,66 @@
         "minLength": 1
       },
       "description": "Recorded candidate hypotheses investigated by this work. Empty for shared apparatus or an independent diagnostic."
+    },
+    "inquiry_mode": {
+      "type": "string",
+      "enum": [
+        "exploration",
+        "discrimination",
+        "intervention"
+      ],
+      "description": "Exploration may gather descriptive observations before explanations exist. Discrimination tests explanations. Intervention tests a usable solution."
+    },
+    "solution_path": {
+      "type": "object",
+      "required": [
+        "parent_work_id",
+        "explanation",
+        "unexplained_observations",
+        "changed_assumption",
+        "intervention",
+        "expected_goal_effect",
+        "next_solution_decision",
+        "original_scope_check"
+      ],
+      "properties": {
+        "parent_work_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "explanation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unexplained_observations": {
+          "type": "string",
+          "minLength": 1
+        },
+        "changed_assumption": {
+          "type": "string",
+          "minLength": 1
+        },
+        "intervention": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_goal_effect": {
+          "type": "string",
+          "minLength": 1
+        },
+        "next_solution_decision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "original_scope_check": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "description": "Provisional explanation and route to solving the immutable goal. State unknown explicitly; intuition is allowed. This is not a validated claim. Link the previous explanation by work ID."
     }
   },
   "additionalProperties": false

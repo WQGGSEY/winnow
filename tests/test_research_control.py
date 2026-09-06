@@ -118,6 +118,13 @@ class Planner:
         packet = json.loads(request.prompt.input)
         self.calls.append(packet)
         decision = {
+            'inquiry_mode': 'discrimination',
+            'solution_path': {'parent_work_id': (packet['research_brief'].get('current_solution') or {}).get('work_id'),
+                'explanation': 'Measurements may be invalid.', 'unexplained_observations': 'Failure cause unknown.',
+                'changed_assumption': 'None yet.', 'intervention': 'Repair only a measured defect.',
+                'expected_goal_effect': 'Enable a valid learned solution.',
+                'next_solution_decision': 'Choose repair or a learning intervention.',
+                'original_scope_check': 'No task or endpoint changes.'},
             'previous_result': None,
             'hypothesis_ids': [],
             'source_mode': 'existing',
@@ -656,3 +663,42 @@ def test_source_preparation_preserves_scientific_work_and_revision_bytes(tmp_pat
     assert prepared_implementations(thread) == {revision['evidence_id']: revision, latest['evidence_id']: latest}
     bind_work(thread, work['work_id'], node['id'], plan)
     assert current_work(thread)['status'] == 'running'
+
+
+def test_exploration_retains_solution_lineage_without_invented_predictions(tmp_path):
+    from research_harness.orchestrator.research_knowledge import research_brief, validate_solution_path
+    thread, _, _, _, _ = fixture(tmp_path)
+    class Explorer(Planner):
+        def complete(self, request):
+            response = super().complete(request)
+            decision = json.loads(response.text)
+            decision.update(inquiry_mode='exploration', alternatives=[])
+            from dataclasses import replace
+            return replace(response, text=json.dumps(decision))
+    first = plan_research_work(REPO, thread, transport=Explorer('analysis'))
+    brief = research_brief(thread)
+    assert brief['current_solution']['work_id'] == first['work_id']
+    assert brief['current_solution']['path']['next_solution_decision']
+    with pytest.raises(ValueError, match='current explanation'):
+        validate_solution_path(first['decision'], brief)
+    next_decision = copy.deepcopy(first['decision'])
+    next_decision['solution_path']['parent_work_id'] = first['work_id']
+    validate_solution_path(next_decision, brief)
+    next_decision['inquiry_mode'] = 'intervention'
+    with pytest.raises(ValueError, match='competing predictions'):
+        validate_solution_path(next_decision, brief)
+
+
+def test_large_planning_context_retains_exact_sources_and_latest_failure(tmp_path):
+    from research_harness.orchestrator.research_knowledge import compact_planning_context
+    source = {'node': {'source': 'x' * 13000}}
+    packet = {'implementation_context': source, 'previous_work': {
+        'work_id': 'old', 'status': 'completed', 'source_observations': {'duplicated': True},
+        'decision': {'test': 'Repair the earlier serialization defect'},
+        'outcome': {'observation': {'measurement_error': 'New output schema defect'}}}}
+    compact = compact_planning_context(tmp_path, packet)
+    reference = compact['implementation_context']
+    assert json.loads(Path(reference['context_reference']).read_text()) == source
+    assert compact['authoritative_previous_result']['outcome'] == packet['previous_work']['outcome']
+    assert 'source_observations' not in compact['previous_work']
+    assert 'source_observations' in packet['previous_work']

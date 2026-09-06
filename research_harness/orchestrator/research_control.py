@@ -9,12 +9,12 @@ from pathlib import Path
 from typing import Any
 
 from research_harness.adapters.codex_cli import CodexCliAdapter
-from research_harness.agent_runtime import AgentPrompt, CompletionRequest
+from research_harness.agent_runtime import research_model, AgentPrompt, CompletionRequest
 from research_harness.schemas.validator import validate_named_schema
 from research_harness.evaluation_vault import sealed_bank_metadata
 from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
 
-PLANNING_POLICY_VERSION = 18
+PLANNING_POLICY_VERSION = 20
 
 
 class StaleResearchWork(ValueError):
@@ -186,7 +186,7 @@ def executed_diagnostic_bindings(thread: Path) -> dict[str, Any]:
 def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '', transport=None) -> dict[str, Any]:
     from research_harness.orchestrator.hypothesis_development import hypothesis_context
     from research_harness.orchestrator.protocol_revision import protocol_note_history
-    from research_harness.orchestrator.research_knowledge import research_brief, brief_context, validate_previous_result
+    from research_harness.orchestrator.research_knowledge import research_brief, brief_context, validate_previous_result, validate_solution_path, compact_planning_context
     from research_harness.orchestrator.research_sources import retrieved_sources
 
     confirmation = _read(thread / 'production/confirmation_execution.json')
@@ -279,6 +279,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'diagnostic_component_binding': 'An approved pre-execution review records an authoritative diagnostic_source_binding.json before launch. A separate source-registration amendment is not needed for the same already permitted diagnostic unless the protocol explicitly requires a separate transaction.',
         },
         'planning_policy_version': planning_policy_version,
+        'planning_model': research_model(),
         'research_brief': brief_context(thread, brief),
         'retrieved_sources': sources,
         'registered_protocol': envelope,
@@ -305,6 +306,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     # Only the prospective claim enters the planner, never node-attached final evaluation.
     packet['active_claim'] = [{'id': n['id'], 'claim': n.get('claim_contract', {}).get('claim_under_test')}
                               for n in packet['active_claim'] if n.get('status') not in {'pruned', 'archived'}]
+    packet = compact_planning_context(thread, packet)
     directory = thread / 'production/research_control/decisions' / _digest(packet)
     _write(directory / 'request.json', packet)
     response_path = directory / 'response.json'
@@ -313,17 +315,33 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     else:
         instructions = (
             'Choose ONE next research work unit using the supplied development evidence. '
+            'Maintain solution_path: what currently explains the observations, what remains unexplained, '
+            'which assumption changed, a possible intervention, and how it could solve the ORIGINAL goal. '
+            'Link parent_work_id to research_brief.current_solution.work_id, or null if none exists. '
+            'A negative explanation is intermediate knowledge, never completion of a solution goal. '
+            'Unknown intervention is allowed during exploration: state what observation would enable its design. '
+            'Choose inquiry_mode=exploration to inspect phenomena, change representations or pursue an intuition '
+            'before a testable explanation exists; alternatives may then be empty. Do not invent explanations to fill a form. '
+            'An informative exploratory observation may identify a new phenomenon without confirming a mechanism. '
+            'Choose discrimination for explaining competing predictions, or intervention for testing a usable solution. '
+            'Do not wait for a complete causal theory before a cheap, plausible intervention probe. '
+            'Diagnostic privileged information or simplified conditions cannot establish success in the original task. '
+            'State how the next observation changes a solution choice in next_solution_decision. '
+            'When repeated diagnosis does not change that choice, reconsider the representation, assumption or intervention '
+            'rather than only adding caveats or rerunning training. All current explanations may be wrong. '
+            'Keep promising intuitions provisional. Preserve original_scope_check and resources for replication and confirmation. '
+
             'Consult the independently critiqued hypotheses as candidates, not established facts. Name any candidate this work investigates in hypothesis_ids; use an empty list for shared apparatus or a new diagnostic outside that registry. Source IDs establish only their declared evidence scope. '
             'For an empirical test, declare required_observations as metric names counting its eligible observations. The execution must report those counts. Zero or missing counts make the planned comparison inconclusive. These counts must not require a positive treatment effect or successful learner. '
             'When primary material is missing, choose analysis with source_mode=acquire. retrieve_research_source uses the existing public HTTP and provenance boundary, then resolve_research_work interprets the receipts. '
             'Failed or deferred retrieval is not evidence that a method or paper does not exist. Use source_mode=existing for other work. '
             'In this same response, interpret the completed previous_work in previous_result; use null only if there is no completed previous work. '
             'Cite work_<previous work_id> and relevant evidence. Compare each original alternative prediction to the actual result, including its limitations. '
-            'A crash or malformed measurement leaves scientific predictions unresolved. Valid measurements with zero eligible observations, missing telemetry or indistinguishable predictions are inconclusive, never evidence of no effect. '
+            'For execution_failure, leave every prediction effect unresolved, including an operational-invalidity alternative: result_kind already records the observed operational failure. A crash or malformed measurement leaves scientific predictions unresolved. Valid measurements with zero eligible observations, missing telemetry or indistinguishable predictions are inconclusive, never evidence of no effect. '
             'An interpretation is a scoped development judgment, not causal proof or scientific approval. '
             'Explain how the next_decision follows from those prediction updates. If inconclusive, identify the missing discriminating evidence and compare the next test to the previous next_if_inconclusive. '
             'Use the research_brief to retain older decisions and their evidence dependencies. When contradicting an earlier interpretation cite it and explain the new evidence; do not silently treat both as established facts. '
-            'Before commissioning an expensive experiment, establish that its measurement can have eligible observations and that the competing predictions would actually differ. If feasibility is unknown, choose a small support probe. '
+            'Before commissioning an expensive experiment, establish that its measurement can have eligible observations. For discrimination or intervention, competing predictions must differ; exploratory work may instead seek a new observable distinction. If feasibility is unknown, choose a small support probe. '
             'Do not embed a previous work_id in the test instructions: the harness assigns a NEW work_id after this decision. '
             'Retain the accumulated analysis_findings and their scope. Do not re-run a resolved source question because '
             'its answer is no longer in previous_work. Consult the receipt if the excerpt is insufficient. '
@@ -413,7 +431,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'Before calling a discrepancy a defect, justify the reference semantics against the intended algorithm or estimator; '
             'an intentional policy restriction or different valid representation is a competing explanation, not automatically a bug. '
             'A truncated source is incomplete evidence; use a targeted implementation audit when necessary. '
-            'Give competing explanations, contrasting observable predictions and the decision each outcome changes. '
+            'For discrimination or intervention, give competing explanations, contrasting predictions and the decision each outcome changes. '
             'Select the smallest useful diagnostic before expensive training when validity is uncertain. '
             'Do not prescribe the same full experiment after an unchanged observation; change the discriminating test. '
             'If diagnostic_required is true, choose diagnostic_experiment or analysis to locate the failure, or protocol_revision for a conflicting registration. Otherwise choose analysis, protocol_revision, diagnostic_experiment, competence, comparison or replication. Choose confirmation only after baseline qualification, fixed checkpoints and an executed public reference of the complete final measurement program, with an approved future sampler. '
@@ -430,13 +448,13 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
         with tempfile.TemporaryDirectory(prefix='research-work-') as temporary:
             response = (transport or CodexCliAdapter()).complete(CompletionRequest(
                 prompt=AgentPrompt(instructions=instructions, input=json.dumps(submitted, ensure_ascii=False)),
-                model='gpt-5.6-sol', timeout_seconds=240, allow_local_tools=True,
+                model=research_model(), timeout_seconds=240, allow_local_tools=True,
                 output_schema=repo / 'research_harness/schemas/research_work.schema.json',
                 cwd=Path(temporary), label='research work decision',
             ))
         (directory / 'raw_response.txt').write_text(response.text)
         _write(directory / 'invocations' / f'{time.time_ns()}.json', {
-            'model': 'gpt-5.6-sol', 'thread_id': response.thread_id,
+            'model': research_model(), 'thread_id': response.thread_id,
             'usage': response.usage.as_dict(), 'request': submitted, 'raw_response': response.text,
         })
         try:
@@ -446,6 +464,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             raise
     try:
         validate_named_schema('research_work', decision)
+        validate_solution_path(decision, brief)
         if set(decision['hypothesis_ids']) - {item['id'] for item in hypotheses.get('candidates', [])}:
             raise ValueError('Work hypothesis_ids must refer to recorded hypothesis candidates.')
         if decision['source_mode'] == 'acquire' and decision['kind'] != 'analysis':

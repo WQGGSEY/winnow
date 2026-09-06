@@ -219,6 +219,7 @@ def resolve_agent_model(settings: Mapping[str, Any], role: str) -> str:
     """Pick the Codex model name for an active agent role.
 
     Resolution order:
+      0. RESEARCH_HARNESS_MODEL for an explicitly configured research session
       1. settings.runtime.agent_models.<role>
       2. settings.runtime.agent_models.default
       3. settings.runtime.worker_backends.codex_live.model
@@ -229,6 +230,11 @@ def resolve_agent_model(settings: Mapping[str, Any], role: str) -> str:
     raw ``settings`` dict from ``load_settings()``.
     """
 
+    import os
+    from research_harness.agent_runtime import research_model
+
+    if os.environ.get('RESEARCH_HARNESS_MODEL'):
+        return research_model()
     runtime = settings.get("runtime", {}) if isinstance(settings, Mapping) else {}
     agent_models = runtime.get("agent_models", {}) or {}
     if isinstance(agent_models, Mapping):

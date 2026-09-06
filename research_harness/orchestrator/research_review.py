@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from research_harness.adapters.codex_cli import CodexCliAdapter
-from research_harness.agent_runtime import AgentPrompt, CompletionRequest
+from research_harness.agent_runtime import research_model, model_reasoning_effort, AgentPrompt, CompletionRequest
 from research_harness.schemas.validator import validate_named_schema
 
 
@@ -132,7 +132,7 @@ def analyze_research_packet(repo: Path, directory: Path, packet: dict[str, Any],
 
 
 def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, instructions: str, schema_name: str) -> dict[str, Any]:
-    request_data = {"model": "gpt-5.6-sol", "reasoning_effort": "low", "instructions": instructions, "packet": packet, "response_schema": schema_name, "response_schema_sha256": hashlib.sha256((repo / "research_harness/schemas" / f"{schema_name}.schema.json").read_bytes()).hexdigest()}
+    request_data = {"model": research_model(), "reasoning_effort": model_reasoning_effort(research_model()), "instructions": instructions, "packet": packet, "response_schema": schema_name, "response_schema_sha256": hashlib.sha256((repo / "research_harness/schemas" / f"{schema_name}.schema.json").read_bytes()).hexdigest()}
     serialized = json.dumps(request_data, sort_keys=True, ensure_ascii=False)
     digest = hashlib.sha256(serialized.encode()).hexdigest()
     rejection_path = directory / digest / 'rejected_review.json'
@@ -156,7 +156,7 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
     with tempfile.TemporaryDirectory(prefix="research-decision-review-") as temporary:
         result = CodexCliAdapter().complete(CompletionRequest(
             prompt=AgentPrompt(instructions=instructions, input=json.dumps(submitted, ensure_ascii=False)),
-            model="gpt-5.6-sol", timeout_seconds=300,
+            model=research_model(), timeout_seconds=300,
             output_schema=repo / 'research_harness/schemas' / f'{schema_name}.schema.json',
             cwd=Path(temporary), label="independent-research-review", allow_local_tools=True,
         ))
@@ -175,7 +175,7 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
         raise ReviewContractError('Reviewer response needs correction, not an experiment change: ' + str(exc)) from exc
     record = {
         "request_sha256": digest, "reviewer": "independent-research-review",
-        "model": "gpt-5.6-sol", "reasoning_effort": "low",
+        "model": research_model(), "reasoning_effort": model_reasoning_effort(research_model()),
         "thread_id": result.thread_id, "usage": result.usage.as_dict(), "assessment": assessment,
         "response_schema_sha256": request_data["response_schema_sha256"],
     }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Mapping
@@ -8,6 +9,13 @@ from typing import Any, Literal, Mapping
 def model_reasoning_effort(model: str) -> str | None:
     """Explicit model/effort pairs authorized for the harness evaluation."""
     return {"gpt-5.6-sol": "low", "gpt-5.6-luna": "max"}.get(model)
+
+
+def research_model() -> str:
+    model = os.environ.get('RESEARCH_HARNESS_MODEL', 'gpt-5.6-sol')
+    if model_reasoning_effort(model) is None:
+        raise ValueError('RESEARCH_HARNESS_MODEL must select Sol low or Luna max.')
+    return model
 
 
 @dataclass(frozen=True)
