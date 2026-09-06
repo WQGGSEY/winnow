@@ -77,7 +77,7 @@ def failed_measurement(previous: dict[str, Any]) -> bool:
             outcome.get('execution_result') in {'execution_failed', 'interrupted', 'rejected'})
 
 
-def planning_response_schema(previous: dict[str, Any]) -> dict[str, Any]:
+def planning_response_schema(previous: dict[str, Any], *, available_evidence: set[str]) -> dict[str, Any]:
     """Constrain receipt facts before generation; scientific judgments remain open."""
     from research_harness.schemas.validator import load_schema
     schema = load_schema('research_work')
@@ -95,6 +95,11 @@ def planning_response_schema(previous: dict[str, Any]) -> dict[str, Any]:
                 bound_prose(child)
     bound_prose(schema)
     schema['properties']['test']['maxLength'] = 3200
+    evidence_ids = schema['properties']['evidence_ids']
+    if available_evidence:
+        evidence_ids['items']['enum'] = sorted(available_evidence)
+    else:
+        evidence_ids['maxItems'] = 0
     field = schema['properties']['previous_result']
     if previous.get('status') != 'completed':
         schema['properties']['previous_result'] = {'type': 'null'}
@@ -102,6 +107,7 @@ def planning_response_schema(previous: dict[str, Any]) -> dict[str, Any]:
     assessment = field['anyOf'][1]
     schema['properties']['previous_result'] = assessment
     properties = assessment['properties']
+    properties['evidence_ids']['items']['enum'] = sorted(available_evidence)
     properties['work_id']['enum'] = [previous['work_id']]
     count = len(previous['decision'].get('alternatives', []))
     updates = properties['prediction_updates']

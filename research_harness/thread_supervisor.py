@@ -1303,6 +1303,7 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         f"  1. get_research_state(thread_id=\"{tid}\") 로 정확한 현재 상태 확인.",
         "     research_work가 있으면 그 작업의 next_tool_to_call과 연결된 결과를 먼저 따라. 완료된 작업이 plan_research_work를 가리키면 다음 작업을 계획하고, planned 작업이 실행 도구를 가리키면 그 작업을 재개해. 과거 claim 노드의 completed_worker_report 상태로 이 순서를 대체하지 마.",
         "     새로운 실행 전 plan_research_work로 다음 작업의 근거·경쟁 예측·예산을 기록해.",
+        "     planning_failed 또는 planning_required는 응답·인용 오류의 복구 경로다. 반환된 plan_research_work를 재시도하고 advance_research로 새 방향을 만들지 마. 완료 work의 일반 후속 계획에는 reconsider_reason을 붙이지 마.",
         "     반환된 work_id와 test를 실행 코드에 적용하고 그 작업의 예산을 넘기지 마.",
         "     kind=analysis는 resolve_research_work로 기존 근거에서 답해. 의미 해석을 위한 실험 코드를 만들지 마.",
         "     미래 sampler가 제공되면 replace_holdout=true, defer_holdout_generation=true로 과거 bank를 전부 폐기하고 생성 규칙만 먼저 등록해. kind=protocol_revision은 revise_evaluation_protocol로 notes 변경안과 근거를 독립 검토에 제출해. 원래 목표·평가 기준·미사용 holdout을 보존하고 변경 이력을 공개해.",

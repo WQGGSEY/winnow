@@ -1873,6 +1873,11 @@ def handle_advance_research(
                     "reason": f"advance command receipt is malformed: {exc}",
                 }
         else:
+            from research_harness.orchestrator.research_control import pending_planning_failure
+            failure = pending_planning_failure(_thread_dir(tid))
+            if failure:
+                return {'status': 'planning_required', **failure,
+                        'next_step': 'Correct the rejected planner response through plan_research_work. This is not research failure or permission to restart direction generation.'}
             engine = _build_blind_research_engine(tid)
             try:
                 acquisition_command = (

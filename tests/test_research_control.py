@@ -765,19 +765,79 @@ def test_large_planning_context_retains_exact_sources_and_latest_failure(tmp_pat
     assert 'source_observations' in packet['previous_work']
 
 
+
+
+@pytest.mark.parametrize('identified', [True, False])
+def test_citation_repair_preserves_scientific_decision_and_caches_result(tmp_path, identified):
+    from research_harness.orchestrator.research_control import recover_citation_error
+    thread, _, _, _, _ = fixture(tmp_path)
+    work = plan_research_work(REPO, thread, transport=Planner())
+    original = copy.deepcopy(work['decision'])
+    original['evidence_ids'] = ['mistyped-reference']
+    directory = tmp_path / 'repair'
+    directory.mkdir()
+    (directory / 'rejected_response.json').write_text(json.dumps({'decision': original, 'error': 'Invalid citation.'}))
+    calls = []
+    class Repair:
+        def complete(self, request):
+            calls.append(request)
+            assert request.allow_local_tools is False
+            schema = json.loads(request.output_schema.read_text())
+            assert list(schema['properties']) == ['mistyped-reference']
+            return CompletionResult(json.dumps({'mistyped-reference': 'actual-reference' if identified else None}), AgentUsage(), None)
+    for _ in range(2):
+        result = recover_citation_error(directory, {'actual-reference'}, transport=Repair())
+        if identified:
+            expected = {**original, 'evidence_ids': ['actual-reference']}
+            assert result == expected
+        else:
+            assert result is None
+    assert len(calls) == 1
+    assert json.loads((directory / 'rejected_response.json').read_text())['decision'] == original
+
+
+def test_rejected_planner_response_cannot_restart_direction_generation(tmp_path, monkeypatch):
+    from research_harness import mcp_server
+    from research_harness.orchestrator.research_control import pending_planning_failure
+    thread, _, _, _, _ = fixture(tmp_path)
+    work = plan_research_work(REPO, thread, transport=Planner())
+    work['status'] = 'completed'
+    (thread / 'production/research_control/current.json').write_text(json.dumps(work))
+    directory = thread / 'production/research_control/decisions/invalid-citation'
+    directory.mkdir()
+    (directory / 'request.json').write_text(json.dumps({'previous_work': work}))
+    (directory / 'rejected_response.json').write_text(json.dumps({'error': 'Unavailable citation.'}))
+    monkeypatch.setattr(mcp_server, '_thread_dir', lambda _: thread)
+    def forbidden_restart(tid):
+        raise AssertionError('A planner contract error must not restart the research direction.')
+    monkeypatch.setattr(mcp_server, '_build_blind_research_engine', forbidden_restart)
+    result = mcp_server.handle_advance_research({'thread_id': 'thread', 'command_id': 'restart-after-error'}, {})
+    assert result['status'] == 'planning_required'
+    assert result['next_tool_to_call'] == 'plan_research_work'
+    assert result['work_id'] == work['work_id']
+    assert result['new_observation'] is False
+    assert current_work(thread) == work
+    (directory / 'response.json').write_text('{}')
+    assert pending_planning_failure(thread) is None
+
+
 def test_planner_schema_binds_failed_receipt_before_generation(tmp_path):
     from research_harness.orchestrator.research_knowledge import planning_response_schema
     from research_harness.schemas.validator import validate_schema
     thread, _, _, _, _ = fixture(tmp_path)
     previous = plan_research_work(REPO, thread, transport=Planner())
     previous.update(status='completed', outcome={'execution_result': 'execution_failed'})
-    schema = planning_response_schema(previous)['properties']['previous_result']
+    schema = planning_response_schema(previous, available_evidence={'work_' + previous['work_id']})['properties']['previous_result']
     assessment = {'work_id': previous['work_id'], 'result_kind': 'execution_failure',
                   'evidence_ids': ['work_' + previous['work_id']], 'missing_evidence': ['valid measurement'],
                   'next_decision': 'Repair the actual output failure',
                   'prediction_updates': [{'alternative_index': i, 'effect': 'unresolved', 'observation_ids': [],
                                           'reason': 'Measurement failed'} for i in range(2)]}
     validate_schema(schema, assessment)
+    assessment['evidence_ids'].append('analysis_malformed_hash')
+    with pytest.raises(ValueError):
+        validate_schema(schema, assessment)
+    assessment['evidence_ids'].pop()
     assessment['prediction_updates'][1]['effect'] = 'supported'
     with pytest.raises(ValueError):
         validate_schema(schema, assessment)
@@ -787,7 +847,7 @@ def test_planner_schema_binds_failed_receipt_before_generation(tmp_path):
     analysis['decision'].update(kind='analysis', required_observations=[])
     for alternative in analysis['decision']['alternatives']:
         alternative['required_observations'] = []
-    source_schema = planning_response_schema(analysis)['properties']['previous_result']
+    source_schema = planning_response_schema(analysis, available_evidence={'work_' + analysis['work_id']})['properties']['previous_result']
     assessment.update(work_id=previous['work_id'], result_kind='inconclusive')
     assessment['prediction_updates'][1].update(effect='unresolved', observation_ids=['/raw/artifact/pointer'])
     with pytest.raises(ValueError):
@@ -921,7 +981,7 @@ def test_output_bindings_and_partial_interpretation_preserve_family_boundaries(t
                                 'reason': 'No eligible observations for b.'}],
         'missing_evidence': ['Eligible b observations'], 'next_decision': 'Choose a different b probe.'}
     validate_previous_result({'previous_result': assessment}, previous, {'work_previous'})
-    assert 'partial' in planning_response_schema(previous)['properties']['previous_result']['properties']['result_kind']['enum']
+    assert 'partial' in planning_response_schema(previous, available_evidence={'work_' + previous['work_id']})['properties']['previous_result']['properties']['result_kind']['enum']
     assessment['prediction_updates'][1].update(effect='weakened', observation_ids=['b_count'])
     with pytest.raises(ValueError, match='another family'):
         validate_previous_result({'previous_result': assessment}, previous, {'work_previous'})
