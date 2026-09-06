@@ -388,7 +388,7 @@ Preserve deferred_questions as outside the current test. Do not combine unrelate
         with tempfile.TemporaryDirectory(prefix='research-work-') as temporary:
             response = (transport or CodexCliAdapter()).complete(CompletionRequest(
                 prompt=AgentPrompt(instructions=instructions, input=json.dumps(submitted, ensure_ascii=False)),
-                model=research_model(), timeout_seconds=240, allow_local_tools=False,
+                model=research_model(), timeout_seconds=600, allow_local_tools=False,
                 output_schema=schema_path.resolve(),
                 cwd=Path(temporary), label='research work decision',
                 event_log_path=directory / 'invocations' / f'{time.time_ns()}.events.jsonl',

@@ -76,3 +76,42 @@ resumption. The live synthesis initial prompt is 105,277 bytes. A focused
 regression also exercises an interrupted trailing JSON event, exact observation
 retention, disabled synthesis tools and reuse of the accepted analysis receipt.
 38 control/review checks passed. The scientific result is still pending.
+
+The recovered synthesis completed and was persisted as `analysis_completed`. It
+reported recoverable counts, a fixed-grid feed-forward no-signal result, and an
+unevaluable recurrent result because all groups represented single primitive
+states. Its usage was 50,752 input and 7,439 output tokens, with 6,732 reasoning
+tokens included in output. The next planner used this finding without rerunning
+the aliasing experiment.
+
+## Planner completion and citation contract
+
+The next 240-second planner timed out. In run
+`luna-cycle-e2e-20260907-060835`, the same saved research input and output contract
+were submitted with a 600-second limit. Input equality was checked. It completed
+in approximately 333 seconds, using 44,751 input and 18,218 output tokens, of
+which 16,563 were reasoning tokens. This completed call required more than the
+old limit. The earlier 140.90-second completion also shows substantial variability.
+The production planner limit is now 600 seconds, still bounded by the run's
+remaining global deadline; this avoids imposing the known inadequate 240-second
+cap on every expensive reasoning attempt.
+
+The model selected a matched task-feasibility/reward diagnostic rather than
+repairing the recurrent denominator again. However, it put raw artifact pointers
+into `prediction_updates.observation_ids` while interpreting source analysis.
+That field accepts declared observation names; analysis declares none. The host
+correctly rejected it but the generated schema had failed to constrain the field
+when no measurement-support record existed. The schema now binds observation
+citations for every previous prediction, including empty citation arrays for
+source analysis. Existing source/analysis receipt citations remain available.
+
+The focused reproduction also found that the local JSON-schema subset ignored
+`maxItems`. It now enforces array upper bounds, so local validation respects the
+same empty-array contract. 38 research-control/review checks and 23 existing
+schema checks passed. These checks do not substitute for a completed experiment.
+
+Supervisor guidance also still said repeated identical observations should always
+lead to causal discrimination. It now follows the planner's exploration,
+discrimination or intervention choice and allows replacing diagnostics that do
+not change the next intervention. The original goal, matched comparisons and
+unverified status of intuition remain explicit.
