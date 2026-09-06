@@ -520,7 +520,16 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         raise ValueError('Implementation review requires the bound research work.')
     prior = work.get('implementation_review', {})
     plan_digest = _digest(plan)
-    review_policy_version = 6
+    review_policy_version = 7
+    execution_sources = []
+    workspace = Path(plan['workspace']).resolve()
+    for source in plan['source_files']:
+        path = (workspace / source['path']).resolve()
+        path.relative_to(workspace)
+        expected = hashlib.sha256(source['content'].encode('utf-8')).hexdigest()
+        if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise ValueError('Materialized execution source differs from the proposed plan: ' + str(path))
+        execution_sources.append({'path': str(path), 'relative_path': source['path'], 'sha256': expected})
     if prior.get('plan_digest') == plan_digest and prior.get('policy_version') == review_policy_version:
         if prior['decision'] != 'approve':
             raise ValueError('Work implementation needs revision: ' + json.dumps(prior, ensure_ascii=False))
@@ -536,17 +545,22 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
             'scope': 'Previously permitted development diagnostic only; no scientific qualification or confirmation authorization',
             'scientific_approval': False,
         }
+    findings = analysis_findings(thread)
+    selected_evidence = set(work['decision']['evidence_ids'])
     packet = {'work_decision': work['decision'], 'node': node, 'experiment_plan': plan,
+              'execution_source_manifest': execution_sources,
               'diagnostic_source_binding_proposal': diagnostic_binding,
               'runtime_input_example': runtime_input_example(thread),
               'runner_contract': {
                   'timeout_sec': plan['resources']['timeout_sec'],
                   'timing_owner': 'LocalRunner subprocess timeout and runner_result.json elapsed_sec',
                   'timeout_outcome': 'timeout; child metrics are not completed scientific evidence',
-                  'source_materialization': 'source_files content is written to workspace-relative paths before launch',
+                  'source_materialization': 'execution_source_manifest names the already materialized, hash-verified files that will execute; historical prepared artifacts are references, not replacements for these files',
               },
               'source_diagnostics': python_source_diagnostics(plan['source_files']),
-              'analysis_findings': analysis_findings(thread),
+              'analysis_findings': {key: value for key, value in findings.items() if key in selected_evidence},
+              'other_analysis_index': {key: {field: value[field] for field in ('question', 'status', 'receipt_path')}
+                                       for key, value in findings.items() if key not in selected_evidence},
               'prepared_implementations': prepared_implementations(thread),
               'executed_diagnostic_bindings': executed_diagnostic_bindings(thread),
               'registered_protocol': _read(thread / 'production/feasibility_envelope.json'),
@@ -573,7 +587,10 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         'a separately rewritten surrogate or hardcoded provenance table does not satisfy it. '
         'Reject tautological self-comparisons and fabricated observations. Verify feature dimensions and decision-time semantics '
         'against referenced implementation when those are the subject of the test. Source paths may be inspected; '
-        'the new workspace is materialized after this review, so do not require it to exist yet. '
+        'Inspect execution_source_manifest for the exact proposed executable bytes, not a similarly named historical artifact. '
+        'The harness verified those materialized files against experiment_plan.source_files before this review and will verify them again before launch. '
+        'Cited analyses are included in full excerpts; other_analysis_index preserves all remaining questions and receipt paths. '
+        'Read a referenced receipt when its question bears on the current test; an omitted excerpt is not an absence of prior evidence. '
         'Use runner_contract for execution guarantees. LocalRunner enforces the subprocess timeout and records total elapsed time, '
         'including child artifact emission; timed-out child metrics cannot qualify a method. '
         'Do not require a child to time its own final artifact write inside that same artifact or duplicate the external hard timeout. '
@@ -585,6 +602,9 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         'When a convention is undeclared, ask the implementation to expose it and measure the consequences, not to adopt your preference. '
         'Prior objections are fallible feedback, not new authoritative requirements. Do not add requirements unrelated to the selected bounded test.'
     ))
+    for source in execution_sources:
+        if hashlib.sha256(Path(source['path']).read_bytes()).hexdigest() != source['sha256']:
+            raise ValueError('Materialized execution source changed during review: ' + source['path'])
     work['implementation_review'] = {**review['assessment'], 'plan_digest': plan_digest, 'policy_version': review_policy_version,
                                     'receipt_path': str((directory / review['request_sha256'] / 'review.json').resolve())}
     work.pop('diagnostic_source_binding', None)

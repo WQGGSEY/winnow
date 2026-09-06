@@ -222,6 +222,12 @@ def test_diagnostic_executes_without_fabricating_a_baseline_or_supporting_a_clai
     work = plan_research_work(REPO, thread, transport=Planner(work_kind))
     bind_work(thread, work['work_id'], node['id'], plan)
     def fixture_review(repo, directory, packet, *, purpose):
+        manifest = packet['execution_source_manifest']
+        assert [source['relative_path'] for source in manifest] == ['experiment.py']
+        assert Path(manifest[0]['path']).read_text() == plan['source_files'][0]['content']
+        assert packet['analysis_findings'] == {}
+        assert packet['other_analysis_index']['analysis_earlier'] == {
+            'question': 'Earlier failed implementation?', 'status': 'answered', 'receipt_path': '/earlier/analysis.json'}
         request = {'packet': packet, 'purpose': purpose}
         digest = _digest(request)
         record = {'request_sha256': digest, 'assessment': {'decision': 'approve', 'reason': 'Fixture source review',
@@ -230,6 +236,9 @@ def test_diagnostic_executes_without_fabricating_a_baseline_or_supporting_a_clai
         _write(directory / digest / 'review.json', record)
         return record
     monkeypatch.setattr(research_review, 'review_research_packet', fixture_review)
+    monkeypatch.setattr('research_harness.orchestrator.research_control.analysis_findings', lambda _: {
+        'analysis_earlier': {'question': 'Earlier failed implementation?', 'status': 'answered',
+                            'receipt_path': '/earlier/analysis.json', 'conclusion_excerpt': 'An earlier implementation failed.'}})
     original_execute = LocalRunner.execute
     def execute_with_binding(self, manifest):
         if work_kind == 'diagnostic_experiment':
