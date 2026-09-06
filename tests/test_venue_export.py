@@ -72,7 +72,7 @@ def _export(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, archive: Path):
         sections=[
             {
                 "title": "Introduction",
-                "prose_html": "<h3>Evidence</h3><figure><img src='figures/curve.png' alt='Measured curve'><figcaption>Ignored HTML caption</figcaption></figure><p>The result is grounded in a compiled package.</p><table id='t_results'></table>",
+                "prose_html": r"<p>Objective \(J(\theta)=\mathbb{E}[R]\), where \(x &lt; y\).</p><h3>Evidence</h3><figure><img src='figures/curve.png' alt='Measured curve'><figcaption>Ignored HTML caption</figcaption></figure><p>The result is grounded in a compiled package.</p><table id='t_results'></table>",
             },
         ],
         appendix_sections=[{"title": "Appendix", "latex": "Additional proof detail.", "trusted_latex": True}],
@@ -162,7 +162,8 @@ def test_arxiv_without_venue_renders_misc_not_inproceedings():
     assert "archivePrefix = {arXiv}" in bib
 
 
-def test_math_in_html_raises_and_authored_latex_requires_verified_marker(tmp_path, monkeypatch):
+@pytest.mark.parametrize('prose', ["<p>Use $x$.</p>", r"<p>\(\text{\input /etc/passwd}\)</p>"])
+def test_unsupported_math_and_unverified_raw_latex_are_rejected(tmp_path, monkeypatch, prose):
     archive = _kit(tmp_path)
     monkeypatch.setattr(ve, "load_venue_profiles", lambda: _profiles(archive))
     with pytest.raises(ve.UnsupportedManuscriptContent, match="math"):
@@ -170,7 +171,7 @@ def test_math_in_html_raises_and_authored_latex_requires_verified_marker(tmp_pat
             target=ve.VenueTarget("iclr", 2026, "main"),
             title="Anonymous Learning System With Verified Evidence",
             abstract="<p>Abstract.</p>",
-            sections=[{"title": "Theory", "prose_html": "<p>Use $x$.</p>"}],
+            sections=[{"title": "Theory", "prose_html": prose}],
             bibliography=[{"id": "x", "title": "X", "authors": "Doe, Jane", "year": 2026, "url": "https://example.test/x"}],
             output_dir=tmp_path / "bad",
             template_zip_path=archive,

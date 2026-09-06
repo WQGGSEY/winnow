@@ -12,6 +12,8 @@ import subprocess
 import zipfile
 from dataclasses import dataclass
 from html.parser import HTMLParser
+
+from research_harness.publishing.math_content import math_parts
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.request import Request, urlopen
@@ -357,20 +359,20 @@ def _render_latex(
         ai_use = "\\section*{AI Use Statement}\n" + _html_to_latex(ai_use_statement, assets)
     main_end = f"\n\\label{{{_MAIN_END_LABEL}}}\n"
     if profile["venue"] == "icml":
-        preamble = "\\documentclass{article}\n\\usepackage{graphicx}\n\\usepackage{booktabs}\n\\usepackage{hyperref}\n\\usepackage{icml2026}\n\\icmltitlerunning{" + _latex_text(title[:80]) + "}\n"
+        preamble = "\\documentclass{article}\n\\usepackage{graphicx}\n\\usepackage{amsmath,amssymb}\n\\usepackage{booktabs}\n\\usepackage{hyperref}\n\\usepackage{icml2026}\n\\icmltitlerunning{" + _latex_text(title[:80]) + "}\n"
         author = "\\begin{icmlauthorlist}\\icmlauthor{Anonymous Authors}{anon}\\end{icmlauthorlist}\\icmlaffiliation{anon}{Anonymous Institution}\\icmlcorrespondingauthor{Anonymous}{anonymous@example.com}\\printAffiliationsAndNotice{}"
         return f"{preamble}\\begin{{document}}\n\\twocolumn[\\icmltitle{{{_latex_text(title)}}}\n{author}\n\\icmlkeywords{{Anonymous Submission}}\n\\vskip 0.3in]\n\\begin{{abstract}}\n{_html_to_latex(abstract, assets)}\n\\end{{abstract}}\n{body}\n{impact}{main_end}\n\\bibliography{{references}}\n\\bibliographystyle{{icml2026}}\n\\appendix\n{appendix}\n\\end{{document}}\n"
     if profile["venue"] == "iclr":
-        preamble = "\\documentclass{article}\n\\usepackage{" + family + "_conference,times}\n\\usepackage{hyperref}\n\\usepackage{booktabs}\n\\usepackage{graphicx}\n\\title{" + _latex_text(title) + "}\n\\author{Anonymous Authors\\\\Anonymous Institution}\n"
+        preamble = "\\documentclass{article}\n\\usepackage{" + family + "_conference,times}\n\\usepackage{hyperref}\n\\usepackage{booktabs}\n\\usepackage{graphicx}\n\\usepackage{amsmath,amssymb}\n\\title{" + _latex_text(title) + "}\n\\author{Anonymous Authors\\\\Anonymous Institution}\n"
         return f"{preamble}\\begin{{document}}\n\\maketitle\n\\begin{{abstract}}\n{_html_to_latex(abstract, assets)}\n\\end{{abstract}}\n{body}\n{impact}{main_end}{ai_use}\n\\bibliography{{references}}\n\\bibliographystyle{{{family}_conference}}\n\\appendix\n{appendix}\n{checklist}\n\\end{{document}}\n"
     if profile["venue"] == "cvpr":
         preamble = "\\documentclass[10pt,twocolumn,letterpaper]{article}\n\\usepackage[review]{cvpr}\n\\usepackage{times}\n\\usepackage{epsfig}\n\\usepackage{graphicx}\n\\usepackage{amsmath}\n\\usepackage{amssymb}\n\\usepackage[pagebackref,breaklinks,colorlinks]{hyperref}\n\\def\\paperID{0000}\n\\def\\confName{CVPR}\n\\def\\confYear{2026}\n\\title{" + _latex_text(title) + "}\n\\author{Anonymous Authors}\n"
         return f"{preamble}\\begin{{document}}\n\\maketitle\n\\begin{{abstract}}\n{_html_to_latex(abstract, assets)}\n\\end{{abstract}}\n{body}\n{impact}{main_end}\n{{\\small\\bibliographystyle{{ieeenat_fullname}}\\bibliography{{references}}}}\n\\end{{document}}\n"
     if profile["venue"] == "colt":
-        preamble = "\\documentclass[anon,12pt]{colt2026}\n\\usepackage{times}\n\\usepackage{graphicx}\n\\usepackage{booktabs}\n\\usepackage{hyperref}\n\\title[" + _latex_text(title[:40]) + "]{" + _latex_text(title) + "}\n"
+        preamble = "\\documentclass[anon,12pt]{colt2026}\n\\usepackage{times}\n\\usepackage{graphicx}\n\\usepackage{amsmath,amssymb}\n\\usepackage{booktabs}\n\\usepackage{hyperref}\n\\title[" + _latex_text(title[:40]) + "]{" + _latex_text(title) + "}\n"
         return f"{preamble}\\begin{{document}}\n\\maketitle\n\\begin{{abstract}}\n{_html_to_latex(abstract, assets)}\n\\end{{abstract}}\n{body}\n{impact}{main_end}\n\\bibliography{{references}}\n\\appendix\n{appendix}\n\\end{{document}}\n"
     if profile["venue"] == "neurips":
-        preamble = "\\documentclass{article}\n\\usepackage{neurips_2026}\n\\usepackage[utf8]{inputenc}\n\\usepackage[T1]{fontenc}\n\\usepackage{hyperref}\n\\usepackage{url}\n\\usepackage{booktabs}\n\\usepackage{graphicx}\n\\title{" + _latex_text(title) + "}\n\\author{Anonymous Authors}"
+        preamble = "\\documentclass{article}\n\\usepackage{neurips_2026}\n\\usepackage[utf8]{inputenc}\n\\usepackage[T1]{fontenc}\n\\usepackage{hyperref}\n\\usepackage{url}\n\\usepackage{booktabs}\n\\usepackage{graphicx}\n\\usepackage{amsmath,amssymb}\n\\title{" + _latex_text(title) + "}\n\\author{Anonymous Authors}"
         return f"{preamble}\n\\begin{{document}}\n\\maketitle\n\\begin{{abstract}}\n{_html_to_latex(abstract, assets)}\n\\end{{abstract}}\n{body}\n{impact}{main_end}\n{{\\small\\bibliographystyle{{plainnat}}\\bibliography{{references}}}}\n\\appendix\n{appendix}\n{checklist}\n\\end{{document}}\n"
     raise UnsupportedVenueError(f"unsupported document family {family}")
 
@@ -496,11 +498,17 @@ class _LatexHTML(HTMLParser):
             if data.strip():
                 raise UnsupportedManuscriptContent("HTML tables must be empty placeholders resolved from evidence table_specs")
             return
-        if any(marker in data for marker in ("$", "\\(", "\\[", "\\begin{")):
-            raise UnsupportedManuscriptContent(
-                "math or raw TeX was found in prose_html; use the internal trusted_latex escape hatch only after artifact binding"
-            )
-        self.parts.append(_latex_text(data))
+        try:
+            parts = math_parts(data)
+        except ValueError as exc:
+            raise UnsupportedManuscriptContent(str(exc)) from exc
+        for kind, value in parts:
+            if kind == 'text':
+                if "$" in value or "\\begin{" in value:
+                    raise UnsupportedManuscriptContent("Use explicit \\( ... \\) or \\[ ... \\] math delimiters; raw TeX is unsupported.")
+                self.parts.append(_latex_text(value))
+            else:
+                self.parts.append(("\\(" + value + "\\)") if kind == 'inline' else ("\\[" + value + "\\]"))
 
 
 def _figure_id_from_src(value: str) -> str:

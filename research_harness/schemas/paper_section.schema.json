@@ -20,7 +20,7 @@
     "prose_html": {
       "type": "string",
       "minLength": 200,
-      "description": "Section body as safe HTML fragment. Allowed tags: <p>, <h3>, <h4>, <ul>, <ol>, <li>, <strong>, <em>, <code>, <pre>, <table>, <thead>, <tbody>, <tr>, <th>, <td>, <figure>, <figcaption>, <img>, <a>. Other tags stripped at render time. Figure embeds use <img src='figures/{figure_id}.png'> and table embeds use an empty <table id='t_table_id'></table> placeholder. The renderer cross-checks both against embedded_figure_ids and embedded_table_ids."
+      "description": "Section body as safe HTML fragment. Equations use LaTeX math delimited by \\( ... \\) inline or \\[ ... \\] for display, kept within one HTML text node. Common AMS math commands are supported; raw TeX environments and dollar delimiters are not. Use HTML entities for less-than and greater-than symbols. Allowed tags: <p>, <h3>, <h4>, <ul>, <ol>, <li>, <strong>, <em>, <code>, <pre>, <table>, <thead>, <tbody>, <tr>, <th>, <td>, <figure>, <figcaption>, <img>, <a>. Other tags stripped at render time. Figure embeds use <img src='figures/{figure_id}.png'> and table embeds use an empty <table id='t_table_id'></table> placeholder. The renderer cross-checks both against embedded_figure_ids and embedded_table_ids."
     },
     "mental_model_link": {
       "type": "string",

@@ -169,6 +169,7 @@ def test_paper_preserves_figure_and_citation_urls(tmp_path):
     wr, ac, rev, figs, outline, sections = _build_inputs(tmp_path)
     sections["method"]["prose_html"] += (
         '<a href="https://example.org/paper?a=1&amp;b=2">Reference</a>'
+        + r'<p>Objective \(J(\theta)=\mathbb{E}[R]\), with \(x &lt; y\).</p>'
     )
     render_sakana_paper(
         outline=outline, sections=sections, figures_registry=figs,
@@ -181,8 +182,11 @@ def test_paper_preserves_figure_and_citation_urls(tmp_path):
             super().__init__()
             self.images = []
             self.links = []
+            self.equations = []
 
         def handle_starttag(self, tag, attrs):
+            if tag == "svg":
+                self.equations.append(dict(attrs).get("aria-label"))
             if tag == "img":
                 self.images.append(dict(attrs).get("src"))
             if tag == "a":
@@ -191,6 +195,7 @@ def test_paper_preserves_figure_and_citation_urls(tmp_path):
     parsed = Links()
     parsed.feed((tmp_path / "paper.html").read_text(encoding="utf-8"))
     assert parsed.images == ["figures/f_baseline.png"]
+    assert parsed.equations == [r"J(\theta)=\mathbb{E}[R]", "x < y"]
     assert "https://example.org/paper?a=1&b=2" in parsed.links
 
 

@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from research_harness.publishing.math_content import math_parts, math_svg
+
 
 class SakanaPaperError(ValueError):
     pass
@@ -63,7 +65,7 @@ _ALLOWED_ATTRS = {
 
 class _SafeHTML(HTMLParser):
     def __init__(self) -> None:
-        super().__init__(convert_charrefs=False)
+        super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -98,19 +100,16 @@ class _SafeHTML(HTMLParser):
             self.parts.append(closing if tag in _ALLOWED_TAGS else html_lib.escape(closing))
 
     def handle_data(self, data: str) -> None:
-        self.parts.append(html_lib.escape(data, quote=False))
-
-    def handle_entityref(self, name: str) -> None:
-        self.parts.append(f"&{name};")
-
-    def handle_charref(self, name: str) -> None:
-        self.parts.append(f"&#{name};")
-
+        for kind, value in math_parts(data):
+            self.parts.append(html_lib.escape(value, quote=False) if kind == 'text' else math_svg(value, kind == 'display'))
 
 def _sanitize_html(prose: str) -> str:
     parser = _SafeHTML()
-    parser.feed(prose)
-    parser.close()
+    try:
+        parser.feed(prose)
+        parser.close()
+    except ValueError as exc:
+        raise SakanaPaperError(str(exc)) from exc
     return "".join(parser.parts)
 
 
