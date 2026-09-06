@@ -30,6 +30,7 @@ def _digest(value: Any) -> str:
 
 def hypothesis_context(repo: Path, thread: Path) -> dict[str, Any]:
     from research_harness.runner.baseline_preflight import baseline_preparation_state
+    from research_harness.orchestrator.research_knowledge import research_brief, brief_context
 
     connector = _read(thread / 'connector/connector_session.json')
     brief = _read(thread / 'market/market_research_brief.json')
@@ -54,6 +55,7 @@ def hypothesis_context(repo: Path, thread: Path) -> dict[str, Any]:
         base = dossier_path(repo, brief['baseline_dossier_id']).parent
         details = {candidate['id']: (base / candidate['detail_file']).read_text() for candidate in dossier['candidates_index']}
     return {
+        'research_brief': brief_context(thread, research_brief(thread)),
         'research_question': _read(thread / 'thread.json').get('user_goal', ''),
         'problem_definition': _read(thread / 'grilling/grilling_session.json').get('extracted', {}),
         'connector_candidates': connector.get('claims', []),

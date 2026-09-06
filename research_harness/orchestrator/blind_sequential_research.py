@@ -851,8 +851,11 @@ class BlindSequentialResearch:
     ) -> _GenerationPlan:
         draw_index = self._next_draw_index()
         from research_harness.orchestrator.research_control import development_evidence
+        from research_harness.orchestrator.research_knowledge import research_brief, brief_context
 
         observations = development_evidence(self._thread_dir)
+        if observations:
+            observations['research_brief'] = brief_context(self._thread_dir, research_brief(self._thread_dir))
         request = GenerationRequest(
             goal_contract=contract,
             random_perspective=sample_random_perspective(

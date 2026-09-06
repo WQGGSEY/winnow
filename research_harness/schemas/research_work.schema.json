@@ -10,12 +10,20 @@
     "test",
     "deferred_questions",
     "next_if_inconclusive",
-    "max_runtime_seconds"
+    "max_runtime_seconds",
+    "previous_result",
+    "source_mode",
+    "required_observations",
+    "hypothesis_ids"
   ],
   "properties": {
     "protocol_change": {
       "type": "string",
-      "enum": ["not_applicable", "study_design", "component_binding"],
+      "enum": [
+        "not_applicable",
+        "study_design",
+        "component_binding"
+      ],
       "description": "For protocol_revision, distinguish a prospective study design from registration of executable component bytes. component_binding requires source preparation within this work before amendment review; promising future source does not complete it. Use not_applicable for other work kinds."
     },
     "kind": {
@@ -79,9 +87,13 @@
       "minLength": 1
     },
     "deferred_questions": {
-      "type": "array", "maxItems": 5,
+      "type": "array",
+      "maxItems": 5,
       "description": "Other relevant questions intentionally outside this work unit; these are not required to accept this diagnostic's result.",
-      "items": {"type": "string", "minLength": 1}
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "next_if_inconclusive": {
       "type": "string",
@@ -90,6 +102,111 @@
     "max_runtime_seconds": {
       "type": "integer",
       "minimum": 1
+    },
+    "previous_result": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "work_id",
+            "result_kind",
+            "evidence_ids",
+            "prediction_updates",
+            "missing_evidence",
+            "next_decision"
+          ],
+          "properties": {
+            "work_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "result_kind": {
+              "type": "string",
+              "enum": [
+                "execution_failure",
+                "inconclusive",
+                "informative"
+              ]
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "prediction_updates": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "alternative_index": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "effect": {
+                    "type": "string",
+                    "enum": [
+                      "supported",
+                      "weakened",
+                      "unresolved"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "alternative_index",
+                  "effect",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "missing_evidence": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "next_decision": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      ],
+      "description": "Interpret the completed previous work against each of its predictions. Null only if there is no completed previous work. A development interpretation never qualifies a scientific claim."
+    },
+    "source_mode": {
+      "type": "string",
+      "enum": [
+        "existing",
+        "acquire"
+      ],
+      "description": "Use acquire for an analysis requiring new primary material. Existing-source analysis cannot establish absence of an unsearched source."
+    },
+    "required_observations": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "For empirical work, names of numeric metrics counting the eligible observations needed to interpret this test. Each must exceed zero. These are sample-support counts, never positive-outcome requirements or treatment-effect thresholds. Use an empty list for analysis/protocol_revision."
+    },
+    "hypothesis_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Recorded candidate hypotheses investigated by this work. Empty for shared apparatus or an independent diagnostic."
     }
   },
   "additionalProperties": false

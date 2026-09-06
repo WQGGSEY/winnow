@@ -1,0 +1,89 @@
+{
+  "type": "object",
+  "required": [
+    "decision",
+    "reason",
+    "evidence",
+    "required_work",
+    "next_steps",
+    "blocking_basis"
+  ],
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": [
+        "approve",
+        "reject"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "next_steps": {
+      "type": "array",
+      "description": "Non-blocking later work, such as qualification before a future execution. These are not prerequisites for the current decision.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required_work": {
+      "type": "array",
+      "description": "Blocking defects that must be resolved BEFORE the current decision can be approved. Empty when decision=approve.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "blocking_basis": {
+      "type": "array",
+      "description": "One grounded basis for each required_work item. Future confirmation requirements belong in next_steps, not blocking development execution.",
+      "items": {
+        "type": "object",
+        "required": [
+          "required_work_index",
+          "scope",
+          "basis_path",
+          "basis_quote"
+        ],
+        "properties": {
+          "required_work_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "selected_test",
+              "runtime_contract",
+              "development_protocol",
+              "method_semantics",
+              "final_confirmation"
+            ]
+          },
+          "basis_path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Dot path into the supplied packet for the requirement being violated."
+          },
+          "basis_quote": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Exact nonempty quote from that packet value, not an invented requirement."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

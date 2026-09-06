@@ -17,6 +17,83 @@ from research_harness.runner.baseline_preflight import execute_baseline_prefligh
 REPO = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.parametrize('count', [None, 0])
+def test_empty_measurement_cannot_be_interpreted_as_no_effect(tmp_path, monkeypatch, count):
+    from research_harness.orchestrator import research_control
+    from research_harness.orchestrator.research_knowledge import validate_previous_result, research_brief
+
+    thread, _, node, plan, _ = fixture(tmp_path)
+    work = plan_research_work(REPO, thread, transport=Planner())
+    bind_work(thread, work['work_id'], node['id'], plan)
+    research_control._write(thread / 'production/tree/baseline_preflight/measurement/experiment_plan.json', plan)
+    measurement = {'execution_status': 'completed', 'measurement_status': 'completed',
+                   'report_path': 'production/tree/baseline_preflight/measurement/worker_report.json',
+                   'metrics': {'effect': 0, **({'eligible_count': count} if count is not None else {})},
+                   'observation_digest': 'measurement'}
+    monkeypatch.setattr(research_control, 'development_evidence', lambda thread: {node['id']: measurement})
+    finish_work(thread, {'status': 'executed'})
+    previous = current_work(thread)
+    assert not previous['outcome']['measurement_support']['evaluable']
+    class OverconfidentPlanner(Planner):
+        def complete(self, request):
+            response = super().complete(request)
+            decision = json.loads(response.text)
+            decision['previous_result']['result_kind'] = 'informative'
+            decision['previous_result']['prediction_updates'][0]['effect'] = 'weakened'
+            return CompletionResult(text=json.dumps(decision), usage=AgentUsage(), thread_id='test')
+
+    with pytest.raises(ValueError, match='empty eligible'):
+        plan_research_work(REPO, thread, transport=OverconfidentPlanner('analysis'))
+    assert current_work(thread)['work_id'] == previous['work_id']
+    corrected = Planner('analysis')
+    next_work = plan_research_work(REPO, thread, transport=corrected)
+    assert 'empty eligible' in corrected.calls[0]['previous_response_rejection']['error']
+    forged = copy.deepcopy(next_work['decision'])
+    forged['previous_result']['result_kind'] = 'informative'
+    forged['previous_result']['prediction_updates'][0]['effect'] = 'weakened'
+    with pytest.raises(ValueError, match='empty eligible'):
+        validate_previous_result(forged, previous, {'work_' + previous['work_id']})
+    brief = research_brief(thread)
+    assert brief['result_interpretations'][-1]['result_kind'] == 'inconclusive'
+    assert brief['result_interpretations'][-1]['work_id'] == previous['work_id']
+    assert previous['work_id'] not in brief['uninterpreted_completed_work_ids']
+
+
+def test_crash_cannot_weaken_scientific_prediction(tmp_path):
+    from research_harness.orchestrator.research_knowledge import validate_previous_result
+
+    thread, _, _, _, _ = fixture(tmp_path)
+    previous = plan_research_work(REPO, thread, transport=Planner())
+    previous.update(status='completed', outcome={'execution_result': 'execution_failed'})
+    decision = {'previous_result': {'work_id': previous['work_id'], 'result_kind': 'informative',
+        'evidence_ids': ['work_' + previous['work_id']],
+        'prediction_updates': [{'alternative_index': i, 'effect': 'weakened'} for i in range(2)]}}
+    with pytest.raises(ValueError, match='cannot support or weaken'):
+        validate_previous_result(decision, previous, {'work_' + previous['work_id']})
+
+
+def test_planning_consumes_critiqued_hypotheses_and_retains_work_link(tmp_path):
+    from research_harness.orchestrator.research_control import _write
+    from research_harness.orchestrator.research_knowledge import research_brief
+
+    thread, _, _, _, _ = fixture(tmp_path)
+    _write(thread / 'production/hypotheses/current.json', {'status': 'completed', 'candidates': [
+        {'id': 'hypothesis_1', 'claim_under_test': 'The measurement aliases distinct inputs.',
+         'selected_for_diagnostic': True, 'scientific_support': 'unverified'}]})
+
+    class HypothesisPlanner(Planner):
+        def complete(self, request):
+            response = super().complete(request)
+            packet = json.loads(request.prompt.input)
+            decision = json.loads(response.text)
+            decision['hypothesis_ids'] = [packet['hypotheses']['candidates'][0]['id']]
+            return CompletionResult(text=json.dumps(decision), usage=AgentUsage(), thread_id='test')
+
+    work = plan_research_work(REPO, thread, transport=HypothesisPlanner())
+    assert work['decision']['hypothesis_ids'] == ['hypothesis_1']
+    assert research_brief(thread)['work_index'][-1]['hypothesis_ids'] == ['hypothesis_1']
+
+
 def test_execution_inventory_includes_preparation_without_reading_measurements(tmp_path):
     for scope, node_id in [('baseline_preflight', 'preflight'), ('nodes', 'formal')]:
         directory = tmp_path / 'production/tree' / scope / node_id
@@ -41,6 +118,10 @@ class Planner:
         packet = json.loads(request.prompt.input)
         self.calls.append(packet)
         decision = {
+            'previous_result': None,
+            'hypothesis_ids': [],
+            'source_mode': 'existing',
+            'required_observations': [] if self.kind in {'analysis', 'protocol_revision'} else ['eligible_count'],
             'kind': self.kind, 'uncertainty': 'Is the measurement implementation valid?',
             'protocol_change': self.protocol_change,
             'evidence_ids': packet['available_evidence_ids'],
@@ -56,6 +137,20 @@ class Planner:
             'next_if_inconclusive': 'Inspect the first divergence in the raw trace.',
             'max_runtime_seconds': self.budget,
         }
+        previous = packet['previous_work']
+        if previous.get('status') == 'completed':
+            outcome = previous.get('outcome', {})
+            failed = outcome.get('execution_result') in {'execution_failed', 'interrupted', 'rejected'}
+            decision['previous_result'] = {
+                'work_id': previous['work_id'],
+                'result_kind': 'execution_failure' if failed else 'inconclusive',
+                'evidence_ids': ['work_' + previous['work_id']],
+                'prediction_updates': [{'alternative_index': i, 'effect': 'unresolved',
+                                        'reason': 'This record does not distinguish the predictions.'}
+                                       for i, _ in enumerate(previous['decision']['alternatives'])],
+                'missing_evidence': ['A valid distinguishing measurement.'],
+                'next_decision': 'Inspect the first divergence in the raw trace.',
+            }
         return CompletionResult(text=json.dumps(decision), usage=AgentUsage(), thread_id='test')
 
 
@@ -101,7 +196,10 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     monkeypatch.setattr(mcp_server, '_thread_dir', lambda tid: thread)
     monkeypatch.setattr(settings_scoped, 'resolve_for_thread', lambda repo, tid: {})
     reviewed = []
+    invalid_review = []
     def review(repo, directory, packet, *, purpose):
+        if invalid_review:
+            raise research_review.ReviewContractError('Final confirmation requirements cannot block development.')
         reviewed.append(packet)
         return {'request_sha256': 'review', 'assessment': {
             'decision': 'reject' if len(reviewed) == 1 else 'approve',
@@ -127,6 +225,14 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     assert conflicting_role['status'] == 'rejected'
     assert 'role conflicts' in conflicting_role['reason']
     assert not reviewed
+    invalid_review.append(True)
+    invalid = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
+    assert invalid['status'] == 'review_invalid'
+    assert invalid['next_tool_to_call'] == 'execute_baseline_preflight'
+    assert current_work(thread)['status'] == 'planned'
+    assert current_work(thread)['work_id'] == work['work_id']
+    assert not (tree / 'baseline_preflight' / node['id'] / 'job_manifest.json').exists()
+    invalid_review.clear()
     revision = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
     assert revision['status'] == 'rejected'
     assert current_work(thread)['status'] == 'planned'
@@ -167,7 +273,7 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     packet = planner.calls[-1]
     assert packet['diagnostic_required']
     assert packet['previous_work']['outcome']['observation']['execution_status'] == 'failed'
-    assert next_work['decision']['evidence_ids'] == [node['id']]
+    assert {node['id'], 'work_' + work['work_id']} <= set(next_work['decision']['evidence_ids'])
     plan['source_files'][0]['content'] += '\n# corrected request\n'
     request_path.write_text(json.dumps({**({'node': node} if explicit_node else {}), 'experiment_plan': plan, 'role': role, 'work_id': next_work['work_id']}))
     rejected = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})

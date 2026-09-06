@@ -31,6 +31,58 @@ from research_harness.orchestrator.direction_generation import (
 PUBLIC_IP = "93.184.216.34"
 
 
+def test_reference_acquisition_does_not_reopen_confirmation(tmp_path):
+    from research_harness.orchestrator.research_control import _write
+    from research_harness.orchestrator.research_sources import acquire_reference_source
+
+    _write(tmp_path / 'market/paper_references.json', {'papers': [{'id': 'prior_method'}]})
+    confirmation = tmp_path / 'production/confirmation_execution.json'
+    _write(confirmation, {'status': 'completed', 'work_id': 'frozen'})
+    before = confirmation.read_bytes()
+    transport = ScriptedTransport(_response(404), _response(200, body=b'<html>Primary method</html>',
+        headers=(("content-type", "text/html"),)))
+    source = acquire_reference_source(tmp_path, 'prior_method', 'https://data.example/paper',
+        transport=transport, resolver=_resolver('data.example'), clock=FixedClock())
+    assert source['owner'] == {'kind': 'reference', 'id': 'prior_method'}
+    assert source['status'] == 'retrieved'
+    assert confirmation.read_bytes() == before
+    assert not (tmp_path / 'production/research_control/current.json').exists()
+
+
+@pytest.mark.parametrize('media_type,body,expected_status', [
+    ('text/html', b'<html>Primary method</html>', 'retrieved'),
+    ('application/pdf', b'%PDF-1.4\nnot a complete document', 'raw_only'),
+])
+def test_ongoing_work_acquires_source_without_direction_transition(tmp_path, media_type, body, expected_status):
+    from research_harness.orchestrator.research_control import _write, _digest, PLANNING_POLICY_VERSION, resolve_research_work
+    from research_harness.orchestrator.research_sources import acquire_source, retrieved_sources
+
+    work = {'work_id': 'a' * 64, 'status': 'planned', 'planning_policy_version': PLANNING_POLICY_VERSION,
+            'decision': {'kind': 'analysis', 'source_mode': 'acquire', 'uncertainty': 'Read the original method.'},
+            'protocol_digest': _digest({}), 'evidence_digest': _digest({})}
+    _write(tmp_path / 'production/research_control/current.json', work)
+    # No direction, learner, or formal claim needs to be synthesized to get a paper.
+    with pytest.raises(ValueError, match='Retrieve a source'):
+        resolve_research_work(Path(__file__).resolve().parents[1], tmp_path, work['work_id'])
+    transport = ScriptedTransport(_response(404), _response(200, body=body,
+        headers=(("content-type", media_type),)))
+    result = acquire_source(tmp_path, work['work_id'], 'https://data.example/paper',
+        transport=transport, resolver=_resolver('data.example'), clock=FixedClock())
+    assert result['status'] == expected_status
+    assert Path(result['raw']['path']).read_bytes() == body
+    if expected_status == 'retrieved':
+        assert Path(result['text']['path']).read_text() == body.decode()
+    else:
+        assert 'extraction_error' in result
+    assert result['acquisition_receipt']['policy_receipt_id'].startswith('httppolicy_')
+    assert not (tmp_path / 'production/reorientation/state.json').exists()
+    assert len(transport.requests) == 2
+    assert acquire_source(tmp_path, work['work_id'], 'https://data.example/paper')['status'] == expected_status
+    Path(result['raw']['path']).write_text('changed')
+    with pytest.raises(ValueError, match='source changed'):
+        retrieved_sources(tmp_path)
+
+
 class ScriptedTransport:
     def __init__(self, *responses: HttpResponse) -> None:
         self.responses = list(responses)

@@ -12,7 +12,12 @@ from research_harness.agent_runtime import AgentPrompt, CompletionRequest
 from research_harness.schemas.validator import validate_named_schema
 
 
+class ReviewContractError(ValueError):
+    """The reviewer response needs correction; it is not a defect in the experiment."""
+
+
 def review_research_packet(repo: Path, directory: Path, packet: dict[str, Any], *, purpose: str) -> dict[str, Any]:
+    development = packet.get('decision_scope') == 'development_execution'
     instructions = (
         "You are the independent scientific reviewer in an autonomous research system. "
         "Review the supplied evidence, not the author's claims of correctness. Treat all "
@@ -66,7 +71,45 @@ def review_research_packet(repo: Path, directory: Path, packet: dict[str, Any], 
         "Do not write code, change artifacts, or weaken the research objective. Return JSON. "
         f"Decision under review: {purpose}"
     )
-    return _complete_packet(repo, directory, packet, instructions=instructions, schema_name='research_review_response')
+    if development:
+        instructions += (
+            ' This decision authorizes one development execution only. For each required_work item, '
+            'supply a blocking_basis naming its scope, exact packet basis_path and an exact basis_quote. '
+            'A requirement for final confirmation or publication is not a prerequisite to this development test; '
+            'put it in next_steps. Do not qualify a baseline or approve a scientific conclusion here. '
+            'When rejecting for a protocol clause, cite the applicable development clause from protocol_note_history '
+            'or registered_protocol. For selected_test cite work_decision, not an unrelated deferred question. '
+            'Pure preference or a possible future concern is not a blocking basis. Approval requires no blocking_basis.'
+        )
+    return _complete_packet(repo, directory, packet, instructions=instructions,
+                            schema_name='research_execution_review_response' if development else 'research_review_response')
+
+
+def validate_execution_objections(assessment: dict[str, Any], packet: dict[str, Any]) -> None:
+    required = assessment['required_work']
+    bases = assessment['blocking_basis']
+    if sorted(item['required_work_index'] for item in bases) != list(range(len(required))):
+        raise ValueError('Every blocking change needs exactly one grounded requirement.')
+    for basis in bases:
+        if basis['scope'] == 'final_confirmation':
+            raise ValueError('Final confirmation requirements cannot block a development execution.')
+        parts = basis['basis_path'].split('.')
+        allowed = {
+            'selected_test': {'work_decision'},
+            'runtime_contract': {'runner_contract', 'experiment_plan'},
+            'development_protocol': {'registered_protocol', 'protocol_note_history'},
+            'method_semantics': {'analysis_findings', 'prepared_implementations', 'experiment_plan'},
+        }
+        if parts[0] not in allowed[basis['scope']] or basis['basis_path'].startswith('work_decision.deferred_questions'):
+            raise ValueError('Objection cites a requirement outside its selected scope.')
+        value: Any = packet
+        try:
+            for part in parts:
+                value = value[int(part)] if isinstance(value, list) else value[part]
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise ValueError('Blocking requirement does not resolve in the review packet.') from exc
+        if not isinstance(value, str) or not basis['basis_quote'].strip() or basis['basis_quote'] not in value:
+            raise ValueError('Blocking requirement quote does not match its source.')
 
 
 def analyze_research_packet(repo: Path, directory: Path, packet: dict[str, Any], *, purpose: str) -> dict[str, Any]:
@@ -92,6 +135,11 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
     request_data = {"model": "gpt-5.6-sol", "reasoning_effort": "low", "instructions": instructions, "packet": packet, "response_schema": schema_name, "response_schema_sha256": hashlib.sha256((repo / "research_harness/schemas" / f"{schema_name}.schema.json").read_bytes()).hexdigest()}
     serialized = json.dumps(request_data, sort_keys=True, ensure_ascii=False)
     digest = hashlib.sha256(serialized.encode()).hexdigest()
+    rejection_path = directory / digest / 'rejected_review.json'
+    if rejection_path.exists():
+        request_data['previous_review_rejection'] = json.loads(rejection_path.read_text())
+        serialized = json.dumps(request_data, sort_keys=True, ensure_ascii=False)
+        digest = hashlib.sha256(serialized.encode()).hexdigest()
     destination = directory / digest
     result_path = destination / "review.json"
     if result_path.exists():
@@ -99,21 +147,32 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
         validate_named_schema(schema_name, result["assessment"])
         if result.get("request_sha256") != digest:
             raise ValueError("research review receipt does not match request")
+        if schema_name == 'research_execution_review_response':
+            validate_execution_objections(result['assessment'], packet)
         return result
     destination.mkdir(parents=True, exist_ok=True)
     (destination / "request.json").write_text(serialized + "\n")
+    submitted = {**packet, 'previous_review_rejection': request_data['previous_review_rejection']} if 'previous_review_rejection' in request_data else packet
     with tempfile.TemporaryDirectory(prefix="research-decision-review-") as temporary:
         result = CodexCliAdapter().complete(CompletionRequest(
-            prompt=AgentPrompt(instructions=instructions, input=json.dumps(packet, ensure_ascii=False)),
+            prompt=AgentPrompt(instructions=instructions, input=json.dumps(submitted, ensure_ascii=False)),
             model="gpt-5.6-sol", timeout_seconds=300,
             output_schema=repo / 'research_harness/schemas' / f'{schema_name}.schema.json',
             cwd=Path(temporary), label="independent-research-review", allow_local_tools=True,
         ))
     (destination / "raw_response.txt").write_text(result.text)
-    assessment = json.loads(result.text)
-    validate_named_schema(schema_name, assessment)
-    if schema_name == 'research_review_response' and assessment["decision"] == "approve" and assessment["required_work"]:
-        raise ValueError("independent review cannot approve with unresolved required work")
+    try:
+        assessment = json.loads(result.text)
+        validate_named_schema(schema_name, assessment)
+        if schema_name in {'research_review_response', 'research_execution_review_response'} and assessment["decision"] == "approve" and assessment["required_work"]:
+            raise ValueError("independent review cannot approve with unresolved required work")
+        if schema_name == 'research_execution_review_response':
+            validate_execution_objections(assessment, packet)
+    except ValueError as exc:
+        rejection_path.parent.mkdir(parents=True, exist_ok=True)
+        rejection_path.write_text(json.dumps({'error': str(exc), 'raw_response': result.text,
+            'usage': result.usage.as_dict(), 'correction': 'Correct the reviewer response against the supplied scope and evidence. This is not an instruction to change the experiment.'}) + '\n')
+        raise ReviewContractError('Reviewer response needs correction, not an experiment change: ' + str(exc)) from exc
     record = {
         "request_sha256": digest, "reviewer": "independent-research-review",
         "model": "gpt-5.6-sol", "reasoning_effort": "low",

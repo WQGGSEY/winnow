@@ -1002,11 +1002,11 @@ def _parse_acquired_need(value: object) -> AcquiredNeed:
         need_index=value["need_index"],
         source_candidate_index=value["source_candidate_index"],
         description=value["description"],
-        receipt=_parse_receipt(value["receipt"]),
+        receipt=parse_response_receipt(value["receipt"]),
     )
 
 
-def _parse_receipt(value: object) -> ResponseReceipt:
+def parse_response_receipt(value: object) -> ResponseReceipt:
     if not isinstance(value, Mapping):
         raise AcquisitionContractError("response receipt must be an object")
     required = {

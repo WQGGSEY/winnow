@@ -62,7 +62,7 @@ from .http_redirect import RedirectReplayStore, make_redirect_replay
 from .live_http import CredentialProfileUnavailable
 from .model import (
     AcquiredNeed,
-    AcquisitionCommand,
+    NeedPlan,
     AcquisitionConflictError,
     CacheObject,
     MissingnessReport,
@@ -389,6 +389,16 @@ def _canonical_json(value: object) -> bytes:
     ).encode("utf-8")
 
 
+class HttpAcquisitionContext(Protocol):
+    """HTTP needs identity and source plans, not a research direction."""
+
+    @property
+    def command_id(self) -> str: ...
+
+    @property
+    def needs(self) -> tuple[NeedPlan, ...]: ...
+
+
 class HttpAcquirer:
     def __init__(
         self,
@@ -416,7 +426,7 @@ class HttpAcquirer:
     def acquire(
         self,
         *,
-        command: AcquisitionCommand,
+        command: HttpAcquisitionContext,
         need_index: int,
         source_candidate_index: int,
         source: PublicSource,
@@ -515,7 +525,7 @@ class HttpAcquirer:
     def _complete(
         self,
         *,
-        command: AcquisitionCommand,
+        command: HttpAcquisitionContext,
         need_index: int,
         source_candidate_index: int,
         source: PublicSource,
@@ -577,7 +587,7 @@ class HttpAcquirer:
     def _acquire_crawl(
         self,
         *,
-        command: AcquisitionCommand,
+        command: HttpAcquisitionContext,
         need_index: int,
         source_candidate_index: int,
         source: PublicSource,
@@ -729,7 +739,7 @@ class HttpAcquirer:
         uri: str,
         *,
         source: PublicSource,
-        command: AcquisitionCommand,
+        command: HttpAcquisitionContext,
         deadline: float,
         usage: _Usage,
         exchanges: list[HttpResponseRecord],
@@ -815,7 +825,7 @@ class HttpAcquirer:
         target_uri: str,
         *,
         source: PublicSource,
-        command: AcquisitionCommand,
+        command: HttpAcquisitionContext,
         deadline: float,
         usage: _Usage,
         robots: dict[str, tuple[HttpResponse, tuple[HttpResponseRecord, ...]]],
@@ -871,7 +881,7 @@ class HttpAcquirer:
         uri: str,
         *,
         source: PublicSource,
-        command: AcquisitionCommand,
+        command: HttpAcquisitionContext,
         deadline: float,
         usage: _Usage,
     ) -> tuple[HttpResponse, tuple[HttpResponseRecord, ...]]:
@@ -912,7 +922,7 @@ class HttpAcquirer:
         purpose: Literal["robots", "content"],
         robots_decision: RobotsDecision,
         source: PublicSource,
-        command: AcquisitionCommand,
+        command: HttpAcquisitionContext,
         deadline: float,
         usage: _Usage,
         response_cap: int | None = None,
@@ -958,7 +968,7 @@ class HttpAcquirer:
         purpose: Literal["robots", "content"],
         robots_decision: RobotsDecision,
         source: PublicSource,
-        command: AcquisitionCommand,
+        command: HttpAcquisitionContext,
         deadline: float,
         usage: _Usage,
         response_cap: int | None = None,
@@ -1095,6 +1105,9 @@ def _validate_response(
             ValidationReport("passed", "public API JSON parsed successfully"),
             MissingnessReport("passed", fraction, "JSON null fraction measured"),
         )
+    if "application/pdf" in content_type and response.body.startswith(b'%PDF-'):
+        return (ValidationReport('passed', 'PDF media type and signature verified; contents require interpretation'),
+                MissingnessReport('not_evaluated', None, 'PDF document has no declared missingness rule'))
     if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
         raise _RejectedSignal(
             HardExternalBlockCode.LAWFUL_ACCESS_UNAVAILABLE,

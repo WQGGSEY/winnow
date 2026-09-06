@@ -160,6 +160,11 @@ TOOL_DEFINITIONS = [
         "inputSchema": {"type": "object", "required": ["thread_id", "work_id", "notes", "rationale"], "properties": {"thread_id": {"type": "string"}, "work_id": {"type": "string"}, "notes": {"type": "string", "minLength": 1}, "rationale": {"type": "string", "minLength": 1}, "replace_holdout": {"type": "boolean", "default": False}, "defer_holdout_generation": {"type": "boolean", "default": False}}, "additionalProperties": False},
     },
     {
+        "name": "retrieve_research_source",
+        "description": "Acquire primary material through the public HTTP/cache boundary. Supply work_id for the current analysis with source_mode=acquire, or reference_id for retrieved bibliography during manuscript revision. Records content and provenance or a concrete failure. Work acquisitions continue with resolve_research_work; reference acquisitions continue with prepare_paper_writing_context. No experiment or scientific approval.",
+        "inputSchema": {"type": "object", "required": ["thread_id", "url"], "properties": {"thread_id": {"type": "string"}, "work_id": {"type": "string"}, "reference_id": {"type": "string", "description": "A retrieved bibliography ID. Use instead of work_id to acquire primary literature during manuscript revision without reopening experiments or confirmation."}, "url": {"type": "string"}}, "additionalProperties": False},
+    },
+    {
         "name": "resolve_research_work",
         "description": "Resolve a planned analysis work from existing sources and artifacts. The harness reads the evidence and records a sourced answer or the smallest missing observation. No new experiment, baseline approval or scientific claim approval is implied.",
         "inputSchema": {"type": "object", "required": ["thread_id", "work_id"], "properties": {"thread_id": {"type": "string"}, "work_id": {"type": "string"}}, "additionalProperties": False},
@@ -1524,6 +1529,22 @@ def handle_resolve_research_work(args: dict[str, Any]) -> dict[str, Any]:
             return {'status': 'analysis_failed', 'reason': str(exc), 'next_tool_to_call': 'resolve_research_work'}
 
 
+def handle_retrieve_research_source(args: dict[str, Any]) -> dict[str, Any]:
+    from research_harness.orchestrator.research_sources import acquire_source, acquire_reference_source
+
+    with _exclusive_adaptive_writer(args['thread_id']):
+        try:
+            if bool(args.get('work_id')) == bool(args.get('reference_id')):
+                raise ValueError('Supply exactly one work_id or reference_id.')
+            if args.get('reference_id'):
+                return {**acquire_reference_source(_thread_dir(args['thread_id']), args['reference_id'], args['url']),
+                        'next_tool_to_call': 'prepare_paper_writing_context'}
+            return acquire_source(_thread_dir(args['thread_id']), args['work_id'], args['url'])
+        except (OSError, ValueError) as exc:
+            return {'status': 'source_acquisition_failed', 'reason': str(exc),
+                    'next_tool_to_call': 'search_paper_references' if args.get('reference_id') else 'plan_research_work'}
+
+
 def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     from research_harness.runner.baseline_preflight import baseline_preparation_state
     from research_harness.orchestrator.research_control import current_work, runtime_input_example, executed_diagnostic_bindings
@@ -1609,6 +1630,8 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
         "intake_to_claim": _read_json(d / "production" / "intake_to_claim_dialog.json"),
     }
     from research_harness.orchestrator.research_control import PLANNING_POLICY_VERSION
+    from research_harness.orchestrator.research_knowledge import research_brief, brief_context
+    state['research_brief'] = research_brief(d)
     if state['research_work'] and state['research_work'].get('planning_policy_version') != PLANNING_POLICY_VERSION:
         state['research_work'] = {**state['research_work'], 'next_tool_to_call': 'plan_research_work',
                                   'requires_replanning': True, 'reason': 'Research capabilities changed; old work routing is stale.'}
@@ -1621,6 +1644,7 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
         **{key: state[key] for key in ('thread', 'operator_model_preference', '_model_note',
                                       'baseline_preparation', 'baseline_preparation_contract', '_market_usage_contract', 'publication_target')},
         'view': 'current', 'thread_dir': str(d.resolve()), 'research_work': work,
+        'research_brief': brief_context(d, state['research_brief']),
         'runtime_input_example': state['runtime_input_example'],
         'executed_diagnostic_bindings': state['executed_diagnostic_bindings'],
         'operator_intent': envelope.get('operator_intent'),
@@ -3603,6 +3627,9 @@ def _handle_execute_node_experiment_locked(args: dict[str, Any]) -> dict[str, An
         validate_named_schema("job_manifest", manifest)
         review_work_implementation(repo, _thread_dir(tid), work['work_id'], node, plan)
     except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:
+        from research_harness.orchestrator.research_review import ReviewContractError
+        if isinstance(exc, ReviewContractError):
+            return {'status': 'review_invalid', 'reason': str(exc), 'next_tool_to_call': 'execute_node_experiment'}
         return {'status': 'rejected', 'reason': f'experiment dispatch failed: {exc}',
                 'next_tool_to_call': 'design_experiment_template'}
     (node_run_dir / "experiment_plan.json").write_text(
@@ -4255,6 +4282,9 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
             return finish_work(_thread_dir(tid), result) if bound else result
         except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:
             result = {"status": "rejected", "reason": f"baseline preflight failed: {exc}", "next_tool_to_call": "plan_research_work"}
+            from research_harness.orchestrator.research_review import ReviewContractError
+            if isinstance(exc, ReviewContractError):
+                result.update(status='review_invalid', next_tool_to_call='execute_baseline_preflight')
             if isinstance(exc, StaleResearchWork):
                 return {**result, 'status': 'work_required'}
             work = current_work(_thread_dir(tid))
@@ -5266,6 +5296,8 @@ def _paper_market_brief(tid: str) -> dict[str, Any]:
 
 def _paper_evidence_bundle(tid: str, node_dir: Path) -> dict[str, Any]:
     from research_harness.orchestrator.protocol_revision import approved_protocol_revisions
+    from research_harness.orchestrator.research_sources import retrieved_sources
+    from research_harness.orchestrator.research_knowledge import research_brief
     production = _thread_dir(tid) / "production"
     return {
         "worker_report": _read_json(node_dir / "worker_report.json") or {},
@@ -5277,6 +5309,8 @@ def _paper_evidence_bundle(tid: str, node_dir: Path) -> dict[str, Any]:
         "protocol_revisions": approved_protocol_revisions(_thread_dir(tid)),
         "confirmation_execution": _read_json(_thread_dir(tid) / "production/confirmation_execution.json") or {},
         "market_brief": _paper_market_brief(tid),
+        "primary_sources": retrieved_sources(_thread_dir(tid)),
+        "development_research_brief": research_brief(_thread_dir(tid)),
     }
 
 
@@ -5343,7 +5377,7 @@ def handle_prepare_paper_writing_context(args: dict[str, Any]) -> dict[str, Any]
         "protocol_disclosure_requirement": "Describe approved development amendments and their timing in the methods. Do not portray an amended design as the original preregistration or use prior results as prospective evidence for the amendment.",
         "market_brief": market_brief,
         "reference_papers": market_brief.get("papers") or [],
-        "reference_retrieval_tool": "search_paper_references adds retrieved records to this writing context and evidence bundle without changing baseline assignments. Use it when the actual methods or closest works are absent from reference_papers.",
+        "reference_retrieval_tool": "search_paper_references adds retrieved records to this writing context and evidence bundle without changing baseline assignments. Use it when the actual methods or closest works are absent from reference_papers. Then use retrieve_research_source with the returned reference_id and a primary-source URL to inspect full text without reopening experimental work.",
         "citation_format": "Declare citation_source_ids from reference_papers[].id and embed <a href='#ref_ID'>citation</a>. The references section is generated from those retrieved records; do not hand-copy metadata.",
         "evidence_anchor_format": "artifact.path.to.value, optionally =JSON_VALUE (checked for equality); only the supplied research artifacts are allowed.",
         "baseline_analysis_md": analysis_path.read_text(encoding="utf-8") if analysis_path.exists() else None,
@@ -6199,9 +6233,11 @@ def handle_submit_professor_user_goal_attestation(
     else:  # not_achieved
         next_step = (
             "attested_status=not_achieved. A real referent IS registered but its "
-            "falsifier has not passed. Run/repair compute_falsifier_result against "
-            "the real holdout and re-attest. If the direction closes, call "
-            "advance_research."
+            "falsifier has not passed. If confirmation has not run, follow the "
+            "registered frozen procedure with compute_falsifier_result and re-attest. "
+            "A failed confirmation closes this attempt; call advance_research. "
+            "Never repair the implementation against observed holdout outcomes "
+            "or reuse those outcomes as fresh confirmation."
         )
     return {
         "status": "ok",
@@ -6523,6 +6559,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_get_research_state(args, settings)
             elif name == "plan_research_work":
                 result = handle_plan_research_work(args)
+            elif name == "retrieve_research_source":
+                result = handle_retrieve_research_source(args)
             elif name == "resolve_research_work":
                 result = handle_resolve_research_work(args)
             elif name == "execute_confirmation_experiment":

@@ -23,6 +23,7 @@ SCHEMA_FILES = {
     "baseline_dossier": "baseline_dossier.schema.json",
     "baseline_qualification": "baseline_qualification.schema.json",
     "research_review_response": "research_review_response.schema.json",
+    "research_execution_review_response": "research_execution_review_response.schema.json",
     "research_analysis_response": "research_analysis_response.schema.json",
     "research_work": "research_work.schema.json",
     "hypothesis_candidates": "hypothesis_candidates.schema.json",
