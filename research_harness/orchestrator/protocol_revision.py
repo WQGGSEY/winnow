@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from datetime import datetime, timezone
+import hashlib
 from typing import Any
 from research_harness.evaluation_vault import sealed_bank_metadata
 from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
@@ -52,7 +53,16 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
     sampling_spec = read_sampling_spec(thread) if defer_holdout_generation else None
     if replace_holdout and bank is None and sampling_spec is None:
         raise ValueError('A server-sealed bank or registered future sampling procedure is required.')
+    prepared = work.get('prepared_implementation')
+    if work['decision']['protocol_change'] == 'component_binding' and not prepared:
+        raise ValueError('This work requires actual component binding. Use design_experiment_template with this same work_id to prepare source bytes first; another promise to prepare cannot complete it.')
+    if prepared:
+        for source in prepared['source_files']:
+            if hashlib.sha256(Path(source['path']).read_bytes()).hexdigest() != source['sha256']:
+                raise ValueError('Prepared source changed; prepare a new revision before binding.')
     identity = {'work_id': work_id, 'notes': notes, 'rationale': rationale}
+    if prepared:
+        identity['prepared_source'] = prepared
     if bank:
         identity['replacement_holdout_bank'] = bank
     if sampling_spec:
@@ -71,6 +81,7 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
         packet = {
             'previous_protocol': existing, 'proposal': {**existing, 'notes': notes},
             'rationale': rationale, 'work_decision': work['decision'],
+            'prepared_source': prepared,
             'original_goal': _read(production / 'reorientation/goal_contract.json'),
             'development_evidence': evidence, 'thread_dir': str(thread.resolve()),
             'analysis_findings': analysis_findings(thread),
@@ -123,6 +134,9 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
         )
     review = review_research_packet(repo, directory / 'review', packet, purpose=(
         'Review a prospective development protocol amendment. Only the notes may change; structured goal, resources and predicate remain identical. '
+        'The proposal must complete the selected work_decision, not substitute a promise to do that work later. '
+        'For protocol_change=component_binding, inspect prepared_source files and verify the proposal actually binds those concrete paths and hashes '
+        'with the requested method semantics. Reject a preparation-only authorization in place of component binding. '
         'Verify that the same task endpoints, units, success thresholds, dependence-aware uncertainty and fair comparison rules '
         'are preserved in meaning, not merely in their names. Reject any semantic lowering, outcome redefinition, post-hoc exclusion or retroactive approval. '
         'Removing an untested candidate-specific design lock can be legitimate before final evaluation; development results may guide method selection '
@@ -149,10 +163,15 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
                 'next_tool_to_call': 'revise_evaluation_protocol'}
     if _read(envelope_path) != existing or _digest(development_evidence(thread)) != work['evidence_digest']:
         raise StaleResearchWork('Protocol or evidence changed during review; call plan_research_work.')
+    if prepared and any(hashlib.sha256(Path(source['path']).read_bytes()).hexdigest() != source['sha256']
+                        for source in prepared['source_files']):
+        raise ValueError('Prepared source changed during component review; prepare a new revision.')
     record = {'work_id': work_id, 'previous_protocol': packet['previous_protocol'],
               'protocol': packet['proposal'], 'rationale': rationale, 'review': review,
               'recorded_at': datetime.now(timezone.utc).isoformat(),
               'scope': 'prospective development amendment; not original preregistration or scientific approval'}
+    if prepared:
+        record['prepared_source'] = prepared
     if bank:
         if sealed_bank_metadata(thread) != bank:
             raise StaleResearchWork('Sealed bank changed during protocol review.')

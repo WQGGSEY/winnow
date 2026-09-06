@@ -2,6 +2,7 @@
   "type": "object",
   "required": [
     "kind",
+    "protocol_change",
     "uncertainty",
     "evidence_ids",
     "interpretation",
@@ -12,6 +13,11 @@
     "max_runtime_seconds"
   ],
   "properties": {
+    "protocol_change": {
+      "type": "string",
+      "enum": ["not_applicable", "study_design", "component_binding"],
+      "description": "For protocol_revision, distinguish a prospective study design from registration of executable component bytes. component_binding requires source preparation within this work before amendment review; promising future source does not complete it. Use not_applicable for other work kinds."
+    },
     "kind": {
       "type": "string",
       "enum": [

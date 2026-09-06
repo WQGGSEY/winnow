@@ -31,16 +31,18 @@ def test_execution_inventory_includes_preparation_without_reading_measurements(t
 
 
 class Planner:
-    def __init__(self, kind='diagnostic_experiment', budget=10):
+    def __init__(self, kind='diagnostic_experiment', budget=10, protocol_change=None):
         self.calls = []
         self.kind = kind
         self.budget = budget
+        self.protocol_change = protocol_change or ('study_design' if kind == 'protocol_revision' else 'not_applicable')
 
     def complete(self, request):
         packet = json.loads(request.prompt.input)
         self.calls.append(packet)
         decision = {
             'kind': self.kind, 'uncertainty': 'Is the measurement implementation valid?',
+            'protocol_change': self.protocol_change,
             'evidence_ids': packet['available_evidence_ids'],
             'interpretation': 'Execution validity must be established before testing the mechanism.',
             'alternatives': [
@@ -332,8 +334,11 @@ def test_analysis_resolves_existing_evidence_without_fabricating_execution(tmp_p
     assert all(row['conclusion_excerpt'].startswith('The source declares') for row in findings.values())
 
 
-@pytest.mark.parametrize('replace_holdout,deferred', [(False, False), (True, False), (True, True)])
-def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tmp_path, monkeypatch, replace_holdout, deferred):
+@pytest.mark.parametrize('replace_holdout,deferred,protocol_change', [
+    (False, False, 'study_design'), (True, False, 'study_design'),
+    (True, True, 'study_design'), (False, False, 'component_binding'),
+])
+def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tmp_path, monkeypatch, replace_holdout, deferred, protocol_change):
     from research_harness.orchestrator import protocol_revision
     from research_harness.publishing.manuscript import ManuscriptError, validate_sections
 
@@ -342,7 +347,7 @@ def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tm
     original = json.loads(path.read_text())
     original.update(notes='Only method A is allowed.', external_falsifier={'predicate': {'threshold': 1.0}})
     path.write_text(json.dumps(original))
-    planner = Planner('protocol_revision')
+    planner = Planner('protocol_revision', protocol_change=protocol_change)
     work = plan_research_work(REPO, thread, transport=planner)
     assert planner.calls[0]['registered_protocol'] == original
     assert work['next_tool_to_call'] == 'revise_evaluation_protocol'
@@ -364,21 +369,39 @@ def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tm
     kwargs = {'work_id': work['work_id'], 'notes': 'Any qualified method; identical endpoints and untouched partition.',
               'rationale': 'The original method lock conflicts with development method selection.',
               'replace_holdout': replace_holdout, 'defer_holdout_generation': deferred}
+    if protocol_change == 'component_binding':
+        from research_harness import mcp_server
+        monkeypatch.setattr(mcp_server, '_thread_dir', lambda tid: thread)
+        with pytest.raises(ValueError, match='actual component binding'):
+            protocol_revision.revise_evaluation_protocol(REPO, thread, **kwargs)
+        assert not calls
+        assert current_work(thread)['status'] == 'planned'
+        source_args = {'thread_id': 'thread', 'work_id': work['work_id'],
+                       'plan_metadata': {'source_files': [{'path': 'component.py', 'content': 'VALUE = 1\n'}]}}
+        mcp_server.handle_design_experiment_template(source_args)
     assert protocol_revision.revise_evaluation_protocol(REPO, thread, **kwargs)['status'] == 'rejected'
     rejected = current_work(thread)
     assert rejected['status'] == 'planned'
     assert rejected['protocol_review']['required_work'] == ['Preserve the endpoint meaning.']
     assert rejected['reconsideration_available']
     assert json.loads(path.read_text()) == original
+    if protocol_change == 'component_binding':
+        source_args['plan_metadata']['source_files'][0]['content'] = 'VALUE = 2\n'
+        mcp_server.handle_design_experiment_template(source_args)
     result = protocol_revision.revise_evaluation_protocol(REPO, thread, **kwargs)
     assert json.loads(path.read_text()) == {**original, 'notes': kwargs['notes']}
     assert result == protocol_revision.revise_evaluation_protocol(REPO, thread, **kwargs)
     assert len(calls) == 2
+    if protocol_change == 'component_binding':
+        assert calls[0]['prepared_source']['template_digest'] != calls[1]['prepared_source']['template_digest']
+        assert Path(calls[1]['prepared_source']['source_files'][0]['path']).read_text() == 'VALUE = 2\n'
     assert result['outcome']['new_observation'] is False
     assert result['protocol_review']['decision'] == 'approve'
     assert 'reconsideration_available' not in result
     records = protocol_revision.approved_protocol_revisions(thread)
     assert records[0]['previous_protocol'] == original
+    if protocol_change == 'component_binding':
+        assert records[0]['prepared_source'] == calls[1]['prepared_source']
     assert records[0].get('replacement_holdout_bank') == bank
     assert calls[0]['replacement_holdout_bank'] == bank
     assert records[0].get('replacement_sampling_spec') == sampling

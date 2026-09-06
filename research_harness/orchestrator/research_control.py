@@ -13,7 +13,7 @@ from research_harness.schemas.validator import validate_named_schema
 from research_harness.evaluation_vault import sealed_bank_metadata
 from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
 
-PLANNING_POLICY_VERSION = 14
+PLANNING_POLICY_VERSION = 15
 
 
 class StaleResearchWork(ValueError):
@@ -316,6 +316,8 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'Then dispatch the selected test with that work_id. Do not turn writing code or checking a repair into another research question or work. '
             'For a qualified formal claim, write its normal node template using node_id, then execute_node_experiment with the same scientific work_id. '
             'A protocol_revision may prepare required components within its own work before submitting the amendment. '
+            'Set protocol_change=component_binding when this work must register concrete executable source bytes; source preparation is mandatory within that work. '
+            'Use study_design for a prospective design decision, and not_applicable for non-protocol work. Do not substitute another promise to prepare for selected component binding. '
             'A nonexistent program cannot have a prior hash. Prepared sources are not observations or scientific approval. '
             'Choose analysis for questions answerable by interpreting existing source, definitions or recorded evidence. '
             'Every selected execution already receives the independent pre-execution review described in execution_review. '
@@ -365,6 +367,8 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
         (directory / 'raw_response.txt').write_text(response.text)
         decision = json.loads(response.text)
     validate_named_schema('research_work', decision)
+    if (decision['kind'] == 'protocol_revision') != (decision['protocol_change'] != 'not_applicable'):
+        raise ValueError('protocol_revision requires study_design or component_binding; other work uses not_applicable.')
     if set(decision['evidence_ids']) - available_evidence or (available_evidence and not decision['evidence_ids']):
         raise ValueError('The work decision must cite existing development execution or source-analysis evidence.')
     if diagnostic_required and decision['kind'] not in {'diagnostic_experiment', 'analysis', 'protocol_revision'}:
