@@ -1486,6 +1486,7 @@ def spawn_codex_session(
     )
     if active_child_ref is not None:
         active_child_ref["pid"] = session.pid
+        active_child_ref['session'] = session
 
     if log_fh:
         log_fh.write(f"\n=== codex spawn pid={session.pid} {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
@@ -1611,8 +1612,10 @@ def spawn_codex_session(
     finally:
         stop_watchdog.set()
         watchdog.join(timeout=1.0)
+        session.terminate(force=True)
         if active_child_ref is not None:
             active_child_ref["pid"] = None
+            active_child_ref['session'] = None
         if log_fh:
             log_fh.close()
         if events_fh:
@@ -1751,16 +1754,22 @@ def watch_thread(
         # in the UI for the whole subprocess lifetime.
         child_pid = active_child.get("pid")
         if child_pid:
+            session = active_child.get('session')
             for sig in (signal.SIGTERM, signal.SIGKILL):
                 try:
-                    os.kill(child_pid, sig)
+                    if session is not None:
+                        session.terminate(force=sig == signal.SIGKILL)
+                    else:
+                        os.kill(child_pid, sig)
                 except ProcessLookupError:
-                    break
+                    pass
                 # Brief pause to let SIGTERM take effect before SIGKILL.
                 time.sleep(0.5)
                 try:
                     os.kill(child_pid, 0)
                 except ProcessLookupError:
+                    if session is not None:
+                        session.terminate(force=True)
                     break
 
     signal.signal(signal.SIGINT, _sigint)

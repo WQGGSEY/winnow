@@ -16,6 +16,47 @@ from research_harness.agent_runtime import (
 from research_harness.adapters.codex_cli import CodexCliAdapter, CodexCliError
 
 
+def test_session_stop_kills_detached_descendant_and_preserves_unrelated_process(tmp_path):
+    import os
+    import time
+    import uuid
+    from research_harness.adapters.process_tree import OwnedProcessTree
+
+    ready = tmp_path / 'child.pid'
+    child_code = 'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'
+    parent_code = ('import subprocess,sys,time; from pathlib import Path; '
+                   f'p=subprocess.Popen([sys.executable,"-c",{child_code!r}],start_new_session=True); '
+                   f'Path({str(ready)!r}).write_text(str(p.pid)); time.sleep(60)')
+    token = uuid.uuid4().hex
+    parent = subprocess.Popen([sys.executable, '-c', parent_code], start_new_session=True,
+                              env={**os.environ, 'RESEARCH_HARNESS_SESSION': token})
+    unrelated = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+    owned = OwnedProcessTree(parent.pid, token)
+    child = None
+    try:
+        deadline = time.monotonic() + 3
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        child = int(ready.read_text())
+        owned.terminate()
+        parent.wait(timeout=3)
+        owned.terminate(force=True)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            stat = Path('/proc') / str(child) / 'stat'
+            if not stat.exists() or stat.read_text().rsplit(')', 1)[1].split()[0] == 'Z':
+                break
+            time.sleep(.01)
+        else:
+            pytest.fail('Detached descendant survived session cancellation')
+        assert unrelated.poll() is None
+    finally:
+        owned.terminate(force=True)
+        parent.wait(timeout=3)
+        unrelated.kill()
+        unrelated.wait(timeout=3)
+
+
 @pytest.mark.parametrize('backend', ['codex', 'runner'])
 def test_development_subprocess_cannot_read_evaluation_vault(tmp_path, monkeypatch, backend):
     from research_harness import evaluation_vault

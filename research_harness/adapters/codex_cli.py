@@ -130,6 +130,11 @@ class CodexCliAdapter:
         mcp: ResearchHarnessMcp,
         env: dict[str, str] | None = None,
     ) -> "CodexProcessSession":
+        import uuid
+
+        session_token = uuid.uuid4().hex
+        session_env = dict(env or _codex_environment())
+        session_env['RESEARCH_HARNESS_SESSION'] = session_token
         command = self._build_exec_command(
             request=None,
             model=model,
@@ -145,14 +150,14 @@ class CodexCliAdapter:
             bufsize=1,
             close_fds=True,
             start_new_session=True,
-            env=env or _codex_environment(),
+            env=session_env,
         )
         if process.stdin is None:
             process.terminate()
             raise CodexCliError("codex session did not expose stdin")
         process.stdin.write(self._compose_prompt(prompt))
         process.stdin.close()
-        return CodexProcessSession(process, self)
+        return CodexProcessSession(process, self, session_token=session_token)
 
     def build_worker_command(
         self,
@@ -331,9 +336,12 @@ class CodexCliAdapter:
 
 
 class CodexProcessSession:
-    def __init__(self, process: subprocess.Popen[str], adapter: CodexCliAdapter) -> None:
+    def __init__(self, process: subprocess.Popen[str], adapter: CodexCliAdapter, *, session_token: str = '') -> None:
+        from research_harness.adapters.process_tree import OwnedProcessTree
+
         self._process = process
         self._adapter = adapter
+        self._owned_tree = OwnedProcessTree(process.pid, session_token)
 
     @property
     def pid(self) -> int:
@@ -350,6 +358,7 @@ class CodexProcessSession:
     def terminate(self, *, force: bool = False) -> None:
         import signal
 
+        self._owned_tree.terminate(force=force)
         sig = signal.SIGKILL if force else signal.SIGTERM
         try:
             os.killpg(os.getpgid(self.pid), sig)
