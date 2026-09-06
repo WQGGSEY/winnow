@@ -156,8 +156,8 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "revise_evaluation_protocol",
-        "description": "Submit replacement protocol notes and a development rationale for independent review of the current protocol_revision work. If its protocol_change is component_binding, first prepare the actual source files using design_experiment_template with the same work_id, then bind their returned paths and hashes; a promise to prepare later cannot complete this work. Only a prospective amendment before qualification/final evaluation is allowed. The goal, resources, structured predicate and endpoint meanings must be preserved. With replace_holdout=true, a server-sealed bank can replace the entire contaminated partition under a new prospective protocol; old cells and results are retired. With defer_holdout_generation=true, register the provisioned future sampler instead; data are drawn only after implementation/checkpoint freeze. Previous registration and amendments remain disclosed; this does not approve results.",
-        "inputSchema": {"type": "object", "required": ["thread_id", "work_id", "notes", "rationale"], "properties": {"thread_id": {"type": "string"}, "work_id": {"type": "string"}, "notes": {"type": "string", "minLength": 1}, "rationale": {"type": "string", "minLength": 1}, "replace_holdout": {"type": "boolean", "default": False}, "defer_holdout_generation": {"type": "boolean", "default": False}}, "additionalProperties": False},
+        "description": "Resume a checkpoint with thread_id and request_path only; the harness loads every saved option unchanged. For a new proposal, submit replacement protocol notes and a development rationale for independent review of the current protocol_revision work. If its protocol_change is component_binding, first prepare the actual source files using design_experiment_template with the same work_id, then bind their returned paths and hashes; a promise to prepare later cannot complete this work. Only a prospective amendment before qualification/final evaluation is allowed. The goal, resources, structured predicate and endpoint meanings must be preserved. With replace_holdout=true, a server-sealed bank can replace the entire contaminated partition under a new prospective protocol; old cells and results are retired. With defer_holdout_generation=true, register the provisioned future sampler instead; data are drawn only after implementation/checkpoint freeze. Previous registration and amendments remain disclosed; this does not approve results.",
+        "inputSchema": {"type": "object", "required": ["thread_id"], "anyOf": [{"required": ["request_path"]}, {"required": ["work_id", "notes", "rationale"]}], "properties": {"request_path": {"type": "string"}, "thread_id": {"type": "string"}, "work_id": {"type": "string"}, "notes": {"type": "string", "minLength": 1}, "rationale": {"type": "string", "minLength": 1}, "replace_holdout": {"type": "boolean", "default": False}, "defer_holdout_generation": {"type": "boolean", "default": False}}, "additionalProperties": False},
     },
     {
         "name": "retrieve_research_source",
@@ -1509,6 +1509,24 @@ def handle_revise_evaluation_protocol(args: dict[str, Any]) -> dict[str, Any]:
     tid = args['thread_id']
     with _exclusive_adaptive_writer(tid):
         try:
+            from research_harness.orchestrator.research_control import current_work
+            thread = _thread_dir(tid)
+            work = current_work(thread)
+            if args.get('request_path'):
+                if set(args) - {'thread_id', 'request_path'}:
+                    raise ValueError('Use request_path without inline amendment fields or options.')
+                path = Path(args['request_path']).resolve()
+                path.relative_to(thread.resolve())
+                if str(path) != work.get('protocol_review_dispatch_path'):
+                    raise StaleResearchWork('Resume the current work saved protocol request only.')
+                saved = _read_json(path)
+                if not isinstance(saved, dict) or saved.get('thread_id') != tid or saved.get('work_id') != work.get('work_id'):
+                    raise ValueError('Saved protocol request must match the current thread and work.')
+                args = saved
+            elif work.get('protocol_review_checkpoint') and work.get('protocol_review_dispatch_path') and args.get('work_id') == work.get('work_id'):
+                return {'status': 'resume_required', 'next_tool_to_call': 'revise_evaluation_protocol',
+                        'arguments': {'thread_id': tid, 'request_path': work['protocol_review_dispatch_path']},
+                        'reason': 'Resume the exact saved request after a transport checkpoint; do not rewrite the proposal or options.'}
             return revise_evaluation_protocol(_repo_root(), _thread_dir(tid), work_id=args['work_id'], notes=args['notes'], rationale=args['rationale'], replace_holdout=args.get('replace_holdout', False), defer_holdout_generation=args.get('defer_holdout_generation', False))
         except StaleResearchWork as exc:
             return {'status': 'work_required', 'reason': str(exc), 'next_tool_to_call': 'plan_research_work'}
@@ -1518,7 +1536,7 @@ def handle_revise_evaluation_protocol(args: dict[str, Any]) -> dict[str, Any]:
             work = current_work(thread)
             checkpoint = isinstance(exc, CallBudgetExhausted) or (
                 isinstance(exc, CodexCliError) and bool(os.environ.get('RESEARCH_HARNESS_CALL_BUDGET')))
-            if work.get('work_id') == args['work_id'] and work.get('status') == 'planned':
+            if work.get('work_id') == args.get('work_id') and work.get('status') == 'planned':
                 work.update(protocol_review_error=str(exc), protocol_review_checkpoint=checkpoint)
                 if not checkpoint:
                     work['reconsideration_available'] = True

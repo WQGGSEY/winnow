@@ -624,10 +624,13 @@ def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tm
     assert current_work(thread)['protocol_review_checkpoint']
     handoff = execution_handoff(thread, current_work(thread))
     assert handoff['tool'] == 'revise_evaluation_protocol'
-    assert handoff['arguments'] == {'thread_id': thread.name, **kwargs}
+    assert json.loads(Path(handoff['request_path']).read_text()) == {'thread_id': thread.name, **kwargs}
+    redirected = mcp_server.handle_revise_evaluation_protocol({'thread_id': thread.name, **kwargs, 'replace_holdout': not replace_holdout})
+    assert redirected['status'] == 'resume_required'
+    assert redirected['arguments'] == handoff['arguments']
     assert json.loads(path.read_text()) == original
     monkeypatch.setattr(protocol_revision, 'review_research_packet', review)
-    assert protocol_revision.revise_evaluation_protocol(REPO, thread, **kwargs)['status'] == 'rejected'
+    assert mcp_server.handle_revise_evaluation_protocol(handoff['arguments'])['status'] == 'rejected'
     assert [entry['notes'] for entry in calls[0]['protocol_note_history']['entries']] == [original['notes']]
     rejected = current_work(thread)
     assert rejected['status'] == 'planned'

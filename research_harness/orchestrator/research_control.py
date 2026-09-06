@@ -52,7 +52,8 @@ def execution_handoff(thread: Path, work: dict[str, Any]) -> dict[str, Any] | No
         saved.relative_to(thread.resolve())
         arguments = _read(saved)
         if arguments.get('work_id') == work['work_id']:
-            return {'request_path': str(saved), 'tool': 'revise_evaluation_protocol', 'arguments': arguments,
+            return {'request_path': str(saved), 'tool': 'revise_evaluation_protocol',
+                    'arguments': {'thread_id': thread.name, 'request_path': str(saved)},
                     'usage': 'Resume this exact saved amendment after the transport/budget checkpoint. No design objection was returned; do not rewrite the notes or reinterpret the interruption as research evidence.'}
     saved = thread / 'production/research_control/work' / work['work_id'] / 'dispatch_request.json'
     if saved.exists():

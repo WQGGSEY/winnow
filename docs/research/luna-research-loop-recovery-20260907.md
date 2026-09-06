@@ -312,3 +312,11 @@ prediction_support returned no eligible measurement counts for analysis work, an
 Answered analysis_completed work now carries answered_source_analysis as its support basis and may update its own alternatives with source-receipt citations and an empty observation-ID list. Unresolved analysis, failed executions, absent empirical support, and zero counts keep their existing restrictions. This neither supplies empirical measurements nor qualifies a scientific claim. The existing schema/semantic validation case now demonstrates an informative update from answered source analysis while retaining rejection of invented observation IDs and unsupported empirical effects.
 
 Verification: research_control/research_review/thread_supervisor — 108 passed, 3 subtests passed; git diff --check. Historical interpretations are not rewritten by the host.
+
+### Enforce exact protocol checkpoint replay at the API
+
+The coordinator again changed saved sampling flags during resume, this time true/true back to false/false. Consequently the 084127 batch opened a fresh review rather than reusing the previous completed inspection. Prompt instructions alone did not preserve request identity. The user-facing progress correction explicitly records that distinction.
+
+revise_evaluation_protocol now accepts thread_id plus request_path for exact replay. During a checkpoint, inline resubmission is routed to the saved request instead of letting the coordinator reconstruct notes/options. The saved path must belong to the current thread/work; mixed inline/path inputs are rejected. The handoff exposes only that path, and normal independent review still governs the saved amendment.
+
+Verification: research_control/research_review — 51 passed. Existing protocol cases now attempt an option flip and receive resume_required, then replay the actual saved file through MCP; the stored proposal remains unchanged. Hypothesis-reference enums were also extended from the same confirmed identifier-copy failure class in a separate commit. git diff --check passed.
