@@ -175,6 +175,16 @@ TOOL_DEFINITIONS = [
         "inputSchema": {"type": "object", "required": ["thread_id"], "properties": {"thread_id": {"type": "string"}, "revision_request": {"type": "string", "description": "Findings for a new round after the current round completes. An unfinished round resumes its frozen context even if this text changes."}, "run_id": {"type": "string", "pattern": "^[a-f0-9]{64}$", "description": "Returned run_id to resume or replay. Omit to resume the unfinished current round automatically."}}, "additionalProperties": False},
     },
     {
+        "name": "search_paper_references",
+        "description": "Retrieve bibliographic records from Crossref or arXiv and retain them for this thread's manuscript citations. Use returned paper IDs in citation_source_ids. Search results are metadata, not proof of method fidelity, relevance, or novelty; inspect the primary sources before making those claims. This does not change baseline qualification or authorize an experiment.",
+        "inputSchema": {
+            "type": "object", "required": ["thread_id", "query"], "additionalProperties": False,
+            "properties": {"thread_id": {"type": "string"}, "query": {"type": "string", "minLength": 1},
+                           "provider": {"type": "string", "enum": ["crossref", "arxiv"]},
+                           "max_results": {"type": "integer", "minimum": 1, "maximum": 10}},
+        },
+    },
+    {
         "name": "update_baseline_sources",
         "description": "Update this thread's unqualified literature dossier while baseline qualification is pending. Supply a full baseline_dossier object and candidate_details mapping each candidate ID to source/method analysis text. The harness assigns all file paths. This does not approve a baseline. Use this tool instead of editing dossier files through the shell.",
         "inputSchema": {
@@ -4103,6 +4113,41 @@ def handle_update_baseline_sources(args: dict[str, Any]) -> dict[str, Any]:
             return {"status": "rejected", "reason": f"baseline source update failed: {exc}"}
 
 
+def handle_search_paper_references(args: dict[str, Any]) -> dict[str, Any]:
+    import hashlib
+    from research_harness.agents.market_research import search_literature, _default_http_fetcher
+
+    tid = args['thread_id']
+    query = args['query'].strip()
+    count = args.get('max_results', 5)
+    if not query or type(count) is not int or not 1 <= count <= 10:
+        return {'status': 'rejected', 'reason': 'A nonempty query and 1–10 results are required.'}
+    with _exclusive_adaptive_writer(tid):
+        responses = []
+        def fetch(url):
+            raw = _default_http_fetcher(url)
+            responses.append({'url': url, 'sha256': hashlib.sha256(raw).hexdigest(),
+                              'body': raw.decode('utf-8')})
+            return raw
+        try:
+            provider = args.get('provider', 'crossref')
+            papers = search_literature(fetch, query, count, provider=provider)
+            receipt = {'query': query, 'provider': provider, 'responses': responses, 'papers': papers}
+            digest = hashlib.sha256(json.dumps(receipt, sort_keys=True).encode()).hexdigest()
+            market = _thread_dir(tid) / 'market'
+            receipt_path = market / 'reference_searches' / (digest + '.json')
+            _write_json_atomic(receipt_path, receipt)
+            path = market / 'paper_references.json'
+            catalog = {p['id']: p for p in (_read_json(path) or {}).get('papers', [])}
+            for paper in papers:
+                catalog[paper['id']] = {**paper, 'retrieval_receipt_path': str(receipt_path.resolve())}
+            _write_json_atomic(path, {'papers': list(catalog.values())})
+            return {'status': 'recorded', 'papers': [catalog[p['id']] for p in papers],
+                    'receipt_path': str(receipt_path.resolve()), 'scientific_approval': False}
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return {'status': 'unavailable', 'reason': str(exc), 'scientific_approval': False}
+
+
 def handle_submit_baseline_qualification(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.memory.baseline_review import baseline_roles_frozen, propose_baselines
     from research_harness.adapters.codex_cli import CodexCliError
@@ -5211,6 +5256,14 @@ def _paper_dir(tid: str) -> Path:
     return _publication_dir(tid) / "_drafts"
 
 
+def _paper_market_brief(tid: str) -> dict[str, Any]:
+    market = _thread_dir(tid) / 'market'
+    brief = _read_json(market / 'market_research_brief.json') or {}
+    papers = {p['id']: p for p in brief.get('papers', [])}
+    papers.update({p['id']: p for p in (_read_json(market / 'paper_references.json') or {}).get('papers', [])})
+    return {**brief, 'papers': list(papers.values())}
+
+
 def _paper_evidence_bundle(tid: str, node_dir: Path) -> dict[str, Any]:
     from research_harness.orchestrator.protocol_revision import approved_protocol_revisions
     production = _thread_dir(tid) / "production"
@@ -5223,7 +5276,7 @@ def _paper_evidence_bundle(tid: str, node_dir: Path) -> dict[str, Any]:
         "goal_contract": _read_json(production / "reorientation" / "goal_contract.json") or {},
         "protocol_revisions": approved_protocol_revisions(_thread_dir(tid)),
         "confirmation_execution": _read_json(_thread_dir(tid) / "production/confirmation_execution.json") or {},
-        "market_brief": _read_json(_thread_dir(tid) / "market" / "market_research_brief.json") or {},
+        "market_brief": _paper_market_brief(tid),
     }
 
 
@@ -5252,7 +5305,7 @@ def handle_prepare_paper_writing_context(args: dict[str, Any]) -> dict[str, Any]
     worker_report = _read_json(node_dir / "worker_report.json") or {}
     production = _thread_dir(tid) / "production"
     market = _thread_dir(tid) / "market"
-    market_brief = _read_json(market / "market_research_brief.json") or {}
+    market_brief = _paper_market_brief(tid)
     analysis_path = market / "baseline_analysis.md"
 
     # Surface keys available for figure data_spec lookups.
@@ -5290,6 +5343,7 @@ def handle_prepare_paper_writing_context(args: dict[str, Any]) -> dict[str, Any]
         "protocol_disclosure_requirement": "Describe approved development amendments and their timing in the methods. Do not portray an amended design as the original preregistration or use prior results as prospective evidence for the amendment.",
         "market_brief": market_brief,
         "reference_papers": market_brief.get("papers") or [],
+        "reference_retrieval_tool": "search_paper_references adds retrieved records to this writing context and evidence bundle without changing baseline assignments. Use it when the actual methods or closest works are absent from reference_papers.",
         "citation_format": "Declare citation_source_ids from reference_papers[].id and embed <a href='#ref_ID'>citation</a>. The references section is generated from those retrieved records; do not hand-copy metadata.",
         "evidence_anchor_format": "artifact.path.to.value, optionally =JSON_VALUE (checked for equality); only the supplied research artifacts are allowed.",
         "baseline_analysis_md": analysis_path.read_text(encoding="utf-8") if analysis_path.exists() else None,
@@ -6525,6 +6579,8 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 result = handle_submit_baseline_qualification(args)
             elif name == "update_baseline_sources":
                 result = handle_update_baseline_sources(args)
+            elif name == "search_paper_references":
+                result = handle_search_paper_references(args)
             elif name == "execute_baseline_preflight":
                 result = handle_execute_baseline_preflight(args)
             elif name == "register_paper_figure":

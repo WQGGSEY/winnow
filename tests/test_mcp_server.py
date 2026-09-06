@@ -17,6 +17,41 @@ from unittest import mock
 import research_harness.mcp_server as srv
 
 
+def test_retrieved_references_reach_manuscript_citations_without_changing_baselines(tmp_path, monkeypatch):
+    import urllib.error
+    from research_harness.agents import market_research
+    from research_harness.publishing.manuscript import validate_sections
+
+    monkeypatch.setattr(srv, '_thread_dir', lambda tid: tmp_path)
+    market = tmp_path / 'market'
+    market.mkdir()
+    brief = market / 'market_research_brief.json'
+    brief.write_text(json.dumps({'baseline_dossier_id': 'unchanged', 'papers': []}))
+    original = brief.read_bytes()
+    raw = json.dumps({'message': {'items': [{'DOI': '10.1234/reference-fixture',
+        'title': ['Retrieved fixture title'], 'author': [{'given': 'A', 'family': 'Researcher'}],
+        'published': {'date-parts': [[2020]]}}]}}).encode()
+    monkeypatch.setattr(market_research, '_default_http_fetcher', lambda url: raw)
+    result = srv.handle_search_paper_references({'thread_id': 't', 'query': 'fixture title'})
+    assert result['status'] == 'recorded'
+    source = result['papers'][0]
+    receipt = json.loads(Path(result['receipt_path']).read_text())
+    assert receipt['responses'][0]['body'].encode() == raw
+    bundle = srv._paper_evidence_bundle('t', tmp_path / 'production/tree/nodes/n')
+    assert bundle['market_brief']['papers'] == result['papers']
+    ledger = validate_sections({'introduction': {
+        'prose_html': f"<p>Related work <a href='#ref_{source['id']}'>Researcher (2020)</a>.</p>",
+        'citation_source_ids': [source['id']], 'evidence_anchors': []}}, bundle)
+    assert ledger['citations'][source['id']]['source']['authors'] == ['A Researcher']
+    assert brief.read_bytes() == original
+    catalog = (market / 'paper_references.json').read_bytes()
+    def unavailable(url):
+        raise urllib.error.URLError('offline')
+    monkeypatch.setattr(market_research, '_default_http_fetcher', unavailable)
+    assert srv.handle_search_paper_references({'thread_id': 't', 'query': 'another'})['status'] == 'unavailable'
+    assert (market / 'paper_references.json').read_bytes() == catalog
+
+
 def test_template_write_rejects_escaping_paths_before_any_file_changes(tmp_path):
     from types import SimpleNamespace
 
@@ -479,6 +514,7 @@ class MCPServerTests(unittest.TestCase):
             "submit_ac_decision",
             "submit_camera_ready_revision",
             "prepare_paper_writing_context",
+            "search_paper_references",
             "submit_paper_outline",
             "submit_paper_section",
             "register_paper_figure",
