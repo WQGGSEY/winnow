@@ -269,7 +269,9 @@ class CodexCliAdapter:
             "-c", 'permissions.research-development.filesystem={\":root\"="read",'
             + _toml_string(str(vault)) + '="deny",'
             + _toml_string(str(Path.home() / '.agents/skills')) + '="deny",'
-            + _toml_string(str(Path.home() / '.codex/skills')) + '="deny"}',
+            + _toml_string(str(Path.home() / '.codex/skills')) + '="deny"'
+            + ''.join(',' + _toml_string(str(path.resolve())) + '="deny"'
+                      for path in (request.denied_read_paths if request else ())) + '}',
         ])
         if cwd is not None:
             command.extend(["--cd", str(cwd)])

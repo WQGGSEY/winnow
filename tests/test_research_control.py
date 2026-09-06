@@ -211,6 +211,7 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
             raise CallBudgetExhausted('bounded review budget exhausted')
         if invalid_review:
             raise research_review.ReviewContractError('Final confirmation requirements cannot block development.')
+        assert current_work(thread)['execution_phase'] == 'implementation_review'
         reviewed.append(packet)
         return {'request_sha256': 'review', 'assessment': {
             'decision': 'reject' if len(reviewed) == 1 else 'approve',

@@ -1377,6 +1377,7 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "평가 프로토콜은 submit_feasibility_envelope로 독립 심사 후 등록해. 계산 한도와 고정 목표는 바꾸지 마.",
         "이 실행은 harness 자체 역할과 MCP 도구 규칙을 따른다. 호스트의 agent skill을 불러오거나 적용하지 마. 해당 디렉터리는 연구 자료가 아니며 접근이 차단된다.",
         "get_research_state의 현재 work와 next_tool_to_call이 있으면 그 도구로 진행해. 같은 상태를 확인하기 위해 current.json과 과거 report를 다시 모두 읽지 마. 코드 수정이나 근거 해석에 필요한 특정 내용만 조회해.",
+        "research_work.status=running은 작업 예약이며 실험 실행을 뜻하지 않는다. execution_phase=implementation_review이면 독립 검토 중이라고 보고해. experiment_running일 때만 실험 실행 중이라고 보고해.",
         "지금 시작:",
     ]
     if os.environ.get('RESEARCH_HARNESS_CALL_BUDGET'):

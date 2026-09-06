@@ -537,7 +537,7 @@ def bind_work(thread: Path, work_id: str | None, node_id: str, plan: dict[str, A
     if work.get('binding') and work['binding'] != binding:
         raise ValueError('This work unit is already bound to another execution.')
     work.pop('outcome', None)
-    work.update(status='running', binding=binding)
+    work.update(status='running', execution_phase='implementation_review', binding=binding)
     _write(thread / 'production/research_control/current.json', work)
     _write(thread / 'production/research_control/work' / work_id / 'work.json', work)
 
@@ -552,7 +552,7 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         raise ValueError('Implementation review requires the bound research work.')
     prior = work.get('implementation_review', {})
     plan_digest = _digest(plan)
-    review_policy_version = 10
+    review_policy_version = 11
     execution_sources = []
     workspace = Path(plan['workspace']).resolve()
     for source in plan['source_files']:
@@ -604,6 +604,8 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
               'prior_objections': prior.get('required_work', []),
               'development_artifacts': {key: str((thread / value['report_path']).resolve())
                                         for key, value in work['source_observations'].items()}}
+    from research_harness.orchestrator.research_review import predecessor_review_delta
+    packet['predecessor_review_delta'] = predecessor_review_delta(thread, work, packet)
     review = review_research_packet(repo, directory, packet, purpose=(
         'Whether this proposed implementation performs the selected bounded research test. '
         'Check compatibility with registered protocol notes as well as the selected test. A development diagnostic is not a protocol amendment '
@@ -656,10 +658,22 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         raise ValueError('Work implementation needs revision: ' + json.dumps(work['implementation_review'], ensure_ascii=False))
 
 
+def mark_experiment_running(thread: Path, work_id: str) -> None:
+    work = current_work(thread)
+    if work.get('work_id') != work_id or work.get('status') != 'running':
+        raise ValueError('Experiment launch requires the bound running work.')
+    if work.get('implementation_review', {}).get('decision') != 'approve':
+        raise ValueError('Experiment launch requires independent implementation approval.')
+    work['execution_phase'] = 'experiment_running'
+    _write(thread / 'production/research_control/current.json', work)
+    _write(thread / 'production/research_control/work' / work_id / 'work.json', work)
+
+
 def finish_work(thread: Path, result: dict[str, Any]) -> dict[str, Any]:
     work = current_work(thread)
     if work.get('status') != 'running':
         return result
+    work['execution_phase'] = 'finished'
     evidence = development_evidence(thread)
     new = evidence.get(work['binding']['node_id'])
     previous = {e['observation_digest'] for e in work['source_observations'].values()}

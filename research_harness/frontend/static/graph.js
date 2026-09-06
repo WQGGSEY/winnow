@@ -671,8 +671,11 @@
       const data = await resp.json();
       const work = data.research_work || {};
       const decision = work.decision || {};
+      const phase = work.status === 'running'
+        ? ({ implementation_review: 'Reviewing implementation', experiment_running: 'Running experiment' }[work.execution_phase] || 'Work reserved')
+        : (work.status || 'Not planned');
       document.getElementById('research-work-status').textContent =
-        `${work.status || 'Not planned'}${decision.kind ? ' · ' + decision.kind : ''}`;
+        `${phase}${decision.kind ? ' · ' + decision.kind : ''}`;
       document.getElementById('research-work-question').textContent = decision.uncertainty || '';
       document.getElementById('research-work-test').textContent = decision.test || '';
       document.getElementById('research-work-review').textContent = work.implementation_review

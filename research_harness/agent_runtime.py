@@ -53,6 +53,7 @@ class CompletionRequest:
     allow_local_tools: bool = True
     allow_web_search: bool = False
     event_log_path: Path | None = None
+    denied_read_paths: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True)

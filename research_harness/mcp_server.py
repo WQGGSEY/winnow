@@ -3656,6 +3656,8 @@ def _handle_execute_node_experiment_locked(args: dict[str, Any]) -> dict[str, An
         )
         _write_search_state_atomic(state_path, state)
     runner = LocalRunner(run_dir, settings=settings_local)
+    from research_harness.orchestrator.research_control import mark_experiment_running
+    mark_experiment_running(_thread_dir(tid), work['work_id'])
     runner_result = runner.execute(manifest)
     validate_named_schema("runner_result", runner_result)
     if runtime_inputs is not None:

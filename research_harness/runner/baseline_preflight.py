@@ -160,6 +160,9 @@ def execute_baseline_preflight(
             review_work_implementation(repo, thread_dir, research_work_id, node, plan)
         for name, value in [('node.json', node), ('experiment_plan.json', plan), ('job_manifest.json', manifest)]:
             (node_dir / name).write_text(json.dumps(value, indent=2) + '\n')
+        if research_work_id:
+            from research_harness.orchestrator.research_control import mark_experiment_running
+            mark_experiment_running(thread_dir, research_work_id)
         result = LocalRunner(tree, settings=settings).execute(manifest)
         report = build_worker_report_from_runner_evidence(node, manifest, result, tree).worker_report
         report_path.write_text(json.dumps(report, indent=2) + '\n')
