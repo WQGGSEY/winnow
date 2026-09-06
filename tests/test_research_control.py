@@ -449,6 +449,7 @@ def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tm
                        'plan_metadata': {'source_files': [{'path': 'component.py', 'content': 'VALUE = 1\n'}]}}
         mcp_server.handle_design_experiment_template(source_args)
     assert protocol_revision.revise_evaluation_protocol(REPO, thread, **kwargs)['status'] == 'rejected'
+    assert [entry['notes'] for entry in calls[0]['protocol_note_history']['entries']] == [original['notes']]
     rejected = current_work(thread)
     assert rejected['status'] == 'planned'
     assert rejected['protocol_review']['required_work'] == ['Preserve the endpoint meaning.']

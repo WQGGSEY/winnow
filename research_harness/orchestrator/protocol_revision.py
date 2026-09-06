@@ -88,7 +88,7 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
             'execution_inventory': execution_inventory(thread),
             'executed_diagnostic_bindings': executed_diagnostic_bindings(thread),
             'replacement_holdout_bank': bank,
-            'protocol_history': approved_protocol_revisions(thread),
+            'protocol_note_history': protocol_note_history(thread),
             'replacement_sampling_spec': sampling_spec,
             'active_sampling_registration': active_sampling_registration(thread),
             'execution_plans': [str(path.resolve()) for path in sorted((production / 'tree').rglob('experiment_plan.json'))],
@@ -127,7 +127,7 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
         'Disclose any changed sampling distribution or balanced starting conditions and restrict eventual conclusions to that population. '
         'A pinned generator and a specified seed law define a sampling frame without enumerating every layout. '
         'Inspect supplied sampling provenance and distinguish reconstructed records from contemporaneous receipts. '
-        'Compare endpoint and qualification definitions with protocol_history when the current notes only contain a termination notice. '
+        'Compare endpoint and qualification definitions with protocol_note_history when the current notes only contain a termination notice. '
         'Do not approve retrospective confirmation or changes intended to turn an observed failure into a pass. '
         ) if bank else (
         'Preserve the held-out partition. Independently inspect executed source and available execution records to establish that the reserved holdout has not been evaluated or inspected. '
