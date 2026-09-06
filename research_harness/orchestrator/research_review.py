@@ -391,7 +391,9 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
     serialized = json.dumps(request_data, sort_keys=True, ensure_ascii=False)
     digest = hashlib.sha256(serialized.encode()).hexdigest()
     inspection = None
-    if schema_name in {'research_analysis_response', 'research_execution_review_response'} and not (directory / digest / 'review.json').exists():
+    recoverable = schema_name in {'research_analysis_response', 'research_execution_review_response'} or (
+        schema_name == 'research_review_response' and 'proposal' in packet and 'work_decision' in packet)
+    if recoverable and not (directory / digest / 'review.json').exists():
         source_paths = tuple(source['path'] for source in packet.get('execution_source_manifest', []))
         inspection_digest = hashlib.sha256(json.dumps({**request_data, 'packet': inspection_packet},
                                                        sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -422,6 +424,15 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
         submitted = review_input_bundle(destination, submitted)
     elif schema_name == 'research_analysis_response':
         submitted = analysis_input_bundle(destination, submitted)
+    elif schema_name == 'research_review_response' and 'proposal' in packet and 'work_decision' in packet:
+        submitted = analysis_input_bundle(destination, {**submitted, 'question': packet['work_decision']})
+        submitted.pop('question')
+        submitted['protocol_note_history'] = packet.get('protocol_note_history', {})
+        submitted['reading_contract'] = (
+            'Review the selected prospective amendment against the original goal, supplied protocol history and selected evidence. '
+            'Other analyses and execution details are preserved in evidence_sections; inspect only a dependency needed for this decision. '
+            'Design approval does not assert that an implementation exists or any scientific outcome has been achieved. '
+            'Do not reread review logs or reconstruct unrelated experiments.')
     if inspection:
         submitted['completed_inspection'] = inspection
         if schema_name == 'research_execution_review_response':

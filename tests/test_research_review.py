@@ -136,7 +136,7 @@ def test_execution_review_cannot_omit_declared_output_checks():
     validate_execution_objections(assessment, packet)
 
 
-@pytest.mark.parametrize("role", ["analysis", "execution_review"])
+@pytest.mark.parametrize("role", ["analysis", "execution_review", "protocol_review"])
 def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp_path, role):
     from research_harness.orchestrator.research_review import analyze_research_packet
     from research_harness.adapters.codex_cli import CodexCliError
@@ -147,15 +147,29 @@ def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp
         packet['decision_scope'] = 'development_execution'
         packet['experiment_plan'] = {'source_files': [{'path': 'measure.py', 'content': 'print(7)'}]}
         assess = review_research_packet
+    if role == 'protocol_review':
+        packet.update(proposal={'notes': 'Preserve endpoints.'}, work_decision={'evidence_ids': ['selected']},
+                      protocol_note_history={'entries': [{'notes': 'Original endpoints.'}]},
+                      analysis_findings={'selected': {'answer': 'Relevant finding.'}, 'older': {'answer': 'Large unrelated history.'}})
+        assess = review_research_packet
     assessment = {'status': 'answered', 'answer': 'The recorded count is 7.',
                   'evidence': ['metrics.json /count'], 'limitations': [], 'next_steps': []}
     if role == 'execution_review':
         assessment = {'decision': 'approve', 'reason': 'The producer emits the count.',
                       'evidence': ['metrics.json /count'], 'required_work': [], 'next_steps': [],
                       'blocking_basis': [], 'observation_checks': []}
+    if role == 'protocol_review':
+        assessment = {'decision': 'approve', 'reason': 'The amendment preserves the endpoint.',
+                      'evidence': ['proposal.notes'], 'required_work': [], 'next_steps': []}
     requests = []
     def complete(request):
         requests.append(request)
+        if role == 'protocol_review':
+            submitted = json.loads(request.prompt.input)
+            assert submitted['analysis_findings'] == {'selected': {'answer': 'Relevant finding.'}}
+            assert submitted['protocol_note_history'] == packet['protocol_note_history']
+            reference = submitted['evidence_sections']['analysis_findings']
+            assert json.loads(Path(reference['path']).read_text()) == packet['analysis_findings']
         if len(requests) == 1:
             request.event_log_path.write_text(json.dumps({'type': 'item.completed', 'item': {
                 'type': 'command_execution', 'command': 'cat metrics.json',
