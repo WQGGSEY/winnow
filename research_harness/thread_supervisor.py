@@ -40,6 +40,7 @@ from research_harness.agent_runtime import AgentPrompt, ResearchHarnessMcp
 from research_harness.adapters.codex_cli import CodexCliAdapter
 
 from research_harness.config import load_settings
+from research_harness.research_logs import visible_research_log_line
 from research_harness.orchestrator.blind_sequential_research import (
     BlindSequentialResearchError,
     StrongResultBinding,
@@ -1560,17 +1561,18 @@ def spawn_codex_session(
                 events_fh.flush()
             formatted = f"{event.kind}> {event.summary[:400]}"
             stamped = f"[{time.strftime('%H:%M:%S')}] {formatted}"
-            if log_fh:
+            if visible_research_log_line(formatted):
+                if log_fh:
+                    try:
+                        log_fh.write(stamped + "\n")
+                        log_fh.flush()
+                    except OSError:
+                        pass
                 try:
-                    log_fh.write(stamped + "\n")
-                    log_fh.flush()
-                except OSError:
+                    LOG.write(stamped + "\n")
+                    LOG.flush()
+                except Exception:  # noqa: BLE001
                     pass
-            try:
-                LOG.write(stamped + "\n")
-                LOG.flush()
-            except Exception:  # noqa: BLE001
-                pass
             item = event.raw.get('item', {})
             if item.get('type') == 'mcp_tool_call':
                 if event.raw.get('type') == 'item.started':
@@ -1665,6 +1667,8 @@ def _pid_alive(pid: int) -> bool:
 
 def _log(supervisor_log_path: Path, msg: str) -> None:
     """Append a timestamped line to the supervisor log AND mirror to stderr."""
+    if not visible_research_log_line(msg):
+        return
     line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n"
     try:
         supervisor_log_path.parent.mkdir(parents=True, exist_ok=True)

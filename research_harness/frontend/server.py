@@ -55,6 +55,7 @@ from research_harness.config import load_settings
 # the real claim contract at production entry instead.
 from research_harness.frontend import acks, datasets, threads
 from research_harness.frontend.lock import LockBusyError, SingleActiveRunLock
+from research_harness.research_logs import visible_research_log_line
 from research_harness.schemas.validator import validate_named_schema
 
 LOG = logging.getLogger("research_harness.frontend")
@@ -940,17 +941,6 @@ async def _sse_stream(session: LiveSession):
             break
 
 
-def _visible_research_log_line(line: str) -> bool:
-    message = line.partition("] ")[2] if line.startswith("[") and "] " in line else line
-    if not message.strip():
-        return False
-    if message.startswith(("tool>", "usage>")):
-        return False
-    if message.startswith("status>"):
-        return any(word in message.lower() for word in ("error", "failed", "cancel", "interrupt"))
-    return not message.startswith(("max_idle=", "stall watchdog:", "heartbeat", "polling "))
-
-
 async def _tail_supervisor_logs(tdir: Path):
     """Tail two append-only logs (supervisor.log + codex_subprocess.log)
     as SSE. Emits a `snapshot` event per file with last 200 lines on
@@ -988,7 +978,7 @@ async def _tail_supervisor_logs(tdir: Path):
         # exclude it from the snapshot so the live-tail isn't out of sync.
         if data and not data.endswith(b"\n") and lines:
             lines = lines[:-1]
-        return (len(data), [line for line in lines if _visible_research_log_line(line)][-SNAPSHOT_LINES:])
+        return (len(data), [line for line in lines if visible_research_log_line(line)][-SNAPSHOT_LINES:])
 
     def _new_lines(st: dict) -> list[str]:
         p: Path = st["path"]
@@ -1033,7 +1023,7 @@ async def _tail_supervisor_logs(tdir: Path):
                         continue
                     new = _new_lines(st)
                     for ln in new:
-                        if not _visible_research_log_line(ln):
+                        if not visible_research_log_line(ln):
                             continue
                         payload = json.dumps(
                             {"kind": kind, "line": ln}, ensure_ascii=False
@@ -1365,7 +1355,7 @@ def _read_supervisor_state(repo_root: Path, thread_id: str) -> dict[str, Any]:
     if log_path.exists():
         try:
             lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-            out["log_tail"] = [line for line in lines if _visible_research_log_line(line)][-30:]
+            out["log_tail"] = [line for line in lines if visible_research_log_line(line)][-30:]
             for ln in reversed(lines):
                 if "target_scope=" in ln:
                     # crude parse — find target_scope=...
@@ -1384,7 +1374,7 @@ def _read_supervisor_state(repo_root: Path, thread_id: str) -> dict[str, Any]:
             data = subproc_log.read_bytes()
             text = data.decode("utf-8", errors="replace")
             lines = [ln for ln in text.splitlines() if ln.strip()]
-            out["subprocess_log_tail"] = [line for line in lines if _visible_research_log_line(line)][-10:]
+            out["subprocess_log_tail"] = [line for line in lines if visible_research_log_line(line)][-10:]
         except OSError:
             pass
 

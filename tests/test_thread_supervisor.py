@@ -1847,10 +1847,18 @@ class WatchLoopTests(unittest.TestCase):
             fake.chmod(0o755)
             with mock.patch.object(ts, "_which", return_value=str(fake)):
                 started = time.time()
-                rc = ts.spawn_codex_session("prompt", stall_timeout=20)
+                log = Path(tmp) / 'codex_subprocess.log'
+                rc = ts.spawn_codex_session("prompt", stall_timeout=20, log_path=log)
             self.assertEqual(rc, ts.WORK_UNIT_EXIT_CODE)
             self.assertTrue(marker.exists())
             self.assertLess(time.time() - started, 8)
+            self.assertNotIn('tool>', log.read_text())
+            self.assertNotIn('status>', log.read_text())
+            self.assertIn('execute_baseline_preflight', log.with_suffix('.events.jsonl').read_text())
+            ts._log(log, 'heartbeat waiting')
+            ts._log(log, 'execution failed: invalid measurement')
+            self.assertNotIn('heartbeat', log.read_text())
+            self.assertIn('execution failed: invalid measurement', log.read_text())
 
     def test_spawn_watchdog_kills_hung_cycle(self):
         # Fix 3: a cycle that produces NO output and never exits (a hang — the
