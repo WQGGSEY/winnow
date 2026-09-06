@@ -96,7 +96,7 @@
         "mandatory_baselines": {
           "type": "array",
           "items": { "type": "string" },
-          "minItems": 1
+          "minItems": 0
         },
         "success_criteria": {
           "type": "array",
@@ -250,5 +250,9 @@
       "additionalProperties": false
     }
   },
+  "anyOf": [
+    {"properties": {"type": {"const": "operational"}}},
+    {"properties": {"claim_contract": {"properties": {"mandatory_baselines": {"minItems": 1}}}}}
+  ],
   "additionalProperties": false
 }

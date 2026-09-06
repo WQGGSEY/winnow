@@ -20,6 +20,7 @@
     "reproducibility"
   ],
   "properties": {
+    "measurement_only": {"type": "boolean"},
     "job_id": { "type": "string" },
     "experiment_plan_id": { "type": "string" },
     "node_id": { "type": "string" },
@@ -99,7 +100,7 @@
         },
         "additionalProperties": false
       },
-      "minItems": 1
+      "minItems": 0
     },
     "claim_contract": { "type": "object" },
     "failure_index_hints": {

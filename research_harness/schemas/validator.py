@@ -187,6 +187,18 @@ def _validate(schema: dict[str, Any], data: Any, path: str) -> None:
                 f"{path}: expected exactly one oneOf branch, matched {matches}"
             )
 
+    if "anyOf" in schema:
+        errors = []
+        for branch in schema["anyOf"]:
+            try:
+                _validate(branch, data, path)
+            except SchemaValidationError as exc:
+                errors.append(str(exc))
+                continue
+            break
+        else:
+            raise SchemaValidationError(f"{path}: no anyOf branch matched: " + "; ".join(errors))
+
     if "enum" in schema and data not in schema["enum"]:
         raise SchemaValidationError(f"{path}: {data!r} not in enum {schema['enum']!r}")
 

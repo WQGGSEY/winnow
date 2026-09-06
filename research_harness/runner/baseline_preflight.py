@@ -103,10 +103,18 @@ def execute_baseline_preflight(
     node = json.loads(json.dumps(node))
     plan = json.loads(json.dumps(plan))
     validate_named_schema('node', node)
-    if role not in {'current_best_known', 'naive', 'random_or_null'}:
+    if role not in {'current_best_known', 'naive', 'random_or_null', 'diagnostic'}:
         raise ValueError('invalid preflight role')
     requirements = plan.get('baseline_evidence_requirements', [])
-    if len(requirements) != 1 or requirements[0].get('role') != role or not requirements[0].get('required'):
+    if role == 'diagnostic':
+        from research_harness.orchestrator.research_control import current_work
+        work = current_work(thread_dir)
+        if (not research_work_id or work.get('work_id') != research_work_id
+                or work.get('decision', {}).get('kind') != 'diagnostic_experiment'):
+            raise ValueError('diagnostic role requires the selected diagnostic_experiment work')
+        if requirements or plan['mandatory_baselines']:
+            raise ValueError('diagnostic role must not declare baseline comparisons')
+    elif len(requirements) != 1 or requirements[0].get('role') != role or not requirements[0].get('required'):
         raise ValueError('preflight must measure exactly one baseline role')
     tree = thread_dir / 'production/tree'
     node_dir = tree / 'baseline_preflight' / node['id']
@@ -147,10 +155,10 @@ def execute_baseline_preflight(
         report = build_worker_report_from_runner_evidence(node, manifest, result, tree).worker_report
         report_path.write_text(json.dumps(report, indent=2) + '\n')
     report = json.loads(report_path.read_text())
-    key = requirements[0]['baseline_key']
     if report.get('status') != 'completed':
         return {'status': 'execution_failed', 'node_dir': str(node_dir), 'worker_report': report}
-    if set(report.get('baselines', {})) != {key}:
+    expected_baselines = {requirements[0]['baseline_key']} if requirements else set()
+    if set(report.get('baselines', {})) != expected_baselines:
         raise ValueError('preflight must report only its actually executed baseline key')
     verify_strong_execution_evidence(node=node, experiment_plan=plan, worker_report=report, node_dir=node_dir, tree_dir=tree, settings=settings)
     relative = node_dir.relative_to(tree).as_posix()
@@ -159,7 +167,8 @@ def execute_baseline_preflight(
         'reproducibility_receipt': {
             'node_path': relative + '/node.json', 'experiment_plan_path': relative + '/experiment_plan.json',
             'worker_report_path': relative + '/worker_report.json', 'node_dir': relative, 'tree_dir': '.',
-            'metric_id': requirements[0]['metric_key'], 'baseline_key': key, 'metric_value': report['baselines'][key],
+            **({'metric_id': requirements[0]['metric_key'], 'baseline_key': requirements[0]['baseline_key'],
+                'metric_value': report['baselines'][requirements[0]['baseline_key']]} if requirements else {}),
         },
         'worker_report': report,
     }

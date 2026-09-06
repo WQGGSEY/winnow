@@ -270,6 +270,8 @@ def _evidence_to_worker_report(
         metrics,
         baselines,
     )
+    if baseline_status['overall'] == 'not_required':
+        verdict = 'inconclusive'
     if baseline_status["overall"] == "not_evaluable":
         return _baseline_confounded_report(
             node,
@@ -457,7 +459,7 @@ def _evaluate_baseline_evidence_requirements(
     baselines: dict[str, Any],
 ) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
-    overall = "passed"
+    overall = "passed" if manifest.get("baseline_evidence_requirements") else "not_required"
     for requirement in manifest.get("baseline_evidence_requirements", []):
         metric_key = requirement["metric_key"]
         baseline_key = requirement["baseline_key"]

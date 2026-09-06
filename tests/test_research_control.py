@@ -171,6 +171,42 @@ def test_restart_reconciles_reserved_work_and_never_reads_final_holdout(tmp_path
     assert planner.calls[0]['previous_work']['status'] == 'completed'
 
 
+def test_diagnostic_executes_without_fabricating_a_baseline_or_supporting_a_claim(tmp_path, monkeypatch):
+    from research_harness.orchestrator import research_control
+    from research_harness.orchestrator.experiment_plan import validate_experiment_plan
+    from research_harness.schemas.validator import validate_named_schema
+
+    thread, tree, node, plan, _ = fixture(tmp_path)
+    plan['baseline_evidence_requirements'] = []
+    plan['mandatory_baselines'] = []
+    node['claim_contract']['mandatory_baselines'] = []
+    node['type'] = 'mechanism'
+    with pytest.raises(ValueError):
+        validate_named_schema('node', node)
+    node['type'] = 'operational'
+    with pytest.raises(ValueError, match='missing required baseline'):
+        validate_experiment_plan(node, plan, tree)
+    plan['source_files'][0]['content'] = (
+        "from pathlib import Path\nPath('artifacts').mkdir(exist_ok=True)\n"
+        "Path('artifacts/metrics.json').write_text('{\"metrics\": {\"measured_count\": 6}, \"claim_verdict_candidate\": \"supported\"}')\n"
+    )
+    plan['expected_outputs']['metrics_files'] = ['artifacts/metrics.json']
+    with pytest.raises(ValueError, match='selected diagnostic'):
+        execute_baseline_preflight(REPO, thread, node=node, plan=plan, role='diagnostic', settings={})
+    work = plan_research_work(REPO, thread, transport=Planner())
+    bind_work(thread, work['work_id'], node['id'], plan)
+    monkeypatch.setattr(research_control, 'review_work_implementation', lambda *args: None)
+    result = execute_baseline_preflight(REPO, thread, node=node, plan=plan, role='diagnostic',
+                                       settings={}, research_work_id=work['work_id'])
+    report = result['worker_report']
+    assert result['status'] == 'executed'
+    assert report['metrics'] == {'measured_count': 6}
+    assert report['baselines'] == {}
+    assert report['baseline_evidence_status'] == {'overall': 'not_required', 'results': []}
+    assert report['claim_verdict_candidate'] == 'inconclusive'
+    assert not result['scientific_approval']
+
+
 @pytest.mark.parametrize('status', ['rejected', 'interrupted'])
 def test_dispatch_rejection_preserves_question_and_allows_corrected_input(tmp_path, status):
     thread, _, node, plan, _ = fixture(tmp_path)

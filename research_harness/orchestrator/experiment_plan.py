@@ -742,7 +742,11 @@ def validate_experiment_plan(
         raise ExperimentPlanError("experiment plan must restrict writes to workspace")
 
     required_roles = {"current_best_known", "naive", "random_or_null"}
-    if preflight_role is not None:
+    if preflight_role == 'diagnostic':
+        if node['type'] != 'operational' or experiment_plan['baseline_evidence_requirements'] or experiment_plan['mandatory_baselines']:
+            raise ExperimentPlanError('diagnostic preparation requires an operational node without baseline comparisons')
+        required_roles = set()
+    elif preflight_role is not None:
         if preflight_role not in required_roles:
             raise ExperimentPlanError("invalid baseline preflight role")
         required_roles = {preflight_role}
@@ -813,6 +817,8 @@ def derive_job_manifest_from_experiment_plan(
         "experiment_plan_id": experiment_plan["plan_id"],
         "node_id": node["id"],
         "task_class": experiment_plan["task_class"],
+        **({'measurement_only': True} if node['type'] == 'operational'
+           and not experiment_plan['baseline_evidence_requirements'] else {}),
         "workspace": experiment_plan["workspace"],
         "source_files": normalized_sources,
         "entrypoint": experiment_plan["entrypoint"],

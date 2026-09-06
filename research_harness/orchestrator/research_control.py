@@ -308,6 +308,8 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'Every selected execution already receives the independent pre-execution review described in execution_review. '
             'Do not insert a separate analysis work solely to approve the same prepared program for that same execution. '
             'When new measurements are the next needed evidence and the program exists, select the bounded execution; '
+            'For a diagnostic with no scientific comparator, execute_baseline_preflight accepts role=diagnostic with empty '
+            'mandatory_baselines and baseline_evidence_requirements. Emit measured metrics without a fabricated baseline or completion comparator. '
             'its automatic review will inspect implementation validity and return repair feedback before any runner starts. '
             'A separate source analysis is justified when it answers a distinct scientific or semantic question that changes which experiment to run. '
             'An already permitted development diagnostic is bound by its recorded execution plan. Do not add a separate '

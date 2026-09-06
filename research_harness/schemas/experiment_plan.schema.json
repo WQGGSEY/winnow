@@ -113,12 +113,12 @@
         },
         "additionalProperties": false
       },
-      "minItems": 1
+      "minItems": 0
     },
     "mandatory_baselines": {
       "type": "array",
       "items": { "type": "string" },
-      "minItems": 1
+      "minItems": 0
     },
     "success_criteria": {
       "type": "array",

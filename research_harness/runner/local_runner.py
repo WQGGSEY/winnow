@@ -177,15 +177,20 @@ class LocalRunner:
             if any(token in part for token in self.FORBIDDEN_TOKENS):
                 raise RunnerValidationError(f"shell control token is forbidden in command: {part}")
 
-        self._validate_claim_contract(manifest["claim_contract"])
+        measurement_only = manifest.get('measurement_only', False)
+        if measurement_only and (manifest['baseline_evidence_requirements'] or manifest['claim_contract'].get('mandatory_baselines')):
+            raise RunnerValidationError('measurement-only jobs cannot declare baseline comparisons')
+        self._validate_claim_contract(manifest["claim_contract"], measurement_only=measurement_only)
         self._validate_source_files(manifest, workspace)
         self._validate_output_paths(manifest, workspace)
         return validate_runtime_input_reference(
             manifest.get("inputs", {}), workspace=workspace
         )
 
-    def _validate_claim_contract(self, contract: dict[str, Any]) -> None:
-        required = ["claim_under_test", "mandatory_baselines", "success_criteria", "disproof_conditions"]
+    def _validate_claim_contract(self, contract: dict[str, Any], *, measurement_only: bool = False) -> None:
+        required = ["claim_under_test", "success_criteria", "disproof_conditions"]
+        if not measurement_only:
+            required.append('mandatory_baselines')
         missing = [key for key in required if not contract.get(key)]
         if missing:
             raise RunnerValidationError(
