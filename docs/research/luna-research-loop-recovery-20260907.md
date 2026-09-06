@@ -256,3 +256,11 @@ Live policy-24 planner work 5575d76d cited the earlier completed feasibility rec
 A second remaining conflation set diagnostic_required for any rejected/interrupted dispatch, including no-launch request errors. Removed that condition. Actual failed measurements and duplicate observations retain their existing handling; no-launch feedback remains in the authoritative outcome and implementation/protocol review. Extended existing reconsideration coverage to actual pre-execution rejections and verified they do not force a scientific diagnostic.
 
 Verification: combined research_control/research_review checks: 46 passed. Policy-24 live run remains in protocol-scope interpretation for the proposed control; the model process already in flight is not restarted simply to discard paid work. These changes will enter its next process boundary.
+
+### Known scope prohibition must not pay for source review
+
+In run luna-cycle-e2e-20260907-074611, the live scope interpretation answered that the original one-use control permission was consumed by completed run _04. Because its analysis status was answered rather than unresolved, the old route nevertheless started code review. That redundant review timed out after 300 seconds and stopped the bounded batch. No new game ran.
+
+Added an explicit protocol-scope disposition: eligible_for_source_review, blocked, unresolved. A blocked result requires a verbatim original-clause citation and routes directly to replanning; eligibility remains neither code approval nor execution authorization. Both ambiguous and established-blocked scope preserve their receipts and bypass source review. Invalid blocked citations are recorded as reviewer contract errors for correction rather than cached as accepted scientific findings. Review policy 14 prevents stale source approvals bypassing this dependency.
+
+Verification: `venv/bin/python -m pytest tests/test_research_control.py tests/test_research_review.py tests/test_schema_validation.py -q --tb=short` — 52 passed. The existing scope recovery case now covers established prohibition as well as ambiguity and eligible scope. An initial command named nonexistent tests/test_schemas.py and ran no checks; the corrected command above is the reported validation. The old bounded budget and failed-call receipt are preserved before continuing with the changed route.

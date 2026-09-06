@@ -17,8 +17,8 @@ class ReviewContractError(ValueError):
     """The reviewer response needs correction; it is not a defect in the experiment."""
 
 
-class ProtocolScopeUnresolved(ValueError):
-    """Resolve study scope before spending a call judging source compliance."""
+class ProtocolScopeNeedsReplanning(ValueError):
+    """Unresolved or blocked scope must be replanned before source review."""
 
     def __init__(self, analysis: dict[str, Any]):
         self.analysis = analysis
@@ -370,16 +370,20 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
                 'later result before its permitted diagnostic. Do not waive a condition or invent a new one. '
                 'In evidence cite exact amendment_history.entries.N.notes locations and short verbatim clauses for the '
                 'operative obligations and overrides. Explain an override using both the old and replacement clause. '
-                'Return answered when that scope can be established, unresolved when a relevant ambiguity remains. '
+                'Return status=answered when scope can be established, unresolved when a relevant ambiguity remains. '
+                'Set execution_scope=blocked for an established active prohibition or consumed one-off permission; '
+                'set unresolved for ambiguous scope, and eligible_for_source_review only when scope allows code review. '
+                'For blocked scope cite the original operative clause verbatim; no source review is needed to repair '
+                'a study-design prohibition. Eligibility never approves code or permits execution. '
                 'Do not inspect or approve implementation fidelity here; that is the next reviewer responsibility. Return JSON.'),
-            schema_name='research_analysis_response', source_inspection=False)
+            schema_name='research_protocol_scope_response', source_inspection=False)
         packet = {**packet, 'protocol_scope_analysis': {
             'assessment': scope['assessment'], 'request_sha256': scope['request_sha256'],
             'verified_clause_citations': protocol_clause_citations(scope['assessment'], packet),
             'receipt_path': str((directory / 'protocol_scope' / scope['request_sha256'] / 'review.json').resolve()),
             'scope': 'Fallible interpretation of unchanged supplied protocol text; not authority to amend, execute or claim a result. The independent reviewer must still verify this particular source against the cited conditions.'}}
-        if scope['assessment']['status'] == 'unresolved':
-            raise ProtocolScopeUnresolved(packet['protocol_scope_analysis'])
+        if scope['assessment']['status'] == 'unresolved' or scope['assessment']['execution_scope'] != 'eligible_for_source_review':
+            raise ProtocolScopeNeedsReplanning(packet['protocol_scope_analysis'])
     request_data = {"model": research_model(), "reasoning_effort": model_reasoning_effort(research_model()), "instructions": instructions, "packet": packet, "response_schema": schema_name, "response_schema_sha256": hashlib.sha256((repo / "research_harness/schemas" / f"{schema_name}.schema.json").read_bytes()).hexdigest()}
     request_data["review_transport_version"] = 5
     if not source_inspection:
@@ -439,6 +443,9 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
     try:
         assessment = json.loads(result.text)
         validate_named_schema(schema_name, assessment)
+        if (schema_name == 'research_protocol_scope_response' and assessment['execution_scope'] == 'blocked'
+                and not protocol_clause_citations(assessment, {'protocol_note_history': packet['amendment_history']})):
+            raise ValueError('Blocked protocol scope requires a verified original clause citation.')
         if schema_name in {'research_review_response', 'research_execution_review_response'} and assessment["decision"] == "approve" and assessment["required_work"]:
             raise ValueError("independent review cannot approve with unresolved required work")
         if schema_name == 'research_execution_review_response':

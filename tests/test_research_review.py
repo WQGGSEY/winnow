@@ -189,9 +189,10 @@ def test_inspection_budget_prioritizes_experiment_source_over_recent_framework_r
     assert recovered['omitted_output_count'] == 1
 
 
-@pytest.mark.parametrize('scope_status', ['answered', 'unresolved'])
-def test_protocol_interpretation_is_preserved_across_implementation_revisions(tmp_path, scope_status):
-    from research_harness.orchestrator.research_review import ProtocolScopeUnresolved
+@pytest.mark.parametrize('scope_status,execution_scope', [('answered', 'eligible_for_source_review'),
+    ('answered', 'blocked'), ('unresolved', 'unresolved')])
+def test_protocol_interpretation_is_preserved_across_implementation_revisions(tmp_path, scope_status, execution_scope):
+    from research_harness.orchestrator.research_review import ProtocolScopeNeedsReplanning
     packet = {'decision_scope': 'development_execution', 'work_decision': {'test': 'Compare matched controls.'},
               'development_executions': {'prior_control': {'execution_status': 'completed'}},
               'registered_protocol': {'notes': 'Keep the original outcome.'},
@@ -206,7 +207,7 @@ def test_protocol_interpretation_is_preserved_across_implementation_revisions(tm
         if 'amendment_history' in value:
             assert value['development_executions'] == packet['development_executions']
             assert not request.allow_local_tools
-            result = {'status': scope_status, 'answer': 'Preserve outcome; confirmation is later.',
+            result = {'status': scope_status, 'execution_scope': execution_scope, 'answer': 'Preserve outcome; confirmation is later.',
                       'evidence': ['amendment_history.entries.0.notes: “Keep the original outcome.”'], 'limitations': [], 'next_steps': []}
         else:
             assert value['protocol_scope_analysis']['assessment']['status'] == 'answered'
@@ -218,11 +219,11 @@ def test_protocol_interpretation_is_preserved_across_implementation_revisions(tm
                       'required_work': [], 'next_steps': [], 'blocking_basis': [], 'observation_checks': []}
         return CompletionResult(json.dumps(result), AgentUsage(), None)
     with patch('research_harness.orchestrator.research_review.CodexCliAdapter.complete', side_effect=complete):
-        if scope_status == 'unresolved':
+        if execution_scope != 'eligible_for_source_review':
             for _ in range(2):
-                with pytest.raises(ProtocolScopeUnresolved) as unresolved:
+                with pytest.raises(ProtocolScopeNeedsReplanning) as unresolved:
                     review_research_packet(repo, tmp_path, packet, purpose='Development test.')
-                assert unresolved.value.analysis['assessment']['status'] == 'unresolved'
+                assert unresolved.value.analysis['assessment']['execution_scope'] == execution_scope
             assert len(seen) == 1
             return
         first = review_research_packet(repo, tmp_path, packet, purpose='Development test.')

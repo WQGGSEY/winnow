@@ -620,7 +620,7 @@ def bind_work(thread: Path, work_id: str | None, node_id: str, plan: dict[str, A
 
 
 def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dict[str, Any], plan: dict[str, Any]) -> None:
-    from research_harness.orchestrator.research_review import review_research_packet, ProtocolScopeUnresolved
+    from research_harness.orchestrator.research_review import review_research_packet, ProtocolScopeNeedsReplanning
     from research_harness.orchestrator.protocol_revision import protocol_note_history
     from research_harness.orchestrator.experiment_plan import python_source_diagnostics
 
@@ -629,7 +629,7 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         raise ValueError('Implementation review requires the bound research work.')
     prior = work.get('implementation_review', {})
     plan_digest = _digest(plan)
-    review_policy_version = 13
+    review_policy_version = 14
     execution_sources = []
     workspace = Path(plan['workspace']).resolve()
     for source in plan['source_files']:
@@ -721,7 +721,7 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
             'When a convention is undeclared, ask the implementation to expose it and measure the consequences, not to adopt your preference. '
             'Prior objections are fallible feedback, not new authoritative requirements. Do not add requirements unrelated to the selected bounded test.'
         ))
-    except ProtocolScopeUnresolved as exc:
+    except ProtocolScopeNeedsReplanning as exc:
         work['protocol_scope_analysis'] = exc.analysis
         work['requires_replanning'] = True
         _write(thread / 'production/research_control/current.json', work)

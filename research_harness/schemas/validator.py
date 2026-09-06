@@ -25,6 +25,7 @@ SCHEMA_FILES = {
     "research_review_response": "research_review_response.schema.json",
     "research_execution_review_response": "research_execution_review_response.schema.json",
     "research_analysis_response": "research_analysis_response.schema.json",
+    "research_protocol_scope_response": "research_protocol_scope_response.schema.json",
     "research_work": "research_work.schema.json",
     "hypothesis_candidates": "hypothesis_candidates.schema.json",
     "hypothesis_critique": "hypothesis_critique.schema.json",
