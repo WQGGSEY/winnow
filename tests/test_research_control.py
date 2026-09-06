@@ -172,8 +172,9 @@ def test_restart_reconciles_reserved_work_and_never_reads_final_holdout(tmp_path
 
 
 def test_diagnostic_executes_without_fabricating_a_baseline_or_supporting_a_claim(tmp_path, monkeypatch):
-    from research_harness.orchestrator import research_control
+    from research_harness.orchestrator import research_review
     from research_harness.orchestrator.experiment_plan import validate_experiment_plan
+    from research_harness.runner.local_runner import LocalRunner
     from research_harness.schemas.validator import validate_named_schema
 
     thread, tree, node, plan, _ = fixture(tmp_path)
@@ -195,7 +196,17 @@ def test_diagnostic_executes_without_fabricating_a_baseline_or_supporting_a_clai
         execute_baseline_preflight(REPO, thread, node=node, plan=plan, role='diagnostic', settings={})
     work = plan_research_work(REPO, thread, transport=Planner())
     bind_work(thread, work['work_id'], node['id'], plan)
-    monkeypatch.setattr(research_control, 'review_work_implementation', lambda *args: None)
+    monkeypatch.setattr(research_review, 'review_research_packet', lambda *args, **kwargs: {
+        'request_sha256': 'fixture-review', 'assessment': {'decision': 'approve', 'reason': 'Fixture source review',
+                                                        'evidence': [], 'required_work': []}})
+    original_execute = LocalRunner.execute
+    def execute_with_binding(self, manifest):
+        binding = current_work(thread)['diagnostic_source_binding']
+        assert Path(binding['receipt_path']).is_file()
+        assert set(binding['source_sha256']) == {'experiment.py'}
+        assert binding['scientific_approval'] is False
+        return original_execute(self, manifest)
+    monkeypatch.setattr(LocalRunner, 'execute', execute_with_binding)
     result = execute_baseline_preflight(REPO, thread, node=node, plan=plan, role='diagnostic',
                                        settings={}, research_work_id=work['work_id'])
     report = result['worker_report']

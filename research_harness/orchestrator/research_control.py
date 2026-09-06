@@ -13,7 +13,7 @@ from research_harness.schemas.validator import validate_named_schema
 from research_harness.evaluation_vault import sealed_bank_metadata
 from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
 
-PLANNING_POLICY_VERSION = 11
+PLANNING_POLICY_VERSION = 12
 
 
 class StaleResearchWork(ValueError):
@@ -226,6 +226,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
                        'measurement validity', 'prior implementation objections'],
             'rejection_preserves_work': True,
             'source_binding': 'bind_research_work records the complete plan digest, including source bytes, before review and execution',
+            'diagnostic_component_binding': 'An approved pre-execution review records an authoritative diagnostic_source_binding.json before launch. A separate source-registration amendment is not needed for the same already permitted diagnostic unless the protocol explicitly requires a separate transaction.',
         },
         'planning_policy_version': planning_policy_version,
         'registered_protocol': envelope,
@@ -315,6 +316,8 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'An already permitted development diagnostic is bound by its recorded execution plan. Do not add a separate '
             'protocol amendment solely to register its source hash unless the active protocol explicitly requires that extra registration. '
             'A prior analysis saying source is ready for binding is not itself such a protocol requirement. '
+            'The automatic diagnostic source-binding transaction is authoritative and prospective, not merely a source-existence record. '
+            'Use it through the selected diagnostic execution instead of planning a separate binding-only amendment. '
             'Do not write an experiment program to classify the meaning of prose or source semantics. '
             'diagnostic_experiment always runs a program to obtain new measurements. Source-only inspection of schemas, serializers, or code is analysis even when it diagnoses a bug. '
             'Choose an execution kind only when new measurements are needed. Analysis cannot establish unmeasured causal or performance claims. '
@@ -469,13 +472,24 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         raise ValueError('Implementation review requires the bound research work.')
     prior = work.get('implementation_review', {})
     plan_digest = _digest(plan)
-    review_policy_version = 5
+    review_policy_version = 6
     if prior.get('plan_digest') == plan_digest and prior.get('policy_version') == review_policy_version:
         if prior['decision'] != 'approve':
             raise ValueError('Work implementation needs revision: ' + json.dumps(prior, ensure_ascii=False))
         return
     directory = thread / 'production/research_control/work' / work_id / 'implementation_reviews'
+    diagnostic_binding = None
+    if (work['decision']['kind'] == 'diagnostic_experiment' and node['type'] == 'operational'
+            and not plan['baseline_evidence_requirements'] and not plan['mandatory_baselines']):
+        diagnostic_binding = {
+            'plan_digest': plan_digest, 'node_id': node['id'],
+            'source_sha256': {source['path']: hashlib.sha256(source['content'].encode('utf-8')).hexdigest()
+                              for source in plan['source_files']},
+            'scope': 'Previously permitted development diagnostic only; no scientific qualification or confirmation authorization',
+            'scientific_approval': False,
+        }
     packet = {'work_decision': work['decision'], 'node': node, 'experiment_plan': plan,
+              'diagnostic_source_binding_proposal': diagnostic_binding,
               'runtime_input_example': runtime_input_example(thread),
               'runner_contract': {
                   'timeout_sec': plan['resources']['timeout_sec'],
@@ -495,6 +509,12 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         'Whether this proposed implementation performs the selected bounded research test. '
         'Check compatibility with registered protocol notes as well as the selected test. A development diagnostic is not a protocol amendment '
         'or permission to substitute an unregistered method in the final comparison. '
+        'When diagnostic_source_binding_proposal is present, this review also decides the prospective component binding for this '
+        'already permitted development diagnostic. Approval commits the exact plan/source binding receipt before launch. '
+        'Do not demand a separate binding-only protocol amendment: this transaction supplies the authoritative binding. '
+        'Reject a changed scientific test, controller, input partition or endpoint; those still require a protocol amendment. '
+        'Preserve any explicit requirement for a separate registration transaction and cite its actual active clause if it blocks this binding. '
+        'This capability does not replace comparator/candidate qualification or final implementation and checkpoint freeze. '
         'Questions listed in deferred_questions are outside this work and must not become preconditions for its execution. '
         'This is a pre-execution method check, not scientific approval; do not require positive results or finished training. '
         'Trace code, actual imports and data provenance. When the work calls for the actual learner, collector or replay, '
@@ -518,6 +538,13 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
     ))
     work['implementation_review'] = {**review['assessment'], 'plan_digest': plan_digest, 'policy_version': review_policy_version,
                                     'receipt_path': str((directory / review['request_sha256'] / 'review.json').resolve())}
+    work.pop('diagnostic_source_binding', None)
+    if diagnostic_binding and review['assessment']['decision'] == 'approve':
+        receipt = {**diagnostic_binding, 'review_receipt_path': work['implementation_review']['receipt_path'],
+                   'review_request_sha256': review['request_sha256']}
+        receipt_path = directory.parent / 'source_bindings' / plan_digest / 'diagnostic_source_binding.json'
+        _write(receipt_path, receipt)
+        work['diagnostic_source_binding'] = {**receipt, 'receipt_path': str(receipt_path.resolve())}
     _write(thread / 'production/research_control/current.json', work)
     _write(thread / 'production/research_control/work' / work_id / 'work.json', work)
     if review['assessment']['decision'] != 'approve':
