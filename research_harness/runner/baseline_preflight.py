@@ -14,6 +14,20 @@ from research_harness.runtime_inputs import bind_runtime_input
 from research_harness.schemas.validator import validate_named_schema
 
 
+def resolve_preflight_role(plan: dict[str, Any], requested: str | None = None) -> str:
+    requirements = plan.get('baseline_evidence_requirements', [])
+    if not requirements and not plan.get('mandatory_baselines'):
+        role = 'diagnostic'
+    elif (len(requirements) == 1 and requirements[0].get('required')
+          and requirements[0].get('role') in {'current_best_known', 'naive', 'random_or_null'}):
+        role = requirements[0]['role']
+    else:
+        raise ValueError('preflight must measure exactly one required baseline or have no comparisons for a diagnostic')
+    if requested is not None and requested != role:
+        raise ValueError('preflight role conflicts with experiment_plan.baseline_evidence_requirements')
+    return role
+
+
 def build_preflight_node(thread_dir: Path, plan: dict[str, Any]) -> dict[str, Any]:
     """Derive preparation metadata without duplicating the author's experiment contract."""
     from research_harness.orchestrator.adaptive_search import build_research_goal
@@ -103,8 +117,7 @@ def execute_baseline_preflight(
     node = json.loads(json.dumps(node))
     plan = json.loads(json.dumps(plan))
     validate_named_schema('node', node)
-    if role not in {'current_best_known', 'naive', 'random_or_null', 'diagnostic'}:
-        raise ValueError('invalid preflight role')
+    role = resolve_preflight_role(plan, role)
     requirements = plan.get('baseline_evidence_requirements', [])
     if role == 'diagnostic':
         from research_harness.orchestrator.research_control import current_work
@@ -112,10 +125,6 @@ def execute_baseline_preflight(
         if (not research_work_id or work.get('work_id') != research_work_id
                 or work.get('decision', {}).get('kind') != 'diagnostic_experiment'):
             raise ValueError('diagnostic role requires the selected diagnostic_experiment work')
-        if requirements or plan['mandatory_baselines']:
-            raise ValueError('diagnostic role must not declare baseline comparisons')
-    elif len(requirements) != 1 or requirements[0].get('role') != role or not requirements[0].get('required'):
-        raise ValueError('preflight must measure exactly one baseline role')
     tree = thread_dir / 'production/tree'
     node_dir = tree / 'baseline_preflight' / node['id']
     node_dir.resolve().relative_to(tree.resolve())

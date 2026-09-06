@@ -114,13 +114,15 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
         source.write_text(plan['source_files'][0]['content'])
         request_plan['source_files'] = [{'path': 'experiment.py', 'purpose': plan['source_files'][0]['purpose'],
                                         'from_path': str(source), 'sha256': hashlib.sha256(source.read_bytes()).hexdigest()}]
-    request_path.write_text(json.dumps({**({'node': node} if explicit_node else {}), 'experiment_plan': request_plan, 'role': role, 'work_id': work['work_id']}))
+    if explicit_node:
+        request_plan['role'] = role
+    request_path.write_text(json.dumps({**({'node': node} if explicit_node else {}), 'experiment_plan': request_plan, 'work_id': work['work_id']}))
     outside = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(tmp_path / 'outside.json')})
     assert outside['status'] == 'rejected'
-    misplaced_role = mcp_server.handle_execute_baseline_preflight({
-        'thread_id': 'thread', 'experiment_plan': {**request_plan, 'role': role}, 'work_id': work['work_id']})
-    assert misplaced_role['status'] == 'rejected'
-    assert 'request top level' in misplaced_role['reason']
+    conflicting_role = mcp_server.handle_execute_baseline_preflight({
+        'thread_id': 'thread', 'experiment_plan': {**request_plan, 'role': 'diagnostic'}, 'work_id': work['work_id']})
+    assert conflicting_role['status'] == 'rejected'
+    assert 'role conflicts' in conflicting_role['reason']
     assert not reviewed
     revision = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
     assert revision['status'] == 'rejected'

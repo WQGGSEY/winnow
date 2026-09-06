@@ -181,13 +181,13 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "execute_baseline_preflight",
-        "description": "While baseline qualification is pending, write and execute ONE baseline implementation or bounded development diagnostic. Prefer supplying experiment_plan without node: the harness derives operational metadata, input snapshot, and the identical claim contract automatically. An explicit node remains subject to exact contract validation. source_files may use from_path (absolute existing thread file), sha256, and optional replacements:[{old,new}] instead of content; every old text must match exactly once, and the original file is preserved. To revise a saved dispatch, use its absolute request_path plus updates (path segments and new value), without retransmitting unchanged source code or writing files from the read-only shell. To change node identity, update experiment_plan.node_id; update node.id as well only if the saved request supplied an explicit node. Inline objects work for initial requests. Use a new node ID when changing a previously executed plan; completed receipts are immutable. The harness binds the operator input snapshot, enforces compute limits and runs LocalRunner. For a baseline role, use exactly one baseline_evidence_requirement and report only that baseline key. For a selected diagnostic_experiment without a comparator, use role=diagnostic with mandatory_baselines=[] and baseline_evidence_requirements=[]; emit metrics without a baseline key. For the same already permitted diagnostic, independent pre-execution approval also records an authoritative source-binding receipt before launch; no separate binding-only amendment is needed unless the protocol explicitly requires a separate transaction. Diagnostic receipts cannot support a scientific claim. This is execution evidence, not scientific approval. Implement methods yourself after retrieving primary sources.",
+        "description": "While baseline qualification is pending, write and execute ONE baseline implementation or bounded development diagnostic. Prefer supplying experiment_plan without node: the harness derives operational metadata, input snapshot, and the identical claim contract automatically. An explicit node remains subject to exact contract validation. source_files may use from_path (absolute existing thread file), sha256, and optional replacements:[{old,new}] instead of content; every old text must match exactly once, and the original file is preserved. To revise a saved dispatch, use its absolute request_path plus updates (path segments and new value), without retransmitting unchanged source code or writing files from the read-only shell. To change node identity, update experiment_plan.node_id; update node.id as well only if the saved request supplied an explicit node. Inline objects work for initial requests. Use a new node ID when changing a previously executed plan; completed receipts are immutable. The harness binds the operator input snapshot, enforces compute limits and runs LocalRunner. For a baseline role, use exactly one baseline_evidence_requirement and report only that baseline key. The harness derives the dispatch role from the plan; no separate role input is needed. For a selected diagnostic_experiment without a comparator, use mandatory_baselines=[] and baseline_evidence_requirements=[]; emit metrics without a baseline key. For the same already permitted diagnostic, independent pre-execution approval also records an authoritative source-binding receipt before launch; no separate binding-only amendment is needed unless the protocol explicitly requires a separate transaction. Diagnostic receipts cannot support a scientific claim. This is execution evidence, not scientific approval. Implement methods yourself after retrieving primary sources.",
         "inputSchema": {
             "type": "object",
-            "anyOf": [{"required": ["request_path"]}, {"required": ["thread_id", "experiment_plan", "role"]}],
+            "anyOf": [{"required": ["request_path"]}, {"required": ["thread_id", "experiment_plan"]}],
             "properties": {
                 "thread_id": {"type": "string"}, "node": load_schema("node"), "experiment_plan": _experiment_plan_input_schema(),
-                "role": {"type": "string", "enum": ["current_best_known", "naive", "random_or_null", "diagnostic"]},
+                "role": {"type": "string", "enum": ["current_best_known", "naive", "random_or_null", "diagnostic"], "description": "Optional consistency check. The harness derives the role from the plan's baseline requirements; empty comparisons require a selected diagnostic_experiment work."},
                 "work_id": {"type": "string", "description": "work_id returned by plan_research_work; required for a new execution."},
                 "request_path": {"type": "string", "description": "Absolute path of the saved request JSON inside this thread. Do not also supply inline node or plan."},
                 "updates": {"type": "array", "maxItems": 32, "items": {"type": "object", "required": ["path", "value"], "additionalProperties": False,
@@ -4117,7 +4117,7 @@ def handle_submit_baseline_qualification(args: dict[str, Any]) -> dict[str, Any]
 
 
 def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
-    from research_harness.runner.baseline_preflight import build_preflight_node, execute_baseline_preflight
+    from research_harness.runner.baseline_preflight import build_preflight_node, execute_baseline_preflight, resolve_preflight_role
     from research_harness.orchestrator.experiment_plan import resolve_source_files
     from research_harness.memory.baseline_review import baseline_roles_frozen
     from research_harness.settings_scoped import resolve_for_thread
@@ -4174,8 +4174,10 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
                 args = {**request, 'thread_id': tid}
             elif args.get('updates'):
                 raise ValueError('Dispatch updates require request_path.')
-            if args.get('role') not in {'current_best_known', 'naive', 'random_or_null', 'diagnostic'}:
-                raise ValueError('Supply role at the request top level, alongside experiment_plan: current_best_known, naive, random_or_null, or diagnostic. A role inside experiment_plan is not the dispatch role. For a saved request, use updates with path=["role"].')
+            plan_input = dict(args['experiment_plan'])
+            role = resolve_preflight_role(plan_input, args.get('role'))
+            resolve_preflight_role(plan_input, plan_input.pop('role', None))
+            args = {**args, 'experiment_plan': plan_input, 'role': role}
             plan = {**args['experiment_plan'], 'source_files': resolve_source_files(_thread_dir(tid), args['experiment_plan']['source_files'])}
             node = args['node'] if 'node' in args else build_preflight_node(_thread_dir(tid), plan)
             node_id = node['id']
