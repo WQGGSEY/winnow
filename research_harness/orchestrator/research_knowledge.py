@@ -108,12 +108,36 @@ def planning_response_schema(previous: dict[str, Any]) -> dict[str, Any]:
     if failed_measurement(previous):
         properties['result_kind']['enum'] = ['execution_failure']
         updates['items']['properties']['effect']['enum'] = ['unresolved']
-    elif (previous.get('outcome', {}).get('measurement_support', {}).get('evaluable') is False
-          or previous.get('outcome', {}).get('execution_result') == 'analysis_inconclusive'):
+    elif previous.get('outcome', {}).get('execution_result') == 'analysis_inconclusive':
         properties['result_kind']['enum'] = ['inconclusive']
         updates['items']['properties']['effect']['enum'] = ['unresolved']
     else:
-        properties['result_kind']['enum'] = ['inconclusive', 'informative']
+        from research_harness.orchestrator.research_observations import prediction_support
+        eligible = prediction_support(previous)
+        if previous.get('outcome', {}).get('measurement_support', {}).get('evaluable') is False:
+            properties['result_kind']['enum'] = ['inconclusive', 'partial'] if any(
+                row['eligible_for_interpretation'] for row in eligible) else ['inconclusive']
+            if properties['result_kind']['enum'] == ['inconclusive']:
+                updates['items']['properties']['effect']['enum'] = ['unresolved']
+        else:
+            properties['result_kind']['enum'] = ['inconclusive', 'informative']
+    support = previous.get('outcome', {}).get('measurement_support')
+    if support is not None and not failed_measurement(previous) and count:
+        import copy
+        from research_harness.orchestrator.research_observations import prediction_support
+        branches = []
+        for row in prediction_support(previous):
+            branch = copy.deepcopy(updates['items'])
+            branch['properties']['alternative_index']['enum'] = [row['alternative_index']]
+            if not row['eligible_for_interpretation']:
+                branch['properties']['effect']['enum'] = ['unresolved']
+            names = row['required_observations']
+            if names:
+                branch['properties']['observation_ids']['items']['enum'] = names
+            else:
+                branch['properties']['observation_ids']['maxItems'] = 0
+            branches.append(branch)
+        updates['items'] = {'anyOf': branches}
     return schema
 
 
@@ -144,8 +168,23 @@ def validate_previous_result(decision: dict[str, Any], previous: dict[str, Any],
         raise ValueError('Execution failure requires a failed execution or measurement receipt.')
     support = outcome.get('measurement_support')
     if not execution_failed and support is not None and not support['evaluable']:
-        if assessment['result_kind'] != 'inconclusive':
+        if assessment['result_kind'] not in {'inconclusive', 'partial'}:
             raise ValueError('Missing or empty eligible observations cannot establish an informative result.')
+    from research_harness.orchestrator.research_observations import prediction_support
+    eligibility = {row['alternative_index']: row for row in prediction_support(previous)}
+    for update in updates:
+        row = eligibility[update['alternative_index']]
+        cited = set(update.get('observation_ids', []))
+        if cited - set(row['required_observations']):
+            raise ValueError('Prediction update cites observations outside its declared dependencies.')
+        if update['effect'] != 'unresolved' and support is not None:
+            if not row['eligible_for_interpretation'] or cited != set(row['required_observations']):
+                raise ValueError('A prediction update needs all its declared nonempty observations; another family cannot supply them.')
+    if assessment['result_kind'] == 'partial':
+        if not any(item['effect'] != 'unresolved' for item in updates) or not assessment['missing_evidence']:
+            raise ValueError('Partial interpretation needs a supported update and an explicit unresolved limitation.')
+        if support is None or support['evaluable']:
+            raise ValueError('Partial interpretation requires a recorded partial measurement-support boundary.')
     if assessment['result_kind'] == 'inconclusive' and any(item['effect'] != 'unresolved' for item in updates):
         raise ValueError('Inconclusive evidence leaves competing predictions unresolved.')
     if (outcome.get('execution_result') == 'analysis_inconclusive'
@@ -224,7 +263,7 @@ def compact_planning_context(thread: Path, packet: dict[str, Any]) -> dict[str, 
     if previous.get('status') == 'completed' and failed_measurement(previous):
         # No scientific observation was obtained: choose how to recover this test,
         # not a fresh literature/hypothesis search across the whole project.
-        compact['selection_scope'] = 'Recover the previous scientific measurement from its latest operational failure. A scientific direction change requires new evidence, not this invalid measurement.'
+        compact['selection_scope'] = 'The failed measurement leaves scientific predictions unresolved. Recover it or replace the procedure using concrete cost, feasibility or discriminating-value evidence. Existing-source analysis and small exploratory controls remain available. Do not treat an operational failure as scientific refutation.'
         compact['full_context_digest'] = hashlib.sha256(
             json.dumps(packet, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         compact['research'] = {key: compact.get('research', {}).get(key)
@@ -243,5 +282,33 @@ def compact_planning_context(thread: Path, packet: dict[str, Any]) -> dict[str, 
                    {'work_' + previous['work_id']})
         compact['available_evidence_ids'] = sorted(available & visible)
         compact['repair_hypothesis_ids'] = previous.get('decision', {}).get('hypothesis_ids', [])
+    from research_harness.orchestrator.research_observations import prediction_support
+    completed = previous.get('status') == 'completed'
+    if completed:
+        relevant = set(previous.get('decision', {}).get('evidence_ids', []))
+        findings = compact.get('analysis_findings', {})
+        selected = [key for key in findings if key in relevant]
+        selected = set(selected[-2:] + list(findings)[-2:])
+        older = {key: value for key, value in findings.items() if key not in selected}
+        if older:
+            raw = json.dumps(older, sort_keys=True, ensure_ascii=False).encode()
+            path = thread / 'production/research_control/context' / (hashlib.sha256(raw).hexdigest() + '.json')
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
+            compact['older_analysis_reference'] = {'path': str(path.resolve()), 'keys': list(older),
+                                                   'scope': 'Retained evidence; source analysis may retrieve a relevant entry.'}
+            compact['analysis_findings'] = {key: value for key, value in findings.items() if key in selected}
+        compact['development_evidence'] = dict(list(compact.get('development_evidence', {}).items())[-2:])
+        compact['previous_work'] = {key: previous[key] for key in
+            ('work_id', 'status', 'decision', 'outcome', 'binding') if key in previous}
+    compact['decision_focus'] = {
+        'previous_work_id': previous.get('work_id'),
+        'prediction_support': prediction_support(previous),
+        'existing_measurement_artifacts': list(compact.get('measurement_context', {})),
+        'next_choice': 'Interpret the available part, identify the remaining limitation, then choose the smallest work that changes the next intervention decision toward the original goal.',
+        'recovery_options': ['Use existing artifact values through source analysis when only reporting or interpretation is missing.',
+                             'Replace an uninformative diagnostic instead of endlessly repairing it.',
+                             'Try a bounded intuitive intervention with a matched control before a complete causal explanation.'],
+        'scientific_limit': 'Support eligibility is not evidence that a prediction is true. Keep validity, scope, confounding and uncertainty explicit.'}
     compact['context_reading'] = 'This selector has no tools. Use visible findings to choose one provisional work. Exact references are for downstream analysis/implementation, which must inspect relevant source and full protocol history before relying on them. Missing detail warrants analysis only if it changes which scientific test to select.'
     return compact

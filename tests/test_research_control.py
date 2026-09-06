@@ -144,6 +144,8 @@ class Planner:
             'next_if_inconclusive': 'Inspect the first divergence in the raw trace.',
             'max_runtime_seconds': self.budget,
         }
+        for alternative in decision['alternatives']:
+            alternative['required_observations'] = decision['required_observations']
         previous = packet['previous_work']
         if previous.get('status') == 'completed':
             outcome = previous.get('outcome', {})
@@ -152,7 +154,7 @@ class Planner:
                 'work_id': previous['work_id'],
                 'result_kind': 'execution_failure' if failed else 'inconclusive',
                 'evidence_ids': ['work_' + previous['work_id']],
-                'prediction_updates': [{'alternative_index': i, 'effect': 'unresolved',
+                'prediction_updates': [{'alternative_index': i, 'effect': 'unresolved', 'observation_ids': [],
                                         'reason': 'This record does not distinguish the predictions.'}
                                        for i, _ in enumerate(previous['decision']['alternatives'])],
                 'missing_evidence': ['A valid distinguishing measurement.'],
@@ -174,6 +176,8 @@ def fixture(tmp_path):
     requirement = plan['baseline_evidence_requirements'][2]
     plan['baseline_evidence_requirements'] = [requirement]
     plan['resources']['timeout_sec'] = 10
+    plan['observation_bindings'] = {'eligible_count': {'artifact_path': plan['expected_outputs']['metrics_files'][0],
+        'json_pointer': '/metrics/eligible_count', 'producer': 'experiment.py measurement output'}}
     plan['source_files'] = [{'path': 'experiment.py', 'purpose': 'Reproduce invalid measurement.',
                              'content': "raise ValueError('measurement construction is invalid')\n"}]
     return thread, tree, node, plan, requirement['role']
@@ -726,7 +730,7 @@ def test_planner_schema_binds_failed_receipt_before_generation(tmp_path):
     assessment = {'work_id': previous['work_id'], 'result_kind': 'execution_failure',
                   'evidence_ids': ['work_' + previous['work_id']], 'missing_evidence': ['valid measurement'],
                   'next_decision': 'Repair the actual output failure',
-                  'prediction_updates': [{'alternative_index': i, 'effect': 'unresolved',
+                  'prediction_updates': [{'alternative_index': i, 'effect': 'unresolved', 'observation_ids': [],
                                           'reason': 'Measurement failed'} for i in range(2)]}
     validate_schema(schema, assessment)
     assessment['prediction_updates'][1]['effect'] = 'supported'
@@ -826,3 +830,46 @@ def test_repair_handoff_binds_predecessor_bytes_and_fresh_identity(tmp_path):
     assert Path(reference['from_path']).read_text() == plan['source_files'][0]['content']
     Path(reference['from_path']).write_text('changed after execution')
     assert 'request_draft' not in execution_handoff(thread, work)
+
+
+def test_output_bindings_and_partial_interpretation_preserve_family_boundaries(tmp_path):
+    from research_harness.orchestrator.research_observations import observation_contract, collect_observation_support, measurement_facts
+    from research_harness.orchestrator.research_knowledge import validate_previous_result, planning_response_schema
+    thread = tmp_path
+    workspace = thread / 'workspace'
+    workspace.mkdir()
+    artifact = workspace / 'metrics.json'
+    artifact.write_text(json.dumps({'details': {'families': [
+        {'name': 'a', 'count': 216, 'effect': 0}, {'name': 'b', 'count': 0, 'effect': 0}]}}))
+    decision = {'required_observations': ['a_count', 'b_count'],
+                'alternatives': [{'required_observations': ['a_count']}, {'required_observations': ['b_count']}]}
+    plan = {'workspace': str(workspace), 'expected_outputs': {'metrics_files': ['metrics.json']}}
+    with pytest.raises(ValueError, match='Bind every'):
+        observation_contract(decision, plan)
+    plan['observation_bindings'] = {name: {'artifact_path': 'metrics.json',
+        'json_pointer': '/details/families/' + str(i) + '/count', 'producer': 'diagnostic.py report'}
+        for i, name in enumerate(decision['required_observations'])}
+    observation_contract(decision, plan)
+    support = collect_observation_support(decision, plan, {}, thread)
+    assert support['counts'] == {'a_count': 216, 'b_count': 0}
+    assert not support['evaluable']
+    assert measurement_facts(artifact)['facts']['/details/families/1/count'] == 0
+    previous = {'work_id': 'previous', 'status': 'completed', 'decision': decision,
+                'outcome': {'execution_result': 'executed', 'measurement_support': support}}
+    assessment = {'work_id': 'previous', 'result_kind': 'partial', 'evidence_ids': ['work_previous'],
+        'prediction_updates': [{'alternative_index': 0, 'effect': 'weakened', 'observation_ids': ['a_count'],
+                                'reason': 'Illustrative bounded prediction update, not inferred by the host.'},
+                               {'alternative_index': 1, 'effect': 'unresolved', 'observation_ids': [],
+                                'reason': 'No eligible observations for b.'}],
+        'missing_evidence': ['Eligible b observations'], 'next_decision': 'Choose a different b probe.'}
+    validate_previous_result({'previous_result': assessment}, previous, {'work_previous'})
+    assert 'partial' in planning_response_schema(previous)['properties']['previous_result']['properties']['result_kind']['enum']
+    assessment['prediction_updates'][1].update(effect='weakened', observation_ids=['b_count'])
+    with pytest.raises(ValueError, match='another family'):
+        validate_previous_result({'previous_result': assessment}, previous, {'work_previous'})
+    # A source path cannot manufacture the missing count by falling back to another field.
+    plan['observation_bindings']['a_count']['json_pointer'] = '/missing_count'
+    assert collect_observation_support(decision, plan, {'a_count': 999}, thread)['counts']['a_count'] is None
+    plan['observation_bindings']['a_count']['artifact_path'] = '../outside.json'
+    with pytest.raises(ValueError, match='declared metrics file'):
+        observation_contract(decision, plan)

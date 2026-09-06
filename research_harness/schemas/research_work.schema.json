@@ -64,7 +64,8 @@
         "required": [
           "explanation",
           "prediction",
-          "decision_if_observed"
+          "decision_if_observed",
+          "required_observations"
         ],
         "properties": {
           "explanation": {
@@ -78,6 +79,15 @@
           "decision_if_observed": {
             "type": "string",
             "minLength": 1
+          },
+          "required_observations": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true,
+            "description": "Subset of this work required_observations needed for this prediction. Include shared validity/support counts. Empty for source analysis only."
           }
         },
         "additionalProperties": false
@@ -130,7 +140,8 @@
               "enum": [
                 "execution_failure",
                 "inconclusive",
-                "informative"
+                "informative",
+                "partial"
               ]
             },
             "evidence_ids": {
@@ -159,12 +170,21 @@
                   "reason": {
                     "type": "string",
                     "minLength": 1
+                  },
+                  "observation_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "uniqueItems": true,
+                    "description": "Declared observation names used by this prediction update; never cite an unavailable count as evidence."
                   }
                 },
                 "required": [
                   "alternative_index",
                   "effect",
-                  "reason"
+                  "reason",
+                  "observation_ids"
                 ],
                 "additionalProperties": false
               }

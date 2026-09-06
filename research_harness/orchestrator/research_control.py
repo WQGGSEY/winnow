@@ -14,7 +14,7 @@ from research_harness.schemas.validator import validate_named_schema
 from research_harness.evaluation_vault import sealed_bank_metadata
 from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
 
-PLANNING_POLICY_VERSION = 22
+PLANNING_POLICY_VERSION = 23
 
 
 class StaleResearchWork(ValueError):
@@ -293,11 +293,8 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
                 path.relative_to(workspace)
                 path.relative_to(thread.resolve())
                 if path.is_file() and path.suffix == '.json':
-                    payload = _read(path).get('details')
-                    if payload is not None:
-                        raw = json.dumps(payload, ensure_ascii=False)
-                        details.append({'path': str(path), 'excerpt': raw if len(raw) <= 8000 else raw[:4000] + '\n[MIDDLE OMITTED]\n' + raw[-4000:],
-                                        'truncated': len(raw) > 8000})
+                    from research_harness.orchestrator.research_observations import measurement_facts
+                    details.append(measurement_facts(path))
             measurements[key] = details
     prepared = prepared_implementations(thread)
     brief = research_brief(thread)
@@ -318,6 +315,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
         'measurement_output_contract': {
             'unexpected_observations': 'Array of objects with string observation, evidence, scope_relation; optional suggested_branch_type is string or null. Use [] if absent; plain strings are invalid.',
             'scope': 'Output transport contract, not a scientific measurement or verdict.'},
+        'observation_binding_contract': 'For empirical work, supply experiment_plan.observation_bindings mapping every required_observations name to artifact_path (a declared metrics file), json_pointer and producer (source location). Bind existing emitted values explicitly; never guess aliases or silently aggregate observations.',
         'source_preparation': 'design_experiment_template(work_id, plan_metadata) prepares or repairs source within the SAME planned execution or protocol-revision work. The question and work_id remain active; preparation is not a new research work or observation.',
         'execution_review': {
             'automatic_before_runner': True,
@@ -365,9 +363,9 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     else:
         instructions = """Choose ONE next ResearchWork from the supplied development evidence. This call selects a question and a bounded procedure; it does not perform source analysis, implementation, or execution review. Return the decision directly in the supplied JSON schema. No tools are available in this role.
 
-Use authoritative_previous_result for the latest outcome. The previous decision describes intent, not what happened. Cite the previous work receipt and interpret every previous prediction exactly once. Execution or measurement failures leave scientific predictions unresolved. Empty eligible observations, missing telemetry and indistinguishable predictions are inconclusive, not evidence of no effect. Operational invalidity belongs in result_kind, not a scientific alternative. The schema fixes receipt facts but does not establish scientific truth.
+Use authoritative_previous_result for the latest outcome. The previous decision describes intent, not what happened. Cite the previous work receipt and interpret every previous prediction exactly once. Execution or measurement failures leave scientific predictions unresolved. Use decision_focus.prediction_support to separate interpretable predictions from missing or empty support. Use result_kind=partial when some predictions can be updated and others remain unsupported. Cite observation_ids for each empirical update. Missing support cannot refute its dependent prediction. Positive support alone does not prove a scientific effect. Operational invalidity belongs in result_kind, not a scientific alternative. The schema fixes receipt facts but does not establish scientific truth.
 
-Maintain solution_path and its parent_work_id from research_brief.current_solution. Explain what accounts for observations, what remains unexplained, which assumption changed, a possible intervention and the next decision toward the ORIGINAL goal. Negative findings are intermediate; they do not complete a solution goal. An intuition may motivate a small exploration without already having competing predictions. Discrimination and intervention require contrasting predictions. Do not manufacture an intervention when evidence is insufficient: name the smallest observation that would enable its design.
+Maintain solution_path and its parent_work_id from research_brief.current_solution. Explain what accounts for observations, what remains unexplained, which assumption changed, a possible intervention and the next decision toward the ORIGINAL goal. Negative findings are intermediate; they do not complete a solution goal. An intuition may motivate a small exploration without already having competing predictions. Discrimination and intervention require contrasting predictions. Do not wait for a complete causal theory before a cheap plausible intervention probe. State its intuition as provisional, predict a measurable original-goal effect, and include a matched control. A negative result must change the next intervention choice, not terminate a solution goal. If repeated diagnosis does not change that choice, revisit the assumption or choose another probe. Do not invent efficacy or a causal explanation.
 
 Choose from:
 - analysis: a distinct semantic or source question that changes which experiment to run. Existing findings are fallible but should not be repeatedly re-audited without a specific unresolved distinction. source_mode=acquire only when primary material actually needs acquisition.
@@ -376,7 +374,7 @@ Choose from:
 - protocol_revision: a prospective design change actually required by the intended question or a cited active restriction. Changes cannot lower the original endpoints or success bar. component_binding requires preparing actual source within the same work; study_design does not. Automatic pre-execution source binding is already available for permitted diagnostics.
 - confirmation: only when confirmation_available is true. The existing freeze, qualification and independent checks still govern dispatch.
 
-Use diagnostic_required to choose diagnostic_experiment, analysis or protocol_revision after unusable or unchanged observations. Declare nonempty required_observations count metrics for empirical work; analysis/protocol_revision must use []. A selected empirical test must have a plausible opportunity for eligible observations. If unknown, choose a small support probe. Set a runtime no greater than max_runtime_seconds.
+After unusable or unchanged observations, choose recovery, existing-source analysis, a different diagnostic or a small exploratory competence/comparison control. An operational failure leaves the hypothesis unresolved but may justify replacing the procedure based on cost or feasibility. First inspect measurement_context facts: if a needed quantity is already recorded, prefer existing-source analysis over rerunning solely to rename or recover it. Declare nonempty required_observations count names for empirical work and their subsets on each alternative, including shared validity dependencies; analysis/protocol_revision must use []. The execution agent must bind every count to an artifact JSON pointer and producer in experiment_plan.observation_bindings; names alone are not an output contract. A selected empirical test must have a plausible opportunity for eligible observations. If unknown, choose a small support probe. Set a runtime no greater than max_runtime_seconds.
 
 Implementation source, full protocol history and older findings have exact references for downstream analysis and implementation agents. A reference is not missing evidence and you have not inspected it in this call. Use visible summaries with their limitations; do not assert unseen contents, source fidelity or protocol compliance. Only choose analysis if the missing detail changes the scientific choice itself. Routine code inspection, instrumentation repair and checking protocol compliance belong to design_experiment_template and the independent pre-execution reviewer within the selected work. That reviewer receives full protocol history and proposed source, and can reject or route a necessary amendment before execution. This decision grants no execution permission or scientific approval.
 
@@ -416,12 +414,19 @@ Preserve deferred_questions as outside the current test. Do not combine unrelate
             raise ValueError('An empirical work must declare its eligible-observation count metrics.')
         if decision['kind'] in {'analysis', 'protocol_revision'} and decision['required_observations']:
             raise ValueError('Source analysis and protocol revision cannot manufacture empirical observation counts.')
+        for alternative in decision['alternatives']:
+            dependencies = alternative['required_observations']
+            if set(dependencies) - set(decision['required_observations']):
+                raise ValueError('Prediction dependencies must name this work required observations.')
+            if decision['required_observations'] and not dependencies:
+                raise ValueError('Each empirical prediction needs explicit observation dependencies.')
         validate_previous_result(decision, previous, available_evidence)
         if (decision['kind'] == 'protocol_revision') != (decision['protocol_change'] != 'not_applicable'):
             raise ValueError('protocol_revision requires study_design or component_binding; other work uses not_applicable.')
         if set(decision['evidence_ids']) - available_evidence or (available_evidence and not decision['evidence_ids']):
             raise ValueError('The work decision must cite existing development execution or source-analysis evidence.')
-        if diagnostic_required and decision['kind'] not in {'diagnostic_experiment', 'analysis', 'protocol_revision'}:
+        if (diagnostic_required and decision['kind'] not in {'diagnostic_experiment', 'analysis', 'protocol_revision'}
+                and not (decision['inquiry_mode'] == 'exploration' and decision['kind'] in {'competence', 'comparison'})):
             raise ValueError('An execution failure or unchanged observation requires a discriminating diagnostic.')
         if decision['kind'] == 'confirmation' and not packet['confirmation_available']:
             raise ValueError('Confirmation requires approved future sampling and qualified baselines.')
@@ -533,6 +538,8 @@ def bind_work(thread: Path, work_id: str | None, node_id: str, plan: dict[str, A
         raise StaleResearchWork('New evidence arrived; call plan_research_work before execution.')
     if plan['resources']['timeout_sec'] > work['decision']['max_runtime_seconds']:
         raise ValueError('Execution exceeds this work unit budget; implement the selected smaller test.')
+    from research_harness.orchestrator.research_observations import observation_contract
+    observation_contract(work['decision'], plan)
     binding = {'node_id': node_id, 'plan_digest': _digest(plan), 'scope': scope}
     if work.get('binding') and work['binding'] != binding:
         raise ValueError('This work unit is already bound to another execution.')
@@ -552,7 +559,7 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         raise ValueError('Implementation review requires the bound research work.')
     prior = work.get('implementation_review', {})
     plan_digest = _digest(plan)
-    review_policy_version = 11
+    review_policy_version = 12
     execution_sources = []
     workspace = Path(plan['workspace']).resolve()
     for source in plan['source_files']:
@@ -579,7 +586,9 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         }
     findings = analysis_findings(thread)
     selected_evidence = set(work['decision']['evidence_ids'])
-    packet = {'work_decision': work['decision'], 'node': node, 'experiment_plan': plan,
+    from research_harness.orchestrator.research_observations import observation_contract
+    packet = {'observation_contract': observation_contract(work['decision'], plan),
+              'work_decision': work['decision'], 'node': node, 'experiment_plan': plan,
               'decision_scope': 'development_execution',
               'execution_source_manifest': execution_sources,
               'diagnostic_source_binding_proposal': diagnostic_binding,
@@ -686,15 +695,10 @@ def finish_work(thread: Path, result: dict[str, Any]) -> dict[str, Any]:
         'scientific_verdict': 'unverified',
     }, next_tool_to_call='plan_research_work')
     if new and new.get('measurement_status') == 'completed':
-        from math import isfinite
-
-        counts = {key: new.get('metrics', {}).get(key) for key in work['decision'].get('required_observations', [])}
-        missing = [key for key, value in counts.items() if isinstance(value, bool)
-                   or not isinstance(value, (int, float)) or not isfinite(value) or value <= 0]
-        work['outcome']['measurement_support'] = {
-            'counts': counts, 'missing_or_empty': missing, 'evaluable': bool(counts) and not missing,
-            'scope': 'Nonempty support is necessary, not sufficient, for the selected test. It does not establish power, correctness or scientific validity.',
-        }
+        from research_harness.orchestrator.research_observations import collect_observation_support
+        plan = _read(node_dir / 'experiment_plan.json')
+        work['outcome']['measurement_support'] = collect_observation_support(
+            work['decision'], plan, new.get('metrics', {}), thread)
     if dispatch_rejected:
         work.update(status='planned', next_tool_to_call='execute_baseline_preflight'
                     if work['binding'].get('scope', 'baseline_preflight') == 'baseline_preflight'

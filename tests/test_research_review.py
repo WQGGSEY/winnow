@@ -22,7 +22,7 @@ def test_development_review_cannot_install_future_or_invented_requirements(tmp_p
               'registered_protocol': {'notes': 'Qualify the final comparator before confirmation.'}}
     assessment = {'decision': 'reject', 'reason': 'Not ready.', 'evidence': ['work_decision.test'],
         'required_work': ['Complete the final comparison first.'], 'next_steps': [],
-        'blocking_basis': [{'required_work_index': 0, 'scope': scope, 'basis_path': path, 'basis_quote': quote}]}
+        'observation_checks': [], 'blocking_basis': [{'required_work_index': 0, 'scope': scope, 'basis_path': path, 'basis_quote': quote}]}
     repo = Path(__file__).resolve().parents[1]
     with patch('research_harness.orchestrator.research_review.CodexCliAdapter.complete') as complete:
         complete.return_value = CompletionResult(text=json.dumps(assessment), usage=AgentUsage(), thread_id='review')
@@ -98,7 +98,7 @@ def test_review_bundle_preserves_evidence_and_denies_self_replay(tmp_path):
     (prior_dir / 'request.json').write_text('{}')
     assert predecessor_review_delta(tmp_path, work, changed) is None
     assessment = {'decision': 'approve', 'reason': 'Valid development execution.',
-                  'evidence': ['measure.py'], 'required_work': [], 'next_steps': [], 'blocking_basis': []}
+                  'evidence': ['measure.py'], 'required_work': [], 'next_steps': [], 'blocking_basis': [], 'observation_checks': []}
     repo = Path(__file__).resolve().parents[1]
     with patch('research_harness.orchestrator.research_review.CodexCliAdapter.complete') as complete:
         complete.return_value = CompletionResult(text=json.dumps(assessment), usage=AgentUsage(), thread_id=None)
@@ -111,3 +111,17 @@ def test_review_bundle_preserves_evidence_and_denies_self_replay(tmp_path):
         req = complete.call_args.args[0]
         assert not req.allow_local_tools
         assert json.loads(req.prompt.input)['experiment_plan']['source_files'][0]['content'] == source['content']
+
+
+def test_execution_review_cannot_omit_declared_output_checks():
+    from research_harness.orchestrator.research_review import validate_execution_objections
+    packet = {'observation_contract': {'eligible_count': {'json_pointer': '/metrics/eligible_count'}}}
+    assessment = {'decision': 'approve', 'required_work': [], 'blocking_basis': [], 'observation_checks': []}
+    with pytest.raises(ValueError, match='every declared observation'):
+        validate_execution_objections(assessment, packet)
+    assessment['observation_checks'] = [{'observation_id': 'eligible_count', 'emitted_by_producer': False,
+                                       'reason': 'Producer emits a different key.'}]
+    with pytest.raises(ValueError, match='missing declared observation'):
+        validate_execution_objections(assessment, packet)
+    assessment['observation_checks'][0]['emitted_by_producer'] = True
+    validate_execution_objections(assessment, packet)

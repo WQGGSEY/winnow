@@ -24,6 +24,34 @@
     "reproducibility"
   ],
   "properties": {
+    "observation_bindings": {
+      "type": "object",
+      "description": "Required for ResearchWork execution. Map each required count name to its exact emitted value; no implicit aliases or aggregation.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "artifact_path",
+          "json_pointer",
+          "producer"
+        ],
+        "properties": {
+          "artifact_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "json_pointer": {
+            "type": "string",
+            "minLength": 1
+          },
+          "producer": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Source file and producer that emits this count, for independent review."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     "plan_id": { "type": "string", "minLength": 1 },
     "node_id": { "type": "string", "minLength": 1 },
     "claim_under_test": { "type": "string", "minLength": 1 },

@@ -6,7 +6,8 @@
     "evidence",
     "required_work",
     "next_steps",
-    "blocking_basis"
+    "blocking_basis",
+    "observation_checks"
   ],
   "properties": {
     "decision": {
@@ -83,6 +84,31 @@
         },
         "additionalProperties": false
       }
+    },
+    "observation_checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "observation_id",
+          "emitted_by_producer",
+          "reason"
+        ],
+        "properties": {
+          "observation_id": {
+            "type": "string"
+          },
+          "emitted_by_producer": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "Exactly one check per observation_contract entry. Trace the named producer to the bound output path. Approval requires every declared count to be emitted, not to be positive."
     }
   },
   "additionalProperties": false

@@ -175,6 +175,8 @@ def review_research_packet(repo: Path, directory: Path, packet: dict[str, Any], 
         instructions += (
             ' This decision authorizes one development execution only. For each required_work item, '
             'supply a blocking_basis naming its scope, exact packet basis_path and an exact basis_quote. '
+            'For every observation_contract entry supply observation_checks: trace the named producer to that exact emitted JSON value. '
+            'Reject a missing output even if a differently named value exists elsewhere. Counts may be zero; approval checks emission, not a positive outcome. '
             'A requirement for final confirmation or publication is not a prerequisite to this development test; '
             'put it in next_steps. Do not qualify a baseline or approve a scientific conclusion here. '
             'When rejecting for a protocol clause, cite the applicable development clause from protocol_note_history '
@@ -186,6 +188,12 @@ def review_research_packet(repo: Path, directory: Path, packet: dict[str, Any], 
 
 
 def validate_execution_objections(assessment: dict[str, Any], packet: dict[str, Any]) -> None:
+    checks = assessment.get('observation_checks', [])
+    contract = packet.get('observation_contract', {})
+    if sorted(item['observation_id'] for item in checks) != sorted(contract):
+        raise ValueError('Review every declared observation output exactly once.')
+    if assessment['decision'] == 'approve' and any(not item['emitted_by_producer'] for item in checks):
+        raise ValueError('Cannot approve an implementation with a missing declared observation output.')
     required = assessment['required_work']
     bases = assessment['blocking_basis']
     if sorted(item['required_work_index'] for item in bases) != list(range(len(required))):
@@ -196,7 +204,7 @@ def validate_execution_objections(assessment: dict[str, Any], packet: dict[str, 
         parts = basis['basis_path'].split('.')
         allowed = {
             'selected_test': {'work_decision'},
-            'runtime_contract': {'runner_contract', 'experiment_plan'},
+            'runtime_contract': {'runner_contract', 'experiment_plan', 'observation_contract'},
             'development_protocol': {'registered_protocol', 'protocol_note_history'},
             'method_semantics': {'analysis_findings', 'prepared_implementations', 'experiment_plan'},
         }
@@ -233,7 +241,7 @@ def analyze_research_packet(repo: Path, directory: Path, packet: dict[str, Any],
 
 def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, instructions: str, schema_name: str) -> dict[str, Any]:
     request_data = {"model": research_model(), "reasoning_effort": model_reasoning_effort(research_model()), "instructions": instructions, "packet": packet, "response_schema": schema_name, "response_schema_sha256": hashlib.sha256((repo / "research_harness/schemas" / f"{schema_name}.schema.json").read_bytes()).hexdigest()}
-    request_data["review_transport_version"] = 3
+    request_data["review_transport_version"] = 4
     serialized = json.dumps(request_data, sort_keys=True, ensure_ascii=False)
     digest = hashlib.sha256(serialized.encode()).hexdigest()
     rejection_path = directory / digest / 'rejected_review.json'
