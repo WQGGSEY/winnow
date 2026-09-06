@@ -498,7 +498,8 @@ Preserve deferred_questions as outside the current test. Do not combine unrelate
         submitted = {**packet, 'previous_response_rejection': prior_rejection} if prior_rejection else packet
         _write(directory / 'submitted_request.json', submitted)
         schema_path = directory / 'response.schema.json'
-        _write(schema_path, planning_response_schema(previous, available_evidence=available_evidence))
+        _write(schema_path, planning_response_schema(previous, available_evidence=available_evidence,
+                                                     available_hypotheses={item['id'] for item in hypotheses.get('candidates', [])}))
         with tempfile.TemporaryDirectory(prefix='research-work-') as temporary:
             response = (transport or CodexCliAdapter()).complete(CompletionRequest(
                 prompt=AgentPrompt(instructions=instructions, input=json.dumps(submitted, ensure_ascii=False)),

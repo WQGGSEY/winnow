@@ -843,7 +843,12 @@ def test_planner_schema_binds_failed_receipt_before_generation(tmp_path):
     thread, _, _, _, _ = fixture(tmp_path)
     previous = plan_research_work(REPO, thread, transport=Planner())
     previous.update(status='completed', outcome={'execution_result': 'execution_failed'})
-    schema = planning_response_schema(previous, available_evidence={'work_' + previous['work_id']})['properties']['previous_result']
+    generated = planning_response_schema(previous, available_evidence={'work_' + previous['work_id']},
+                                         available_hypotheses={'recorded-hypothesis'})
+    with pytest.raises(ValueError):
+        validate_schema(generated['properties']['hypothesis_ids'], ['mistyped-hypothesis'])
+    validate_schema(generated['properties']['hypothesis_ids'], ['recorded-hypothesis'])
+    schema = generated['properties']['previous_result']
     assessment = {'work_id': previous['work_id'], 'result_kind': 'execution_failure',
                   'evidence_ids': ['work_' + previous['work_id']], 'missing_evidence': ['valid measurement'],
                   'next_decision': 'Repair the actual output failure',
@@ -863,7 +868,7 @@ def test_planner_schema_binds_failed_receipt_before_generation(tmp_path):
     analysis['decision'].update(kind='analysis', required_observations=[])
     for alternative in analysis['decision']['alternatives']:
         alternative['required_observations'] = []
-    source_schema = planning_response_schema(analysis, available_evidence={'work_' + analysis['work_id']})['properties']['previous_result']
+    source_schema = planning_response_schema(analysis, available_evidence={'work_' + analysis['work_id']}, available_hypotheses=set())['properties']['previous_result']
     assessment.update(work_id=previous['work_id'], result_kind='inconclusive')
     assessment['prediction_updates'][1].update(effect='unresolved', observation_ids=['/raw/artifact/pointer'])
     with pytest.raises(ValueError):
@@ -1004,7 +1009,7 @@ def test_output_bindings_and_partial_interpretation_preserve_family_boundaries(t
                                 'reason': 'No eligible observations for b.'}],
         'missing_evidence': ['Eligible b observations'], 'next_decision': 'Choose a different b probe.'}
     validate_previous_result({'previous_result': assessment}, previous, {'work_previous'})
-    assert 'partial' in planning_response_schema(previous, available_evidence={'work_' + previous['work_id']})['properties']['previous_result']['properties']['result_kind']['enum']
+    assert 'partial' in planning_response_schema(previous, available_evidence={'work_' + previous['work_id']}, available_hypotheses=set())['properties']['previous_result']['properties']['result_kind']['enum']
     assessment['prediction_updates'][1].update(effect='weakened', observation_ids=['b_count'])
     with pytest.raises(ValueError, match='another family'):
         validate_previous_result({'previous_result': assessment}, previous, {'work_previous'})

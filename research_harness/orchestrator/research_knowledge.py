@@ -77,7 +77,8 @@ def failed_measurement(previous: dict[str, Any]) -> bool:
             outcome.get('execution_result') in {'execution_failed', 'interrupted', 'rejected'})
 
 
-def planning_response_schema(previous: dict[str, Any], *, available_evidence: set[str]) -> dict[str, Any]:
+def planning_response_schema(previous: dict[str, Any], *, available_evidence: set[str],
+                             available_hypotheses: set[str]) -> dict[str, Any]:
     """Constrain receipt facts before generation; scientific judgments remain open."""
     from research_harness.schemas.validator import load_schema
     schema = load_schema('research_work')
@@ -100,6 +101,11 @@ def planning_response_schema(previous: dict[str, Any], *, available_evidence: se
         evidence_ids['items']['enum'] = sorted(available_evidence)
     else:
         evidence_ids['maxItems'] = 0
+    hypothesis_ids = schema['properties']['hypothesis_ids']
+    if available_hypotheses:
+        hypothesis_ids['items']['enum'] = sorted(available_hypotheses)
+    else:
+        hypothesis_ids['maxItems'] = 0
     field = schema['properties']['previous_result']
     if previous.get('status') != 'completed':
         schema['properties']['previous_result'] = {'type': 'null'}
