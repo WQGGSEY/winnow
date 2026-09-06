@@ -187,3 +187,34 @@ def test_inspection_budget_prioritizes_experiment_source_over_recent_framework_r
     recovered = completed_inspection(path, ('/workspace/experiment.py',))
     assert recovered['observations'][0]['output'] == 'source' * 700
     assert recovered['omitted_output_count'] == 1
+
+
+def test_protocol_interpretation_is_preserved_across_implementation_revisions(tmp_path):
+    packet = {'decision_scope': 'development_execution', 'work_decision': {'test': 'Compare matched controls.'},
+              'registered_protocol': {'notes': 'Keep the original outcome.'},
+              'protocol_note_history': {'entries': [{'notes': 'Keep the original outcome.'},
+                                                    {'notes': 'A later confirmation must use unused inputs.'}]},
+              'experiment_plan': {'source_files': [{'path': 'measure.py', 'content': 'print(1)'}]}}
+    repo = Path(__file__).resolve().parents[1]
+    seen = []
+    def complete(request):
+        value = json.loads(request.prompt.input)
+        seen.append(value)
+        if 'amendment_history' in value:
+            assert not request.allow_local_tools
+            result = {'status': 'answered', 'answer': 'Preserve outcome; confirmation is later.',
+                      'evidence': ['amendment_history.entries.0.notes'], 'limitations': [], 'next_steps': []}
+        else:
+            assert value['protocol_scope_analysis']['assessment']['status'] == 'answered'
+            reference = value['evidence_sections']['protocol_note_history']
+            assert json.loads(Path(reference['path']).read_text()) == packet['protocol_note_history']
+            result = {'decision': 'approve', 'reason': 'Valid selected test.', 'evidence': ['measure.py'],
+                      'required_work': [], 'next_steps': [], 'blocking_basis': [], 'observation_checks': []}
+        return CompletionResult(json.dumps(result), AgentUsage(), None)
+    with patch('research_harness.orchestrator.research_review.CodexCliAdapter.complete', side_effect=complete):
+        first = review_research_packet(repo, tmp_path, packet, purpose='Development test.')
+        assert review_research_packet(repo, tmp_path, packet, purpose='Development test.') == first
+        packet['experiment_plan']['source_files'][0]['content'] = 'print(2)'
+        review_research_packet(repo, tmp_path, packet, purpose='Development test.')
+    assert len(seen) == 3
+    assert sum('amendment_history' in value for value in seen) == 1

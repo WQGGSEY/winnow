@@ -177,3 +177,34 @@ The corrected continuation `source-retention-recovery` retains the same run
 ledger/deadline. Its initial review prompt is 262,965 bytes, below the 280 KB
 per-call ceiling. 41 control/review checks passed. Actual review and experiment
 outcomes are still pending at this checkpoint.
+
+## Separating protocol scope from code judgment
+
+The unchanged source-preserved synthesis also timed out at 600 seconds. No final
+assessment or usage record was returned. Increasing the timeout alone did not
+resolve that combined review. The retained protocol history contained 30 distinct
+approved amendments, about 107 KB; removing exact duplicate text was not a solution.
+
+Execution review now first records a separate, tool-free protocol-scope analysis
+of the selected question and supplied registered text. It does not inspect or
+approve code. The code reviewer receives that fallible guide, the original
+history reference, and the actual source/inspection evidence. The original packet
+remains available for exact blocking-clause validation. No protocol is rewritten
+or waived. The guide is cached across source revisions of the same work; a changed
+protocol or selected question changes its input digest.
+
+Run `luna-cycle-e2e-20260907-070544` reached a real scope answer in about 321 seconds
+from 124,260 initial prompt bytes. Usage: 49,251 input and 17,558 output tokens,
+including 16,836 reasoning tokens. Status was unresolved: historical permission
+bound a single collect-and-return task-feasibility execution on tiny/alley/test,
+while a later test-to-blox replacement applied explicitly to training/Q2 grids.
+It did not clearly authorize the new two-arm naive/random tiny/alley/blox test.
+The analysis identified the relevant old and replacement clauses rather than
+inventing an implementation defect or approving the ambiguity.
+
+The subsequent independent source judgment receives 160,743 initial prompt bytes,
+compared with 262,965 in the unsplit synthesis. Its decision remains pending at
+this checkpoint. This finding is evidence of a protocol/history bottleneck in
+addition to latency, not evidence of an RL improvement or completed priorities1–4.
+The stage-cache and original-history preservation regression passed along with
+the existing control/review checks, 42 in total.
