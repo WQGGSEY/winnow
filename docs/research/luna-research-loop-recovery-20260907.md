@@ -298,3 +298,9 @@ The actual protocol review prompt was 371250 bytes and rejected before model sub
 The previous protocol MCP handler classified budget/transport interruption as rejected and enabled reconsideration. It now records a checkpoint, saves exact submitted amendment arguments, and exposes an unchanged resume handoff. Completed independent review clears the checkpoint; actual design rejection still follows its normal revision path. Existing empirical saved-request handoffs also cover comparison/competence work, not just diagnostics.
 
 Verification: research_control/research_review — 51 passed. Extended existing protocol-amendment cases across study-design, component-binding and partition variants to assert that budget interruption changes no protocol and preserves exact retry arguments. git diff --check passed. No new game or intervention result yet.
+
+### Remove unconditional sampler re-registration
+
+The resumed coordinator preserved notes but changed replace_holdout/defer_holdout_generation from the saved false/false to true/true. A global supervisor instruction said to retire/re-register whenever a future sampler was present, contradicting exact checkpoint replay. Replaced that unconditional instruction: only a selected new sampling design uses those flags; mere presence of an already registered sampler does not. The in-flight independent review still owns the submitted revision; the root has not altered its scientific proposal.
+
+Verification: included in the combined research_control/research_review/thread_supervisor run — 108 passed, 3 subtests passed; git diff --check. Live recovery fidelity after this prompt adjustment remains to be observed at the next process boundary.

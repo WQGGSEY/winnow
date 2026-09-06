@@ -1306,7 +1306,7 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "     planning_failed 또는 planning_required는 응답·인용 오류의 복구 경로다. 반환된 plan_research_work를 재시도하고 advance_research로 새 방향을 만들지 마. 완료 work의 일반 후속 계획에는 reconsider_reason을 붙이지 마.",
         "     반환된 work_id와 test를 실행 코드에 적용하고 그 작업의 예산을 넘기지 마.",
         "     kind=analysis는 resolve_research_work로 기존 근거에서 답해. 의미 해석을 위한 실험 코드를 만들지 마.",
-        "     미래 sampler가 제공되면 replace_holdout=true, defer_holdout_generation=true로 과거 bank를 전부 폐기하고 생성 규칙만 먼저 등록해. kind=protocol_revision은 revise_evaluation_protocol로 notes 변경안과 근거를 독립 검토에 제출해. 원래 목표·평가 기준·미사용 holdout을 보존하고 변경 이력을 공개해.",
+        "     kind=protocol_revision은 선택된 작업의 notes 변경안과 근거를 revise_evaluation_protocol의 독립 검토에 제출해. 등록된 미래 sampler가 존재한다는 이유만으로 holdout을 재등록하지 마. 선택된 작업이 새 sampling 설계를 요구할 때만 replace_holdout=true, defer_holdout_generation=true를 사용하고, checkpoint 재개는 저장된 옵션까지 그대로 따라. 원래 목표·평가 기준·미사용 holdout을 보존하고 변경 이력을 공개해.",
         "     한 실행이 끝나면 supervisor가 새 세션에서 결과를 해석하고 다음 작업을 계획한다.",
         "     실행 오류를 과학적 반박으로 해석하지 마. 같은 관측을 반복해도 개입 선택이 바뀌지 않으면 진단 절차를 교체하거나 작은 개입과 대조군을 비교해. 완전한 원인 설명을 기다릴 필요는 없지만 직관은 미검증 가정으로 남겨.",
         "     planned 작업에 거절 사유와 dispatch_request_path가 있으면 저장된 요청의 입력 오류를 고쳐 같은 검사를 재시도해. 실행 전 거절은 새 연구 관측이 아니야.",
