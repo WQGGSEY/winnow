@@ -208,6 +208,15 @@ def development_result_index(thread: Path) -> dict[str, Any]:
 
 
 
+
+def focused_development_evidence(thread: Path, recent: dict[str, Any], previous: dict[str, Any]) -> dict[str, Any]:
+    """Keep cited older measurements visible alongside recent measurement details."""
+    cited = set(previous.get('decision', {}).get('evidence_ids', []))
+    history = development_evidence(thread, limit=None) if cited - recent.keys() else recent
+    return {**{key: value for key, value in history.items() if key in cited},
+            **dict(list(recent.items())[-2:])}
+
+
 def development_execution_history(thread: Path) -> dict[str, Any]:
     """Expose actual launches to interpret consumable protocol permissions."""
     history = {}
@@ -306,8 +315,6 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     duplicate_observation = (len(evidence) >= 2 and
                              list(evidence.values())[-1]['observation_digest'] == list(evidence.values())[-2]['observation_digest'])
     diagnostic_required = (diagnostic_required or
-                           (previous.get('outcome', {}).get('execution_result') in {'rejected', 'interrupted'}
-                            and not previous.get('requires_replanning')) or
                            (duplicate_observation and previous.get('decision', {}).get('kind') != 'replication'))
     research = hypothesis_context(repo, thread)
     hypotheses = _read(thread / 'production/hypotheses/current.json')
@@ -317,7 +324,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     }
     implementations = {}
     measurements = {}
-    for key, observation in list(evidence.items())[-2:]:
+    for key, observation in focused_development_evidence(thread, evidence, previous).items():
         plan = _read((thread / observation['report_path']).parent / 'experiment_plan.json')
         source = json.dumps(plan.get('source_files', []), ensure_ascii=False)
         implementations[key] = {'plan_path': str(((thread / observation['report_path']).parent / 'experiment_plan.json').resolve()), 'source_excerpt': source if len(source) <= 32000 else source[:16000] + '\n[MIDDLE OMITTED]\n' + source[-16000:],

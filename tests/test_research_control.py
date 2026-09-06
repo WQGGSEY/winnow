@@ -109,7 +109,7 @@ def test_execution_inventory_includes_preparation_without_reading_measurements(t
 
 
 def test_historical_measurements_remain_discoverable_after_recent_window(tmp_path):
-    from research_harness.orchestrator.research_control import development_result_index
+    from research_harness.orchestrator.research_control import development_result_index, focused_development_evidence
     for index in range(10):
         directory = tmp_path / 'production/tree/baseline_preflight' / f'measurement_{index}'
         workspace = directory / 'workspace'
@@ -125,6 +125,10 @@ def test_historical_measurements_remain_discoverable_after_recent_window(tmp_pat
     assert index['measurement_0']['declared_objective'] == 'Question 0'
     assert index['measurement_0']['metrics'] == {'value': 0}
     assert Path(index['measurement_0']['report_path']).is_file()
+    focused = focused_development_evidence(tmp_path, development_evidence(tmp_path),
+        {'decision': {'evidence_ids': ['measurement_0']}})
+    assert set(focused) == {'measurement_0', 'measurement_8', 'measurement_9'}
+    assert focused['measurement_0']['metrics'] == {'value': 0}
 
 
 class Planner:
@@ -661,19 +665,18 @@ def test_reconsideration_keeps_rejected_plan_and_does_not_create_observations(tm
         work[review_key] = {'assessment': {'status': 'unresolved', 'answer': 'Scope requires clarification.'}}
         work['requires_replanning'] = True
     (thread / 'production/research_control/current.json').write_text(json.dumps(work))
+    bind_work(thread, work['work_id'], node['id'], plan)
+    unresolved = finish_work(thread, {'status': 'rejected', 'reason': 'Pre-execution review rejected the plan.'})
     if review_key == 'protocol_scope_analysis':
-        bind_work(thread, work['work_id'], node['id'], plan)
-        unresolved = finish_work(thread, {'status': 'rejected', 'reason': 'Scope requires clarification.'})
         assert unresolved['next_tool_to_call'] == 'plan_research_work'
         assert unresolved['reconsideration_available']
-        assert not current_work(thread)['outcome']['new_observation']
+    assert not current_work(thread)['outcome']['new_observation']
     planner = Planner('analysis')
     revised = plan_research_work(REPO, thread, reconsider_reason='Inspect available source provenance instead of inventing telemetry.', transport=planner)
     assert revised['next_tool_to_call'] == 'resolve_research_work'
     assert revised['evidence_digest'] == work['evidence_digest']
     assert planner.calls[0]['previous_work'][review_key] == work[review_key]
-    if review_key == 'protocol_scope_analysis':
-        assert not planner.calls[0]['diagnostic_required']
+    assert not planner.calls[0]['diagnostic_required']
     assert planner.calls[0]['reconsider_reason']
     old = json.loads((thread / 'production/research_control/work' / work['work_id'] / 'work.json').read_text())
     assert old['status'] == 'superseded'
