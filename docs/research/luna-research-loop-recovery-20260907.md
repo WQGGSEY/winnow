@@ -50,3 +50,29 @@ comparison have not yet been established at this checkpoint. The root agent has
 not supplied an RL learner or scientific intervention. 37 focused control/review
 checks passed; these protect implementation behavior and do not demonstrate
 research success.
+
+## Interrupted inspection recovery
+
+The focused analysis reached the metric producer and read the selected artifacts,
+but timed out at 300 seconds before returning a final answer. Its event stream
+contained 12 successful read-only command outputs, including the full metric
+producer and computed summaries of the existing artifact. No accepted analysis
+was persisted. Input compaction alone was therefore insufficient.
+
+Analysis recovery now separates these completed observations from unfinished
+interpretation. It retains successful tool outputs verbatim, their output hashes,
+commands and original event-stream hash. Failed commands and incomplete event
+lines do not become evidence. Duplicate outputs are removed and an 80 KB bound
+on the serialized observations reports any omissions. All 12 outputs fit for this
+run, with zero omissions. A resumed synthesis call gets those observations and
+the selected question with local tools disabled. It must answer from that record
+or explicitly identify missing evidence; it cannot buy another round of the same
+inspection. The original events remain immutable and the synthesis cache key
+includes the recovered observations.
+
+The `inspection-recovery` continuation retains the original run's deadline and
+call ledger. All processes belonging to the failed budget were absent before
+resumption. The live synthesis initial prompt is 105,277 bytes. A focused
+regression also exercises an interrupted trailing JSON event, exact observation
+retention, disabled synthesis tools and reuse of the accepted analysis receipt.
+38 control/review checks passed. The scientific result is still pending.

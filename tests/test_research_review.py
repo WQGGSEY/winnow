@@ -134,3 +134,32 @@ def test_execution_review_cannot_omit_declared_output_checks():
         validate_execution_objections(assessment, packet)
     assessment['observation_checks'][0]['emitted_by_producer'] = True
     validate_execution_objections(assessment, packet)
+
+
+def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp_path):
+    from research_harness.orchestrator.research_review import analyze_research_packet
+    from research_harness.adapters.codex_cli import CodexCliError
+    repo = Path(__file__).resolve().parents[1]
+    packet = {'question': {'evidence_ids': []}}
+    assessment = {'status': 'answered', 'answer': 'The recorded count is 7.',
+                  'evidence': ['metrics.json /count'], 'limitations': [], 'next_steps': []}
+    requests = []
+    def complete(request):
+        requests.append(request)
+        if len(requests) == 1:
+            request.event_log_path.write_text(json.dumps({'type': 'item.completed', 'item': {
+                'type': 'command_execution', 'command': 'cat metrics.json',
+                'exit_code': 0, 'aggregated_output': '{"count":7}'}}) + '\n{"type":')
+            raise CodexCliError('timeout')
+        assert not request.allow_local_tools
+        recovered = json.loads(request.prompt.input)['completed_inspection']
+        assert recovered['observations'][0]['output'] == '{"count":7}'
+        assert Path(recovered['events_path']).read_text().endswith('{"type":')
+        return CompletionResult(json.dumps(assessment), AgentUsage(), None)
+    with patch('research_harness.orchestrator.research_review.CodexCliAdapter.complete', side_effect=complete):
+        with pytest.raises(CodexCliError):
+            analyze_research_packet(repo, tmp_path, packet, purpose='Read the count.')
+        result = analyze_research_packet(repo, tmp_path, packet, purpose='Read the count.')
+        assert result['assessment'] == assessment
+        assert analyze_research_packet(repo, tmp_path, packet, purpose='Read the count.') == result
+        assert len(requests) == 2
