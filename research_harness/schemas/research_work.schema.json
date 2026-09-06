@@ -86,7 +86,6 @@
               "type": "string",
               "minLength": 1
             },
-            "uniqueItems": true,
             "description": "Subset of this work required_observations needed for this prediction. Include shared validity/support counts. Empty for source analysis only."
           }
         },
@@ -176,7 +175,6 @@
                     "items": {
                       "type": "string"
                     },
-                    "uniqueItems": true,
                     "description": "Declared observation names used by this prediction update; never cite an unavailable count as evidence."
                   }
                 },

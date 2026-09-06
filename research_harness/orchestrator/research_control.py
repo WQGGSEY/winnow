@@ -414,8 +414,12 @@ Preserve deferred_questions as outside the current test. Do not combine unrelate
             raise ValueError('An empirical work must declare its eligible-observation count metrics.')
         if decision['kind'] in {'analysis', 'protocol_revision'} and decision['required_observations']:
             raise ValueError('Source analysis and protocol revision cannot manufacture empirical observation counts.')
+        if len(decision['required_observations']) != len(set(decision['required_observations'])):
+            raise ValueError('Required observation names must be unique.')
         for alternative in decision['alternatives']:
             dependencies = alternative['required_observations']
+            if len(dependencies) != len(set(dependencies)):
+                raise ValueError('Prediction observation dependencies must be unique.')
             if set(dependencies) - set(decision['required_observations']):
                 raise ValueError('Prediction dependencies must name this work required observations.')
             if decision['required_observations'] and not dependencies:

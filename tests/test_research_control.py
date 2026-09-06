@@ -867,6 +867,10 @@ def test_output_bindings_and_partial_interpretation_preserve_family_boundaries(t
     assessment['prediction_updates'][1].update(effect='weakened', observation_ids=['b_count'])
     with pytest.raises(ValueError, match='another family'):
         validate_previous_result({'previous_result': assessment}, previous, {'work_previous'})
+    assessment['prediction_updates'][1].update(effect='unresolved', observation_ids=[])
+    assessment['prediction_updates'][0]['observation_ids'] = ['a_count', 'a_count']
+    with pytest.raises(ValueError, match='citations must be unique'):
+        validate_previous_result({'previous_result': assessment}, previous, {'work_previous'})
     # A source path cannot manufacture the missing count by falling back to another field.
     plan['observation_bindings']['a_count']['json_pointer'] = '/missing_count'
     assert collect_observation_support(decision, plan, {'a_count': 999}, thread)['counts']['a_count'] is None

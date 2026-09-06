@@ -175,6 +175,8 @@ def validate_previous_result(decision: dict[str, Any], previous: dict[str, Any],
     for update in updates:
         row = eligibility[update['alternative_index']]
         cited = set(update.get('observation_ids', []))
+        if len(cited) != len(update.get('observation_ids', [])):
+            raise ValueError('Prediction observation citations must be unique.')
         if cited - set(row['required_observations']):
             raise ValueError('Prediction update cites observations outside its declared dependencies.')
         if update['effect'] != 'unresolved' and support is not None:
