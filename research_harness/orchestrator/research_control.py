@@ -39,6 +39,26 @@ def current_work(thread: Path) -> dict[str, Any]:
     return _read(thread / 'production/research_control/current.json')
 
 
+def runtime_input_example(thread: Path) -> dict[str, Any] | None:
+    intent = _read(thread / 'production/feasibility_envelope.json').get('operator_intent', {})
+    if not intent.get('data_source_snapshot_id'):
+        return None
+    paths = (thread / 'production/tree/baseline_preflight').glob('*/workspace/runtime_inputs.json')
+    for path in sorted(paths, key=lambda p: p.stat().st_mtime_ns, reverse=True):
+        if not path.resolve().is_relative_to(thread.resolve()):
+            continue
+        try:
+            manifest = _read(path)
+        except (OSError, ValueError):
+            continue
+        dataset = manifest.get('primary_dataset', {})
+        if (dataset.get('adapter_id') == intent.get('data_source_anchor')
+                and dataset.get('snapshot_id') == intent['data_source_snapshot_id']):
+            return {'manifest_path': str(path.resolve()), 'manifest': manifest,
+                    'usage': 'Read the current runtime manifest at execution. relative_path is opaque; do not require a historical basename. This example is not evidence that a program consumed the input.'}
+    return None
+
+
 def execution_inventory(thread: Path) -> dict[str, Any]:
     groups = {}
     for scope in ('baseline_preflight', 'nodes'):
@@ -199,6 +219,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     packet = {
         'available_evidence_ids': sorted(available_evidence),
         'review_runtime': runtime,
+        'runtime_input_example': runtime_input_example(thread),
         'execution_review': {
             'automatic_before_runner': True,
             'checks': ['selected test', 'registered protocol', 'actual imports and input consumption',
@@ -380,6 +401,7 @@ def resolve_research_work(repo: Path, thread: Path, work_id: str) -> dict[str, A
     directory = thread / 'production/research_control/work' / work_id / 'analysis'
     inventory = execution_inventory(thread)
     packet = {'question': work['decision'], 'development_evidence': evidence,
+              'runtime_input_example': runtime_input_example(thread),
               'execution_inventory': inventory,
               'analysis_findings': analysis_findings(thread),
               'prepared_implementations': prepared_implementations(thread),
@@ -452,6 +474,7 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         return
     directory = thread / 'production/research_control/work' / work_id / 'implementation_reviews'
     packet = {'work_decision': work['decision'], 'node': node, 'experiment_plan': plan,
+              'runtime_input_example': runtime_input_example(thread),
               'runner_contract': {
                   'timeout_sec': plan['resources']['timeout_sec'],
                   'timing_owner': 'LocalRunner subprocess timeout and runner_result.json elapsed_sec',
