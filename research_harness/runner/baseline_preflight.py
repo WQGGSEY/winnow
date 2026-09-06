@@ -22,7 +22,7 @@ def resolve_preflight_role(plan: dict[str, Any], requested: str | None = None) -
           and requirements[0].get('role') in {'current_best_known', 'naive', 'random_or_null'}):
         role = requirements[0]['role']
     else:
-        raise ValueError('preflight must measure exactly one required baseline or have no comparisons for a diagnostic')
+        raise ValueError('preflight must qualify one required baseline or record an unqualified development measurement')
     if requested is not None and requested != role:
         raise ValueError('preflight role conflicts with experiment_plan.baseline_evidence_requirements')
     return role
@@ -123,8 +123,8 @@ def execute_baseline_preflight(
         from research_harness.orchestrator.research_control import current_work
         work = current_work(thread_dir)
         if (not research_work_id or work.get('work_id') != research_work_id
-                or work.get('decision', {}).get('kind') not in {'diagnostic_experiment', 'competence'}):
-            raise ValueError('measurement-only preflight requires selected diagnostic_experiment or competence work')
+                or work.get('decision', {}).get('kind') not in {'diagnostic_experiment', 'competence', 'comparison', 'replication'}):
+            raise ValueError('measurement-only preflight requires selected diagnostic_experiment, competence, comparison or replication work')
     tree = thread_dir / 'production/tree'
     node_dir = tree / 'baseline_preflight' / node['id']
     node_dir.resolve().relative_to(tree.resolve())

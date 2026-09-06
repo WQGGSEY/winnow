@@ -238,3 +238,13 @@ Luna planning with the historical result index and scope feedback, 172,650 initi
 prompt bytes. 44 control/review checks passed, including unresolved-scope caching,
 no code-review call on unresolved scope, reconsideration, and no fabricated
 measurement. The autonomous RL intervention/comparison remains outstanding.
+
+### Early comparison execution route and consumable scope (07:49 KST)
+
+The planner could select an exploratory comparison before baseline qualification, but measurement-only preflight rejected comparison and replication kinds. Extended the existing operational preflight route to those kinds while retaining source/protocol review, budget/partition enforcement, no baseline qualification and inconclusive formal claim output. Planner policy 24 and the MCP description now expose this actual capability.
+
+The scope interpreter previously received protocol text but no execution history. It could therefore read an exactly-once permission as still available after its execution. It now receives preparation execution objectives, statuses and receipt digests, including unsuccessful launches, and must distinguish scope applicability from permission consumption. No host scientific interpretation or source was supplied. Review policy 13 invalidates reviews missing this dependency.
+
+Observed latest autonomous selection ca637fba repeated a collect-and-return proposal; its dispatch was rejected for reusing an existing node with a different plan. Existing completed collect-return record n_preflight_collect_return_feasibility_04 was present in the historical measurement index but not cited by that selection. This is not research progress or priority-4 completion. Current preparation runtime is 14115.46 seconds over 100 recorded runs, below the registered eight-hour ceiling.
+
+Verification: `venv/bin/python -m pytest tests/test_research_control.py tests/test_research_review.py -q --tb=short` — 46 passed. Actual LocalRunner route coverage now includes unqualified comparison/replication with no scientific claim approval. This narrow evidence does not demonstrate an autonomous intervention comparison.

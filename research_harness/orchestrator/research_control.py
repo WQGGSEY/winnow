@@ -14,7 +14,7 @@ from research_harness.schemas.validator import validate_named_schema
 from research_harness.evaluation_vault import sealed_bank_metadata
 from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
 
-PLANNING_POLICY_VERSION = 23
+PLANNING_POLICY_VERSION = 24
 
 
 class StaleResearchWork(ValueError):
@@ -207,6 +207,23 @@ def development_result_index(thread: Path) -> dict[str, Any]:
     return results
 
 
+
+def development_execution_history(thread: Path) -> dict[str, Any]:
+    """Expose actual launches to interpret consumable protocol permissions."""
+    history = {}
+    for node_id, observation in development_evidence(thread, limit=None).items():
+        report = thread / observation['report_path']
+        plan = _read(report.parent / 'experiment_plan.json')
+        history[node_id] = {
+            'declared_objective': plan.get('objective', ''),
+            'execution_status': observation['execution_status'],
+            'measurement_status': observation['measurement_status'],
+            'report_path': str(report.resolve()),
+            'artifact_digest': observation['artifact_digest'],
+        }
+    return history
+
+
 def prepared_implementations(thread: Path) -> dict[str, Any]:
     records = []
     for path in (thread / 'production/research_control/work').glob('*/work.json'):
@@ -339,6 +356,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'scope': 'Output transport contract, not a scientific measurement or verdict.'},
         'observation_binding_contract': 'For empirical work, supply experiment_plan.observation_bindings mapping every required_observations name to artifact_path (a declared metrics file), json_pointer and producer (source location). Bind existing emitted values explicitly; never guess aliases or silently aggregate observations.',
         'source_preparation': 'design_experiment_template(work_id, plan_metadata) prepares or repairs source within the SAME planned execution or protocol-revision work. The question and work_id remain active; preparation is not a new research work or observation.',
+        'development_comparison_route': 'Before baseline qualification, comparison or replication work may run a bounded intervention/control pilot through baseline_preflight with mandatory_baselines=[] and baseline_evidence_requirements=[]. Emit both arms, paired original-goal effects and support as development metrics, not qualifying baseline evidence. The source/protocol review, resource limits and heldout separation still apply. A pilot may guide the next intervention but cannot qualify a baseline, support a formal claim, or complete the research goal.',
         'execution_review': {
             'automatic_before_runner': True,
             'checks': ['selected test', 'registered protocol', 'actual imports and input consumption',
@@ -604,7 +622,7 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         raise ValueError('Implementation review requires the bound research work.')
     prior = work.get('implementation_review', {})
     plan_digest = _digest(plan)
-    review_policy_version = 12
+    review_policy_version = 13
     execution_sources = []
     workspace = Path(plan['workspace']).resolve()
     for source in plan['source_files']:
@@ -655,6 +673,7 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
               'executed_diagnostic_bindings': executed_diagnostic_bindings(thread),
               'registered_protocol': _read(thread / 'production/feasibility_envelope.json'),
               'protocol_note_history': protocol_note_history(thread),
+              'development_executions': development_execution_history(thread),
               'prior_objections': prior.get('required_work', []),
               'development_artifacts': {key: str((thread / value['report_path']).resolve())
                                         for key, value in work['source_observations'].items()}}

@@ -373,7 +373,7 @@ def test_restart_reconciles_reserved_work_and_never_reads_final_holdout(tmp_path
     assert planner.calls[0]['previous_work']['status'] == 'completed'
 
 
-@pytest.mark.parametrize('work_kind', ['diagnostic_experiment', 'competence'])
+@pytest.mark.parametrize('work_kind', ['diagnostic_experiment', 'competence', 'comparison', 'replication'])
 def test_diagnostic_executes_without_fabricating_a_baseline_or_supporting_a_claim(tmp_path, monkeypatch, work_kind):
     from research_harness.orchestrator import research_review
     from research_harness.orchestrator.experiment_plan import validate_experiment_plan
@@ -438,7 +438,7 @@ def test_diagnostic_executes_without_fabricating_a_baseline_or_supporting_a_clai
     assert report['claim_verdict_candidate'] == 'inconclusive'
     assert not result['scientific_approval']
     finish_work(thread, result)
-    if work_kind == 'competence':
+    if work_kind != 'diagnostic_experiment':
         assert current_work(thread)['outcome']['scientific_verdict'] == 'unverified'
         return
     planner = Planner('protocol_revision')

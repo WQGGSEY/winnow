@@ -193,6 +193,7 @@ def test_inspection_budget_prioritizes_experiment_source_over_recent_framework_r
 def test_protocol_interpretation_is_preserved_across_implementation_revisions(tmp_path, scope_status):
     from research_harness.orchestrator.research_review import ProtocolScopeUnresolved
     packet = {'decision_scope': 'development_execution', 'work_decision': {'test': 'Compare matched controls.'},
+              'development_executions': {'prior_control': {'execution_status': 'completed'}},
               'registered_protocol': {'notes': 'Keep the original outcome.'},
               'protocol_note_history': {'entries': [{'notes': 'Keep the original outcome.'},
                                                     {'notes': 'A later confirmation must use unused inputs.'}]},
@@ -203,6 +204,7 @@ def test_protocol_interpretation_is_preserved_across_implementation_revisions(tm
         value = json.loads(request.prompt.input)
         seen.append(value)
         if 'amendment_history' in value:
+            assert value['development_executions'] == packet['development_executions']
             assert not request.allow_local_tools
             result = {'status': scope_status, 'answer': 'Preserve outcome; confirmation is later.',
                       'evidence': ['amendment_history.entries.0.notes: “Keep the original outcome.”'], 'limitations': [], 'next_steps': []}

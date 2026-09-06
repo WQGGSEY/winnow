@@ -354,6 +354,7 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
         scope_packet = {key: packet[key] for key in ('work_decision', 'registered_protocol', 'protocol_note_history')}
         # All text for this interpretation is supplied, so this role needs no source tools.
         scope_packet['amendment_history'] = scope_packet.pop('protocol_note_history')
+        scope_packet['development_executions'] = packet.get('development_executions', {})
         scope = _complete_packet(repo, directory / 'protocol_scope', scope_packet,
             instructions=(
                 'Interpret which registered conditions apply BEFORE the single proposed development test. '
@@ -361,6 +362,9 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
                 'a new research plan or a scientific conclusion. All protocol text is supplied; no tools are needed. '
                 'Read amendment_history in chronological order. Preserve inherited definitions and all original goal, '
                 'endpoint, partition and budget constraints; distinguish explicitly replaced rules from still-active ones. '
+                'Check development_executions before treating one-off or once-only permissions as still available. '
+                'A completed launch is not a new permission; failed launches must be interpreted under the actual clause. '
+                'Declared objectives are an index, not proof of identical conditions; report unresolved applicability honestly. '
                 'Group the applicable obligations in a concise answer, at most 4000 characters. Separate present execution '
                 'conditions, later qualification/confirmation conditions, and any unresolved conflict. Do not demand a '
                 'later result before its permitted diagnostic. Do not waive a condition or invent a new one. '
