@@ -279,3 +279,26 @@ def test_mcp_transport_timeout_covers_configured_experiment(tmp_path: Path) -> N
     command = CodexCliAdapter()._build_exec_command(request=None, model="gpt-5.6-sol", cwd=tmp_path, mcp=mcp)
     assert mcp.tool_timeout_seconds > 900
     assert f"mcp_servers.research_harness.tool_timeout_sec={mcp.tool_timeout_seconds}" in command
+
+
+def test_bounded_call_budget_rejects_before_launch(tmp_path, monkeypatch):
+    import time
+    budget = tmp_path / 'budget.json'
+    budget.write_text(json.dumps({'deadline_epoch': time.time() + 60,
+        'max_calls': 1, 'max_prompt_bytes': 1000, 'model': 'gpt-5.6-luna'}))
+    monkeypatch.setenv('RESEARCH_HARNESS_CALL_BUDGET', str(budget))
+    calls = []
+    def runner(command, **kwargs):
+        calls.append(command)
+        raise RuntimeError('simulated provider failure')
+    adapter = CodexCliAdapter(runner=runner)
+    request = CompletionRequest(prompt=AgentPrompt(instructions='', input='probe'),
+                                model='gpt-5.6-luna')
+    with pytest.raises(RuntimeError, match='provider failure'):
+        adapter.complete(request)
+    with pytest.raises(ValueError, match='budget exhausted'):
+        adapter.complete(request)
+    assert len(calls) == 1
+    assert calls[0][calls[0].index('multi_agent') - 1] == '--disable'
+    assert calls[0][calls[0].index('skip_host_skill_discovery') - 1] == '--enable'
+    assert len(json.loads(budget.read_text())['calls']) == 1

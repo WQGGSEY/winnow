@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
+from research_harness.adapters.call_budget import reserve_call
 from research_harness.evaluation_vault import ensure_evaluation_vault
 
 from research_harness.agent_runtime import (
@@ -90,6 +91,7 @@ class CodexCliAdapter:
 
     def complete(self, request: CompletionRequest) -> CompletionResult:
         command = self._build_exec_command(request=request)
+        reserve_call(model=request.model, prompt=self._compose_prompt(request.prompt), label=request.label)
         try:
             completed = self._runner(
                 command,
@@ -141,6 +143,7 @@ class CodexCliAdapter:
             cwd=cwd,
             mcp=mcp,
         )
+        reserve_call(model=model, prompt=self._compose_prompt(prompt), label='research supervisor')
         process = self._popen(
             command,
             stdin=subprocess.PIPE,
@@ -192,6 +195,9 @@ class CodexCliAdapter:
         command = [
             self._codex_path,
         ]
+        if os.environ.get('RESEARCH_HARNESS_CALL_BUDGET'):
+            command.extend(['--disable', 'multi_agent', '--disable', 'multi_agent_v2',
+                            '--enable', 'skip_host_skill_discovery', '--disable', 'skill_search'])
         if request is not None and request.allow_web_search:
             command.append('--search')
         if request is not None and not request.allow_local_tools:

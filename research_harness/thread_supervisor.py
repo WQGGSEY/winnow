@@ -1377,6 +1377,11 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "평가 프로토콜은 submit_feasibility_envelope로 독립 심사 후 등록해. 계산 한도와 고정 목표는 바꾸지 마.",
         "지금 시작:",
     ]
+    if os.environ.get('RESEARCH_HARNESS_CALL_BUDGET'):
+        lines.append('This is an operator-bounded continuation. Prefer one small decision-changing work, '
+                     'preserve a resumable checkpoint, and do not claim publication completion at a budget stop. '
+                     'Do not launch long training merely to consume available time. All nested research calls use '
+                     'the configured session model. The invocation budget is enforced by the host.')
     return "\n".join(lines)
 
 
@@ -1455,7 +1460,10 @@ def spawn_codex_session(
     settings = load_settings(repo_root)
     mcp = ResearchHarnessMcp.from_settings(repo_root, settings)
     if thread_id is not None:
-        mcp = replace(mcp, environment={**mcp.environment, "RESEARCH_HARNESS_THREAD_ID": thread_id})
+        mcp = replace(mcp, environment={**mcp.environment, "RESEARCH_HARNESS_THREAD_ID": thread_id, "RESEARCH_HARNESS_MODEL": model})
+    if os.environ.get('RESEARCH_HARNESS_CALL_BUDGET'):
+        mcp = replace(mcp, environment={**mcp.environment,
+            'RESEARCH_HARNESS_CALL_BUDGET': os.environ['RESEARCH_HARNESS_CALL_BUDGET']})
     log_fh = log_path.open("a", encoding="utf-8") if log_path else None
 
     # Match the Professor's shell environment to the EXPERIMENT RUNNER's, so its
