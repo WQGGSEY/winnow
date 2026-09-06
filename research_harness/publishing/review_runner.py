@@ -80,7 +80,7 @@ def _review_input(paper: str, ledger: dict[str, Any], figures: list[dict[str, st
     return json.dumps(packet, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
 
 
-def _prompt(paper: str, ledger: dict[str, Any], emphasis: str, figures: list[dict[str, str]]) -> AgentPrompt:
+def _prompt(paper: str, ledger: dict[str, Any], emphasis: str, figures: list[dict[str, str]], reviewer_id: str) -> AgentPrompt:
     return AgentPrompt(
         instructions=(
             "Act as an independent scientific reviewer. Use only the supplied complete manuscript "
@@ -89,9 +89,11 @@ def _prompt(paper: str, ledger: dict[str, Any], emphasis: str, figures: list[dic
                if figures else "Do not inspect files or use tools. ")
             + "Assess all five categories: "
             "importance, closest_work, argument_completeness, reproducibility, limitations. Every "
-            "assessment and objection must cite IDs that occur in the ledger. closest_work must cite "
-            "retrieved literature and explain the concrete difference. Numeric scores are insufficient. "
+            "assessment and objection must cite IDs that occur in the ledger. importance must include both evidence_ids and citation_ids. closest_work must cite "
+            "literature and explain the concrete difference or why the supplied references cannot establish one. Cite a deficient supplied source when explaining its inadequacy; do not invent a source. Numeric scores are insufficient. "
+            f"Prefix every objection_id with {reviewer_id}- so independent reviews have distinct IDs. "
             "Do not claim novelty is proved. Open any objection that the present artifacts do not resolve. "
+            "Every new objection must have status=open. Put limitations already accepted within the manuscript's stated scope in assessments rather than inventing a resolved objection or revision history. "
             f"Reviewer emphasis: {emphasis} Return only schema-conforming JSON."
         ),
         input=_review_input(paper, ledger, figures),
@@ -146,7 +148,7 @@ def run_scientific_reviews(
             incomplete = publication_dir / 'incomplete_reviews'
             incomplete.mkdir(exist_ok=True)
             shutil.move(str(existing), str(incomplete / f'{review_id}-{time.time_ns()}'))
-        prompt = _prompt(paper, ledger, emphasis, figures)
+        prompt = _prompt(paper, ledger, emphasis, figures, reviewer_id)
         with tempfile.TemporaryDirectory(prefix=f"research-harness-{review_id}-") as raw:
             request = CompletionRequest(
                 prompt=prompt,
