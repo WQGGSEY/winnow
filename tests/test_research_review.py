@@ -136,13 +136,22 @@ def test_execution_review_cannot_omit_declared_output_checks():
     validate_execution_objections(assessment, packet)
 
 
-def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp_path):
+@pytest.mark.parametrize("role", ["analysis", "execution_review"])
+def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp_path, role):
     from research_harness.orchestrator.research_review import analyze_research_packet
     from research_harness.adapters.codex_cli import CodexCliError
     repo = Path(__file__).resolve().parents[1]
     packet = {'question': {'evidence_ids': []}}
+    assess = analyze_research_packet
+    if role == 'execution_review':
+        packet['decision_scope'] = 'development_execution'
+        assess = review_research_packet
     assessment = {'status': 'answered', 'answer': 'The recorded count is 7.',
                   'evidence': ['metrics.json /count'], 'limitations': [], 'next_steps': []}
+    if role == 'execution_review':
+        assessment = {'decision': 'approve', 'reason': 'The producer emits the count.',
+                      'evidence': ['metrics.json /count'], 'required_work': [], 'next_steps': [],
+                      'blocking_basis': [], 'observation_checks': []}
     requests = []
     def complete(request):
         requests.append(request)
@@ -158,8 +167,8 @@ def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp
         return CompletionResult(json.dumps(assessment), AgentUsage(), None)
     with patch('research_harness.orchestrator.research_review.CodexCliAdapter.complete', side_effect=complete):
         with pytest.raises(CodexCliError):
-            analyze_research_packet(repo, tmp_path, packet, purpose='Read the count.')
-        result = analyze_research_packet(repo, tmp_path, packet, purpose='Read the count.')
+            assess(repo, tmp_path, packet, purpose='Read the count.')
+        result = assess(repo, tmp_path, packet, purpose='Read the count.')
         assert result['assessment'] == assessment
-        assert analyze_research_packet(repo, tmp_path, packet, purpose='Read the count.') == result
+        assert assess(repo, tmp_path, packet, purpose='Read the count.') == result
         assert len(requests) == 2
