@@ -6,6 +6,7 @@ import json
 import tempfile
 import shutil
 import time
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -14,6 +15,7 @@ from research_harness.agent_runtime import AgentPrompt, CompletionRequest, Compl
 from research_harness.publishing.integrity import json_digest
 from research_harness.publishing.scientific_review import assess_readiness
 from research_harness.schemas.validator import validate_schema
+from research_harness.workers.workspace import ensure_path_inside
 
 
 class ScientificReviewRunError(ValueError):
@@ -48,19 +50,51 @@ def _response_schema(repo_root: Path) -> Path:
     return repo_root / "research_harness" / "schemas" / "scientific_review_response.schema.json"
 
 
-def _prompt(paper: str, ledger: dict[str, Any], emphasis: str) -> AgentPrompt:
+def manuscript_figures(publication: Path, paper: str) -> list[dict[str, str]]:
+    class Images(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.sources: set[str] = set()
+
+        def handle_starttag(self, tag, attrs):
+            if tag == 'img':
+                self.sources.add(dict(attrs).get('src', ''))
+
+    parser = Images()
+    parser.feed(paper)
+    figures = []
+    for source in sorted(parser.sources):
+        if not source.startswith('figures/'):
+            raise ScientificReviewRunError('Manuscript images must reference local figures/.')
+        path = publication / source
+        ensure_path_inside(path, publication / 'figures', 'review figure')
+        figures.append({'relative_path': source, 'path': str(path.resolve()),
+                        'sha256': _bytes_digest(path.read_bytes())})
+    return figures
+
+
+def _review_input(paper: str, ledger: dict[str, Any], figures: list[dict[str, str]]) -> str:
+    packet = {'manuscript_html': paper, 'evidence_ledger': ledger}
+    if figures:
+        packet['figure_files'] = figures
+    return json.dumps(packet, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
+
+
+def _prompt(paper: str, ledger: dict[str, Any], emphasis: str, figures: list[dict[str, str]]) -> AgentPrompt:
     return AgentPrompt(
         instructions=(
             "Act as an independent scientific reviewer. Use only the supplied complete manuscript "
-            "and evidence ledger; do not inspect files or use tools. Assess all five categories: "
+            "and evidence ledger. "
+            + ("Use read-only image inspection to open every supplied figure_files path and compare the actual plot, axes, uncertainty, and labels with the manuscript and ledger. Captions alone do not establish what the figures show. Inspect only these supplied files; do not search other files, datasets, or the web. If a figure cannot be inspected, report the limitation as an objection. "
+               if figures else "Do not inspect files or use tools. ")
+            + "Assess all five categories: "
             "importance, closest_work, argument_completeness, reproducibility, limitations. Every "
             "assessment and objection must cite IDs that occur in the ledger. closest_work must cite "
             "retrieved literature and explain the concrete difference. Numeric scores are insufficient. "
             "Do not claim novelty is proved. Open any objection that the present artifacts do not resolve. "
             f"Reviewer emphasis: {emphasis} Return only schema-conforming JSON."
         ),
-        input=json.dumps({"manuscript_html": paper, "evidence_ledger": ledger},
-                         sort_keys=True, ensure_ascii=False, separators=(",", ":")),
+        input=_review_input(paper, ledger, figures),
     )
 
 
@@ -93,6 +127,7 @@ def run_scientific_reviews(
     except (OSError, UnicodeDecodeError) as exc:
         raise ScientificReviewRunError(f"unreadable paper.html: {exc}") from exc
     ledger = _read_json(ledger_path, "evidence ledger")
+    figures = manuscript_figures(publication_dir, paper)
     manuscript_digest = _bytes_digest(paper_bytes)
     ledger_digest = json_digest(ledger)
     completion_transport = transport or CodexCliAdapter()
@@ -111,7 +146,7 @@ def run_scientific_reviews(
             incomplete = publication_dir / 'incomplete_reviews'
             incomplete.mkdir(exist_ok=True)
             shutil.move(str(existing), str(incomplete / f'{review_id}-{time.time_ns()}'))
-        prompt = _prompt(paper, ledger, emphasis)
+        prompt = _prompt(paper, ledger, emphasis, figures)
         with tempfile.TemporaryDirectory(prefix=f"research-harness-{review_id}-") as raw:
             request = CompletionRequest(
                 prompt=prompt,
@@ -120,7 +155,7 @@ def run_scientific_reviews(
                 output_schema=_response_schema(repo_root),
                 cwd=Path(raw),
                 label=reviewer_id,
-                allow_local_tools=False,
+                allow_local_tools=bool(figures),
             )
             result = completion_transport.complete(request)
         try:
@@ -181,6 +216,7 @@ def replay_scientific_reviews(
     """Reopen run artifacts and reconstruct trusted ``assess_readiness`` inputs."""
     paper_bytes = (publication_dir / "paper.html").read_bytes()
     ledger = _read_json(publication_dir / "_drafts" / "evidence_ledger.json", "evidence ledger")
+    figures = manuscript_figures(publication_dir, paper_bytes.decode('utf-8'))
     root = publication_dir / "scientific_reviews"
     review_ids = expected_review_ids or sorted(path.name for path in root.iterdir() if path.is_dir())
     if len(review_ids) != 2 or len(set(review_ids)) != 2:
@@ -212,10 +248,7 @@ def replay_scientific_reviews(
             raise ScientificReviewRunError(f"parsed record differs from raw response: {review_id}")
         if identity.get("instructions_sha256") != _bytes_digest(prompt["instructions"].encode()) or identity.get("input_sha256") != _bytes_digest(prompt["input"].encode()):
             raise ScientificReviewRunError(f"request identity differs from prompt: {review_id}")
-        expected_input = json.dumps(
-            {"manuscript_html": paper_bytes.decode("utf-8"), "evidence_ledger": ledger},
-            sort_keys=True, ensure_ascii=False, separators=(",", ":"),
-        )
+        expected_input = _review_input(paper_bytes.decode('utf-8'), ledger, figures)
         if prompt.get("input") != expected_input:
             raise ScientificReviewRunError(f"review prompt is stale: {review_id}")
         reviewer = record.get("reviewer") or {}

@@ -56,23 +56,38 @@ def _publication(tmp_path: Path) -> Path:
     return publication
 
 
-def test_runs_two_isolated_reviews_and_replays_readiness(tmp_path: Path) -> None:
+@pytest.mark.parametrize('with_figure', [False, True])
+def test_runs_two_isolated_reviews_and_replays_readiness(tmp_path: Path, with_figure: bool) -> None:
     publication = _publication(tmp_path)
     transport = _Transport(_response())
+    if with_figure:
+        from PIL import Image
+        (publication / 'figures').mkdir()
+        Image.new('RGB', (8, 8), 'white').save(publication / 'figures/curve.png')
+        (publication / 'paper.html').write_text('<html><p>Complete paper</p><img src="figures/curve.png"></html>')
 
     result = run_scientific_reviews(REPO_ROOT, publication, "test-model", transport)
 
     assert len(transport.requests) == 2
-    assert all(request.allow_local_tools is False for request in transport.requests)
+    assert all(request.allow_local_tools is with_figure for request in transport.requests)
     assert transport.requests[0].cwd != transport.requests[1].cwd
     assert all("Complete paper" in request.prompt.input for request in transport.requests)
     for request in transport.requests:
         evidence = json.loads(request.prompt.input)["evidence_ledger"]["sections"]["experiments"]
         assert evidence[0]["value"] == 12.5
+        if with_figure:
+            import hashlib
+            figure = json.loads(request.prompt.input)['figure_files'][0]
+            assert Path(figure['path']).read_bytes() == (publication / 'figures/curve.png').read_bytes()
+            assert hashlib.sha256(Path(figure['path']).read_bytes()).hexdigest() == figure['sha256']
     assert result["readiness"]["ready"] is True
     assert result["readiness"]["review_execution_provenance"] == "harness_verified"
     assert run_scientific_reviews(REPO_ROOT, publication, "test-model", transport) == result
     assert len(transport.requests) == 2
+    if with_figure:
+        Image.new('RGB', (8, 8), 'black').save(publication / 'figures/curve.png')
+        with pytest.raises(ScientificReviewRunError, match='stale'):
+            replay_scientific_reviews(publication)
 
 
 @pytest.mark.parametrize("filename", ["prompt.json", "raw_response.txt", "record.json"])

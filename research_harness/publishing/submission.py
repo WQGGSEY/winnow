@@ -3,13 +3,14 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
+import tempfile
 import zipfile
 from typing import Any
 
 from research_harness.confirmation_sampling import _hash
 from research_harness.orchestrator.research_control import _read, _write
 from research_harness.publishing.integrity import json_digest
-from research_harness.publishing.review_runner import replay_scientific_reviews, run_scientific_reviews
+from research_harness.publishing.review_runner import manuscript_figures, replay_scientific_reviews, run_scientific_reviews
 from research_harness.publishing.venue_export import VenueTarget, export_venue_package, supported_targets, load_venue_profiles
 from research_harness.workers.workspace import ensure_path_inside
 
@@ -60,15 +61,30 @@ def finalize_submission(repo: Path, publication: Path, *, target: VenueTarget,
     draft_hashes = {str(path.relative_to(publication)): _hash(path) for path in draft.rglob('*.json')}
     manuscript_hash = _hash(publication / 'paper.html')
     ledger_hash = _hash(publication / '_drafts/evidence_ledger.json')
+    figures = manuscript_figures(publication, (publication / 'paper.html').read_text())
+    figure_hashes = {item['relative_path']: item['sha256'] for item in figures}
     prior = _read(publication / 'submission_receipt.json')
     target_record = {'venue': target.venue, 'year': target.year, 'track': target.track}
     if prior.get('target') == target_record and verify_submission(publication):
         return {'status': 'completed', 'receipt': prior}
-    review_root = publication / 'submission_reviews' / json_digest([manuscript_hash, ledger_hash])
+    artifact_id = json_digest([manuscript_hash, ledger_hash, figure_hashes])
+    review_root = publication / 'submission_reviews' / artifact_id
     if not review_root.exists():
-        (review_root / '_drafts').mkdir(parents=True)
-        shutil.copyfile(publication / 'paper.html', review_root / 'paper.html')
-        shutil.copyfile(publication / '_drafts/evidence_ledger.json', review_root / '_drafts/evidence_ledger.json')
+        review_root.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='snapshot-', dir=review_root.parent) as temporary:
+            snapshot = Path(temporary) / 'manuscript'
+            (snapshot / '_drafts').mkdir(parents=True)
+            shutil.copyfile(publication / 'paper.html', snapshot / 'paper.html')
+            shutil.copyfile(publication / '_drafts/evidence_ledger.json', snapshot / '_drafts/evidence_ledger.json')
+            for figure in figures:
+                destination = snapshot / figure['relative_path']
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(figure['path'], destination)
+            snapshot.rename(review_root)
+    if _hash(review_root / 'paper.html') != manuscript_hash or _hash(review_root / '_drafts/evidence_ledger.json') != ledger_hash:
+        raise ValueError('Review snapshot differs from the current manuscript')
+    if {item['relative_path']: item['sha256'] for item in manuscript_figures(review_root, (review_root / 'paper.html').read_text())} != figure_hashes:
+        raise ValueError('Figure snapshot differs from the manuscript figures')
     if all((review_root / 'scientific_reviews' / f'review-{index}/run_receipt.json').exists() for index in (1, 2)):
         reviews = replay_scientific_reviews(review_root)
     else:
@@ -91,7 +107,7 @@ def finalize_submission(repo: Path, publication: Path, *, target: VenueTarget,
             raise ValueError('Submission tables currently require worker_report.metrics or worker_report.baselines')
         tables[table['table_id']] = {'caption': table['title'], 'rows': [
             {'label': key, 'source': source, 'key': key} for key in worker_report[source]]}
-    output = publication / 'submission' / target.profile_key / json_digest([manuscript_hash, ledger_hash])
+    output = publication / 'submission' / target.profile_key / artifact_id
     exported = export_venue_package(
         target=target, title=outline['title'], abstract=sections['abstract']['prose_html'], sections=body,
         bibliography=[item['source'] for item in ledger['citations'].values()],
@@ -105,6 +121,8 @@ def finalize_submission(repo: Path, publication: Path, *, target: VenueTarget,
         raise ValueError('Manuscript changed during submission preparation')
     if {str(path.relative_to(publication)): _hash(path) for path in draft.rglob('*.json')} != draft_hashes:
         raise ValueError('Manuscript source changed during submission preparation')
+    if any(_hash(publication / path) != digest for path, digest in figure_hashes.items()):
+        raise ValueError('Figure changed during submission preparation')
     archive = output / 'submission.zip'
     with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as handle:
         for path in sorted(output.rglob('*')):
@@ -116,7 +134,7 @@ def finalize_submission(repo: Path, publication: Path, *, target: VenueTarget,
     receipt = {'kind': 'reviewed_submission_package', 'target': target_record,
                'manuscript_sha256': manuscript_hash, 'ledger_sha256': ledger_hash,
                'review_directory': str(review_root.relative_to(publication)),
-               'readiness_sha256': json_digest(reviews['readiness']), 'files': {**files, **draft_hashes},
+               'readiness_sha256': json_digest(reviews['readiness']), 'files': {**files, **draft_hashes, **figure_hashes},
                'pdf_path': str((output / 'paper.pdf').relative_to(publication)),
                'archive_path': str(archive.relative_to(publication)),
                'venue_export': exported,
