@@ -4138,6 +4138,8 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
         if baseline_roles_frozen(_thread_dir(tid)):
             return {"status": "rejected", "reason": "baseline preparation is closed for the approved baseline roles"}
         bound = False
+        request_resolved = not args.get('request_path')
+        replay_source = None
         try:
             if args.get('request_path'):
                 if 'node' in args or 'experiment_plan' in args:
@@ -4147,6 +4149,7 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
                 request = _read_json(request_path)
                 if not isinstance(request, dict) or request.get('thread_id', tid) != tid:
                     raise ValueError('Saved dispatch request must be an object for this thread.')
+                replay_source = request_path
                 updates = args.get('updates', [])
                 if not isinstance(updates, list) or len(updates) > 32:
                     raise ValueError('Dispatch updates must be an array of at most 32 replacements.')
@@ -4173,6 +4176,7 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
                     else:
                         target[keys[-1]] = update['value']
                 args = {**request, 'thread_id': tid}
+                request_resolved = True
             elif args.get('updates'):
                 raise ValueError('Dispatch updates require request_path.')
             plan_input = dict(args['experiment_plan'])
@@ -4201,13 +4205,18 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
             work = current_work(_thread_dir(tid))
             if not bound and work.get('status') == 'planned' and args.get('work_id') == work.get('work_id'):
                 request_path = (_thread_dir(tid) / 'production/research_control/work' / work['work_id'] / 'dispatch_request.json').resolve()
-                _write_json_atomic(request_path, args)
+                if request_resolved:
+                    _write_json_atomic(request_path, args)
+                else:
+                    # A rejected patch is not a replacement execution plan.
+                    _write_json_atomic(request_path.parent / 'rejected_dispatch_request.json', args)
+                saved_request_path = str(request_path) if request_resolved else (str(replay_source) if replay_source else None)
                 work['outcome'] = {'execution_result': 'rejected', 'reason': result['reason'],
                                    'observation': None, 'new_observation': False, 'scientific_verdict': 'unverified',
-                                   'dispatch_request_path': str(request_path)}
+                                   'dispatch_request_path': saved_request_path}
                 _write_json_atomic(request_path.parent / 'work.json', work)
                 _write_json_atomic(_thread_dir(tid) / 'production/research_control/current.json', work)
-                return {**result, 'work_id': work['work_id'], 'dispatch_request_path': str(request_path),
+                return {**result, 'work_id': work['work_id'], 'dispatch_request_path': saved_request_path,
                         'next_tool_to_call': 'execute_baseline_preflight',
                         'next_step': 'Correct the saved request and retry the same work; no new experiment ran.'}
             return finish_work(_thread_dir(tid), result) if bound else result

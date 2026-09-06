@@ -156,6 +156,20 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     assert current_work(thread)['status'] == 'planned'
     assert current_work(thread)['outcome']['reason'] == rejected['reason']
     assert Path(rejected['dispatch_request_path']).is_absolute()
+    saved_path = Path(rejected['dispatch_request_path'])
+    saved_bytes = saved_path.read_bytes()
+    for bad_path in ['experiment_plan.node_id', ['experiment_plan', 'missing', 'node_id']]:
+        bad_update = mcp_server.handle_execute_baseline_preflight({
+            'thread_id': 'thread', 'work_id': next_work['work_id'],
+            'request_path': str(saved_path),
+            'updates': [{'path': ['experiment_plan', 'node_id'], 'value': 'not_committed'},
+                        {'path': bad_path, 'value': 'n_corrected'}],
+        })
+        assert bad_update['status'] == 'rejected'
+        assert bad_update['dispatch_request_path'] == str(saved_path)
+        assert saved_path.read_bytes() == saved_bytes
+        assert (saved_path.parent / 'rejected_dispatch_request.json').is_file()
+        assert current_work(thread)['status'] == 'planned'
     corrected = mcp_server.handle_execute_baseline_preflight({
         'request_path': rejected['dispatch_request_path'],
         'updates': ([{'path': ['node', 'id'], 'value': 'n_corrected'}] if explicit_node else []) +
