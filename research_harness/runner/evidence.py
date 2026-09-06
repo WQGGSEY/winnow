@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,13 @@ RESERVED_EVIDENCE_KEYS = {
     "disproof_conditions_hit",
     "unexpected_observations",
 }
+
+
+def _finite_json_number(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError('non-finite number in measurement evidence: ' + value)
+    return number
 
 
 @dataclass(frozen=True)
@@ -99,14 +107,15 @@ def _build_worker_report_from_runner_evidence(
                 metrics_evidence_paths=evidence_paths,
             )
         try:
-            parsed = json.loads(metric_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
+            parsed = json.loads(metric_path.read_text(encoding="utf-8"),
+                                parse_float=_finite_json_number, parse_constant=_finite_json_number)
+        except ValueError as exc:
             return _invalid_report(
                 node,
                 manifest,
                 runner_result,
                 run_dir,
-                reason=f"declared metrics file is not valid JSON: {raw_path}: {exc.msg}",
+                reason=f"declared metrics file is not valid JSON: {raw_path}: {exc}",
                 tags=["invalid_metrics_json"],
                 source_files=source_files,
                 metrics_evidence_paths=evidence_paths,

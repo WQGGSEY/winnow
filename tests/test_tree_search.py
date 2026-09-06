@@ -66,14 +66,14 @@ def missing_metrics_plan(node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
     return plan
 
 
-def invalid_json_metrics_plan(node: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+def invalid_json_metrics_plan(node: dict[str, Any], run_dir: Path, payload: str = "not-json") -> dict[str, Any]:
     plan = build_demo_experiment_plan(node, run_dir)
     plan["source_files"][0]["content"] = "\n".join(
         [
             "from pathlib import Path",
             "artifacts = Path('artifacts')",
             "artifacts.mkdir(exist_ok=True)",
-            "(artifacts / 'metrics.json').write_text('not-json\\n')",
+            f"(artifacts / 'metrics.json').write_text({payload!r})",
             "",
         ]
     )
@@ -234,29 +234,30 @@ class TreeSearchTests(unittest.TestCase):
             )
 
     def test_invalid_metrics_json_becomes_invalid_experiment_report(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            run_dir = Path(tmp) / "tree"
-            result = run_mock_tree_search(
-                REPO_ROOT,
-                run_dir,
-                max_steps=1,
-                experiment_plan_builder=invalid_json_metrics_plan,
-                record_runner_failures=False,
-            )
-
-            artifact = result["artifacts"][0]
-            self.assertEqual(artifact["runner_status"], "completed")
-            self.assertEqual(artifact["worker_status"], "failed")
-            worker_report = json.loads(
-                (run_dir / "nodes" / "n_demo_001" / "worker_report.json").read_text(
-                    encoding="utf-8"
+        for payload in ('not-json', '{"metrics":{"value":NaN}}', '{"metrics":{"value":Infinity}}', '{"metrics":{"value":1e999}}'):
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as tmp:
+                run_dir = Path(tmp) / "tree"
+                result = run_mock_tree_search(
+                    REPO_ROOT,
+                    run_dir,
+                    max_steps=1,
+                    experiment_plan_builder=lambda node, directory: invalid_json_metrics_plan(node, directory, payload),
+                    record_runner_failures=False,
                 )
-            )
-            validate_named_schema("worker_report", worker_report)
-            self.assertIn(
-                "invalid_metrics_json",
-                worker_report["failure_record_candidate"]["tags"],
-            )
+
+                artifact = result["artifacts"][0]
+                self.assertEqual(artifact["runner_status"], "completed")
+                self.assertEqual(artifact["worker_status"], "failed")
+                worker_report = json.loads(
+                    (run_dir / "nodes" / "n_demo_001" / "worker_report.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                validate_named_schema("worker_report", worker_report)
+                self.assertIn(
+                    "invalid_metrics_json",
+                    worker_report["failure_record_candidate"]["tags"],
+                )
 
     def test_baseline_dominated_supported_metric_becomes_negative_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
