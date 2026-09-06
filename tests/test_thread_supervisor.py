@@ -1669,6 +1669,7 @@ class ResumePromptTests(unittest.TestCase):
             work_dir.mkdir()
             (work_dir / "current.json").write_text(json.dumps({
                 "work_id": "recent_diagnostic", "status": "completed",
+                "next_tool_to_call": "plan_research_work",
                 "decision": {"kind": "diagnostic_experiment"},
                 "outcome": {"observation": {"report_path": "baseline_preflight/recent/worker_report.json"}},
             }), encoding="utf-8")
@@ -1676,6 +1677,7 @@ class ResumePromptTests(unittest.TestCase):
             self.assertIn("n_root", prompt)
             self.assertIn("recent_diagnostic", prompt)
             self.assertIn("baseline_preflight/recent/worker_report.json", prompt)
+            self.assertEqual(ts._last_known_state_summary(repo, "t1")["research_work"]["next_tool_to_call"], "plan_research_work")
 
 
 class LockTests(unittest.TestCase):
