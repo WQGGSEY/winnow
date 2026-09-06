@@ -746,6 +746,19 @@ def test_planner_schema_binds_failed_receipt_before_generation(tmp_path):
     assessment['prediction_updates'][1]['effect'] = 'supported'
     with pytest.raises(ValueError):
         validate_schema(schema, assessment)
+
+    analysis = copy.deepcopy(previous)
+    analysis.update(outcome={'execution_result': 'analysis_completed'})
+    analysis['decision'].update(kind='analysis', required_observations=[])
+    for alternative in analysis['decision']['alternatives']:
+        alternative['required_observations'] = []
+    source_schema = planning_response_schema(analysis)['properties']['previous_result']
+    assessment.update(work_id=previous['work_id'], result_kind='inconclusive')
+    assessment['prediction_updates'][1].update(effect='unresolved', observation_ids=['/raw/artifact/pointer'])
+    with pytest.raises(ValueError):
+        validate_schema(source_schema, assessment)
+    assessment['prediction_updates'][1]['observation_ids'] = []
+    validate_schema(source_schema, assessment)
     assessment['prediction_updates'][1]['effect'] = 'unresolved'
     assessment['work_id'] = 'stale-work'
     with pytest.raises(ValueError):

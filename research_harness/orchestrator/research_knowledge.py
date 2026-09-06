@@ -124,8 +124,7 @@ def planning_response_schema(previous: dict[str, Any]) -> dict[str, Any]:
                 updates['items']['properties']['effect']['enum'] = ['unresolved']
         else:
             properties['result_kind']['enum'] = ['inconclusive', 'informative']
-    support = previous.get('outcome', {}).get('measurement_support')
-    if support is not None and not failed_measurement(previous) and count:
+    if count:
         import copy
         from research_harness.orchestrator.research_observations import prediction_support
         branches = []

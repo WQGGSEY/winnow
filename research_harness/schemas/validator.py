@@ -243,6 +243,8 @@ def _validate(schema: dict[str, Any], data: Any, path: str) -> None:
     if isinstance(data, list):
         if "minItems" in schema and len(data) < schema["minItems"]:
             raise SchemaValidationError(f"{path}: fewer than minItems")
+        if "maxItems" in schema and len(data) > schema["maxItems"]:
+            raise SchemaValidationError(f"{path}: more than maxItems")
         item_schema = schema.get("items")
         if isinstance(item_schema, dict):
             for index, item in enumerate(data):
