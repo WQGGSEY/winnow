@@ -91,6 +91,7 @@ def analysis_findings(thread: Path) -> dict[str, Any]:
         findings['analysis_' + work['work_id']] = {
             'question': work['decision']['uncertainty'], 'status': analysis.get('status', 'answered' if analysis.get('decision') == 'approve' else 'unresolved'),
             'conclusion_excerpt': reason[:1600], 'truncated': len(reason) > 1600,
+            'limitations': analysis.get('limitations'),
             'next_steps': analysis.get('next_steps', analysis.get('required_work', [])), 'receipt_path': outcome['receipt_path'],
             'evidence_scope': 'Existing-source analysis, not a new experiment or scientific claim approval',
             'execution_inventory_supplied': bool(outcome.get('execution_inventory_digest')),

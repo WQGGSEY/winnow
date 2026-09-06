@@ -378,6 +378,7 @@ def test_analysis_resolves_existing_evidence_without_fabricating_execution(tmp_p
     resolve_research_work(REPO, thread, second['work_id'])
     plan_research_work(REPO, thread, transport=planner)
     findings = planner.calls[-1]['analysis_findings']
+    assert findings['analysis_' + work['work_id']]['limitations'] == ['No learning competence measurement.']
     assert set(findings) == {'analysis_' + work['work_id'], 'analysis_' + second['work_id']}
     assert all(row['conclusion_excerpt'].startswith('The source declares') for row in findings.values())
 
