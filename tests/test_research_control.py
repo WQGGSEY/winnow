@@ -657,7 +657,7 @@ def test_source_preparation_preserves_scientific_work_and_revision_bytes(tmp_pat
     thread, tree, node, plan, _ = fixture(tmp_path)
     planner = Planner('diagnostic_experiment')
     work = plan_research_work(REPO, thread, transport=planner)
-    assert work['next_tool_to_call'] == 'execute_baseline_preflight'
+    assert work['next_tool_to_call'] == 'design_experiment_template'
     monkeypatch.setattr(mcp_server, '_thread_dir', lambda tid: thread)
     def no_claim_lookup(*args):
         raise AssertionError('Source preparation must not depend on a claim node')
@@ -665,6 +665,7 @@ def test_source_preparation_preserves_scientific_work_and_revision_bytes(tmp_pat
     args = {'thread_id': 'thread', 'work_id': work['work_id'],
             'plan_metadata': {'source_files': [{'path': 'prepared.py', 'content': "raise RuntimeError('must not execute during preparation')\n"}]}}
     prepared = mcp_server.handle_design_experiment_template(args)
+    assert prepared['next_tool_to_call'] == 'execute_baseline_preflight'
     revision = prepared['prepared_implementation']
     assert prepared['preparation_checkpoint'] == revision['template_digest']
     assert 'research_work_checkpoint' not in prepared

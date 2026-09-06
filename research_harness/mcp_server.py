@@ -3323,6 +3323,9 @@ def _handle_design_experiment_template_locked(args: dict[str, Any]) -> dict[str,
                     'new_observation': False, 'scientific_verdict': 'unverified'}
         _write(work_dir / 'implementation_preparations' / (template_digest + '.json'), prepared)
         work['prepared_implementation'] = prepared
+        if (work['decision']['kind'] in {'diagnostic_experiment', 'competence', 'comparison', 'replication'}
+                and not (thread / 'market/baseline_qualification.json').exists()):
+            work['next_tool_to_call'] = 'execute_baseline_preflight'
         _write(thread / 'production/research_control/current.json', work)
         _write(thread / 'production/research_control/work' / work['work_id'] / 'work.json', work)
         return {**work, 'preparation_checkpoint': template_digest}

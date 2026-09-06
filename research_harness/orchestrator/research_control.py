@@ -49,6 +49,10 @@ def execution_handoff(thread: Path, work: dict[str, Any]) -> dict[str, Any] | No
         return None
     saved = thread / 'production/research_control/work' / work['work_id'] / 'dispatch_request.json'
     if saved.exists():
+        if work.get('outcome', {}).get('execution_result') == 'checkpoint':
+            return {'request_path': str(saved.resolve()), 'tool': work['next_tool_to_call'],
+                    'arguments': {'request_path': str(saved.resolve())},
+                    'usage': 'This is a transport/budget checkpoint, not an implementation objection. Resume this exact saved request unchanged when the invocation budget permits. Do not inspect review logs or serialized review requests, rewrite the experiment, or invent a scientific repair for a CLI timeout. The harness retains completed inspection observations for the reviewer.'}
         return {'request_path': str(saved.resolve()),
                 'usage': 'Resume this current work request. Apply reviewer feedback using updates; do not reconstruct historical requests.'}
     previous_id = (work['decision'].get('previous_result') or {}).get('work_id')
@@ -452,8 +456,7 @@ Preserve deferred_questions as outside the current test. Do not combine unrelate
             'evaluation_bank_digest': _digest(bank),
             'sampling_spec_digest': _digest(sampling),
             'decision': decision, 'evidence_digest': _digest(evidence),
-            'source_observations': evidence, 'next_tool_to_call': 'execute_baseline_preflight'
-            if not (thread / 'market/baseline_qualification.json').exists() else 'design_experiment_template'}
+            'source_observations': evidence, 'next_tool_to_call': 'design_experiment_template'}
     if decision['kind'] == 'analysis':
         work['next_tool_to_call'] = 'retrieve_research_source' if decision['source_mode'] == 'acquire' else 'resolve_research_work'
     elif decision['kind'] == 'protocol_revision':
