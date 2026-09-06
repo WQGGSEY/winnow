@@ -80,6 +80,9 @@ def fixture(tmp_path):
 @pytest.mark.parametrize('explicit_node', [True, False])
 def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_path, monkeypatch, explicit_node):
     thread, tree, node, plan, role = fixture(tmp_path)
+    if not explicit_node:
+        plan.pop('workspace')
+        plan['failure_index_hints'] = {}
     planner = Planner()
     work = plan_research_work(REPO, thread, transport=planner)
     assert plan_research_work(REPO, thread, transport=planner) == work
@@ -130,6 +133,23 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     assert not (thread / 'production/tree/baseline_preflight' / node['id'] / 'job_manifest.json').exists()
     assert mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})['status'] == 'rejected'
     assert len(reviewed) == 1
+    malformed = copy.deepcopy(request_plan)
+    malformed.pop('plan_id')
+    malformed.pop('failure_index_hints')
+    malformed['task_class'] = 'diagnostic_experiment'
+    malformed['guardrails'].pop('allowed_write_roots')
+    malformed['reproducibility'].pop('seed')
+    malformed['reproducibility'].pop('code_snapshot')
+    malformed['reproducibility']['sampling_seeds'] = [1, 2]
+    rejected_input = mcp_server.handle_execute_baseline_preflight({
+        'thread_id': 'thread', 'work_id': work['work_id'], 'experiment_plan': malformed})
+    assert rejected_input['status'] == 'rejected'
+    for field in ['plan_id', 'failure_index_hints', 'task_class', 'allowed_write_roots',
+                  'seed', 'code_snapshot', 'sampling_seeds']:
+        assert field in rejected_input['reason']
+    assert len(reviewed) == 1
+    assert current_work(thread)['status'] == 'planned'
+    assert json.loads(Path(rejected_input['dispatch_request_path']).read_text())['experiment_plan'] == malformed
     assert revision['reconsideration_available']
     plan['source_files'][0]['content'] += '\n# revised measurement path\n'
     request_path.write_text(json.dumps({'node': node, 'experiment_plan': plan, 'role': role, 'work_id': work['work_id']}))

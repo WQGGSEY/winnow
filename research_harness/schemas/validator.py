@@ -91,6 +91,29 @@ def validate_schema(schema: dict[str, Any], data: Any) -> None:
     _validate(schema, data, "$")
 
 
+def schema_errors(schema: dict[str, Any], data: Any, path: str = "$") -> list[str]:
+    """Collect independent field errors for an interactive input boundary."""
+    properties = schema.get('properties', {})
+    shallow = {key: value for key, value in schema.items()
+               if key not in {'properties', 'items', 'required', 'additionalProperties'}}
+    errors = []
+    for constraint in (shallow, {'required': schema.get('required', [])},
+                       {'properties': {key: {} for key in properties},
+                        'additionalProperties': schema.get('additionalProperties', True)}):
+        try:
+            _validate(constraint, data, path)
+        except SchemaValidationError as exc:
+            errors.append(str(exc))
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if key in properties:
+                errors.extend(schema_errors(properties[key], value, f'{path}.{key}'))
+    elif isinstance(data, list) and isinstance(schema.get('items'), dict):
+        for index, value in enumerate(data):
+            errors.extend(schema_errors(schema['items'], value, f'{path}[{index}]'))
+    return errors
+
+
 def _type_name(data: Any) -> str:
     if data is None:
         return "null"

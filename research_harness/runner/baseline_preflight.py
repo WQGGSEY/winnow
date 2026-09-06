@@ -52,7 +52,7 @@ def build_preflight_node(thread_dir: Path, plan: dict[str, Any]) -> dict[str, An
         'lineage': {'root_goal_id': goal['id'], 'covers_goal_facets': [],
                     'inherited_assumptions': [], 'introduced_assumptions': [], 'taste_constraints_applied': []},
         'baseline_refs': [], 'runtime_profile': {'worker_type': 'experiment_worker', 'timeout_policy': 'hard'},
-        'failure_retrieval': {'query_tags': plan['failure_index_hints']['risk_tags'], 'selected_fail_files': []},
+        'failure_retrieval': {'query_tags': plan['failure_index_hints'].get('risk_tags', []), 'selected_fail_files': []},
         'outputs': {'artifacts': [], 'verdict': None},
     }
     validate_named_schema('node', node)

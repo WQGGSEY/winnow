@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from research_harness.config import load_settings
-from research_harness.schemas.validator import load_schema
+from research_harness.schemas.validator import load_schema, schema_errors
 from research_harness.orchestrator.llm_orchestrator.persona_validator import (
     validate_camera_ready_directives,
     validate_claim_contract,
@@ -40,6 +40,8 @@ from research_harness.orchestrator.llm_orchestrator.persona_validator import (
 
 def _experiment_plan_input_schema() -> dict[str, Any]:
     schema = load_schema('experiment_plan')
+    # The runner owns its workspace and binds the registered input snapshot.
+    schema['required'] = [key for key in schema['required'] if key not in {'workspace', 'inputs'}]
     literal = schema['properties']['source_files']['items']
     reference = {'type': 'object', 'required': ['path', 'purpose', 'from_path', 'sha256'],
                  'additionalProperties': False, 'properties': {
@@ -4180,8 +4182,16 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
             elif args.get('updates'):
                 raise ValueError('Dispatch updates require request_path.')
             plan_input = dict(args['experiment_plan'])
+            nested_role = plan_input.pop('role', None)
+            input_schema = _experiment_plan_input_schema()
+            intent = _read_json(_thread_dir(tid) / 'production/feasibility_envelope.json').get('operator_intent', {})
+            if not intent.get('data_source_anchor'):
+                input_schema['required'].append('inputs')
+            errors = schema_errors(input_schema, plan_input)
+            if errors:
+                raise ValueError('Invalid experiment_plan:\n' + '\n'.join(errors))
             role = resolve_preflight_role(plan_input, args.get('role'))
-            resolve_preflight_role(plan_input, plan_input.pop('role', None))
+            resolve_preflight_role(plan_input, nested_role)
             args = {**args, 'experiment_plan': plan_input, 'role': role}
             plan = {**args['experiment_plan'], 'source_files': resolve_source_files(_thread_dir(tid), args['experiment_plan']['source_files'])}
             node = args['node'] if 'node' in args else build_preflight_node(_thread_dir(tid), plan)
