@@ -267,12 +267,12 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     envelope = _read(thread / 'production/feasibility_envelope.json')
     bank = sealed_bank_metadata(thread)
     sampling = read_sampling_spec(thread)
-    if reconsider_reason and not previous.get('protocol_review_error') and previous.get('planning_policy_version') == PLANNING_POLICY_VERSION and (previous.get('status') != 'planned'
+    if reconsider_reason and not previous.get('protocol_review_error') and not previous.get('requires_replanning') and previous.get('planning_policy_version') == PLANNING_POLICY_VERSION and (previous.get('status') != 'planned'
                               or not any(previous.get(key, {}).get('decision') == 'reject'
                                          for key in ('implementation_review', 'protocol_review'))):
         raise ValueError('Reconsideration requires a planned work with rejected implementation feedback or protocol feedback.')
     planning_policy_version = PLANNING_POLICY_VERSION
-    if not reconsider_reason and previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('planning_model') == research_model() and previous.get('protocol_digest') == _digest(envelope) and previous.get('evaluation_bank_digest') == _digest(bank) and previous.get('sampling_spec_digest') == _digest(sampling) and previous.get('review_runtime_digest') == _digest(runtime) and previous['evidence_digest'] == _digest(evidence):
+    if not reconsider_reason and not previous.get('requires_replanning') and previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('planning_model') == research_model() and previous.get('protocol_digest') == _digest(envelope) and previous.get('evaluation_bank_digest') == _digest(bank) and previous.get('sampling_spec_digest') == _digest(sampling) and previous.get('review_runtime_digest') == _digest(runtime) and previous['evidence_digest'] == _digest(evidence):
         return previous
     if previous.get('status') == 'running':
         # The public caller holds the same writer lock as execution. A remaining
@@ -289,7 +289,8 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     duplicate_observation = (len(evidence) >= 2 and
                              list(evidence.values())[-1]['observation_digest'] == list(evidence.values())[-2]['observation_digest'])
     diagnostic_required = (diagnostic_required or
-                           previous.get('outcome', {}).get('execution_result') in {'rejected', 'interrupted'} or
+                           (previous.get('outcome', {}).get('execution_result') in {'rejected', 'interrupted'}
+                            and not previous.get('requires_replanning')) or
                            (duplicate_observation and previous.get('decision', {}).get('kind') != 'replication'))
     research = hypothesis_context(repo, thread)
     hypotheses = _read(thread / 'production/hypotheses/current.json')
@@ -594,7 +595,7 @@ def bind_work(thread: Path, work_id: str | None, node_id: str, plan: dict[str, A
 
 
 def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dict[str, Any], plan: dict[str, Any]) -> None:
-    from research_harness.orchestrator.research_review import review_research_packet
+    from research_harness.orchestrator.research_review import review_research_packet, ProtocolScopeUnresolved
     from research_harness.orchestrator.protocol_revision import protocol_note_history
     from research_harness.orchestrator.experiment_plan import python_source_diagnostics
 
@@ -659,40 +660,47 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
                                         for key, value in work['source_observations'].items()}}
     from research_harness.orchestrator.research_review import predecessor_review_delta
     packet['predecessor_review_delta'] = predecessor_review_delta(thread, work, packet)
-    review = review_research_packet(repo, directory, packet, purpose=(
-        'Whether this proposed implementation performs the selected bounded research test. '
-        'Check compatibility with registered protocol notes as well as the selected test. A development diagnostic is not a protocol amendment '
-        'or permission to substitute an unregistered method in the final comparison. '
-        'When diagnostic_source_binding_proposal is present, this review also decides the prospective component binding for this '
-        'already permitted development diagnostic. Approval commits the exact plan/source binding receipt before launch. '
-        'Do not demand a separate binding-only protocol amendment: this transaction supplies the authoritative binding. '
-        'Reject a changed scientific test, controller, input partition or endpoint; those still require a protocol amendment. '
-        'Preserve any explicit requirement for a separate registration transaction and cite its actual active clause if it blocks this binding. '
-        'This capability does not replace comparator/candidate qualification or final implementation and checkpoint freeze. '
-        'Questions listed in deferred_questions are outside this work and must not become preconditions for its execution. '
-        'This is a pre-execution method check, not scientific approval; do not require positive results or finished training. '
-        'Trace code, actual imports and data provenance. When the work calls for the actual learner, collector or replay, '
-        'Trace registered input consumption through imported modules as well as the entrypoint. Literal input-manifest names in a wrapper '
-        'do not establish data use, and their absence does not invalidate delegation to a registered implementation. '
-        'The runner stages and verifies the input snapshot; verify separately that the computation consumes it. '
-        'a separately rewritten surrogate or hardcoded provenance table does not satisfy it. '
-        'Reject tautological self-comparisons and fabricated observations. Verify feature dimensions and decision-time semantics '
-        'against referenced implementation when those are the subject of the test. Source paths may be inspected; '
-        'Inspect execution_source_manifest for the exact proposed executable bytes, not a similarly named historical artifact. '
-        'The harness verified those materialized files against experiment_plan.source_files before this review and will verify them again before launch. '
-        'Cited analyses are included in full excerpts; other_analysis_index preserves all remaining questions and receipt paths. '
-        'Read a referenced receipt when its question bears on the current test; an omitted excerpt is not an absence of prior evidence. '
-        'Use runner_contract for execution guarantees. LocalRunner enforces the subprocess timeout and records total elapsed time, '
-        'including child artifact emission; timed-out child metrics cannot qualify a method. '
-        'Do not require a child to time its own final artifact write inside that same artifact or duplicate the external hard timeout. '
-        'Child timers may describe phases, but the runner receipt governs whole-job runtime. '
-        'Do not read final holdout or external-falsifier results. Return actionable changes to this implementation, not a new research question. '
-        'Check prior objections against the revised code and reassess whether those objections were justified. '
-        'Every mandatory change must follow from the selected test, declared objective, or cited method semantics. '
-        'Do not impose a preferred estimator, representation, time unit, discount convention or favorable outcome as an unstated requirement. '
-        'When a convention is undeclared, ask the implementation to expose it and measure the consequences, not to adopt your preference. '
-        'Prior objections are fallible feedback, not new authoritative requirements. Do not add requirements unrelated to the selected bounded test.'
-    ))
+    try:
+        review = review_research_packet(repo, directory, packet, purpose=(
+            'Whether this proposed implementation performs the selected bounded research test. '
+            'Check compatibility with registered protocol notes as well as the selected test. A development diagnostic is not a protocol amendment '
+            'or permission to substitute an unregistered method in the final comparison. '
+            'When diagnostic_source_binding_proposal is present, this review also decides the prospective component binding for this '
+            'already permitted development diagnostic. Approval commits the exact plan/source binding receipt before launch. '
+            'Do not demand a separate binding-only protocol amendment: this transaction supplies the authoritative binding. '
+            'Reject a changed scientific test, controller, input partition or endpoint; those still require a protocol amendment. '
+            'Preserve any explicit requirement for a separate registration transaction and cite its actual active clause if it blocks this binding. '
+            'This capability does not replace comparator/candidate qualification or final implementation and checkpoint freeze. '
+            'Questions listed in deferred_questions are outside this work and must not become preconditions for its execution. '
+            'This is a pre-execution method check, not scientific approval; do not require positive results or finished training. '
+            'Trace code, actual imports and data provenance. When the work calls for the actual learner, collector or replay, '
+            'Trace registered input consumption through imported modules as well as the entrypoint. Literal input-manifest names in a wrapper '
+            'do not establish data use, and their absence does not invalidate delegation to a registered implementation. '
+            'The runner stages and verifies the input snapshot; verify separately that the computation consumes it. '
+            'a separately rewritten surrogate or hardcoded provenance table does not satisfy it. '
+            'Reject tautological self-comparisons and fabricated observations. Verify feature dimensions and decision-time semantics '
+            'against referenced implementation when those are the subject of the test. Source paths may be inspected; '
+            'Inspect execution_source_manifest for the exact proposed executable bytes, not a similarly named historical artifact. '
+            'The harness verified those materialized files against experiment_plan.source_files before this review and will verify them again before launch. '
+            'Cited analyses are included in full excerpts; other_analysis_index preserves all remaining questions and receipt paths. '
+            'Read a referenced receipt when its question bears on the current test; an omitted excerpt is not an absence of prior evidence. '
+            'Use runner_contract for execution guarantees. LocalRunner enforces the subprocess timeout and records total elapsed time, '
+            'including child artifact emission; timed-out child metrics cannot qualify a method. '
+            'Do not require a child to time its own final artifact write inside that same artifact or duplicate the external hard timeout. '
+            'Child timers may describe phases, but the runner receipt governs whole-job runtime. '
+            'Do not read final holdout or external-falsifier results. Return actionable changes to this implementation, not a new research question. '
+            'Check prior objections against the revised code and reassess whether those objections were justified. '
+            'Every mandatory change must follow from the selected test, declared objective, or cited method semantics. '
+            'Do not impose a preferred estimator, representation, time unit, discount convention or favorable outcome as an unstated requirement. '
+            'When a convention is undeclared, ask the implementation to expose it and measure the consequences, not to adopt your preference. '
+            'Prior objections are fallible feedback, not new authoritative requirements. Do not add requirements unrelated to the selected bounded test.'
+        ))
+    except ProtocolScopeUnresolved as exc:
+        work['protocol_scope_analysis'] = exc.analysis
+        work['requires_replanning'] = True
+        _write(thread / 'production/research_control/current.json', work)
+        _write(thread / 'production/research_control/work' / work_id / 'work.json', work)
+        raise
     for source in execution_sources:
         if hashlib.sha256(Path(source['path']).read_bytes()).hexdigest() != source['sha256']:
             raise ValueError('Materialized execution source changed during review: ' + source['path'])
@@ -747,6 +755,8 @@ def finish_work(thread: Path, result: dict[str, Any]) -> dict[str, Any]:
         work.update(status='planned', next_tool_to_call='execute_baseline_preflight'
                     if work['binding'].get('scope', 'baseline_preflight') == 'baseline_preflight'
                     else result.get('next_tool_to_call', 'execute_node_experiment'))
+        if work.get('requires_replanning'):
+            work['next_tool_to_call'] = 'plan_research_work'
         del work['binding']
         request_path = thread / 'production/research_control/work' / work['work_id'] / 'dispatch_request.json'
         if request_path.exists():
@@ -758,7 +768,7 @@ def finish_work(thread: Path, result: dict[str, Any]) -> dict[str, Any]:
             return {**result, 'work_id': work['work_id'], 'next_tool_to_call': None,
                     'dispatch_request_path': work['outcome'].get('dispatch_request_path'),
                     'next_step': 'Stop this bounded run. Resume the same saved request with a later budget; no experiment ran and no code correction is implied.'}
-        can_reconsider = work.get('implementation_review', {}).get('decision') == 'reject'
+        can_reconsider = work.get('implementation_review', {}).get('decision') == 'reject' or bool(work.get('requires_replanning'))
         if result.get('status') == 'review_invalid':
             return {**result, 'work_id': work['work_id'], 'next_tool_to_call': work['next_tool_to_call'],
                     'dispatch_request_path': work['outcome'].get('dispatch_request_path'),
@@ -766,6 +776,6 @@ def finish_work(thread: Path, result: dict[str, Any]) -> dict[str, Any]:
         return {**result, 'work_id': work['work_id'], 'next_tool_to_call': work['next_tool_to_call'],
                 'dispatch_request_path': work['outcome'].get('dispatch_request_path'),
                 'reconsideration_available': can_reconsider,
-                'next_step': ('Apply the implementation feedback. If it reveals missing evidence or an unsuitable test, call plan_research_work with reconsider_reason to revise the procedure; no experiment ran.'
+                'next_step': ('Resolve the recorded protocol scope from existing evidence or a prospective protocol revision before source review; do not rerun or rewrite the experiment first.' if work.get('requires_replanning') else 'Apply the implementation feedback. If it reveals missing evidence or an unsuitable test, call plan_research_work with reconsider_reason to revise the procedure; no experiment ran.'
                               if can_reconsider else 'Correct the rejected execution input and retry the same research work; no experiment ran.')}
     return {**result, 'research_work_checkpoint': work['work_id'], 'next_tool_to_call': 'plan_research_work'}

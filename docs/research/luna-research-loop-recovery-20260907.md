@@ -208,3 +208,33 @@ this checkpoint. This finding is evidence of a protocol/history bottleneck in
 addition to latency, not evidence of an RL improvement or completed priorities1–4.
 The stage-cache and original-history preservation regression passed along with
 the existing control/review checks, 42 in total.
+
+## Routing unresolved scope before code review
+
+The first split code review did finish, rejecting the controller/grid scope while
+finding the four bound outputs emitted. Its response incorrectly cited the
+derived scope guide as an authoritative blocking basis, and host validation
+rejected that citation. The coordinator started correcting the reviewer response;
+that continuation was interrupted while fixing the stage transition.
+
+An unresolved protocol-scope assessment now stops before code judgment and is
+stored on the ResearchWork. The work stays planned with `requires_replanning`,
+points to `plan_research_work`, and permits reconsideration from that evidence.
+No experiment, negative scientific result or forced new causal diagnostic is
+created by a scope ambiguity. The accepted source is retained. A scope guide
+with an answered status remains separate from implementation approval.
+
+For later code reviews, literal guide references and quotes are resolved back to
+canonical protocol-note paths only when the quote exactly occurs there. These
+verified clause citations are provided to the reviewer; the derived guide itself
+cannot create an authoritative blocking requirement.
+
+`scope_route_recovery.json` records recovery through the actual MCP preflight
+handler using the real persisted Luna scope assessment. A transport assertion
+prevented any fresh model call during this recovery. The work returned planned,
+requires_replanning=true, next_tool_to_call=plan_research_work and no new
+observation. The `scope-route-recovery` supervisor continuation then entered live
+Luna planning with the historical result index and scope feedback, 172,650 initial
+prompt bytes. 44 control/review checks passed, including unresolved-scope caching,
+no code-review call on unresolved scope, reconsideration, and no fabricated
+measurement. The autonomous RL intervention/comparison remains outstanding.

@@ -650,19 +650,30 @@ def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tm
         protocol_revision.revise_evaluation_protocol(REPO, thread, **{**kwargs, 'work_id': work['work_id'], 'notes': 'Another change'})
 
 
-@pytest.mark.parametrize('review_key', ['implementation_review', 'protocol_review'])
+@pytest.mark.parametrize('review_key', ['implementation_review', 'protocol_review', 'protocol_scope_analysis'])
 def test_reconsideration_keeps_rejected_plan_and_does_not_create_observations(tmp_path, review_key):
-    thread, tree, _, _, _ = fixture(tmp_path)
+    thread, tree, node, plan, _ = fixture(tmp_path)
     work = plan_research_work(REPO, thread, transport=Planner())
     with pytest.raises(ValueError, match='rejected implementation feedback'):
         plan_research_work(REPO, thread, reconsider_reason='Missing telemetry.', transport=Planner('analysis'))
     work[review_key] = {'decision': 'reject', 'reason': 'Missing reset logs cannot establish zero access.'}
+    if review_key == 'protocol_scope_analysis':
+        work[review_key] = {'assessment': {'status': 'unresolved', 'answer': 'Scope requires clarification.'}}
+        work['requires_replanning'] = True
     (thread / 'production/research_control/current.json').write_text(json.dumps(work))
+    if review_key == 'protocol_scope_analysis':
+        bind_work(thread, work['work_id'], node['id'], plan)
+        unresolved = finish_work(thread, {'status': 'rejected', 'reason': 'Scope requires clarification.'})
+        assert unresolved['next_tool_to_call'] == 'plan_research_work'
+        assert unresolved['reconsideration_available']
+        assert not current_work(thread)['outcome']['new_observation']
     planner = Planner('analysis')
     revised = plan_research_work(REPO, thread, reconsider_reason='Inspect available source provenance instead of inventing telemetry.', transport=planner)
     assert revised['next_tool_to_call'] == 'resolve_research_work'
     assert revised['evidence_digest'] == work['evidence_digest']
     assert planner.calls[0]['previous_work'][review_key] == work[review_key]
+    if review_key == 'protocol_scope_analysis':
+        assert not planner.calls[0]['diagnostic_required']
     assert planner.calls[0]['reconsider_reason']
     old = json.loads((thread / 'production/research_control/work' / work['work_id'] / 'work.json').read_text())
     assert old['status'] == 'superseded'
