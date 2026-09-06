@@ -13,7 +13,7 @@ from research_harness.schemas.validator import validate_named_schema
 from research_harness.evaluation_vault import sealed_bank_metadata
 from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
 
-PLANNING_POLICY_VERSION = 13
+PLANNING_POLICY_VERSION = 14
 
 
 class StaleResearchWork(ValueError):
@@ -282,6 +282,11 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'and thresholds; it cannot retroactively certify results or make a failed test pass. The amendment and its timing remain disclosed. '
             'A comparator_failed study does not terminate the original research question. For a prospective new study, distinguish source fidelity, '
             'a reproduced learning-failure condition, and strong-comparator qualification. Do not require the failure condition to disappear before investigating it. '
+            'A failed run qualifies neither its checkpoint nor its configuration; it does not permanently disqualify the algorithm family. '
+            'Compare repairing the demonstrated cause within the existing method against replacing that method. Prefer the option whose changed variable tests the explanation. '
+            'When an earlier development procedure was invalid or uninformative, a new study may reuse source or method identity with a justified changed configuration, '
+            'a declared budget and stopping rule, and fresh prospective execution. If current notes forbid reuse, propose an explicit amendment first. '
+            'Keep old failures and all new attempts disclosed; do not reuse their failed receipts as qualification or repeat an unchanged attempt until it passes. '
             'If qualification design itself precludes the research question, propose a justified prospective redesign with task-feasibility controls, credible tuning effort '
             'and an appropriate strong comparator, preserving the failed-study record and final success bar. Method-name substitution alone is not a causal explanation: '
             'state which changed configuration or diagnostic distinguishes the next attempt from earlier failures. '

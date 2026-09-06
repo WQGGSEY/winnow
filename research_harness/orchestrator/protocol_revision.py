@@ -130,7 +130,11 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
         'A failed study configuration is not the failure of the original research question. A prospective NEW-study amendment may redesign qualification procedures '
         'when an earlier procedure prevents investigating the stated phenomenon, but must preserve the old failed verdict and its evidence. '
         'Require an explicit scientific justification, faithful source implementation, credible tuning budgets, task-feasibility controls and an appropriate strong comparator. '
-        'A failed method may be retained as a failure condition, not relabeled as the qualified strong comparator. Never merely reduce a threshold to approve that old result. '
+        'A failed execution or checkpoint cannot be relabeled as qualified. This is not a permanent ban on its algorithm family or source code. '
+        'A prospective new study may reuse a method after a scientifically justified change to an invalid task setup, implementation or development procedure. '
+        'Require the amendment to name the demonstrated cause, changed variable, fresh execution, budget and stopping rule; preserve and disclose all failed attempts. '
+        'Review explicit replacement of earlier method-reuse prohibitions on those grounds. Do not require a different algorithm name when it leaves the failure cause unchanged. '
+        'Do not approve unchanged outcome-selected retries, reuse failed receipts as successful qualification, or merely reduce a threshold to approve the old result. '
         + partition_rules +
         'Check the amendment against the original user problem, not an accidental earlier method choice. '
         'The previous protocol and its failure history will remain disclosed. Do not call this the original preregistration or approve any scientific claim.'
