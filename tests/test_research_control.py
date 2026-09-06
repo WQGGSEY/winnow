@@ -413,26 +413,40 @@ def test_reconsideration_keeps_rejected_plan_and_does_not_create_observations(tm
     assert not list(tree.rglob('worker_report.json'))
 
 
-def test_implementation_work_writes_bound_bytes_without_executing(tmp_path, monkeypatch):
+def test_source_preparation_preserves_scientific_work_and_revision_bytes(tmp_path, monkeypatch):
     from research_harness import mcp_server
     from research_harness.confirmation_sampling import _hash
+    from research_harness.orchestrator.research_control import prepared_implementations
     thread, tree, node, plan, _ = fixture(tmp_path)
-    work = plan_research_work(REPO, thread, transport=Planner('implementation'))
-    assert work['next_tool_to_call'] == 'design_experiment_template'
-    with pytest.raises(ValueError, match='design_experiment_template'):
-        bind_work(thread, work['work_id'], node['id'], plan)
+    planner = Planner('diagnostic_experiment')
+    work = plan_research_work(REPO, thread, transport=planner)
+    assert work['next_tool_to_call'] == 'execute_baseline_preflight'
     monkeypatch.setattr(mcp_server, '_thread_dir', lambda tid: thread)
     def no_claim_lookup(*args):
-        raise AssertionError('Implementation work must not depend on a claim node')
+        raise AssertionError('Source preparation must not depend on a claim node')
     monkeypatch.setattr(mcp_server, '_require_authoritative_node', no_claim_lookup)
     args = {'thread_id': 'thread', 'work_id': work['work_id'],
             'plan_metadata': {'source_files': [{'path': 'prepared.py', 'content': "raise RuntimeError('must not execute during preparation')\n"}]}}
     prepared = mcp_server.handle_design_experiment_template(args)
-    source = prepared['outcome']['source_files'][0]
+    revision = prepared['prepared_implementation']
+    source = revision['source_files'][0]
     assert _hash(Path(source['path'])) == source['sha256']
-    assert prepared['outcome']['new_observation'] is False
+    assert revision['new_observation'] is False
+    assert prepared['status'] == 'planned'
+    assert prepared['decision'] == work['decision']
+    assert 'outcome' not in prepared
     assert not list(tree.rglob('runner_result.json'))
     assert mcp_server.handle_design_experiment_template(args) == prepared
-    planner = Planner('analysis')
-    plan_research_work(REPO, thread, transport=planner)
-    assert planner.calls[0]['prepared_implementations'] == {'implementation_' + work['work_id']: prepared['outcome']}
+    resumed = plan_research_work(REPO, thread, transport=planner)
+    assert resumed['work_id'] == work['work_id']
+    assert len(planner.calls) == 1
+    args['plan_metadata']['source_files'][0]['content'] += '# repaired source\n'
+    repaired = mcp_server.handle_design_experiment_template(args)
+    latest = repaired['prepared_implementation']
+    assert repaired['work_id'] == work['work_id']
+    assert repaired['status'] == 'planned'
+    assert latest['source_files'][0]['path'] != source['path']
+    assert _hash(Path(source['path'])) == source['sha256']
+    assert prepared_implementations(thread) == {revision['evidence_id']: revision, latest['evidence_id']: latest}
+    bind_work(thread, work['work_id'], node['id'], plan)
+    assert current_work(thread)['status'] == 'running'

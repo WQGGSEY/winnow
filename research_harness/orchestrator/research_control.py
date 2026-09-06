@@ -13,7 +13,7 @@ from research_harness.schemas.validator import validate_named_schema
 from research_harness.evaluation_vault import sealed_bank_metadata
 from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
 
-PLANNING_POLICY_VERSION = 12
+PLANNING_POLICY_VERSION = 13
 
 
 class StaleResearchWork(ValueError):
@@ -144,6 +144,9 @@ def prepared_implementations(thread: Path) -> dict[str, Any]:
         item = _read(path)
         if item.get('outcome', {}).get('execution_result') == 'implementation_prepared':
             prepared['implementation_' + item['work_id']] = item['outcome']
+        for revision in (path.parent / 'implementation_preparations').glob('*.json'):
+            record = _read(revision)
+            prepared[record['evidence_id']] = record
     return prepared
 
 
@@ -220,6 +223,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
         'available_evidence_ids': sorted(available_evidence),
         'review_runtime': runtime,
         'runtime_input_example': runtime_input_example(thread),
+        'source_preparation': 'design_experiment_template(work_id, plan_metadata) prepares or repairs source within the SAME planned execution or protocol-revision work. The question and work_id remain active; preparation is not a new research work or observation.',
         'execution_review': {
             'automatic_before_runner': True,
             'checks': ['selected test', 'registered protocol', 'actual imports and input consumption',
@@ -302,16 +306,19 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'or sample uniformly over every game. Assess relevance to the original question and honest scope, not equality to the retired population. '
             'Distinguish missing provenance from an established sampling defect and inspect the supplied sampling_provenance before discarding a bank. '
             'Resolve one uncertainty that changes the next research decision; put other useful questions in deferred_questions. '
-            'Choose implementation when source bytes must be created or repaired before registration or execution. '
-            'Use design_experiment_template with this work_id; it writes a work-specific draft and returns source paths and hashes without running anything. '
-            'A nonexistent program cannot have a prior hash. Prepared implementations are not empirical evidence or approval; inspect them, bind them if required, then execute the smallest useful probe. '
+            'Select the scientific test even when its program has not been written. Source preparation and repair are internal steps of that same work. '
+            'Use design_experiment_template with the SAME work_id to prepare versioned files; it returns paths and hashes without executing or completing the work. '
+            'Then dispatch the selected test with that work_id. Do not turn writing code or checking a repair into another research question or work. '
+            'For a qualified formal claim, write its normal node template using node_id, then execute_node_experiment with the same scientific work_id. '
+            'A protocol_revision may prepare required components within its own work before submitting the amendment. '
+            'A nonexistent program cannot have a prior hash. Prepared sources are not observations or scientific approval. '
             'Choose analysis for questions answerable by interpreting existing source, definitions or recorded evidence. '
             'Every selected execution already receives the independent pre-execution review described in execution_review. '
             'Do not insert a separate analysis work solely to approve the same prepared program for that same execution. '
-            'When new measurements are the next needed evidence and the program exists, select the bounded execution; '
+            'When new measurements are the next needed evidence, select the bounded execution and prepare missing code within it. '
             'For a diagnostic with no scientific comparator, execute_baseline_preflight accepts role=diagnostic with empty '
             'mandatory_baselines and baseline_evidence_requirements. Emit measured metrics without a fabricated baseline or completion comparator. '
-            'its automatic review will inspect implementation validity and return repair feedback before any runner starts. '
+            'The automatic review will inspect implementation validity and return repair feedback before any runner starts. '
             'A separate source analysis is justified when it answers a distinct scientific or semantic question that changes which experiment to run. '
             'An already permitted development diagnostic is bound by its recorded execution plan. Do not add a separate '
             'protocol amendment solely to register its source hash unless the active protocol explicitly requires that extra registration. '
@@ -335,7 +342,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'Give competing explanations, contrasting observable predictions and the decision each outcome changes. '
             'Select the smallest useful diagnostic before expensive training when validity is uncertain. '
             'Do not prescribe the same full experiment after an unchanged observation; change the discriminating test. '
-            'If diagnostic_required is true, choose diagnostic_experiment or analysis to locate the failure, or protocol_revision for a conflicting registration. Otherwise choose analysis, implementation, protocol_revision, diagnostic_experiment, competence, comparison or replication. Choose confirmation only after baseline qualification, fixed checkpoints and an executed public reference of the complete final measurement program, with an approved future sampler. '
+            'If diagnostic_required is true, choose diagnostic_experiment or analysis to locate the failure, or protocol_revision for a conflicting registration. Otherwise choose analysis, protocol_revision, diagnostic_experiment, competence, comparison or replication. Choose confirmation only after baseline qualification, fixed checkpoints and an executed public reference of the complete final measurement program, with an approved future sampler. '
             'Use an appropriate bounded runtime, at most max_runtime_seconds, and cite only available_evidence_ids. Prepared implementation references establish source existence, not execution or scientific validity. '
             'Prepared source_diagnostics are fast, non-executing Python syntax/name checks. Repair clear launch defects before commissioning another full source review. '
             'Warnings about dynamically provided names require interpretation, not an automatic scientific rejection. An empty diagnostic list is not method validation. '
@@ -355,7 +362,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     validate_named_schema('research_work', decision)
     if set(decision['evidence_ids']) - available_evidence or (available_evidence and not decision['evidence_ids']):
         raise ValueError('The work decision must cite existing development execution or source-analysis evidence.')
-    if diagnostic_required and decision['kind'] not in {'diagnostic_experiment', 'analysis', 'protocol_revision', 'implementation'}:
+    if diagnostic_required and decision['kind'] not in {'diagnostic_experiment', 'analysis', 'protocol_revision'}:
         raise ValueError('An execution failure or unchanged observation requires a discriminating diagnostic.')
     if decision['max_runtime_seconds'] > ceiling:
         raise ValueError('Work exceeds the registered runtime limit.')
@@ -373,8 +380,6 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
         work['next_tool_to_call'] = 'resolve_research_work'
     elif decision['kind'] == 'protocol_revision':
         work['next_tool_to_call'] = 'revise_evaluation_protocol'
-    elif decision['kind'] == 'implementation':
-        work['next_tool_to_call'] = 'design_experiment_template'
     elif decision['kind'] == 'confirmation':
         if not active_sampling_registration(thread) or not (thread / 'market/baseline_qualification.json').exists():
             raise ValueError('Confirmation requires approved future sampling and qualified baselines.')
@@ -445,7 +450,7 @@ def bind_work(thread: Path, work_id: str | None, node_id: str, plan: dict[str, A
         raise ValueError('Call plan_research_work and supply its work_id before a new execution.')
     if work.get('planning_policy_version') != PLANNING_POLICY_VERSION:
         raise StaleResearchWork('Research planning policy changed; call plan_research_work before execution.')
-    if work['decision']['kind'] in {'analysis', 'protocol_revision', 'implementation', 'confirmation'}:
+    if work['decision']['kind'] in {'analysis', 'protocol_revision', 'confirmation'}:
         raise StaleResearchWork(f"This question requires {work['next_tool_to_call']}, not a new experiment.")
     if work.get('protocol_digest') != _digest(_read(thread / 'production/feasibility_envelope.json')):
         raise StaleResearchWork('Registered protocol changed; call plan_research_work before execution.')

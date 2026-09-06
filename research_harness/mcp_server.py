@@ -544,7 +544,7 @@ TOOL_DEFINITIONS = [
         "name": "design_experiment_template",
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
-            "For planned implementation work, supply work_id and plan_metadata; node_id is not needed. This writes isolated draft source_files without execution or scientific approval; the result records exact paths/hashes and completes this preparation work. Otherwise supply node_id to write the experiment code for the current node. Submit a "
+            "Prepare or repair code within the SAME planned execution or protocol-revision work: supply work_id and plan_metadata; node_id is not needed. This writes versioned source_files without execution or scientific approval, records exact paths/hashes, and keeps the scientific work planned with the same work_id. Do not create a separate implementation work. For a qualified formal claim, instead supply node_id without work_id to install its normal experiment template, then execute with the existing scientific work_id. Submit a "
             "plan_metadata dict (task_class, objective, entrypoint, resources, "
             "expected_outputs, baseline_evidence_requirements, source_files). "
             "Reuse or revise source_files without retranscribing them: supply {path, purpose, from_path:absolute_existing_thread_file, sha256:base_file_hash, replacements:[{old:exact_text,new:replacement_text}]} instead of content. Each old string must match exactly once; omit replacements to copy unchanged bytes. Original files are not edited. "
@@ -3225,32 +3225,50 @@ def _handle_design_experiment_template_locked(args: dict[str, Any]) -> dict[str,
         work = current_work(thread)
         if (thread / 'production/confirmation_execution.json').exists():
             raise ValueError('Confirmation is reserved; implementation changes are closed')
-        if work.get('work_id') != args['work_id'] or work.get('decision', {}).get('kind') != 'implementation':
-            raise ValueError('Supply the current implementation work_id')
-        if work.get('status') == 'completed':
+        if work.get('work_id') != args['work_id']:
+            raise ValueError('Supply the current research work_id')
+        if work.get('status') == 'completed' and work.get('outcome', {}).get('execution_result') == 'implementation_prepared':
             if work['outcome']['template_digest'] != _digest(plan_meta):
                 raise ValueError('This work already prepared another implementation')
             for item in work['outcome']['source_files']:
                 if _hash(Path(item['path'])) != item['sha256']:
                     raise ValueError('Prepared implementation changed')
             return {**work, 'research_work_checkpoint': work['work_id']}
+        if work.get('decision', {}).get('kind') not in {
+            'protocol_revision', 'diagnostic_experiment', 'competence', 'comparison', 'replication', 'confirmation'
+        }:
+            raise ValueError('Prepare source within the planned execution or protocol-revision work, not a source-only analysis')
         if (work.get('status') != 'planned' or work.get('planning_policy_version') != PLANNING_POLICY_VERSION
                 or work.get('protocol_digest') != _digest(_read_json(thread / 'production/feasibility_envelope.json'))
                 or work.get('evidence_digest') != _digest(development_evidence(thread))):
             raise ValueError('Implementation work is stale; call plan_research_work')
         if not source_files:
             raise ValueError('Implementation preparation requires source files')
-        draft = thread / 'production/research_control/work' / work['work_id'] / 'implementation'
+        template_digest = _digest(plan_meta)
+        existing = work.get('prepared_implementation', {})
+        if existing.get('template_digest') == template_digest:
+            for item in existing['source_files']:
+                if _hash(Path(item['path'])) != item['sha256']:
+                    raise ValueError('Prepared implementation changed')
+            return {**work, 'research_work_checkpoint': work['work_id'], 'preparation_checkpoint': template_digest}
+        work_dir = thread / 'production/research_control/work' / work['work_id']
+        draft = work_dir / 'implementation_revisions' / template_digest
         files = write_professor_template(draft, draft, plan_meta)
-        _write(draft.parent / 'implementation_request.json', args['plan_metadata'])
-        sources = [{'path': str((draft / relative).resolve()), 'sha256': _hash(draft / relative)} for relative in files]
-        work.update(status='completed', outcome={'execution_result': 'implementation_prepared',
-                    'template_digest': _digest(plan_meta), 'source_files': sources,
+        _write(work_dir / 'implementation_requests' / (template_digest + '.json'), args['plan_metadata'])
+        sources = [{'path': str((draft / relative).resolve()), 'relative_path': relative,
+                    'sha256': _hash(draft / relative)} for relative in files]
+        from research_harness.orchestrator.experiment_plan import PLAN_METADATA_FILENAME
+        prepared = {'execution_result': 'implementation_prepared',
+                    'evidence_id': 'implementation_' + work['work_id'] + '_' + template_digest,
+                    'template_digest': template_digest, 'source_files': sources,
+                    'plan_metadata_path': str((draft / PLAN_METADATA_FILENAME).resolve()),
                     'source_diagnostics': python_source_diagnostics(source_files),
-                    'new_observation': False, 'scientific_verdict': 'unverified'}, next_tool_to_call='plan_research_work')
+                    'new_observation': False, 'scientific_verdict': 'unverified'}
+        _write(work_dir / 'implementation_preparations' / (template_digest + '.json'), prepared)
+        work['prepared_implementation'] = prepared
         _write(thread / 'production/research_control/current.json', work)
         _write(thread / 'production/research_control/work' / work['work_id'] / 'work.json', work)
-        return {**work, 'research_work_checkpoint': work['work_id']}
+        return {**work, 'research_work_checkpoint': work['work_id'], 'preparation_checkpoint': template_digest}
 
     # (가) Operator-mandated module gate — deterministic, NOT an LLM critic. If the
     # feasibility_envelope declares execution_constraints.required_modules, the

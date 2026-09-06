@@ -1204,6 +1204,7 @@ def _last_known_state_summary(repo: Path, tid: str) -> dict[str, object]:
                 "status": work.get("status"),
                 "decision": work.get("decision"),
                 "outcome": work.get("outcome"),
+                "prepared_implementation": work.get("prepared_implementation"),
                 "binding": work.get("binding"),
             }
         except (OSError, json.JSONDecodeError):
