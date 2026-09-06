@@ -194,7 +194,8 @@ def test_restart_reconciles_reserved_work_and_never_reads_final_holdout(tmp_path
     assert planner.calls[0]['previous_work']['status'] == 'completed'
 
 
-def test_diagnostic_executes_without_fabricating_a_baseline_or_supporting_a_claim(tmp_path, monkeypatch):
+@pytest.mark.parametrize('work_kind', ['diagnostic_experiment', 'competence'])
+def test_diagnostic_executes_without_fabricating_a_baseline_or_supporting_a_claim(tmp_path, monkeypatch, work_kind):
     from research_harness.orchestrator import research_review
     from research_harness.orchestrator.experiment_plan import validate_experiment_plan
     from research_harness.runner.local_runner import LocalRunner
@@ -218,7 +219,7 @@ def test_diagnostic_executes_without_fabricating_a_baseline_or_supporting_a_clai
     plan['expected_outputs']['metrics_files'] = ['artifacts/metrics.json']
     with pytest.raises(ValueError, match='selected diagnostic'):
         execute_baseline_preflight(REPO, thread, node=node, plan=plan, role='diagnostic', settings={})
-    work = plan_research_work(REPO, thread, transport=Planner())
+    work = plan_research_work(REPO, thread, transport=Planner(work_kind))
     bind_work(thread, work['work_id'], node['id'], plan)
     def fixture_review(repo, directory, packet, *, purpose):
         request = {'packet': packet, 'purpose': purpose}
@@ -231,10 +232,12 @@ def test_diagnostic_executes_without_fabricating_a_baseline_or_supporting_a_clai
     monkeypatch.setattr(research_review, 'review_research_packet', fixture_review)
     original_execute = LocalRunner.execute
     def execute_with_binding(self, manifest):
-        binding = current_work(thread)['diagnostic_source_binding']
-        assert Path(binding['receipt_path']).is_file()
-        assert set(binding['source_sha256']) == {'experiment.py'}
-        assert binding['scientific_approval'] is False
+        if work_kind == 'diagnostic_experiment':
+            binding = current_work(thread)['diagnostic_source_binding']
+            assert Path(binding['receipt_path']).is_file()
+            assert set(binding['source_sha256']) == {'experiment.py'}
+            assert binding['scientific_approval'] is False
+        assert current_work(thread)['implementation_review']['decision'] == 'approve'
         return original_execute(self, manifest)
     monkeypatch.setattr(LocalRunner, 'execute', execute_with_binding)
     result = execute_baseline_preflight(REPO, thread, node=node, plan=plan, role='diagnostic',
@@ -247,6 +250,9 @@ def test_diagnostic_executes_without_fabricating_a_baseline_or_supporting_a_clai
     assert report['claim_verdict_candidate'] == 'inconclusive'
     assert not result['scientific_approval']
     finish_work(thread, result)
+    if work_kind == 'competence':
+        assert current_work(thread)['outcome']['scientific_verdict'] == 'unverified'
+        return
     planner = Planner('protocol_revision')
     plan_research_work(REPO, thread, transport=planner)
     binding = planner.calls[0]['executed_diagnostic_bindings'][node['id']]

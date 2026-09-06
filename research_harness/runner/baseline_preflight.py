@@ -123,8 +123,8 @@ def execute_baseline_preflight(
         from research_harness.orchestrator.research_control import current_work
         work = current_work(thread_dir)
         if (not research_work_id or work.get('work_id') != research_work_id
-                or work.get('decision', {}).get('kind') != 'diagnostic_experiment'):
-            raise ValueError('diagnostic role requires the selected diagnostic_experiment work')
+                or work.get('decision', {}).get('kind') not in {'diagnostic_experiment', 'competence'}):
+            raise ValueError('measurement-only preflight requires selected diagnostic_experiment or competence work')
     tree = thread_dir / 'production/tree'
     node_dir = tree / 'baseline_preflight' / node['id']
     node_dir.resolve().relative_to(tree.resolve())
