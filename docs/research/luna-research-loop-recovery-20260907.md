@@ -157,3 +157,23 @@ leaves a final-falsifier sentinel unread. The combined control/review checks pas
 40 cases. A transport checkpoint handoff now gives unchanged saved-request
 arguments, distinguishing retry from an implementation objection and discouraging
 coordinator rereads of reviewer logs.
+
+## Correcting inspection retention
+
+The changed-source review exhausted the remaining global deadline after roughly
+230 seconds. A fresh bounded run, `luna-cycle-e2e-20260907-063918`, attempted
+synthesis from that exact request. Inspection of the recovery revealed a defect
+in the new retention logic: retaining the most recent 80 KB favored later harness
+implementation reads and omitted the experiment source read. The root interrupted
+that synthesis before any assessment was accepted and recorded a transport
+checkpoint. This interrupted call's billed usage is unknown.
+
+Recovery now prioritizes commands reading the bound experiment source, followed
+by its workspace inputs, ahead of unrelated framework reads. The full hash-checked
+proposed source is also supplied inline to a tool-free execution reviewer. Output
+omissions remain explicit; missing evidence does not grant approval. A targeted
+case confirms that a 4 KB source read survives a later 77 KB framework read.
+The corrected continuation `source-retention-recovery` retains the same run
+ledger/deadline. Its initial review prompt is 262,965 bytes, below the 280 KB
+per-call ceiling. 41 control/review checks passed. Actual review and experiment
+outcomes are still pending at this checkpoint.

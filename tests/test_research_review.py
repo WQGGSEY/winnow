@@ -145,6 +145,7 @@ def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp
     assess = analyze_research_packet
     if role == 'execution_review':
         packet['decision_scope'] = 'development_execution'
+        packet['experiment_plan'] = {'source_files': [{'path': 'measure.py', 'content': 'print(7)'}]}
         assess = review_research_packet
     assessment = {'status': 'answered', 'answer': 'The recorded count is 7.',
                   'evidence': ['metrics.json /count'], 'limitations': [], 'next_steps': []}
@@ -161,6 +162,8 @@ def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp
                 'exit_code': 0, 'aggregated_output': '{"count":7}'}}) + '\n{"type":')
             raise CodexCliError('timeout')
         assert not request.allow_local_tools
+        if role == 'execution_review':
+            assert json.loads(request.prompt.input)['experiment_plan']['source_files'][0]['content'] == 'print(7)'
         recovered = json.loads(request.prompt.input)['completed_inspection']
         assert recovered['observations'][0]['output'] == '{"count":7}'
         assert Path(recovered['events_path']).read_text().endswith('{"type":')
@@ -172,3 +175,15 @@ def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp
         assert result['assessment'] == assessment
         assert assess(repo, tmp_path, packet, purpose='Read the count.') == result
         assert len(requests) == 2
+
+
+def test_inspection_budget_prioritizes_experiment_source_over_recent_framework_reads(tmp_path):
+    from research_harness.orchestrator.research_review import completed_inspection
+    path = tmp_path / 'events.jsonl'
+    path.write_text('\n'.join(json.dumps({'type': 'item.completed', 'item': {
+        'type': 'command_execution', 'exit_code': 0, 'command': command, 'aggregated_output': output}})
+        for command, output in [('cat /workspace/experiment.py', 'source' * 700),
+                                ('cat /framework/validator.py', 'framework' * 8600)]))
+    recovered = completed_inspection(path, ('/workspace/experiment.py',))
+    assert recovered['observations'][0]['output'] == 'source' * 700
+    assert recovered['omitted_output_count'] == 1

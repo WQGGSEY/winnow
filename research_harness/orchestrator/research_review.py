@@ -266,7 +266,7 @@ def analyze_research_packet(repo: Path, directory: Path, packet: dict[str, Any],
     return _complete_packet(repo, directory, packet, instructions=instructions, schema_name='research_analysis_response')
 
 
-def completed_inspection(path: Path) -> dict[str, Any] | None:
+def completed_inspection(path: Path, source_paths: tuple[str, ...] = ()) -> dict[str, Any] | None:
     """Recover completed tool observations, never an interrupted agent's conclusion."""
     if not path.is_file():
         return None
@@ -275,7 +275,8 @@ def completed_inspection(path: Path) -> dict[str, Any] | None:
     seen = set()
     omitted = 0
     remaining = 80000
-    for line in reversed(raw.decode(errors='replace').splitlines()):
+    candidates = []
+    for position, line in enumerate(raw.decode(errors='replace').splitlines()):
         try:
             event = json.loads(line)
         except ValueError:
@@ -285,11 +286,16 @@ def completed_inspection(path: Path) -> dict[str, Any] | None:
                 or item.get('exit_code') != 0 or not item.get('aggregated_output')):
             continue
         output = item['aggregated_output']
+        command = item['command']
+        priority = 0 if any(name in command for name in source_paths) else (
+            1 if any(str(Path(name).parent) + '/' in command for name in source_paths) else 2)
+        candidates.append((priority, -position, command, output))
+    for _, _, command, output in sorted(candidates):
         digest = hashlib.sha256(output.encode()).hexdigest()
         if digest in seen:
             continue
         seen.add(digest)
-        observation = {'command': item['command'], 'output': output, 'output_sha256': digest}
+        observation = {'command': command, 'output': output, 'output_sha256': digest}
         size = len(json.dumps(observation, ensure_ascii=False).encode())
         if size > remaining:
             omitted += 1
@@ -310,7 +316,8 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
     digest = hashlib.sha256(serialized.encode()).hexdigest()
     inspection = None
     if schema_name in {'research_analysis_response', 'research_execution_review_response'} and not (directory / digest / 'review.json').exists():
-        inspection = completed_inspection(directory / digest / 'events.jsonl')
+        source_paths = tuple(source['path'] for source in packet.get('execution_source_manifest', []))
+        inspection = completed_inspection(directory / digest / 'events.jsonl', source_paths)
         if inspection:
             request_data['completed_inspection'] = inspection
             serialized = json.dumps(request_data, sort_keys=True, ensure_ascii=False)
@@ -339,6 +346,10 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
         submitted = analysis_input_bundle(destination, submitted)
     if inspection:
         submitted['completed_inspection'] = inspection
+        if schema_name == 'research_execution_review_response':
+            # The bound source was already hash-checked by review_work_implementation.
+            # A tool-free reviewer must see it even when some old reads were omitted.
+            submitted['experiment_plan']['source_files'] = packet['experiment_plan']['source_files']
     with tempfile.TemporaryDirectory(prefix="research-decision-review-") as temporary:
         result = CodexCliAdapter().complete(CompletionRequest(
             prompt=AgentPrompt(instructions=instructions, input=json.dumps(submitted, ensure_ascii=False)),
