@@ -304,3 +304,11 @@ Verification: research_control/research_review — 51 passed. Extended existing 
 The resumed coordinator preserved notes but changed replace_holdout/defer_holdout_generation from the saved false/false to true/true. A global supervisor instruction said to retire/re-register whenever a future sampler was present, contradicting exact checkpoint replay. Replaced that unconditional instruction: only a selected new sampling design uses those flags; mere presence of an already registered sampler does not. The in-flight independent review still owns the submitted revision; the root has not altered its scientific proposal.
 
 Verification: included in the combined research_control/research_review/thread_supervisor run — 108 passed, 3 subtests passed; git diff --check. Live recovery fidelity after this prompt adjustment remains to be observed at the next process boundary.
+
+### Source analysis must be able to update a source question
+
+prediction_support returned no eligible measurement counts for analysis work, and the generated planning schema consequently forced every source-analysis alternative to unresolved even after an answered analysis. Thus a completed inspection could not change a competing interpretation in the next decision. This was a generation-contract defect, not an absence of model reasoning.
+
+Answered analysis_completed work now carries answered_source_analysis as its support basis and may update its own alternatives with source-receipt citations and an empty observation-ID list. Unresolved analysis, failed executions, absent empirical support, and zero counts keep their existing restrictions. This neither supplies empirical measurements nor qualifies a scientific claim. The existing schema/semantic validation case now demonstrates an informative update from answered source analysis while retaining rejection of invented observation IDs and unsupported empirical effects.
+
+Verification: research_control/research_review/thread_supervisor — 108 passed, 3 subtests passed; git diff --check. Historical interpretations are not rewritten by the host.

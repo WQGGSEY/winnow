@@ -870,6 +870,13 @@ def test_planner_schema_binds_failed_receipt_before_generation(tmp_path):
         validate_schema(source_schema, assessment)
     assessment['prediction_updates'][1]['observation_ids'] = []
     validate_schema(source_schema, assessment)
+    from research_harness.orchestrator.research_knowledge import validate_previous_result
+    from research_harness.orchestrator.research_observations import prediction_support
+    assessment['result_kind'] = 'informative'
+    assessment['prediction_updates'][1]['effect'] = 'supported'
+    validate_schema(source_schema, assessment)
+    validate_previous_result({'previous_result': assessment}, analysis, {'work_' + analysis['work_id']})
+    assert prediction_support(analysis)[1]['support_basis'] == 'answered_source_analysis'
     assessment['prediction_updates'][1]['effect'] = 'unresolved'
     assessment['work_id'] = 'stale-work'
     with pytest.raises(ValueError):

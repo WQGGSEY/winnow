@@ -82,6 +82,8 @@ def collect_observation_support(decision: dict[str, Any], plan: dict[str, Any],
 
 def prediction_support(previous: dict[str, Any]) -> list[dict[str, Any]]:
     support = previous.get('outcome', {}).get('measurement_support')
+    answered_analysis = (previous.get('decision', {}).get('kind') == 'analysis'
+                         and previous.get('outcome', {}).get('execution_result') == 'analysis_completed')
     rows = []
     for index, prediction in enumerate(previous.get('decision', {}).get('alternatives', [])):
         dependencies = prediction.get('required_observations', previous['decision'].get('required_observations', []))
@@ -91,7 +93,8 @@ def prediction_support(previous: dict[str, Any]) -> list[dict[str, Any]]:
                        or not math.isfinite(counts[name]) or counts[name] <= 0]
         rows.append({'alternative_index': index, 'required_observations': dependencies,
                      'missing_or_empty': unavailable,
-                     'eligible_for_interpretation': not unavailable and bool(dependencies) if support is not None else None})
+                     'eligible_for_interpretation': True if answered_analysis else not unavailable and bool(dependencies) if support is not None else None,
+                     'support_basis': 'answered_source_analysis' if answered_analysis else 'declared_measurement_counts'})
     return rows
 
 
