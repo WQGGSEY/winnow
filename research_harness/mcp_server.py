@@ -544,7 +544,7 @@ TOOL_DEFINITIONS = [
         "name": "design_experiment_template",
         "description": (
             f"{PROFESSOR_CONTRACT}\n\n"
-            "For planned implementation work, supply work_id to write isolated draft source_files without execution or scientific approval; the result records exact paths/hashes and completes this preparation work. Otherwise write the experiment code for the current node. Submit a "
+            "For planned implementation work, supply work_id and plan_metadata; node_id is not needed. This writes isolated draft source_files without execution or scientific approval; the result records exact paths/hashes and completes this preparation work. Otherwise supply node_id to write the experiment code for the current node. Submit a "
             "plan_metadata dict (task_class, objective, entrypoint, resources, "
             "expected_outputs, baseline_evidence_requirements, source_files). "
             "Reuse or revise source_files without retranscribing them: supply {path, purpose, from_path:absolute_existing_thread_file, sha256:base_file_hash, replacements:[{old:exact_text,new:replacement_text}]} instead of content. Each old string must match exactly once; omit replacements to copy unchanged bytes. Original files are not edited. "
@@ -582,7 +582,8 @@ TOOL_DEFINITIONS = [
         ),
         "inputSchema": {
             "type": "object",
-            "required": ["thread_id", "node_id", "plan_metadata"],
+            "required": ["thread_id", "plan_metadata"],
+            "anyOf": [{"required": ["work_id"]}, {"required": ["node_id"]}],
             "properties": {
                 "thread_id": {"type": "string"},
                 "node_id": {"type": "string"},
@@ -3201,10 +3202,13 @@ def _handle_design_experiment_template_locked(args: dict[str, Any]) -> dict[str,
     )
 
     tid = args["thread_id"]
-    node_id = args["node_id"]
-    rejected = _require_authoritative_node(tid, node_id)
-    if rejected is not None:
-        return rejected
+    node_id = args.get("node_id")
+    if not args.get('work_id'):
+        if not node_id:
+            raise ValueError('Supply the current implementation work_id or an authoritative node_id')
+        rejected = _require_authoritative_node(tid, node_id)
+        if rejected is not None:
+            return rejected
     plan_meta = args["plan_metadata"]
     if not isinstance(plan_meta, dict):
         return {"status": "rejected", "reason": "plan_metadata must be an object"}

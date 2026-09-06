@@ -422,8 +422,10 @@ def test_implementation_work_writes_bound_bytes_without_executing(tmp_path, monk
     with pytest.raises(ValueError, match='design_experiment_template'):
         bind_work(thread, work['work_id'], node['id'], plan)
     monkeypatch.setattr(mcp_server, '_thread_dir', lambda tid: thread)
-    monkeypatch.setattr(mcp_server, '_require_authoritative_node', lambda tid, node_id: None)
-    args = {'thread_id': 'thread', 'node_id': node['id'], 'work_id': work['work_id'],
+    def no_claim_lookup(*args):
+        raise AssertionError('Implementation work must not depend on a claim node')
+    monkeypatch.setattr(mcp_server, '_require_authoritative_node', no_claim_lookup)
+    args = {'thread_id': 'thread', 'work_id': work['work_id'],
             'plan_metadata': {'source_files': [{'path': 'prepared.py', 'content': "raise RuntimeError('must not execute during preparation')\n"}]}}
     prepared = mcp_server.handle_design_experiment_template(args)
     source = prepared['outcome']['source_files'][0]
