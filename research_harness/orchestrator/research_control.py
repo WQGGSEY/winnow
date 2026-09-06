@@ -152,7 +152,7 @@ def analysis_findings(thread: Path) -> dict[str, Any]:
     return findings
 
 
-def development_evidence(thread: Path) -> dict[str, Any]:
+def development_evidence(thread: Path, *, limit: int | None = 8) -> dict[str, Any]:
     """Allowlist preparation artifacts. Never read falsifier or holdout results."""
     root = thread / 'production/tree/baseline_preflight'
     evidence = {}
@@ -164,7 +164,7 @@ def development_evidence(thread: Path) -> dict[str, Any]:
             if path.exists() and path not in paths:
                 paths.append(path)
     paths.sort(key=lambda p: (p.stat().st_mtime_ns, str(p)))
-    for path in paths[-8:]:
+    for path in paths[-limit:] if limit is not None else paths:
         report = _read(path)
         plan = _read(path.parent / 'experiment_plan.json')
         workspace = Path(plan.get('workspace', path.parent / 'workspace')).resolve()
@@ -190,6 +190,21 @@ def development_evidence(thread: Path) -> dict[str, Any]:
             'evidence_scope': 'development preparation, not qualified scientific support',
         }
     return evidence
+
+
+def development_result_index(thread: Path) -> dict[str, Any]:
+    """Keep completed historical measurements discoverable beyond the recent window."""
+    results = {}
+    for node_id, observation in development_evidence(thread, limit=None).items():
+        if observation['execution_status'] != 'completed' or observation['measurement_status'] != 'completed':
+            continue
+        report = thread / observation['report_path']
+        plan = _read(report.parent / 'experiment_plan.json')
+        results[node_id] = {
+            'declared_objective': plan.get('objective', ''), 'metrics': observation['metrics'],
+            'report_path': str(report.resolve()), 'artifact_digest': observation['artifact_digest'],
+        }
+    return results
 
 
 def prepared_implementations(thread: Path) -> dict[str, Any]:
@@ -301,9 +316,11 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
                     details.append(measurement_facts(path))
             measurements[key] = details
     prepared = prepared_implementations(thread)
+    historical_results = development_result_index(thread)
     brief = research_brief(thread)
     _write(thread / 'production/research_control/research_brief.json', brief)
     available_evidence = evidence.keys() | findings.keys() | prepared.keys()
+    available_evidence.update(historical_results)
     available_evidence.update(research.get('sources', {}))
     sources = retrieved_sources(thread)
     archive_path = thread / 'production/research_control/evidence_archive.json'
@@ -352,6 +369,8 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
         'active_sampling_registration': active_sampling_registration(thread),
         'active_claim': _read(thread / 'production/tree/search_state.json').get('nodes', []),
         'development_evidence': evidence, 'previous_work': previous,
+        'historical_measurements': historical_results,
+        'historical_measurement_scope': 'Completed development measurements with their declared objectives, not validated interpretations. Check relevant older measurements before re-establishing task feasibility or repeating a diagnostic. Protocols, implementations and conditions may differ: references do not establish applicability to the present question. Reuse what they actually establish with explicit limits; if a new measurement is needed, identify its new distinction. Final holdout and falsifier results are excluded.',
         'diagnostic_required': diagnostic_required, 'max_runtime_seconds': ceiling,
         'confirmation_available': bool(active_sampling_registration(thread) and (thread / 'market/baseline_qualification.json').exists()),
     }
@@ -509,6 +528,8 @@ def resolve_research_work(repo: Path, thread: Path, work_id: str) -> dict[str, A
             if path.is_file() and path.suffix == '.json':
                 facts[node_id].append(measurement_facts(path))
     packet = {'question': work['decision'], 'measurement_facts': facts, 'development_evidence': evidence,
+              'historical_measurements': {key: value for key, value in development_result_index(thread).items()
+                                          if key in work['decision']['evidence_ids']},
               'retrieved_sources': sources,
               'runtime_input_example': runtime_input_example(thread),
         'measurement_output_contract': {

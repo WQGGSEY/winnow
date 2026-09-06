@@ -115,3 +115,45 @@ lead to causal discrimination. It now follows the planner's exploration,
 discrimination or intervention choice and allows replacing diagnostics that do
 not change the next intervention. The original goal, matched comparisons and
 unverified status of intuition remain explicit.
+
+## Execution handoff and historical evidence loss
+
+The corrected planner registered work
+`95de6a19a52f95f4d1b06ba80f698c46a7dd596f7031491f3620aa16a08c373a`.
+Its first dispatch had no experiment_plan because a new unimplemented work pointed
+straight to execution. New empirical work now points to source preparation;
+preparation preserves the same scientific work and then points to preflight.
+The live agent subsequently authored its control program and explicit count
+bindings. The root did not author the experiment.
+
+The first implementation review timed out at 300 seconds after ten successful
+read-only outputs. Recovery now supports execution reviews as well as analysis.
+The coordinator independently found a real source discrepancy during resumption:
+`testCapture` remained in the copied source where the selected work specified
+`bloxCapture`. It changed that line. Consequently the input digest changed and
+old inspection was correctly not reused for the changed source. The new source
+entered a fresh independent review. This is a code correction, not evidence of
+an RL intervention or a successful control result.
+
+A more consequential memory defect was also found. `development_evidence` admitted
+only the newest eight reports, and the selector then saw only the latest two.
+The earlier completed collect-and-return feasibility control was absent both
+from its visible results and its available evidence IDs. The selector could not
+know that this related question had already been measured. The earlier control
+and the new matched reward-alignment diagnostic are not asserted to be equivalent;
+the omission prevented an informed comparison of their scope in the first place.
+
+A historical result index now retains all completed development measurements
+with declared objectives, observed metrics, receipt paths and artifact digests.
+For this thread it contains 69 measurements in approximately 44 KB, rather than
+full source and tool histories. These entries are discoverable and citable by the
+selector and selected source-analysis role. The index explicitly requires checking
+protocol and implementation differences before reuse. It does not qualify any
+result or expose final-falsifier files. Recent execution reconciliation still uses
+its existing bounded window.
+
+The historical-window regression retains the oldest of ten measurements and
+leaves a final-falsifier sentinel unread. The combined control/review checks pass
+40 cases. A transport checkpoint handoff now gives unchanged saved-request
+arguments, distinguishing retry from an implementation objection and discouraging
+coordinator rereads of reviewer logs.

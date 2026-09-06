@@ -30,7 +30,8 @@ def test_empty_measurement_cannot_be_interpreted_as_no_effect(tmp_path, monkeypa
                    'report_path': 'production/tree/baseline_preflight/measurement/worker_report.json',
                    'metrics': {'effect': 0, **({'eligible_count': count} if count is not None else {})},
                    'observation_digest': 'measurement'}
-    monkeypatch.setattr(research_control, 'development_evidence', lambda thread: {node['id']: measurement})
+    monkeypatch.setattr(research_control, 'development_evidence', lambda thread, limit=8:
+                        development_evidence(thread, limit=None) if limit is None else {node['id']: measurement})
     finish_work(thread, {'status': 'executed'})
     previous = current_work(thread)
     assert not previous['outcome']['measurement_support']['evaluable']
@@ -105,6 +106,25 @@ def test_execution_inventory_includes_preparation_without_reading_measurements(t
     groups = execution_inventory(tmp_path)['groups']
     assert groups['baseline_preflight']['preflight'] == {'runner_status': 'timeout', 'runner_receipt_exists': True}
     assert groups['nodes']['formal'] == {'runner_status': None, 'runner_receipt_exists': False}
+
+
+def test_historical_measurements_remain_discoverable_after_recent_window(tmp_path):
+    from research_harness.orchestrator.research_control import development_result_index
+    for index in range(10):
+        directory = tmp_path / 'production/tree/baseline_preflight' / f'measurement_{index}'
+        workspace = directory / 'workspace'
+        workspace.mkdir(parents=True)
+        (directory / 'experiment_plan.json').write_text(json.dumps({'workspace': str(workspace),
+                                                                   'objective': f'Question {index}'}))
+        (directory / 'worker_report.json').write_text(json.dumps({'status': 'completed', 'metrics': {'value': index}}))
+        (workspace / 'runner_result.json').write_text(json.dumps({'status': 'completed'}))
+    (tmp_path / 'production/falsifier_result.json').write_text('must not read')
+    assert 'measurement_0' not in development_evidence(tmp_path)
+    index = development_result_index(tmp_path)
+    assert len(index) == 10
+    assert index['measurement_0']['declared_objective'] == 'Question 0'
+    assert index['measurement_0']['metrics'] == {'value': 0}
+    assert Path(index['measurement_0']['report_path']).is_file()
 
 
 class Planner:
