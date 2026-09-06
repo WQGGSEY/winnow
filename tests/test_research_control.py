@@ -702,3 +702,54 @@ def test_large_planning_context_retains_exact_sources_and_latest_failure(tmp_pat
     assert compact['authoritative_previous_result']['outcome'] == packet['previous_work']['outcome']
     assert 'source_observations' not in compact['previous_work']
     assert 'source_observations' in packet['previous_work']
+
+
+def test_planner_schema_binds_failed_receipt_before_generation(tmp_path):
+    from research_harness.orchestrator.research_knowledge import planning_response_schema
+    from research_harness.schemas.validator import validate_schema
+    thread, _, _, _, _ = fixture(tmp_path)
+    previous = plan_research_work(REPO, thread, transport=Planner())
+    previous.update(status='completed', outcome={'execution_result': 'execution_failed'})
+    schema = planning_response_schema(previous)['properties']['previous_result']
+    assessment = {'work_id': previous['work_id'], 'result_kind': 'execution_failure',
+                  'evidence_ids': ['work_' + previous['work_id']], 'missing_evidence': ['valid measurement'],
+                  'next_decision': 'Repair the actual output failure',
+                  'prediction_updates': [{'alternative_index': i, 'effect': 'unresolved',
+                                          'reason': 'Measurement failed'} for i in range(2)]}
+    validate_schema(schema, assessment)
+    assessment['prediction_updates'][1]['effect'] = 'supported'
+    with pytest.raises(ValueError):
+        validate_schema(schema, assessment)
+    assessment['prediction_updates'][1]['effect'] = 'unresolved'
+    assessment['work_id'] = 'stale-work'
+    with pytest.raises(ValueError):
+        validate_schema(schema, assessment)
+
+
+def test_planned_work_is_reconsidered_when_model_changes(tmp_path, monkeypatch):
+    thread, _, _, _, _ = fixture(tmp_path)
+    monkeypatch.setenv('RESEARCH_HARNESS_MODEL', 'gpt-5.6-sol')
+    first = plan_research_work(REPO, thread, transport=Planner())
+    monkeypatch.setenv('RESEARCH_HARNESS_MODEL', 'gpt-5.6-luna')
+    planner = Planner()
+    second = plan_research_work(REPO, thread, transport=planner)
+    assert planner.calls
+    assert second['work_id'] != first['work_id']
+    assert second['planning_model'] == 'gpt-5.6-luna'
+
+
+def test_bounded_mcp_transport_failure_returns_checkpoint(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from research_harness import mcp_server
+    from research_harness.orchestrator import research_control
+    from research_harness.adapters.codex_cli import CodexCliError
+    monkeypatch.setenv('RESEARCH_HARNESS_CALL_BUDGET', str(tmp_path / 'budget.json'))
+    monkeypatch.setattr(mcp_server, '_exclusive_adaptive_writer', lambda tid: nullcontext())
+    monkeypatch.setattr(mcp_server, '_repo_root', lambda: REPO)
+    monkeypatch.setattr(mcp_server, '_thread_dir', lambda tid: tmp_path)
+    def fail(*args, **kwargs):
+        raise CodexCliError('measured planner timeout')
+    monkeypatch.setattr(research_control, 'plan_research_work', fail)
+    response = mcp_server.handle_plan_research_work({'thread_id': 'probe'})
+    assert response['status'] == 'checkpoint'
+    assert response['next_tool_to_call'] is None

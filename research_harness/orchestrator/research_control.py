@@ -14,7 +14,7 @@ from research_harness.schemas.validator import validate_named_schema
 from research_harness.evaluation_vault import sealed_bank_metadata
 from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
 
-PLANNING_POLICY_VERSION = 20
+PLANNING_POLICY_VERSION = 21
 
 
 class StaleResearchWork(ValueError):
@@ -186,7 +186,7 @@ def executed_diagnostic_bindings(thread: Path) -> dict[str, Any]:
 def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '', transport=None) -> dict[str, Any]:
     from research_harness.orchestrator.hypothesis_development import hypothesis_context
     from research_harness.orchestrator.protocol_revision import protocol_note_history
-    from research_harness.orchestrator.research_knowledge import research_brief, brief_context, validate_previous_result, validate_solution_path, compact_planning_context
+    from research_harness.orchestrator.research_knowledge import research_brief, brief_context, validate_previous_result, validate_solution_path, compact_planning_context, planning_response_schema
     from research_harness.orchestrator.research_sources import retrieved_sources
 
     confirmation = _read(thread / 'production/confirmation_execution.json')
@@ -207,7 +207,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
                                          for key in ('implementation_review', 'protocol_review'))):
         raise ValueError('Reconsideration requires a planned work with rejected implementation feedback or protocol feedback.')
     planning_policy_version = PLANNING_POLICY_VERSION
-    if not reconsider_reason and previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('protocol_digest') == _digest(envelope) and previous.get('evaluation_bank_digest') == _digest(bank) and previous.get('sampling_spec_digest') == _digest(sampling) and previous.get('review_runtime_digest') == _digest(runtime) and previous['evidence_digest'] == _digest(evidence):
+    if not reconsider_reason and previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('planning_model') == research_model() and previous.get('protocol_digest') == _digest(envelope) and previous.get('evaluation_bank_digest') == _digest(bank) and previous.get('sampling_spec_digest') == _digest(sampling) and previous.get('review_runtime_digest') == _digest(runtime) and previous['evidence_digest'] == _digest(evidence):
         return previous
     if previous.get('status') == 'running':
         # The public caller holds the same writer lock as execution. A remaining
@@ -215,7 +215,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
         report = _read(thread / 'production/tree' / previous['binding'].get('scope', 'baseline_preflight') / previous['binding']['node_id'] / 'worker_report.json')
         finish_work(thread, {'status': 'executed' if report.get('status') == 'completed' else 'interrupted'})
         previous = current_work(thread)
-        if previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('protocol_digest') == _digest(envelope) and previous.get('review_runtime_digest') == _digest(runtime) and previous['evidence_digest'] == _digest(evidence):
+        if previous.get('status') == 'planned' and previous.get('planning_policy_version') == planning_policy_version and previous.get('planning_model') == research_model() and previous.get('protocol_digest') == _digest(envelope) and previous.get('review_runtime_digest') == _digest(runtime) and previous['evidence_digest'] == _digest(evidence):
             return previous
     ceiling = envelope['compute_budget']['max_runner_seconds_per_node']
     latest = list(evidence.values())[-1:] or [{}]
@@ -237,7 +237,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     for key, observation in list(evidence.items())[-2:]:
         plan = _read((thread / observation['report_path']).parent / 'experiment_plan.json')
         source = json.dumps(plan.get('source_files', []), ensure_ascii=False)
-        implementations[key] = {'source_excerpt': source if len(source) <= 32000 else source[:16000] + '\n[MIDDLE OMITTED]\n' + source[-16000:],
+        implementations[key] = {'plan_path': str(((thread / observation['report_path']).parent / 'experiment_plan.json').resolve()), 'source_excerpt': source if len(source) <= 32000 else source[:16000] + '\n[MIDDLE OMITTED]\n' + source[-16000:],
                                 'truncated': len(source) > 32000}
         if observation['execution_status'] == 'completed' and observation['measurement_status'] == 'completed':
             workspace = Path(plan['workspace']).resolve()
@@ -269,6 +269,9 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
         'available_evidence_ids': sorted(available_evidence),
         'review_runtime': runtime,
         'runtime_input_example': runtime_input_example(thread),
+        'measurement_output_contract': {
+            'unexpected_observations': 'Array of objects with string observation, evidence, scope_relation; optional suggested_branch_type is string or null. Use [] if absent; plain strings are invalid.',
+            'scope': 'Output transport contract, not a scientific measurement or verdict.'},
         'source_preparation': 'design_experiment_template(work_id, plan_metadata) prepares or repairs source within the SAME planned execution or protocol-revision work. The question and work_id remain active; preparation is not a new research work or observation.',
         'execution_review': {
             'automatic_before_runner': True,
@@ -424,6 +427,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'An invalid earlier diagnostic may be set aside with an explicit limitation; reconstructing every historical row is not automatically a prerequisite to new research. '
             'Prefer a small informative probe over exhaustive certification. Preserve scientific claim gates, but do not demand that every uncertainty be resolved before testing learning competence. '
             'Separate implementation validity, measurement validity, learning competence, and the scientific hypothesis. '
+            'Alternatives describe scientific predictions only. Record operational invalidity in previous_result.result_kind, not as a competing scientific explanation. '
             'A crash is not a refuted hypothesis; a successful exit is not a qualified method. '
             'Interpret the latest result and state which uncertainty now blocks the research decision. '
             'Inspect the supplied implementation excerpts for circular measurements and mismatches. '
@@ -445,11 +449,13 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
         prior_rejection = _read(directory / 'rejected_response.json')
         submitted = {**packet, 'previous_response_rejection': prior_rejection} if prior_rejection else packet
         _write(directory / 'submitted_request.json', submitted)
+        schema_path = directory / 'response.schema.json'
+        _write(schema_path, planning_response_schema(previous))
         with tempfile.TemporaryDirectory(prefix='research-work-') as temporary:
             response = (transport or CodexCliAdapter()).complete(CompletionRequest(
                 prompt=AgentPrompt(instructions=instructions, input=json.dumps(submitted, ensure_ascii=False)),
                 model=research_model(), timeout_seconds=240, allow_local_tools=True,
-                output_schema=repo / 'research_harness/schemas/research_work.schema.json',
+                output_schema=schema_path.resolve(),
                 cwd=Path(temporary), label='research work decision',
             ))
         (directory / 'raw_response.txt').write_text(response.text)
@@ -490,6 +496,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'created_at_ns': time.time_ns(),
             'claim_ids': [node['id'] for node in packet['active_claim']],
             'planning_policy_version': planning_policy_version,
+            'planning_model': research_model(),
             'review_runtime_digest': _digest(runtime),
             'protocol_digest': _digest(envelope),
             'evaluation_bank_digest': _digest(bank),
@@ -539,6 +546,9 @@ def resolve_research_work(repo: Path, thread: Path, work_id: str) -> dict[str, A
     packet = {'question': work['decision'], 'development_evidence': evidence,
               'retrieved_sources': sources,
               'runtime_input_example': runtime_input_example(thread),
+        'measurement_output_contract': {
+            'unexpected_observations': 'Array of objects with string observation, evidence, scope_relation; optional suggested_branch_type is string or null. Use [] if absent; plain strings are invalid.',
+            'scope': 'Output transport contract, not a scientific measurement or verdict.'},
               'execution_inventory': inventory,
               'analysis_findings': analysis_findings(thread),
               'prepared_implementations': prepared_implementations(thread),
@@ -637,6 +647,9 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
               'execution_source_manifest': execution_sources,
               'diagnostic_source_binding_proposal': diagnostic_binding,
               'runtime_input_example': runtime_input_example(thread),
+        'measurement_output_contract': {
+            'unexpected_observations': 'Array of objects with string observation, evidence, scope_relation; optional suggested_branch_type is string or null. Use [] if absent; plain strings are invalid.',
+            'scope': 'Output transport contract, not a scientific measurement or verdict.'},
               'runner_contract': {
                   'timeout_sec': plan['resources']['timeout_sec'],
                   'timing_owner': 'LocalRunner subprocess timeout and runner_result.json elapsed_sec',

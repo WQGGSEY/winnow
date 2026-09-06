@@ -302,3 +302,69 @@ def test_bounded_call_budget_rejects_before_launch(tmp_path, monkeypatch):
     assert calls[0][calls[0].index('multi_agent') - 1] == '--disable'
     assert calls[0][calls[0].index('skip_host_skill_discovery') - 1] == '--enable'
     assert len(json.loads(budget.read_text())['calls']) == 1
+
+
+def test_bounded_prompt_limit_and_deadline_apply_before_provider(tmp_path, monkeypatch):
+    import time
+    budget = tmp_path / 'budget.json'
+    limits = {'deadline_epoch': time.time() + 30, 'max_calls': 4,
+              'max_prompt_bytes': 10000, 'max_call_prompt_bytes': 100,
+              'model': 'gpt-5.6-luna'}
+    budget.write_text(json.dumps(limits))
+    monkeypatch.setenv('RESEARCH_HARNESS_CALL_BUDGET', str(budget))
+    calls = []
+    def runner(command, **kwargs):
+        calls.append(kwargs)
+        raise RuntimeError('provider reached')
+    adapter = CodexCliAdapter(runner=runner)
+    with pytest.raises(ValueError, match='budget exhausted'):
+        adapter.complete(CompletionRequest(prompt=AgentPrompt(instructions='', input='x' * 101),
+                                           model='gpt-5.6-luna'))
+    assert not calls
+    assert json.loads(budget.read_text())['exhausted_at']
+    budget.write_text(json.dumps(limits))
+    with pytest.raises(RuntimeError, match='provider reached'):
+        adapter.complete(CompletionRequest(prompt=AgentPrompt(instructions='', input='short'),
+                                           model='gpt-5.6-luna', timeout_seconds=240))
+    assert 0 < calls[0]['timeout'] <= 30
+
+
+def test_synchronous_timeout_kills_detached_tool(tmp_path):
+    import sys
+    from research_harness.adapters.codex_cli import CodexCliError
+    pid_file = tmp_path / 'child.pid'
+    executable = tmp_path / 'codex-stub'
+    executable.write_text(f"#!{sys.executable}\n" +
+        "import subprocess,sys,time\n" +
+        "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'], start_new_session=True)\n" +
+        f"open({str(pid_file)!r},'w').write(str(p.pid))\ntime.sleep(60)\n")
+    executable.chmod(0o700)
+    with pytest.raises(CodexCliError, match='timed out'):
+        CodexCliAdapter(codex_path=str(executable)).complete(CompletionRequest(
+            prompt=AgentPrompt(instructions='', input='probe'), model='gpt-5.6-luna', timeout_seconds=0.5))
+    child = Path('/proc') / pid_file.read_text() / 'stat'
+    if child.exists():
+        assert child.read_text().rsplit(')', 1)[1].split()[0] == 'Z'
+
+
+def test_bounded_timeout_preserves_partial_trace_and_stops_retry(tmp_path, monkeypatch):
+    import time
+    import subprocess
+    from research_harness.adapters.codex_cli import CodexCliError
+    budget = tmp_path / 'budget.json'
+    budget.write_text(json.dumps({'deadline_epoch': time.time() + 60, 'max_calls': 4,
+                                  'max_prompt_bytes': 10000, 'model': 'gpt-5.6-luna'}))
+    monkeypatch.setenv('RESEARCH_HARNESS_CALL_BUDGET', str(budget))
+    calls = []
+    def runner(command, **kwargs):
+        calls.append(command)
+        raise subprocess.TimeoutExpired(command, kwargs['timeout'], output=b'{"type":"item.started"}\n')
+    adapter = CodexCliAdapter(runner=runner)
+    request = CompletionRequest(prompt=AgentPrompt(instructions='', input='probe'), model='gpt-5.6-luna')
+    with pytest.raises(CodexCliError, match='timed out'):
+        adapter.complete(request)
+    receipt = json.loads(budget.read_text())
+    assert Path(receipt['failed_call']['partial_output_path']).read_bytes() == b'{"type":"item.started"}\n'
+    with pytest.raises(ValueError, match='budget exhausted'):
+        adapter.complete(request)
+    assert len(calls) == 1

@@ -55,6 +55,7 @@ def hypothesis_context(repo: Path, thread: Path) -> dict[str, Any]:
         base = dossier_path(repo, brief['baseline_dossier_id']).parent
         details = {candidate['id']: (base / candidate['detail_file']).read_text() for candidate in dossier['candidates_index']}
     return {
+        'planning_model': research_model(),
         'research_brief': brief_context(thread, research_brief(thread)),
         'research_question': _read(thread / 'thread.json').get('user_goal', ''),
         'problem_definition': _read(thread / 'grilling/grilling_session.json').get('extracted', {}),
@@ -88,13 +89,17 @@ def develop_hypotheses(repo: Path, thread: Path, *, revision_request: str = '', 
     if run_id is None and previous.get('status') in {
         'developing', 'awaiting_critique', 'awaiting_revision', 'awaiting_revision_critique',
     }:
-        run_id = previous['context_digest']
+        frozen = _read(root / previous['context_digest'] / 'context.json')
+        if frozen.get('planning_model') == research_model():
+            run_id = previous['context_digest']
     if run_id is not None:
         if len(run_id) != 64 or any(c not in '0123456789abcdef' for c in run_id):
             raise ValueError('invalid hypothesis run_id')
         context = _read(root / run_id / 'context.json')
         if not context or _digest(context) != run_id:
             raise ValueError('hypothesis run_id has no matching frozen context')
+        if context.get('planning_model') != research_model():
+            raise ValueError('Hypothesis run model changed; start a new run instead of mixing cached stages.')
         digest = run_id
     else:
         context = hypothesis_context(repo, thread)

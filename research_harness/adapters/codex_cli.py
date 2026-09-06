@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
-from research_harness.adapters.call_budget import reserve_call
+from research_harness.adapters.call_budget import reserve_call, record_failed_call
 from research_harness.evaluation_vault import ensure_evaluation_vault
 
 from research_harness.agent_runtime import (
@@ -91,22 +91,26 @@ class CodexCliAdapter:
 
     def complete(self, request: CompletionRequest) -> CompletionResult:
         command = self._build_exec_command(request=request)
-        reserve_call(model=request.model, prompt=self._compose_prompt(request.prompt), label=request.label)
+        remaining = reserve_call(model=request.model, prompt=self._compose_prompt(request.prompt), label=request.label)
+        timeout = min(request.timeout_seconds, remaining) if remaining is not None else request.timeout_seconds
         try:
-            completed = self._runner(
+            runner = self._run_owned if self._runner is subprocess.run else self._runner
+            completed = runner(
                 command,
                 input=self._compose_prompt(request.prompt),
                 capture_output=True,
                 text=True,
-                timeout=request.timeout_seconds,
+                timeout=timeout,
                 check=False,
                 env=_codex_environment(),
             )
         except subprocess.TimeoutExpired as exc:
-            raise CodexCliError(
-                f"{request.label}: codex CLI timed out after {request.timeout_seconds}s"
-            ) from exc
+            reason = f"{request.label}: codex CLI timed out after {timeout}s"
+            record_failed_call(label=request.label, reason=reason, partial_output=exc.output or "")
+            raise CodexCliError(reason) from exc
         if completed.returncode not in (0, None):
+            record_failed_call(label=request.label, reason=f"CLI exited {completed.returncode}",
+                               partial_output=completed.stdout or "")
             detail = " ".join(
                 part.strip()
                 for part in (completed.stderr or "", completed.stdout or "")
@@ -117,6 +121,23 @@ class CodexCliAdapter:
                 f"{completed.returncode}: {detail[:400]}"
             )
         return self.parse_completion(completed.stdout or "", label=request.label)
+
+    def _run_owned(self, command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        """A timed-out synchronous call must not leave detached tool processes alive."""
+        import uuid
+        from research_harness.adapters.process_tree import OwnedProcessTree
+
+        token = uuid.uuid4().hex
+        env = {**kwargs['env'], 'RESEARCH_HARNESS_SESSION': token}
+        process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True, start_new_session=True, env=env)
+        owned = OwnedProcessTree(process.pid, token)
+        try:
+            stdout, stderr = process.communicate(kwargs['input'], timeout=kwargs['timeout'])
+            return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        finally:
+            owned.terminate(force=True)
+            process.wait()
 
     def parse_completion(self, raw: str, *, label: str) -> CompletionResult:
         """Parse one Codex ``exec --json`` stream into its terminal result."""

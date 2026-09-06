@@ -267,7 +267,10 @@ def _evidence_to_worker_report(
                 manifest,
                 runner_result,
                 run_dir,
-                reason=f"unexpected_observations payload is invalid: {metric_path.name}",
+                reason=(f"unexpected_observations payload is invalid: {metric_path.name}. "
+                        "Expected an array of objects with string observation, evidence, scope_relation; "
+                        "optional suggested_branch_type is string or null. Use [] when absent. "
+                        "Do not put plain strings in this array."),
                 tags=["invalid_observation_payload"],
                 source_files=source_files,
                 metrics_evidence_paths=evidence_paths,

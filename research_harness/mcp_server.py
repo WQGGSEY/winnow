@@ -1460,12 +1460,19 @@ def handle_develop_research_hypotheses(args: dict[str, Any]) -> dict[str, Any]:
 def handle_plan_research_work(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.orchestrator.research_control import plan_research_work
     from research_harness.adapters.codex_cli import CodexCliError
+    from research_harness.adapters.call_budget import CallBudgetExhausted
 
     tid = args['thread_id']
     with _exclusive_adaptive_writer(tid):
         try:
             return plan_research_work(_repo_root(), _thread_dir(tid), reconsider_reason=args.get('reconsider_reason', ''))
-        except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:
+        except (CodexCliError, CallBudgetExhausted) as exc:
+            if os.environ.get('RESEARCH_HARNESS_CALL_BUDGET'):
+                return {'status': 'checkpoint', 'reason': str(exc),
+                        'next_tool_to_call': None,
+                        'scope': 'Bounded transport failure; preserve research state and stop this run. No scientific conclusion.'}
+            return {'status': 'planning_failed', 'reason': str(exc), 'next_tool_to_call': 'plan_research_work'}
+        except (OSError, ValueError, KeyError, TypeError) as exc:
             return {'status': 'planning_failed', 'reason': str(exc), 'next_tool_to_call': 'plan_research_work'}
 
 
@@ -3781,6 +3788,7 @@ def handle_run_critic_reviews(args: dict[str, Any]) -> dict[str, Any]:
     """Deterministic critic pack — selects critics by folder routing and
     runs them. Transitions node to 'critic_reviewed'."""
     from research_harness.critics.governance import select_critics
+    from research_harness.schemas.validator import validate_named_schema
     from research_harness.critics.review_runner import run_critic_reviews as _run
     from research_harness.orchestrator.search_state import (
         transition_node,

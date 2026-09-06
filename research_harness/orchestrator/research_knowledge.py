@@ -69,6 +69,43 @@ def brief_context(thread: Path, brief: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def failed_measurement(previous: dict[str, Any]) -> bool:
+    outcome = previous.get('outcome', {})
+    observation = outcome.get('observation') or {}
+    return (observation.get('execution_status') not in (None, 'completed') or
+            observation.get('measurement_status') not in (None, 'completed') or
+            outcome.get('execution_result') in {'execution_failed', 'interrupted', 'rejected'})
+
+
+def planning_response_schema(previous: dict[str, Any]) -> dict[str, Any]:
+    """Constrain receipt facts before generation; scientific judgments remain open."""
+    from research_harness.schemas.validator import load_schema
+    schema = load_schema('research_work')
+    field = schema['properties']['previous_result']
+    if previous.get('status') != 'completed':
+        schema['properties']['previous_result'] = {'type': 'null'}
+        return schema
+    assessment = field['anyOf'][1]
+    schema['properties']['previous_result'] = assessment
+    properties = assessment['properties']
+    properties['work_id']['enum'] = [previous['work_id']]
+    count = len(previous['decision'].get('alternatives', []))
+    updates = properties['prediction_updates']
+    updates.update(minItems=count, maxItems=count)
+    if count:
+        updates['items']['properties']['alternative_index']['maximum'] = count - 1
+    if failed_measurement(previous):
+        properties['result_kind']['enum'] = ['execution_failure']
+        updates['items']['properties']['effect']['enum'] = ['unresolved']
+    elif (previous.get('outcome', {}).get('measurement_support', {}).get('evaluable') is False
+          or previous.get('outcome', {}).get('execution_result') == 'analysis_inconclusive'):
+        properties['result_kind']['enum'] = ['inconclusive']
+        updates['items']['properties']['effect']['enum'] = ['unresolved']
+    else:
+        properties['result_kind']['enum'] = ['inconclusive', 'informative']
+    return schema
+
+
 def validate_previous_result(decision: dict[str, Any], previous: dict[str, Any],
                              available_evidence: set[str]) -> None:
     """Check interpretation provenance and operational scope, not scientific truth."""
@@ -84,10 +121,7 @@ def validate_previous_result(decision: dict[str, Any], previous: dict[str, Any],
     if 'work_' + previous['work_id'] not in assessment['evidence_ids']:
         raise ValueError('Cite the actual previous work receipt when interpreting its result.')
     outcome = previous.get('outcome', {})
-    observation = outcome.get('observation') or {}
-    execution_failed = (observation.get('execution_status') not in (None, 'completed') or
-                        observation.get('measurement_status') not in (None, 'completed') or
-                        outcome.get('execution_result') in {'execution_failed', 'interrupted', 'rejected'})
+    execution_failed = failed_measurement(previous)
     updates = assessment['prediction_updates']
     predictions = previous['decision'].get('alternatives', [])
     if sorted(item['alternative_index'] for item in updates) != list(range(len(predictions))):
@@ -132,7 +166,8 @@ def compact_planning_context(thread: Path, packet: dict[str, Any]) -> dict[str, 
     paths = [('protocol_note_history',), ('implementation_context',),
              ('executed_diagnostic_bindings',), ('active_sampling_registration',),
              ('research', 'sources'), ('research', 'connector_candidates'),
-             ('hypotheses', 'candidates')]
+             ('hypotheses', 'candidates'), ('analysis_findings',), ('prepared_implementations',),
+             ('research', 'baseline_method_notes'), ('execution_inventory',)]
     for keys in paths:
         parent = compact
         for key in keys[:-1]:
@@ -159,4 +194,5 @@ def compact_planning_context(thread: Path, packet: dict[str, Any]) -> dict[str, 
         'outcome': previous.get('outcome'),
         'usage': 'This is the latest result. Previous decision text describes intent and older failures, not the cause of this result. Use measurement_error/report_path here before proposing a repair.',
     }
+    compact['context_reading'] = 'References retain full material. Select entries by key or ID; do not dump whole archives. The latest outcome below is authoritative over older intent. Read only the relevant protocol clauses and source lines for this decision.'
     return compact
