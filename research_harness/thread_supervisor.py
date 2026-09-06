@@ -1389,10 +1389,16 @@ def _which(name: str) -> str | None:
 
 
 def _experiment_running(state_path: Path) -> "bool | None":
-    """Is a node experiment currently running? Reads the production search_state.
-    Returns True (a node has status 'running'), False (readable, none running),
-    or None (state unreadable — caller treats as 'can't tell' and defers)."""
+    """Check claim executions and launched preparation work, excluding source review."""
     try:
+        work_path = state_path.parent.parent / 'research_control/current.json'
+        if work_path.exists():
+            work = json.loads(work_path.read_text(encoding='utf-8'))
+            binding = work.get('binding', {})
+            if work.get('status') == 'running' and binding:
+                node = state_path.parent / binding['scope'] / binding['node_id']
+                if (node / 'job_manifest.json').exists() and not (node / 'workspace/runner_result.json').exists():
+                    return True
         if not state_path.exists():
             return False
         data = json.loads(state_path.read_text(encoding="utf-8"))

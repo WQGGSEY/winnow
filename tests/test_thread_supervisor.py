@@ -23,6 +23,26 @@ from unittest import mock
 from research_harness import thread_supervisor as ts
 
 
+def test_watchdog_tracks_launched_preflight_outside_claim_graph(tmp_path):
+    production = tmp_path / 'production'
+    state = production / 'tree/search_state.json'
+    state.parent.mkdir(parents=True)
+    state.write_text(json.dumps({'nodes': [{'status': 'completed_worker_report'}]}))
+    work = production / 'research_control/current.json'
+    work.parent.mkdir()
+    work.write_text(json.dumps({'status': 'running', 'binding': {
+        'scope': 'baseline_preflight', 'node_id': 'competence_probe'}}))
+    node = state.parent / 'baseline_preflight/competence_probe'
+    (node / 'workspace').mkdir(parents=True)
+    assert ts._experiment_running(state) is False  # Review has not launched a process.
+    (node / 'job_manifest.json').write_text('{}')
+    assert ts._experiment_running(state) is True
+    assert not ts._should_terminate_stall(650, 600, 1200, ts._experiment_running(state))
+    assert ts._should_terminate_stall(1201, 600, 1200, ts._experiment_running(state))
+    (node / 'workspace/runner_result.json').write_text(json.dumps({'status': 'failed'}))
+    assert ts._experiment_running(state) is False
+
+
 @pytest.fixture(autouse=True)
 def reviewed_submission_boundary(monkeypatch):
     # This module isolates research receipts and the supervisor loop. The submission
