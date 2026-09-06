@@ -20,6 +20,7 @@ import sys
 import tempfile
 from contextlib import contextmanager
 from contextvars import ContextVar
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -6407,6 +6408,7 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
     method = msg.get("method", "")
     params = msg.get("params") or {}
     req_id = msg.get("id")
+    scoped_thread = os.environ.get("RESEARCH_HARNESS_THREAD_ID")
     if method == "initialize":
         return {
             "jsonrpc": "2.0",
@@ -6418,11 +6420,32 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
             },
         }
     if method == "tools/list":
-        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": TOOL_DEFINITIONS}}
+        definitions = TOOL_DEFINITIONS
+        if scoped_thread:
+            definitions = deepcopy(TOOL_DEFINITIONS)
+            for tool in definitions:
+                schema = tool["inputSchema"]
+                if "thread_id" not in schema.get("properties", {}):
+                    continue
+                schema["properties"]["thread_id"].update({
+                    "enum": [scoped_thread],
+                    "description": "Optional: the server supplies the current research thread automatically.",
+                })
+                for branch in [schema, *schema.get("anyOf", [])]:
+                    if "required" in branch:
+                        branch["required"] = [key for key in branch["required"] if key != "thread_id"]
+        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": definitions}}
     if method == "tools/call":
         name = params.get("name", "")
         args = params.get("arguments") or {}
         try:
+            if not isinstance(args, dict):
+                raise ValueError("Tool arguments must be an object")
+            definition = next((tool for tool in TOOL_DEFINITIONS if tool["name"] == name), None)
+            if scoped_thread and definition and "thread_id" in definition["inputSchema"].get("properties", {}):
+                if "thread_id" in args and args["thread_id"] != scoped_thread:
+                    raise ValueError("thread_id conflicts with this server's research thread")
+                args = {**args, "thread_id": scoped_thread}
             if name == "get_research_state":
                 result = handle_get_research_state(args, settings)
             elif name == "plan_research_work":

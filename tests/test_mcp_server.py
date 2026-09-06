@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from unittest import mock
 
@@ -414,6 +415,30 @@ def _setup_skill_iso_thread(
 
 
 class MCPServerTests(unittest.TestCase):
+    def test_scoped_server_supplies_thread_and_rejects_cross_thread_calls(self) -> None:
+        original = deepcopy(srv.TOOL_DEFINITIONS)
+        request = {"id": 1, "method": "tools/call", "params": {
+            "name": "design_experiment_template", "arguments": {"work_id": "work1"}}}
+        with mock.patch.dict(srv.os.environ, {"RESEARCH_HARNESS_THREAD_ID": "thread_current"}), \
+                mock.patch.object(srv, "handle_design_experiment_template", return_value={"status": "planned"}) as handler:
+            response = srv._handle_request(request, {})
+            self.assertNotIn("error", response)
+            handler.assert_called_once_with({"work_id": "work1", "thread_id": "thread_current"})
+            self.assertNotIn("thread_id", request["params"]["arguments"])
+            request["params"]["arguments"]["thread_id"] = "thread_other"
+            self.assertIn("conflicts", srv._handle_request(request, {})["error"]["message"])
+            self.assertEqual(handler.call_count, 1)
+            catalog = srv._handle_request({"id": 2, "method": "tools/list"}, {})["result"]["tools"]
+            for tool in catalog:
+                schema = tool["inputSchema"]
+                if "thread_id" in schema.get("properties", {}):
+                    self.assertEqual(schema["properties"]["thread_id"]["enum"], ["thread_current"])
+                    for branch in [schema, *schema.get("anyOf", [])]:
+                        self.assertNotIn("thread_id", branch.get("required", []))
+        self.assertEqual(srv.TOOL_DEFINITIONS, original)
+        with mock.patch.dict(srv.os.environ, {"RESEARCH_HARNESS_THREAD_ID": ""}):
+            self.assertEqual(srv._handle_request({"id": 3, "method": "tools/list"}, {})["result"]["tools"], original)
+
     def test_tools_list_exposes_all_expected_tools(self) -> None:
         r = srv._handle_request({"id": 1, "method": "tools/list"}, {})
         names = {t["name"] for t in r["result"]["tools"]}

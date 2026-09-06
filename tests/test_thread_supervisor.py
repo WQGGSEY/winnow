@@ -1726,6 +1726,7 @@ class WatchLoopTests(unittest.TestCase):
                  mock.patch.object(ts.time, "sleep") as sleep:
                 result = ts.watch_thread(repo, "t1", max_cycles=1)
             self.assertEqual(spawn.call_count, 1)
+            self.assertEqual(spawn.call_args.kwargs["thread_id"], "t1")
             sleep.assert_not_called()
             self.assertEqual(result["status"], "max_cycles_exceeded")
 

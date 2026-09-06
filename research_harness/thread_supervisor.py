@@ -33,6 +33,7 @@ import sys
 import threading
 import time
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 
 from research_harness.agent_runtime import AgentPrompt, ResearchHarnessMcp
@@ -1423,6 +1424,7 @@ def spawn_codex_session(
     prompt: str,
     *,
     repo_root: Path | None = None,
+    thread_id: str | None = None,
     model: str = DEFAULT_CODEX_MODEL,
     boot_delay: float = DEFAULT_CODEX_BOOT_DELAY,
     log_path: Path | None = None,
@@ -1443,6 +1445,8 @@ def spawn_codex_session(
     repo_root = (repo_root or Path(__file__).resolve().parents[1]).resolve()
     settings = load_settings(repo_root)
     mcp = ResearchHarnessMcp.from_settings(repo_root, settings)
+    if thread_id is not None:
+        mcp = replace(mcp, environment={**mcp.environment, "RESEARCH_HARNESS_THREAD_ID": thread_id})
     log_fh = log_path.open("a", encoding="utf-8") if log_path else None
 
     # Match the Professor's shell environment to the EXPERIMENT RUNNER's, so its
@@ -1876,6 +1880,7 @@ def watch_thread(
             exit_code = spawn_codex_session(
                 prompt,
                 repo_root=repo,
+                thread_id=tid,
                 model=model,
                 boot_delay=boot_delay,
                 log_path=tdir / "codex_subprocess.log",
