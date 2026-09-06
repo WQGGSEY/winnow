@@ -94,7 +94,7 @@ class CodexCliAdapter:
         remaining = reserve_call(model=request.model, prompt=self._compose_prompt(request.prompt), label=request.label)
         timeout = min(request.timeout_seconds, remaining) if remaining is not None else request.timeout_seconds
         try:
-            runner = self._run_owned if self._runner is subprocess.run else self._runner
+            runner = (lambda command, **kwargs: self._run_owned(command, event_log_path=request.event_log_path, **kwargs)) if self._runner is subprocess.run else self._runner
             completed = runner(
                 command,
                 input=self._compose_prompt(request.prompt),
@@ -120,24 +120,42 @@ class CodexCliAdapter:
                 f"{request.label}: codex CLI exited with code "
                 f"{completed.returncode}: {detail[:400]}"
             )
-        return self.parse_completion(completed.stdout or "", label=request.label)
+        try:
+            return self.parse_completion(completed.stdout or "", label=request.label)
+        except CodexCliError as exc:
+            record_failed_call(label=request.label, reason=str(exc), partial_output=completed.stdout or "")
+            raise
 
     def _run_owned(self, command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        """A timed-out synchronous call must not leave detached tool processes alive."""
+        """Persist events while the child runs, including when its caller is killed."""
         import uuid
+        from contextlib import ExitStack
         from research_harness.adapters.process_tree import OwnedProcessTree
 
         token = uuid.uuid4().hex
         env = {**kwargs['env'], 'RESEARCH_HARNESS_SESSION': token}
-        process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, text=True, start_new_session=True, env=env)
-        owned = OwnedProcessTree(process.pid, token)
-        try:
-            stdout, stderr = process.communicate(kwargs['input'], timeout=kwargs['timeout'])
-            return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
-        finally:
-            owned.terminate(force=True)
-            process.wait()
+        with ExitStack() as stack:
+            trace = None
+            if kwargs.get('event_log_path') is not None:
+                path = Path(kwargs['event_log_path'])
+                path.parent.mkdir(parents=True, exist_ok=True)
+                trace = stack.enter_context(path.open('w+', encoding='utf-8', errors='replace'))
+            process = subprocess.Popen(command, stdin=subprocess.PIPE,
+                                       stdout=trace if trace is not None else subprocess.PIPE,
+                                       stderr=subprocess.PIPE, text=True, start_new_session=True, env=env)
+            owned = OwnedProcessTree(process.pid, token)
+            try:
+                stdout, stderr = process.communicate(kwargs['input'], timeout=kwargs['timeout'])
+                if trace is not None:
+                    stdout = path.read_text(errors="replace")
+                return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+            except subprocess.TimeoutExpired as exc:
+                if trace is not None:
+                    exc.output = path.read_text(errors="replace")
+                raise
+            finally:
+                owned.terminate(force=True)
+                process.wait()
 
     def parse_completion(self, raw: str, *, label: str) -> CompletionResult:
         """Parse one Codex ``exec --json`` stream into its terminal result."""
@@ -216,7 +234,7 @@ class CodexCliAdapter:
         command = [
             self._codex_path,
         ]
-        if os.environ.get('RESEARCH_HARNESS_CALL_BUDGET'):
+        if os.environ.get('RESEARCH_HARNESS_CALL_BUDGET') or (request is not None and not request.allow_local_tools):
             command.extend(['--disable', 'multi_agent', '--disable', 'multi_agent_v2',
                             '--enable', 'skip_host_skill_discovery', '--disable', 'skill_search'])
         if request is not None and request.allow_web_search:
@@ -249,7 +267,9 @@ class CodexCliAdapter:
         command.extend([
             "-c", 'default_permissions="research-development"',
             "-c", 'permissions.research-development.filesystem={\":root\"="read",'
-            + _toml_string(str(vault)) + '="deny"}',
+            + _toml_string(str(vault)) + '="deny",'
+            + _toml_string(str(Path.home() / '.agents/skills')) + '="deny",'
+            + _toml_string(str(Path.home() / '.codex/skills')) + '="deny"}',
         ])
         if cwd is not None:
             command.extend(["--cd", str(cwd)])
@@ -348,6 +368,10 @@ class CodexCliAdapter:
                 item_type = item.get("type")
                 if item_type == "agent_message" and isinstance(item.get("text"), str):
                     yield AgentEvent(kind="message", summary=item["text"], raw=event)
+                elif item_type == "error":
+                    message = str(item.get('message', 'CLI item error'))
+                    notice = message.startswith('Under-development features enabled:')
+                    yield AgentEvent(kind='status' if notice else 'diagnostic', summary=message, raw=event)
                 elif item_type in {"mcp_tool_call", "command_execution", "tool_call"}:
                     name = item.get("server") or item.get("name") or item.get("tool") or item_type
                     yield AgentEvent(kind="tool", summary=str(name), raw=event)

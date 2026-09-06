@@ -204,7 +204,11 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     monkeypatch.setattr(settings_scoped, 'resolve_for_thread', lambda repo, tid: {})
     reviewed = []
     invalid_review = []
+    budget_error = []
     def review(repo, directory, packet, *, purpose):
+        if budget_error:
+            from research_harness.adapters.call_budget import CallBudgetExhausted
+            raise CallBudgetExhausted('bounded review budget exhausted')
         if invalid_review:
             raise research_review.ReviewContractError('Final confirmation requirements cannot block development.')
         reviewed.append(packet)
@@ -232,6 +236,13 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     assert conflicting_role['status'] == 'rejected'
     assert 'role conflicts' in conflicting_role['reason']
     assert not reviewed
+    budget_error.append(True)
+    stopped = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
+    assert stopped['status'] == 'checkpoint'
+    assert stopped['next_tool_to_call'] is None
+    assert current_work(thread)['status'] == 'planned'
+    assert not (tree / 'baseline_preflight' / node['id'] / 'job_manifest.json').exists()
+    budget_error.clear()
     invalid_review.append(True)
     invalid = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
     assert invalid['status'] == 'review_invalid'
@@ -736,6 +747,9 @@ def test_planned_work_is_reconsidered_when_model_changes(tmp_path, monkeypatch):
     assert planner.calls
     assert second['work_id'] != first['work_id']
     assert second['planning_model'] == 'gpt-5.6-luna'
+    prior = json.loads((thread / 'production/research_control/work' / first['work_id'] / 'work.json').read_text())
+    assert prior['status'] == 'superseded'
+    assert prior['superseded_by'] == second['work_id']
 
 
 def test_bounded_mcp_transport_failure_returns_checkpoint(tmp_path, monkeypatch):
@@ -753,3 +767,61 @@ def test_bounded_mcp_transport_failure_returns_checkpoint(tmp_path, monkeypatch)
     response = mcp_server.handle_plan_research_work({'thread_id': 'probe'})
     assert response['status'] == 'checkpoint'
     assert response['next_tool_to_call'] is None
+
+
+def test_selector_returns_work_without_source_tools_and_retains_findings(tmp_path):
+    thread, _, _, _, _ = fixture(tmp_path)
+    class DecisionOnlyPlanner(Planner):
+        def complete(self, request):
+            assert not request.allow_local_tools
+            return super().complete(request)
+    work = plan_research_work(REPO, thread, transport=DecisionOnlyPlanner())
+    assert work['status'] == 'planned'
+    from research_harness.orchestrator.research_knowledge import compact_planning_context
+    finding = {'status': 'answered', 'conclusion_excerpt': 'The prior question is resolved.',
+               'limitations': ['No causal effect was measured.'], 'receipt_path': '/exact/receipt',
+               'next_steps': ['Measure the new distinction.'], 'question': 'What is observed?'}
+    packet = {'analysis_findings': {f'analysis_{i}': finding for i in range(80)}}
+    projected = compact_planning_context(thread, packet)
+    assert projected['analysis_findings']['analysis_79'] == finding
+
+
+def test_ineligible_confirmation_is_not_cached_as_valid_work(tmp_path):
+    thread, _, _, _, _ = fixture(tmp_path)
+    with pytest.raises(ValueError, match='Confirmation requires'):
+        plan_research_work(REPO, thread, transport=Planner('confirmation'))
+    decisions = thread / 'production/research_control/decisions'
+    assert not list(decisions.glob('*/response.json'))
+    corrected = Planner()
+    plan_research_work(REPO, thread, transport=corrected)
+    assert 'Confirmation requires' in corrected.calls[0]['previous_response_rejection']['error']
+
+
+def test_repair_handoff_binds_predecessor_bytes_and_fresh_identity(tmp_path):
+    from research_harness.orchestrator.research_control import execution_handoff, _write
+    from research_harness.mcp_server import _experiment_plan_input_schema
+    from research_harness.schemas.validator import validate_schema
+    thread, _, node, plan, _ = fixture(tmp_path)
+    previous = plan_research_work(REPO, thread, transport=Planner())
+    previous.update(status='completed', outcome={'execution_result': 'execution_failed'},
+                    binding={'node_id': node['id'], 'scope': 'baseline_preflight'})
+    _write(thread / 'production/research_control/current.json', previous)
+    _write(thread / 'production/research_control/work' / previous['work_id'] / 'work.json', previous)
+    base = thread / 'production/tree/baseline_preflight' / node['id']
+    _write(base / 'experiment_plan.json', plan)
+    _write(base / 'node.json', node)
+    for source in plan['source_files']:
+        path = Path(plan['workspace']) / source['path']
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source['content'])
+    work = plan_research_work(REPO, thread, transport=Planner())
+    handoff = execution_handoff(thread, work)
+    request = handoff['request_draft']
+    assert request['work_id'] == work['work_id']
+    assert request['node']['id'] == request['experiment_plan']['node_id'] != node['id']
+    validate_schema(_experiment_plan_input_schema(), request['experiment_plan'])
+    reference = request['experiment_plan']['source_files'][0]
+    assert reference['replacements'] == []
+    assert Path(reference['from_path']).read_text() == plan['source_files'][0]['content']
+    Path(reference['from_path']).write_text('changed after execution')
+    assert 'request_draft' not in execution_handoff(thread, work)

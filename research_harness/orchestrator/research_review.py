@@ -159,6 +159,7 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
             model=research_model(), timeout_seconds=300,
             output_schema=repo / 'research_harness/schemas' / f'{schema_name}.schema.json',
             cwd=Path(temporary), label="independent-research-review", allow_local_tools=True,
+            event_log_path=destination / "events.jsonl",
         ))
     (destination / "raw_response.txt").write_text(result.text)
     try:

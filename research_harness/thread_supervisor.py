@@ -1375,6 +1375,8 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "과거 미응답 operator prompt는 대기 조건이 아니다. 필요한 가정과 근거를 기록하고 계속해.",
         "submit_baseline_qualification은 독립 리뷰를 실행한다. 승인되면 계속하고 거절이면 구체적 결함을 수정해.",
         "평가 프로토콜은 submit_feasibility_envelope로 독립 심사 후 등록해. 계산 한도와 고정 목표는 바꾸지 마.",
+        "이 실행은 harness 자체 역할과 MCP 도구 규칙을 따른다. 호스트의 agent skill을 불러오거나 적용하지 마. 해당 디렉터리는 연구 자료가 아니며 접근이 차단된다.",
+        "get_research_state의 현재 work와 next_tool_to_call이 있으면 그 도구로 진행해. 같은 상태를 확인하기 위해 current.json과 과거 report를 다시 모두 읽지 마. 코드 수정이나 근거 해석에 필요한 특정 내용만 조회해.",
         "지금 시작:",
     ]
     if os.environ.get('RESEARCH_HARNESS_CALL_BUDGET'):

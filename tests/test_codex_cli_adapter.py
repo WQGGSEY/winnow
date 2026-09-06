@@ -190,6 +190,7 @@ def test_one_shot_can_disable_every_local_inspection_tool(tmp_path: Path) -> Non
         if value == "--disable"
     }
     assert disabled == {
+        "multi_agent", "multi_agent_v2", "skill_search",
         "shell_tool",
         "unified_exec",
         "js_repl",
@@ -337,11 +338,13 @@ def test_synchronous_timeout_kills_detached_tool(tmp_path):
     executable.write_text(f"#!{sys.executable}\n" +
         "import subprocess,sys,time\n" +
         "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'], start_new_session=True)\n" +
-        f"open({str(pid_file)!r},'w').write(str(p.pid))\ntime.sleep(60)\n")
+        f"open({str(pid_file)!r},'w').write(str(p.pid))\nprint('partial event', flush=True)\ntime.sleep(60)\n")
     executable.chmod(0o700)
     with pytest.raises(CodexCliError, match='timed out'):
         CodexCliAdapter(codex_path=str(executable)).complete(CompletionRequest(
-            prompt=AgentPrompt(instructions='', input='probe'), model='gpt-5.6-luna', timeout_seconds=0.5))
+            prompt=AgentPrompt(instructions='', input='probe'), model='gpt-5.6-luna', timeout_seconds=0.5,
+            event_log_path=tmp_path / 'trace.jsonl'))
+    assert (tmp_path / 'trace.jsonl').read_text() == 'partial event\n'
     child = Path('/proc') / pid_file.read_text() / 'stat'
     if child.exists():
         assert child.read_text().rsplit(')', 1)[1].split()[0] == 'Z'
@@ -368,3 +371,14 @@ def test_bounded_timeout_preserves_partial_trace_and_stops_retry(tmp_path, monke
     with pytest.raises(ValueError, match='budget exhausted'):
         adapter.complete(request)
     assert len(calls) == 1
+
+
+def test_item_error_keeps_reason_instead_of_generic_completed_error():
+    from research_harness.research_logs import visible_research_log_line
+    events = list(CodexCliAdapter()._parse_jsonl([
+        json.dumps({'type': 'item.completed', 'item': {'type': 'error', 'message': 'Under-development features enabled: skip_host_skill_discovery'}}),
+        json.dumps({'type': 'item.completed', 'item': {'type': 'error', 'message': 'Provider request rejected'}}),
+    ]))
+    assert not visible_research_log_line(f'{events[0].kind}> {events[0].summary}')
+    assert events[1].summary == 'Provider request rejected'
+    assert visible_research_log_line(f'{events[1].kind}> {events[1].summary}')

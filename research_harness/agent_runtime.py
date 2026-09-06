@@ -52,6 +52,7 @@ class CompletionRequest:
     label: str = "agent"
     allow_local_tools: bool = True
     allow_web_search: bool = False
+    event_log_path: Path | None = None
 
 
 @dataclass(frozen=True)

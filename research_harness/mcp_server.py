@@ -1638,10 +1638,12 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
     }
     from research_harness.orchestrator.research_control import PLANNING_POLICY_VERSION
     from research_harness.orchestrator.research_knowledge import research_brief, brief_context
+    from research_harness.orchestrator.research_control import execution_handoff
     state['research_brief'] = research_brief(d)
     if state['research_work'] and state['research_work'].get('planning_policy_version') != PLANNING_POLICY_VERSION:
         state['research_work'] = {**state['research_work'], 'next_tool_to_call': 'plan_research_work',
                                   'requires_replanning': True, 'reason': 'Research capabilities changed; old work routing is stale.'}
+    state['execution_handoff'] = execution_handoff(d, state['research_work'])
     if args.get('view', 'current' if thread.get('current_phase') == 'production' else 'full') == 'full':
         return state
     work = dict(state['research_work'])
@@ -1651,6 +1653,7 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
         **{key: state[key] for key in ('thread', 'operator_model_preference', '_model_note',
                                       'baseline_preparation', 'baseline_preparation_contract', '_market_usage_contract', 'publication_target')},
         'view': 'current', 'thread_dir': str(d.resolve()), 'research_work': work,
+        'execution_handoff': state['execution_handoff'],
         'research_brief': brief_context(d, state['research_brief']),
         'runtime_input_example': state['runtime_input_example'],
         'executed_diagnostic_bindings': state['executed_diagnostic_bindings'],
@@ -4291,6 +4294,10 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
         except (OSError, ValueError, KeyError, TypeError, CodexCliError) as exc:
             result = {"status": "rejected", "reason": f"baseline preflight failed: {exc}", "next_tool_to_call": "plan_research_work"}
             from research_harness.orchestrator.research_review import ReviewContractError
+            from research_harness.adapters.call_budget import CallBudgetExhausted
+            operational_stop = isinstance(exc, CallBudgetExhausted) or (isinstance(exc, CodexCliError) and bool(os.environ.get('RESEARCH_HARNESS_CALL_BUDGET')))
+            if operational_stop:
+                result.update(status='checkpoint', next_tool_to_call=None)
             if isinstance(exc, ReviewContractError):
                 result.update(status='review_invalid', next_tool_to_call='execute_baseline_preflight')
             if isinstance(exc, StaleResearchWork):
@@ -4304,11 +4311,14 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
                     # A rejected patch is not a replacement execution plan.
                     _write_json_atomic(request_path.parent / 'rejected_dispatch_request.json', args)
                 saved_request_path = str(request_path) if request_resolved else (str(replay_source) if replay_source else None)
-                work['outcome'] = {'execution_result': 'rejected', 'reason': result['reason'],
+                work['outcome'] = {'execution_result': result['status'], 'reason': result['reason'],
                                    'observation': None, 'new_observation': False, 'scientific_verdict': 'unverified',
                                    'dispatch_request_path': saved_request_path}
                 _write_json_atomic(request_path.parent / 'work.json', work)
                 _write_json_atomic(_thread_dir(tid) / 'production/research_control/current.json', work)
+                if operational_stop:
+                    return {**result, 'work_id': work['work_id'], 'dispatch_request_path': saved_request_path,
+                            'next_step': 'Stop this bounded run. Resume the same saved request with a later budget; no experiment ran and no code correction is implied.'}
                 return {**result, 'work_id': work['work_id'], 'dispatch_request_path': saved_request_path,
                         'next_tool_to_call': 'execute_baseline_preflight',
                         'next_step': 'Correct the saved request and retry the same work; no new experiment ran.'}

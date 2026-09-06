@@ -81,6 +81,17 @@ def planning_response_schema(previous: dict[str, Any]) -> dict[str, Any]:
     """Constrain receipt facts before generation; scientific judgments remain open."""
     from research_harness.schemas.validator import load_schema
     schema = load_schema('research_work')
+    def bound_prose(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get('type') == 'string' and 'enum' not in node:
+                node['maxLength'] = 1600
+            for child in node.values():
+                bound_prose(child)
+        elif isinstance(node, list):
+            for child in node:
+                bound_prose(child)
+    bound_prose(schema)
+    schema['properties']['test']['maxLength'] = 3200
     field = schema['properties']['previous_result']
     if previous.get('status') != 'completed':
         schema['properties']['previous_result'] = {'type': 'null'}
@@ -163,18 +174,26 @@ def compact_planning_context(thread: Path, packet: dict[str, Any]) -> dict[str, 
     import hashlib
 
     compact = copy.deepcopy(packet)
+    # The selector receives findings, not a second assignment to inspect all code.
+    research = compact.get('research', {})
+    research.pop('research_brief', None)  # Already supplied at the top level.
+    compact['analysis_findings'] = {
+        key: {field: value[field] for field in ('question', 'status', 'conclusion_excerpt',
+              'truncated', 'limitations', 'next_steps', 'evidence_ids', 'evidence_scope', 'receipt_path') if field in value}
+        for key, value in compact.get('analysis_findings', {}).items()
+    }
     paths = [('protocol_note_history',), ('implementation_context',),
              ('executed_diagnostic_bindings',), ('active_sampling_registration',),
              ('research', 'sources'), ('research', 'connector_candidates'),
-             ('hypotheses', 'candidates'), ('analysis_findings',), ('prepared_implementations',),
-             ('research', 'baseline_method_notes'), ('execution_inventory',)]
+             ('hypotheses', 'candidates'), ('prepared_implementations',),
+             ('research', 'baseline_method_notes'), ('execution_inventory',), ('future_confirmation_sampling',)]
     for keys in paths:
         parent = compact
         for key in keys[:-1]:
             parent = parent.get(key, {})
         value = parent.get(keys[-1])
         raw = json.dumps(value, ensure_ascii=False, sort_keys=True).encode('utf-8')
-        if len(raw) <= 12000:
+        if len(raw) <= 12000 and keys not in {('execution_inventory',), ('implementation_context',), ('future_confirmation_sampling',)}:
             continue
         digest = hashlib.sha256(raw).hexdigest()
         path = thread / 'production/research_control/context' / (digest + '.json')
@@ -185,8 +204,16 @@ def compact_planning_context(thread: Path, packet: dict[str, Any]) -> dict[str, 
             'bytes': len(raw), 'field': '.'.join(keys),
             'keys': list(value) if isinstance(value, dict) else [],
             'item_ids': [item.get('id') for item in value if isinstance(item, dict)] if isinstance(value, list) else [],
-            'usage': 'Full material is retained, not absent. Read the relevant entries before relying on their requirements, implementation or scientific content. Later protocol amendments do not erase unchanged earlier clauses.',
+            'usage': 'Full material is retained for downstream source analysis and implementation review. This selector has not inspected it. Select a provisional work; do not claim source or protocol approval.',
         }
+        if keys == ('hypotheses', 'candidates'):
+            parent[keys[-1]]['preview'] = [
+                {field: item[field] for field in ('id', 'claim_under_test', 'status', 'selected_for_diagnostic', 'scientific_support') if field in item}
+                for item in value]
+        elif keys == ('research', 'sources'):
+            parent[keys[-1]]['preview'] = {
+                key: {field: item[field] for field in ('id', 'title', 'evidence_kind') if field in item}
+                for key, item in value.items() if isinstance(item, dict)}
     previous = compact.get('previous_work', {})
     previous.pop('source_observations', None)  # Already supplied as development_evidence.
     compact['authoritative_previous_result'] = {
@@ -194,5 +221,27 @@ def compact_planning_context(thread: Path, packet: dict[str, Any]) -> dict[str, 
         'outcome': previous.get('outcome'),
         'usage': 'This is the latest result. Previous decision text describes intent and older failures, not the cause of this result. Use measurement_error/report_path here before proposing a repair.',
     }
-    compact['context_reading'] = 'References retain full material. Select entries by key or ID; do not dump whole archives. The latest outcome below is authoritative over older intent. Read only the relevant protocol clauses and source lines for this decision.'
+    if previous.get('status') == 'completed' and failed_measurement(previous):
+        # No scientific observation was obtained: choose how to recover this test,
+        # not a fresh literature/hypothesis search across the whole project.
+        compact['selection_scope'] = 'Recover the previous scientific measurement from its latest operational failure. A scientific direction change requires new evidence, not this invalid measurement.'
+        compact['full_context_digest'] = hashlib.sha256(
+            json.dumps(packet, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        compact['research'] = {key: compact.get('research', {}).get(key)
+                              for key in ('research_question', 'problem_definition')}
+        compact['previous_work'] = {key: previous[key] for key in
+            ('work_id', 'status', 'decision', 'outcome', 'binding') if key in previous}
+        compact['analysis_findings'] = dict(list(compact.get('analysis_findings', {}).items())[-2:])
+        compact['development_evidence'] = dict(list(compact.get('development_evidence', {}).items())[-2:])
+        for key in ('hypotheses', 'retrieved_sources', 'prepared_implementations',
+                    'execution_inventory', 'future_confirmation_sampling',
+                    'sealed_evaluation_bank', 'active_sampling_registration'):
+            compact.pop(key, None)
+        available = set(compact.get('available_evidence_ids', []))
+        visible = (set(compact['analysis_findings']) | set(compact['development_evidence']) |
+                   set(previous.get('decision', {}).get('evidence_ids', [])) |
+                   {'work_' + previous['work_id']})
+        compact['available_evidence_ids'] = sorted(available & visible)
+        compact['repair_hypothesis_ids'] = previous.get('decision', {}).get('hypothesis_ids', [])
+    compact['context_reading'] = 'This selector has no tools. Use visible findings to choose one provisional work. Exact references are for downstream analysis/implementation, which must inspect relevant source and full protocol history before relying on them. Missing detail warrants analysis only if it changes which scientific test to select.'
     return compact

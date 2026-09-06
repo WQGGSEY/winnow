@@ -41,11 +41,15 @@ def reserve_call(*, model: str, prompt: str, label: str) -> float | None:
         budget = json.loads(budget_path.read_text())
         calls = budget.get('calls', [])
         used = sum(call['prompt_bytes'] for call in calls)
-        if (budget.get('exhausted_at') or time.time() >= budget['deadline_epoch'] or len(calls) >= budget['max_calls']
+        # Leave time to persist a failed call before the supervisor's wall-clock stop.
+        call_deadline = budget['deadline_epoch'] - 5
+        if (budget.get('exhausted_at') or time.time() >= call_deadline or len(calls) >= budget['max_calls']
                 or used + size > budget['max_prompt_bytes']
                 or size > budget.get('max_call_prompt_bytes', budget['max_prompt_bytes'])):
             budget['exhausted_at'] = time.time()
             budget['exhausted_label'] = label
+            budget['rejected_prompt_bytes'] = size
+            budget['used_prompt_bytes'] = used
             _write_budget(budget_path, budget)
             raise CallBudgetExhausted('Bounded research call budget exhausted; checkpoint without claiming research completion.')
         if model != budget['model']:
@@ -53,7 +57,7 @@ def reserve_call(*, model: str, prompt: str, label: str) -> float | None:
         calls.append({'model': model, 'label': label, 'prompt_bytes': size, 'reserved_at': time.time()})
         budget['calls'] = calls
         _write_budget(budget_path, budget)
-        return max(0.001, budget['deadline_epoch'] - time.time())
+        return max(0.001, call_deadline - time.time())
 
 
 def record_failed_call(*, label: str, reason: str, partial_output: str | bytes = '') -> None:
