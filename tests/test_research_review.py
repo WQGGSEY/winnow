@@ -64,7 +64,7 @@ def test_independent_review_reuses_only_matching_evidence_and_rejects_unresolved
 
 def test_review_bundle_preserves_evidence_and_denies_self_replay(tmp_path):
     import hashlib
-    from research_harness.orchestrator.research_review import review_input_bundle, predecessor_review_delta
+    from research_harness.orchestrator.research_review import review_input_bundle, predecessor_review_delta, analysis_input_bundle
 
     source = {'path': 'measure.py', 'content': 'print(1)\n'}
     packet = {'decision_scope': 'development_execution',
@@ -79,6 +79,15 @@ def test_review_bundle_preserves_evidence_and_denies_self_replay(tmp_path):
     reference = submitted['evidence_sections']['prepared_implementations']
     assert json.loads(Path(reference['path']).read_text()) == packet['prepared_implementations']
     assert submitted['registered_protocol'] == packet['registered_protocol']
+    analysis = {'question': {'evidence_ids': ['selected']},
+                'development_evidence': {'selected': {'count': 7}, 'older': {'count': 3}},
+                'measurement_facts': {'selected': {'pointer': '/count', 'value': 7}}}
+    focused = analysis_input_bundle(tmp_path / 'analysis', analysis)
+    assert focused['development_evidence'] == {'selected': {'count': 7}}
+    assert focused['measurement_facts'] == analysis['measurement_facts']
+    archived = focused['evidence_sections']['development_evidence']
+    assert json.loads(Path(archived['path']).read_text()) == analysis['development_evidence']
+    assert hashlib.sha256(Path(archived['path']).read_bytes()).hexdigest() == archived['sha256']
     prior_dir = tmp_path / 'production/research_control/work/old'
     prior_dir.mkdir(parents=True)
     request = json.dumps({'packet': packet}).encode()

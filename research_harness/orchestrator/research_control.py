@@ -365,7 +365,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
 
 Use authoritative_previous_result for the latest outcome. The previous decision describes intent, not what happened. Cite the previous work receipt and interpret every previous prediction exactly once. Execution or measurement failures leave scientific predictions unresolved. Use decision_focus.prediction_support to separate interpretable predictions from missing or empty support. Use result_kind=partial when some predictions can be updated and others remain unsupported. Cite observation_ids for each empirical update. Missing support cannot refute its dependent prediction. Positive support alone does not prove a scientific effect. Operational invalidity belongs in result_kind, not a scientific alternative. The schema fixes receipt facts but does not establish scientific truth.
 
-Maintain solution_path and its parent_work_id from research_brief.current_solution. Explain what accounts for observations, what remains unexplained, which assumption changed, a possible intervention and the next decision toward the ORIGINAL goal. Negative findings are intermediate; they do not complete a solution goal. An intuition may motivate a small exploration without already having competing predictions. Discrimination and intervention require contrasting predictions. Do not wait for a complete causal theory before a cheap plausible intervention probe. State its intuition as provisional, predict a measurable original-goal effect, and include a matched control. A negative result must change the next intervention choice, not terminate a solution goal. If repeated diagnosis does not change that choice, revisit the assumption or choose another probe. Do not invent efficacy or a causal explanation.
+Maintain solution_path from research_brief.current_solution. The harness assigns its parent_work_id from the current recorded work. Explain what accounts for observations, what remains unexplained, which assumption changed, a possible intervention and the next decision toward the ORIGINAL goal. Negative findings are intermediate; they do not complete a solution goal. An intuition may motivate a small exploration without already having competing predictions. Discrimination and intervention require contrasting predictions. Do not wait for a complete causal theory before a cheap plausible intervention probe. State its intuition as provisional, predict a measurable original-goal effect, and include a matched control. A negative result must change the next intervention choice, not terminate a solution goal. If repeated diagnosis does not change that choice, revisit the assumption or choose another probe. Do not invent efficacy or a causal explanation.
 
 Choose from:
 - analysis: a distinct semantic or source question that changes which experiment to run. Existing findings are fallible but should not be repeatedly re-audited without a specific unresolved distinction. source_mode=acquire only when primary material actually needs acquisition.
@@ -400,6 +400,8 @@ Preserve deferred_questions as outside the current test. Do not combine unrelate
         })
         try:
             decision = json.loads(response.text)
+            if isinstance(decision, dict) and isinstance(decision.get('solution_path'), dict):
+                decision['solution_path']['parent_work_id'] = (brief.get('current_solution') or {}).get('work_id')
         except ValueError as exc:
             _write(directory / 'rejected_response.json', {'error': str(exc), 'raw_response': response.text})
             raise
@@ -489,7 +491,21 @@ def resolve_research_work(repo: Path, thread: Path, work_id: str) -> dict[str, A
     if work['decision'].get('source_mode') == 'acquire' and not any(source['owner'] == {'kind': 'research_work', 'id': work_id} for source in sources.values()):
         raise ValueError('Retrieve a source or concrete access-failure receipt for this work before analysis.')
     inventory = execution_inventory(thread)
-    packet = {'question': work['decision'], 'development_evidence': evidence,
+    from research_harness.orchestrator.research_observations import measurement_facts
+    facts = {}
+    for node_id, observation in list(evidence.items())[-2:]:
+        if observation.get('measurement_status') != 'completed':
+            continue
+        plan = _read((thread / observation['report_path']).parent / 'experiment_plan.json')
+        workspace = Path(plan['workspace']).resolve()
+        facts[node_id] = []
+        for relative in plan['expected_outputs']['metrics_files'][:3]:
+            path = (workspace / relative).resolve()
+            path.relative_to(workspace)
+            path.relative_to(thread.resolve())
+            if path.is_file() and path.suffix == '.json':
+                facts[node_id].append(measurement_facts(path))
+    packet = {'question': work['decision'], 'measurement_facts': facts, 'development_evidence': evidence,
               'retrieved_sources': sources,
               'runtime_input_example': runtime_input_example(thread),
         'measurement_output_contract': {

@@ -99,6 +99,33 @@ def review_input_bundle(destination: Path, packet: dict[str, Any]) -> dict[str, 
     return submitted
 
 
+def analysis_input_bundle(destination: Path, packet: dict[str, Any]) -> dict[str, Any]:
+    """Keep the selected question's evidence inline and preserve an addressable archive."""
+    import copy
+    submitted = copy.deepcopy(packet)
+    selected = set(packet.get('question', {}).get('evidence_ids', []))
+    references = {}
+    for key in ('execution_inventory', 'analysis_findings', 'prepared_implementations',
+                'executed_diagnostic_bindings', 'protocol_note_history', 'retrieved_sources',
+                'development_evidence', 'development_artifacts'):
+        if key not in submitted:
+            continue
+        value = submitted[key]
+        path = destination / 'evidence' / (key + '.json')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
+        references[key] = {'path': str(path.resolve()),
+                           'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+        submitted[key] = {name: item for name, item in value.items() if name in selected} if isinstance(value, dict) else {}
+    submitted['evidence_sections'] = references
+    submitted['reading_contract'] = (
+        'Answer the selected question, not a full implementation/protocol audit. Start with supplied measurement_facts and selected evidence. '
+        'Read a specific source range or archive entry only to resolve a missing distinction that changes this answer. '
+        'The archive preserves other evidence; omission from this view is not absence. '
+        'Do not reread serialized requests or events. Report an evidence-backed answer and its limits without designing unrelated future experiments.')
+    return submitted
+
+
 def review_research_packet(repo: Path, directory: Path, packet: dict[str, Any], *, purpose: str) -> dict[str, Any]:
     development = packet.get('decision_scope') == 'development_execution'
     instructions = (
@@ -241,7 +268,7 @@ def analyze_research_packet(repo: Path, directory: Path, packet: dict[str, Any],
 
 def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, instructions: str, schema_name: str) -> dict[str, Any]:
     request_data = {"model": research_model(), "reasoning_effort": model_reasoning_effort(research_model()), "instructions": instructions, "packet": packet, "response_schema": schema_name, "response_schema_sha256": hashlib.sha256((repo / "research_harness/schemas" / f"{schema_name}.schema.json").read_bytes()).hexdigest()}
-    request_data["review_transport_version"] = 4
+    request_data["review_transport_version"] = 5
     serialized = json.dumps(request_data, sort_keys=True, ensure_ascii=False)
     digest = hashlib.sha256(serialized.encode()).hexdigest()
     rejection_path = directory / digest / 'rejected_review.json'
@@ -264,12 +291,14 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
     submitted = {**packet, 'previous_review_rejection': request_data['previous_review_rejection']} if 'previous_review_rejection' in request_data else packet
     if schema_name == 'research_execution_review_response':
         submitted = review_input_bundle(destination, submitted)
+    elif schema_name == 'research_analysis_response':
+        submitted = analysis_input_bundle(destination, submitted)
     with tempfile.TemporaryDirectory(prefix="research-decision-review-") as temporary:
         result = CodexCliAdapter().complete(CompletionRequest(
             prompt=AgentPrompt(instructions=instructions, input=json.dumps(submitted, ensure_ascii=False)),
             model=research_model(), timeout_seconds=300,
             output_schema=repo / 'research_harness/schemas' / f'{schema_name}.schema.json',
-            cwd=Path(temporary), label="independent-research-review",
+            cwd=Path(temporary), label="research source analysis" if schema_name == "research_analysis_response" else "independent-research-review",
             allow_local_tools=not (packet.get("predecessor_review_delta") or {}).get("bounded_revision", False),
             event_log_path=destination / "events.jsonl",
             denied_read_paths=tuple(destination / name for name in

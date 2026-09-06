@@ -336,9 +336,19 @@ def test_restart_reconciles_reserved_work_and_never_reads_final_holdout(tmp_path
     bind_work(thread, work['work_id'], node['id'], plan)
     execute_baseline_preflight(REPO, thread, node=node, plan=plan, role=role, settings={})
     (thread / 'production/falsifier_result.json').write_text('{"secret_holdout": "DO_NOT_USE"}')
-    planner = Planner()
+    class MissingLineagePlanner(Planner):
+        def complete(self, request):
+            from dataclasses import replace
+            schema = json.loads(request.output_schema.read_text())
+            assert 'parent_work_id' not in schema['properties']['solution_path']['properties']
+            response = super().complete(request)
+            decision = json.loads(response.text)
+            del decision['solution_path']['parent_work_id']
+            return replace(response, text=json.dumps(decision))
+    planner = MissingLineagePlanner()
     following = plan_research_work(REPO, thread, transport=planner)
     assert following['status'] == 'planned'
+    assert following['decision']['solution_path']['parent_work_id'] == work['work_id']
     assert 'DO_NOT_USE' not in json.dumps(planner.calls)
     assert planner.calls[0]['previous_work']['status'] == 'completed'
 
