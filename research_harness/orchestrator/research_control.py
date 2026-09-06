@@ -520,7 +520,7 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         raise ValueError('Implementation review requires the bound research work.')
     prior = work.get('implementation_review', {})
     plan_digest = _digest(plan)
-    review_policy_version = 7
+    review_policy_version = 8
     execution_sources = []
     workspace = Path(plan['workspace']).resolve()
     for source in plan['source_files']:
