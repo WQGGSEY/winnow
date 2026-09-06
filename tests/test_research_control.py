@@ -115,6 +115,11 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     request_path.write_text(json.dumps({**({'node': node} if explicit_node else {}), 'experiment_plan': request_plan, 'role': role, 'work_id': work['work_id']}))
     outside = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(tmp_path / 'outside.json')})
     assert outside['status'] == 'rejected'
+    misplaced_role = mcp_server.handle_execute_baseline_preflight({
+        'thread_id': 'thread', 'experiment_plan': {**request_plan, 'role': role}, 'work_id': work['work_id']})
+    assert misplaced_role['status'] == 'rejected'
+    assert 'request top level' in misplaced_role['reason']
+    assert not reviewed
     revision = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
     assert revision['status'] == 'rejected'
     assert current_work(thread)['status'] == 'planned'

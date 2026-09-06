@@ -4172,6 +4172,8 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
                 args = {**request, 'thread_id': tid}
             elif args.get('updates'):
                 raise ValueError('Dispatch updates require request_path.')
+            if args.get('role') not in {'current_best_known', 'naive', 'random_or_null', 'diagnostic'}:
+                raise ValueError('Supply role at the request top level, alongside experiment_plan: current_best_known, naive, random_or_null, or diagnostic. A role inside experiment_plan is not the dispatch role. For a saved request, use updates with path=["role"].')
             plan = {**args['experiment_plan'], 'source_files': resolve_source_files(_thread_dir(tid), args['experiment_plan']['source_files'])}
             node = args['node'] if 'node' in args else build_preflight_node(_thread_dir(tid), plan)
             node_id = node['id']
