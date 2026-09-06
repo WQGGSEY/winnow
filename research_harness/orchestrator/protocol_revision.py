@@ -10,7 +10,7 @@ from research_harness.confirmation_sampling import read_sampling_spec, active_sa
 
 from research_harness.orchestrator.research_control import (
     PLANNING_POLICY_VERSION, StaleResearchWork, _digest, _read, _write,
-    analysis_findings, current_work, development_evidence, execution_inventory,
+    analysis_findings, current_work, development_evidence, execution_inventory, executed_diagnostic_bindings,
 )
 from research_harness.orchestrator.research_review import review_research_packet
 
@@ -86,6 +86,7 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
             'development_evidence': evidence, 'thread_dir': str(thread.resolve()),
             'analysis_findings': analysis_findings(thread),
             'execution_inventory': execution_inventory(thread),
+            'executed_diagnostic_bindings': executed_diagnostic_bindings(thread),
             'replacement_holdout_bank': bank,
             'protocol_history': approved_protocol_revisions(thread),
             'replacement_sampling_spec': sampling_spec,
@@ -135,6 +136,10 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
     review = review_research_packet(repo, directory / 'review', packet, purpose=(
         'Review a prospective development protocol amendment. Only the notes may change; structured goal, resources and predicate remain identical. '
         'The proposal must complete the selected work_decision, not substitute a promise to do that work later. '
+        'For repair of an executed diagnostic, compare against executed_diagnostic_bindings and inspect its verified approval trace and actual source, '
+        'not only an older component-binding amendment. The diagnostic pre-execution transaction can already have approved instrumentation and reporting repairs. '
+        'Do not demand their reversion merely because those exact diagnostic bytes were bound through that transaction instead of a separate protocol amendment. '
+        'Require disclosure of further changes and preserve task semantics, endpoint definitions and pass criteria. Process exit success is not an audit pass when structured metrics report a contradiction. '
         'For protocol_change=component_binding, inspect prepared_source files and verify the proposal actually binds those concrete paths and hashes '
         'with the requested method semantics. Reject a preparation-only authorization in place of component binding. '
         'Verify that the same task endpoints, units, success thresholds, dependence-aware uncertainty and fair comparison rules '

@@ -183,6 +183,7 @@ def test_diagnostic_executes_without_fabricating_a_baseline_or_supporting_a_clai
     from research_harness.orchestrator.experiment_plan import validate_experiment_plan
     from research_harness.runner.local_runner import LocalRunner
     from research_harness.schemas.validator import validate_named_schema
+    from research_harness.orchestrator.research_control import executed_diagnostic_bindings, _digest, _write
 
     thread, tree, node, plan, _ = fixture(tmp_path)
     plan['baseline_evidence_requirements'] = []
@@ -203,9 +204,15 @@ def test_diagnostic_executes_without_fabricating_a_baseline_or_supporting_a_clai
         execute_baseline_preflight(REPO, thread, node=node, plan=plan, role='diagnostic', settings={})
     work = plan_research_work(REPO, thread, transport=Planner())
     bind_work(thread, work['work_id'], node['id'], plan)
-    monkeypatch.setattr(research_review, 'review_research_packet', lambda *args, **kwargs: {
-        'request_sha256': 'fixture-review', 'assessment': {'decision': 'approve', 'reason': 'Fixture source review',
-                                                        'evidence': [], 'required_work': []}})
+    def fixture_review(repo, directory, packet, *, purpose):
+        request = {'packet': packet, 'purpose': purpose}
+        digest = _digest(request)
+        record = {'request_sha256': digest, 'assessment': {'decision': 'approve', 'reason': 'Fixture source review',
+                                                         'evidence': [], 'required_work': []}}
+        _write(directory / digest / 'request.json', request)
+        _write(directory / digest / 'review.json', record)
+        return record
+    monkeypatch.setattr(research_review, 'review_research_packet', fixture_review)
     original_execute = LocalRunner.execute
     def execute_with_binding(self, manifest):
         binding = current_work(thread)['diagnostic_source_binding']
@@ -223,6 +230,16 @@ def test_diagnostic_executes_without_fabricating_a_baseline_or_supporting_a_clai
     assert report['baseline_evidence_status'] == {'overall': 'not_required', 'results': []}
     assert report['claim_verdict_candidate'] == 'inconclusive'
     assert not result['scientific_approval']
+    finish_work(thread, result)
+    planner = Planner('protocol_revision')
+    plan_research_work(REPO, thread, transport=planner)
+    binding = planner.calls[0]['executed_diagnostic_bindings'][node['id']]
+    assert binding['review_trace_verified']
+    source = Path(binding['source_files'][0]['path'])
+    assert source.read_text() == plan['source_files'][0]['content']
+    source.write_text('changed after execution')
+    with pytest.raises(ValueError, match='differs from its binding'):
+        executed_diagnostic_bindings(thread)
 
 
 @pytest.mark.parametrize('status', ['rejected', 'interrupted'])

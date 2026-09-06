@@ -13,7 +13,7 @@ from research_harness.schemas.validator import validate_named_schema
 from research_harness.evaluation_vault import sealed_bank_metadata
 from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
 
-PLANNING_POLICY_VERSION = 15
+PLANNING_POLICY_VERSION = 16
 
 
 class StaleResearchWork(ValueError):
@@ -150,6 +150,35 @@ def prepared_implementations(thread: Path) -> dict[str, Any]:
     return prepared
 
 
+def executed_diagnostic_bindings(thread: Path) -> dict[str, Any]:
+    bindings = {}
+    for path in (thread / 'production/research_control/work').glob('*/source_bindings/*/diagnostic_source_binding.json'):
+        receipt = _read(path)
+        node = thread / 'production/tree/baseline_preflight' / receipt['node_id']
+        plan = _read(node / 'experiment_plan.json')
+        if not (node / 'worker_report.json').exists() or _digest(plan) != receipt['plan_digest']:
+            continue  # An approved but unexecuted proposal is not the executed source.
+        sources = []
+        for relative, digest in receipt['source_sha256'].items():
+            source = node / 'workspace' / relative
+            if hashlib.sha256(source.read_bytes()).hexdigest() != digest:
+                raise ValueError('Executed diagnostic source differs from its binding: ' + str(source))
+            sources.append({'path': str(source.resolve()), 'relative_path': relative, 'sha256': digest})
+        review_path = Path(receipt['review_receipt_path'])
+        review = _read(review_path)
+        request = _read(review_path.parent / 'request.json')
+        bindings[receipt['node_id']] = {
+            **receipt, 'binding_receipt_path': str(path.resolve()),
+            'experiment_plan_path': str((node / 'experiment_plan.json').resolve()),
+            'source_files': sources,
+            'review_trace_verified': (review.get('assessment', {}).get('decision') == 'approve'
+                                      and review.get('request_sha256') == receipt['review_request_sha256']
+                                      and _digest(request) == receipt['review_request_sha256']),
+            'scope': 'Exact executed development diagnostic, including approved instrumentation repairs; not scientific qualification or final method freeze',
+        }
+    return bindings
+
+
 def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '', transport=None) -> dict[str, Any]:
     from research_harness.orchestrator.hypothesis_development import hypothesis_context
     from research_harness.orchestrator.protocol_revision import protocol_note_history
@@ -241,6 +270,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
         'research': research, 'implementation_context': implementations, 'measurement_context': measurements,
         'analysis_findings': findings,
         'prepared_implementations': prepared,
+        'executed_diagnostic_bindings': executed_diagnostic_bindings(thread),
         'execution_inventory': execution_inventory(thread),
         'sealed_evaluation_bank': bank,
         'future_confirmation_sampling': sampling,
@@ -276,6 +306,9 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
             'Preserve the research objective and previous evidence, but change the procedure or work kind when the prior test cannot answer it. '
             'This supersedes a plan, not a scientific hypothesis; an input rejection is not an empirical observation. '
             'Read registered_protocol and protocol_note_history together. Later notes may contain only an amendment; unchanged qualification and split definitions remain in earlier approved notes. Apply explicit later replacements, not retired historical restrictions. '
+            'executed_diagnostic_bindings identifies the exact source bytes used by completed diagnostics and their independent approval receipts. '
+            'When repairing an observed diagnostic failure, use those executed bytes as the base rather than an earlier protocol draft. '
+            'Preserve already approved instrumentation repairs; disclose any further changes. These bindings do not change scientific endpoints, qualify methods or authorize confirmation. '
             'Do not silently change a registered comparator, candidate or metric. If development needs a method change barred by an earlier protocol, '
             'choose protocol_revision before further method selection. revise_evaluation_protocol can independently review a prospective notes amendment '
             'before baseline qualification or final evaluation. It preserves the original goal, resources, held-out partition, endpoint definitions '
@@ -424,6 +457,7 @@ def resolve_research_work(repo: Path, thread: Path, work_id: str) -> dict[str, A
               'execution_inventory': inventory,
               'analysis_findings': analysis_findings(thread),
               'prepared_implementations': prepared_implementations(thread),
+              'executed_diagnostic_bindings': executed_diagnostic_bindings(thread),
               'registered_protocol': _read(thread / 'production/feasibility_envelope.json'),
               'protocol_note_history': protocol_note_history(thread),
               'thread_dir': str(thread.resolve()),
@@ -514,6 +548,7 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
               'source_diagnostics': python_source_diagnostics(plan['source_files']),
               'analysis_findings': analysis_findings(thread),
               'prepared_implementations': prepared_implementations(thread),
+              'executed_diagnostic_bindings': executed_diagnostic_bindings(thread),
               'registered_protocol': _read(thread / 'production/feasibility_envelope.json'),
               'protocol_note_history': protocol_note_history(thread),
               'prior_objections': prior.get('required_work', []),

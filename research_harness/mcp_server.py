@@ -1513,7 +1513,7 @@ def handle_resolve_research_work(args: dict[str, Any]) -> dict[str, Any]:
 
 def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     from research_harness.runner.baseline_preflight import baseline_preparation_state
-    from research_harness.orchestrator.research_control import current_work, runtime_input_example
+    from research_harness.orchestrator.research_control import current_work, runtime_input_example, executed_diagnostic_bindings
 
     tid = args["thread_id"]
     d = _thread_dir(tid)
@@ -1573,6 +1573,7 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
         "baseline_preparation": baseline_preparation_state(d),
         "research_work": current_work(d),
         "runtime_input_example": runtime_input_example(d),
+        "executed_diagnostic_bindings": executed_diagnostic_bindings(d),
         "publication_target": _read_json(d / "production/submission_target.json"),
         "baseline_preparation_contract": (
             "Create the research claim and plan through advance_research before waiting for baseline qualification. "
@@ -1608,6 +1609,7 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
                                       'baseline_preparation', 'baseline_preparation_contract', '_market_usage_contract', 'publication_target')},
         'view': 'current', 'thread_dir': str(d.resolve()), 'research_work': work,
         'runtime_input_example': state['runtime_input_example'],
+        'executed_diagnostic_bindings': state['executed_diagnostic_bindings'],
         'operator_intent': envelope.get('operator_intent'),
         'compute_budget': envelope.get('compute_budget'),
         'external_falsifier': envelope.get('external_falsifier'),
