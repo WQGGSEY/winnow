@@ -94,6 +94,12 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
             'execution_plans': [str(path.resolve()) for path in sorted((production / 'tree').rglob('experiment_plan.json'))],
         }
         _write(request_path, packet)
+    dispatch_path = production / 'research_control/work' / work_id / 'protocol_review_dispatch.json'
+    _write(dispatch_path, {'thread_id': thread.name, 'work_id': work_id, 'notes': notes, 'rationale': rationale,
+                           'replace_holdout': replace_holdout, 'defer_holdout_generation': defer_holdout_generation})
+    work['protocol_review_dispatch_path'] = str(dispatch_path.resolve())
+    _write(production / 'research_control/current.json', work)
+    _write(production / 'research_control/work' / work_id / 'work.json', work)
     if sampling_spec:
         partition_rules = (
             'This proposal retires ALL previous confirmation banks and registers a fixed future sampling PROCEDURE. '
@@ -158,6 +164,8 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
         'Check the amendment against the original user problem, not an accidental earlier method choice. '
         'The previous protocol and its failure history will remain disclosed. Do not call this the original preregistration or approve any scientific claim.'
     ))
+    work.pop('protocol_review_checkpoint', None)
+    work.pop('protocol_review_error', None)
     if review['assessment']['decision'] != 'approve':
         work.update(protocol_review={**review['assessment'], 'request_path': str(request_path.resolve())},
                     reconsideration_available=True)

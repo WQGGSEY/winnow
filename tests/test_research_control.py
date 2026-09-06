@@ -611,6 +611,22 @@ def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tm
         source_args = {'thread_id': 'thread', 'work_id': work['work_id'],
                        'plan_metadata': {'source_files': [{'path': 'component.py', 'content': 'VALUE = 1\n'}]}}
         mcp_server.handle_design_experiment_template(source_args)
+    from research_harness import mcp_server
+    from research_harness.adapters.call_budget import CallBudgetExhausted
+    from research_harness.orchestrator.research_control import execution_handoff
+    monkeypatch.setattr(mcp_server, '_thread_dir', lambda tid: thread)
+    def exhausted_review(*args, **kwargs):
+        raise CallBudgetExhausted('Prompt limit reached before review.')
+    monkeypatch.setattr(protocol_revision, 'review_research_packet', exhausted_review)
+    paused = mcp_server.handle_revise_evaluation_protocol({'thread_id': thread.name, **kwargs})
+    assert paused['status'] == 'checkpoint'
+    assert paused['next_tool_to_call'] is None
+    assert current_work(thread)['protocol_review_checkpoint']
+    handoff = execution_handoff(thread, current_work(thread))
+    assert handoff['tool'] == 'revise_evaluation_protocol'
+    assert handoff['arguments'] == {'thread_id': thread.name, **kwargs}
+    assert json.loads(path.read_text()) == original
+    monkeypatch.setattr(protocol_revision, 'review_research_packet', review)
     assert protocol_revision.revise_evaluation_protocol(REPO, thread, **kwargs)['status'] == 'rejected'
     assert [entry['notes'] for entry in calls[0]['protocol_note_history']['entries']] == [original['notes']]
     rejected = current_work(thread)

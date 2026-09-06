@@ -290,3 +290,11 @@ The live citation repair corrected exactly one malformed analysis ID and the nor
 Before the next protocol review, its existing builder was found to include all analysis findings (140279 bytes), chronological protocol history (107181), diagnostic bindings (31942), inventory (10445) and development results (6271), before the proposal and other fields. This exceeds the 280KB call limit without needing a paid model attempt. Prospective protocol review now receives selected findings inline, keeps full protocol history and the proposal inline, and retains all other material as hashed addressable references. Source-inspection recovery also applies to these protocol reviews, preserving completed reads if interpretation times out.
 
 Verification: research_control/research_review — 51 passed. Extended the existing interrupted-inspection case to a protocol amendment, checking preserved full history, selected findings, complete referenced archive, and tool-free resumed synthesis. git diff --check passed. Live protocol amendment approval and intervention execution remain outstanding.
+
+### Protocol checkpoint preserves the submitted amendment
+
+The actual protocol review prompt was 371250 bytes and rejected before model submission. The unchanged saved proposal through the new bundle measures 188207 bytes. Replaying that exact saved proposal while its existing budget remained exhausted produced a checkpoint, preserved the registered protocol byte-for-byte as JSON, and added zero model calls; protocol_checkpoint_recovery.json records this.
+
+The previous protocol MCP handler classified budget/transport interruption as rejected and enabled reconsideration. It now records a checkpoint, saves exact submitted amendment arguments, and exposes an unchanged resume handoff. Completed independent review clears the checkpoint; actual design rejection still follows its normal revision path. Existing empirical saved-request handoffs also cover comparison/competence work, not just diagnostics.
+
+Verification: research_control/research_review — 51 passed. Extended existing protocol-amendment cases across study-design, component-binding and partition variants to assert that budget interruption changes no protocol and preserves exact retry arguments. git diff --check passed. No new game or intervention result yet.

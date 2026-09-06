@@ -1504,6 +1504,7 @@ def handle_revise_evaluation_protocol(args: dict[str, Any]) -> dict[str, Any]:
     from research_harness.orchestrator.protocol_revision import revise_evaluation_protocol
     from research_harness.orchestrator.research_control import StaleResearchWork
     from research_harness.adapters.codex_cli import CodexCliError
+    from research_harness.adapters.call_budget import CallBudgetExhausted
 
     tid = args['thread_id']
     with _exclusive_adaptive_writer(tid):
@@ -1515,11 +1516,18 @@ def handle_revise_evaluation_protocol(args: dict[str, Any]) -> dict[str, Any]:
             from research_harness.orchestrator.research_control import current_work, _write
             thread = _thread_dir(tid)
             work = current_work(thread)
+            checkpoint = isinstance(exc, CallBudgetExhausted) or (
+                isinstance(exc, CodexCliError) and bool(os.environ.get('RESEARCH_HARNESS_CALL_BUDGET')))
             if work.get('work_id') == args['work_id'] and work.get('status') == 'planned':
-                work.update(protocol_review_error=str(exc), reconsideration_available=True)
+                work.update(protocol_review_error=str(exc), protocol_review_checkpoint=checkpoint)
+                if not checkpoint:
+                    work['reconsideration_available'] = True
                 _write(thread / 'production/research_control/current.json', work)
                 _write(thread / 'production/research_control/work' / work['work_id'] / 'work.json', work)
-            return {'status': 'rejected', 'reason': str(exc), 'next_tool_to_call': 'revise_evaluation_protocol'}
+            return {'status': 'checkpoint' if checkpoint else 'rejected', 'reason': str(exc),
+                    'next_tool_to_call': None if checkpoint else 'revise_evaluation_protocol',
+                    'new_observation': False,
+                    'next_step': 'Preserve the saved amendment and resume it with a later invocation budget; no design rejection occurred.' if checkpoint else 'Correct the recorded protocol review error.'}
 
 
 def handle_resolve_research_work(args: dict[str, Any]) -> dict[str, Any]:

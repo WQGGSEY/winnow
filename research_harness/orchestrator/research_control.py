@@ -45,8 +45,15 @@ def execution_handoff(thread: Path, work: dict[str, Any]) -> dict[str, Any] | No
     import copy
     from research_harness.orchestrator.research_knowledge import failed_measurement
 
-    if work.get('requires_replanning') or work.get('status') != 'planned' or work.get('decision', {}).get('kind') != 'diagnostic_experiment':
+    if work.get('requires_replanning') or work.get('status') != 'planned':
         return None
+    if work.get('protocol_review_checkpoint') and work.get('protocol_review_dispatch_path'):
+        saved = Path(work['protocol_review_dispatch_path']).resolve()
+        saved.relative_to(thread.resolve())
+        arguments = _read(saved)
+        if arguments.get('work_id') == work['work_id']:
+            return {'request_path': str(saved), 'tool': 'revise_evaluation_protocol', 'arguments': arguments,
+                    'usage': 'Resume this exact saved amendment after the transport/budget checkpoint. No design objection was returned; do not rewrite the notes or reinterpret the interruption as research evidence.'}
     saved = thread / 'production/research_control/work' / work['work_id'] / 'dispatch_request.json'
     if saved.exists():
         if work.get('outcome', {}).get('execution_result') == 'checkpoint':
@@ -55,6 +62,8 @@ def execution_handoff(thread: Path, work: dict[str, Any]) -> dict[str, Any] | No
                     'usage': 'This is a transport/budget checkpoint, not an implementation objection. Resume this exact saved request unchanged when the invocation budget permits. Do not inspect review logs or serialized review requests, rewrite the experiment, or invent a scientific repair for a CLI timeout. The harness retains completed inspection observations for the reviewer.'}
         return {'request_path': str(saved.resolve()),
                 'usage': 'Resume this current work request. Apply reviewer feedback using updates; do not reconstruct historical requests.'}
+    if work.get('decision', {}).get('kind') != 'diagnostic_experiment':
+        return None
     previous_id = (work['decision'].get('previous_result') or {}).get('work_id')
     if not previous_id:
         return None
