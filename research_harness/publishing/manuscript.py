@@ -61,6 +61,8 @@ def validate_sections(
     sources = {p["id"]: p for p in bundle.get("market_brief", {}).get("papers", [])
                if isinstance(p, dict) and isinstance(p.get("id"), str)}
     ledger: dict[str, Any] = {"sections": {}, "citations": {}}
+    if bundle.get('primary_sources'):
+        ledger['primary_sources'] = bundle['primary_sources']
     for sid, section in sections.items():
         prose = section.get("prose_html", "")
         parser = _Links()

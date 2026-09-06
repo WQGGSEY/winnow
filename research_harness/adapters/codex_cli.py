@@ -192,6 +192,8 @@ class CodexCliAdapter:
         command = [
             self._codex_path,
         ]
+        if request is not None and request.allow_web_search:
+            command.append('--search')
         if request is not None and not request.allow_local_tools:
             for feature in (
                 "shell_tool",

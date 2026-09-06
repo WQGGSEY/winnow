@@ -43,6 +43,7 @@ class CompletionRequest:
     cwd: Path | None = None
     label: str = "agent"
     allow_local_tools: bool = True
+    allow_web_search: bool = False
 
 
 @dataclass(frozen=True)
