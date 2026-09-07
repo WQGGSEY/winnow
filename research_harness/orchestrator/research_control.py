@@ -772,6 +772,8 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
         work['prior_implementation_review'] = work.pop('implementation_review')
         _write(thread / 'production/research_control/current.json', work)
         _write(thread / 'production/research_control/work' / work_id / 'work.json', work)
+    else:
+        prior = work.get('prior_implementation_review', {})
     directory = thread / 'production/research_control/work' / work_id / 'implementation_reviews'
     diagnostic_binding = None
     if (work['decision']['kind'] == 'diagnostic_experiment' and node['type'] == 'operational'

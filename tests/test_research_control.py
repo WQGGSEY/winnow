@@ -243,9 +243,11 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     monkeypatch.setattr(mcp_server, '_thread_dir', lambda tid: thread)
     monkeypatch.setattr(settings_scoped, 'resolve_for_thread', lambda repo, tid: {})
     reviewed = []
+    review_inputs = []
     invalid_review = []
     budget_error = []
     def review(repo, directory, packet, *, purpose):
+        review_inputs.append(packet)
         if budget_error:
             from research_harness.adapters.call_budget import CallBudgetExhausted
             raise CallBudgetExhausted('bounded review budget exhausted')
@@ -346,6 +348,7 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     monkeypatch.setenv('RESEARCH_HARNESS_CALL_BUDGET', str(invocation_budget))
     before_launch = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
     assert before_launch['status'] == 'checkpoint'
+    assert review_inputs[-1]['prior_objections'] == review_inputs[-2]['prior_objections'] == ['Use the actual implementation.']
     assert current_work(thread)['implementation_review']['decision'] == 'approve'
     assert current_work(thread)['status'] == 'planned'
     assert not (tree / 'baseline_preflight' / node['id'] / 'job_manifest.json').exists()

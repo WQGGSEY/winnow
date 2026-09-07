@@ -1782,6 +1782,9 @@ def resume_saved_preflight(repo: Path, tid: str, model: str, active_child: dict)
             session.terminate(force=True)
             active_child.update(pid=None, session=None)
     if code:
+        if current_work(thread).get('execution_phase') == 'implementation_review':
+            from research_harness.orchestrator.research_control import finish_work
+            finish_work(thread, {'status': 'checkpoint', 'reason': f'Checkpoint MCP process exited {code} before experiment launch.'})
         return code
     for line in reversed(response_path.read_text().splitlines()):
         try:

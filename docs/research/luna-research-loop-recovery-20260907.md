@@ -528,3 +528,12 @@ request_path와 thread_id만 넘긴다. 독립 검토의 모델 호출·소스 �
 job_manifest 부재를 확인한 뒤 해당 실행 상태도 같은 checkpoint로 복구했다.
 초기 감독 호출 외에 독립 모델 호출이 없음을 확인하고 162초 시점에 세션을
 교체했다. 관련 기존 좁은 검사 3 passed, 93 deselected.
+
+120751에서 자동 재개가 supervisor LLM 없이 실제 독립 검토로 진입했다.
+첫 예약은 independent-research-review 단 하나였다. 그러나 재개 검토의
+packet은 이전 b5736f2와 prior_objections만 달라 완료된 검토 자료를 놓쳤다.
+implementation_review를 prior_implementation_review로 옮긴 뒤 prior_objections를
+빈 배열로 만든 것이 원인이다. 기록 이동 후에도 동일 거절 사유를 유지하도록
+수정하고, 중단 전후 실제 MCP 검토 입력이 일치함을 기존 검사에서 확인했다.
+research_control/research_review 검사 52 passed. MCP 프로세스가 검토 중 종료된
+경우도 operational checkpoint로 남겨 후속 세션이 새 구현 거절로 오인하지 않게 했다.
