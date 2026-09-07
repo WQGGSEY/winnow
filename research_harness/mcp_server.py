@@ -1682,6 +1682,13 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
         review = state['research_work'].pop('implementation_review')
         state['research_work']['prior_implementation_review'] = review
     state['execution_handoff'] = execution_handoff(d, state['research_work'])
+    handoff = state['execution_handoff'] or {}
+    if (handoff.get('tool') == 'execute_baseline_preflight' and handoff.get('request_path')
+            and state['research_work'].get('prepared_implementation')):
+        state['research_work']['prepared_implementation'] = {
+            **state['research_work']['prepared_implementation'],
+            'execution_request_path': handoff['request_path'],
+        }
     from research_harness.orchestrator.research_control import source_workspace
     state['source_workspace'] = str(source_workspace(d))
     if args.get('view', 'current' if thread.get('current_phase') == 'production' else 'full') == 'full':
@@ -3391,6 +3398,12 @@ def _handle_design_experiment_template_locked(args: dict[str, Any]) -> dict[str,
             if not intent.get('data_source_anchor'):
                 schema['required'].append('inputs')
             errors = schema_errors(schema, plan)
+            if not errors:
+                from research_harness.orchestrator.research_observations import observation_contract
+                try:
+                    observation_contract(work['decision'], plan)
+                except ValueError as exc:
+                    errors.append(str(exc))
             prepared['execution_contract_errors'] = errors
             if errors:
                 work['next_tool_to_call'] = 'design_experiment_template'
@@ -3398,8 +3411,9 @@ def _handle_design_experiment_template_locked(args: dict[str, Any]) -> dict[str,
                 request_path = draft / 'execution_request.json'
                 request = {'thread_id': tid, 'work_id': work['work_id'], 'experiment_plan': plan}
                 _write(request_path, request)
-                _write(work_dir / 'dispatch_request.json', request)
-                prepared['execution_request_path'] = str(request_path.resolve())
+                dispatch_path = work_dir / 'dispatch_request.json'
+                _write(dispatch_path, request)
+                prepared['execution_request_path'] = str(dispatch_path.resolve())
                 work['next_tool_to_call'] = 'execute_baseline_preflight'
         _write(work_dir / 'implementation_preparations' / (template_digest + '.json'), prepared)
         work['prepared_implementation'] = prepared
@@ -4372,7 +4386,6 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
             resolve_preflight_role(plan_input, nested_role)
             args = {**args, 'experiment_plan': plan_input, 'role': role}
             plan = {**args['experiment_plan'], 'source_files': resolve_source_files(_thread_dir(tid), args['experiment_plan']['source_files'])}
-            request_resolved = True
             # Materializing a revision can overwrite its referenced workspace file.
             # Resume the resolved bytes, not a reference to that mutable predecessor.
             args = {**args, 'experiment_plan': plan}
@@ -4384,6 +4397,7 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
                 bind_work(_thread_dir(tid), args.get('work_id'), node_id, plan)
                 bound = True
                 _write_json_atomic(_thread_dir(tid) / 'production/research_control/work' / args['work_id'] / 'dispatch_request.json', args)
+            request_resolved = True
             result = execute_baseline_preflight(
                 _repo_root(), _thread_dir(tid), node=node, plan=plan,
                 role=args["role"], settings=resolve_for_thread(_repo_root(), tid),

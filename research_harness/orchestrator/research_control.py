@@ -95,7 +95,7 @@ def execution_handoff(thread: Path, work: dict[str, Any]) -> dict[str, Any] | No
         return {'request_path': str(saved.resolve()), 'tool': work['next_tool_to_call'],
                 'current_source_files': source_files,
                 'arguments': {'thread_id': thread.name, 'request_path': str(saved.resolve())},
-                'usage': 'Resume this current work request. Apply reviewer feedback using updates; do not reconstruct historical requests.'}
+                'usage': 'Resume this current work request. Apply reviewer feedback using updates; do not reconstruct historical requests. prepared_implementation records prepared source, not a completed repair or review approval.'}
     if work.get('decision', {}).get('kind') != 'diagnostic_experiment':
         return None
     previous_id = (work['decision'].get('previous_result') or {}).get('work_id')

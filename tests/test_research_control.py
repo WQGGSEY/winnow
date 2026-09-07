@@ -339,6 +339,15 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     assert not (thread / 'production/tree/baseline_preflight' / node['id'] / 'job_manifest.json').exists()
     assert mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})['status'] == 'rejected'
     assert len(reviewed) == 1
+    bound_request = request_path.read_bytes()
+    missing_observations = mcp_server.handle_execute_baseline_preflight({
+        'thread_id': 'thread', 'request_path': str(request_path),
+        'updates': [{'path': ['experiment_plan', 'observation_bindings'], 'value': {}}],
+    })
+    assert missing_observations['status'] == 'rejected'
+    assert 'Bind every required_observations' in missing_observations['reason']
+    assert request_path.read_bytes() == bound_request
+    assert len(reviewed) == 1
     malformed = copy.deepcopy(request_plan)
     malformed.pop('plan_id')
     malformed.pop('failure_index_hints')
@@ -843,6 +852,12 @@ def test_source_preparation_preserves_scientific_work_and_revision_bytes(tmp_pat
     complete_metadata = {**plan, 'source_files': args['plan_metadata']['source_files']}
     complete_metadata.pop('plan_id')
     complete_metadata.pop('node_id')
+    missing_bindings = copy.deepcopy(complete_metadata)
+    missing_bindings.pop('observation_bindings')
+    incomplete = mcp_server.handle_design_experiment_template({**args, 'plan_metadata': missing_bindings})
+    assert incomplete['next_tool_to_call'] == 'design_experiment_template'
+    assert incomplete['prepared_implementation']['execution_contract_errors']
+    assert 'execution_request_path' not in incomplete['prepared_implementation']
     complete = mcp_server.handle_design_experiment_template({**args, 'plan_metadata': complete_metadata})
     assert complete['next_tool_to_call'] == 'execute_baseline_preflight'
     complete_revision = complete['prepared_implementation']
@@ -852,6 +867,7 @@ def test_source_preparation_preserves_scientific_work_and_revision_bytes(tmp_pat
     assert request['experiment_plan']['claim_under_test'] == plan['claim_under_test']
     assert resolve_source_files(thread, request['experiment_plan']['source_files'])[0]['content'] == args['plan_metadata']['source_files'][0]['content']
     handoff = execution_handoff(thread, complete)
+    assert complete_revision['execution_request_path'] == handoff['arguments']['request_path']
     assert json.loads(Path(handoff['arguments']['request_path']).read_text()) == request
     assert not list(tree.rglob('runner_result.json'))
     bind_work(thread, work['work_id'], node['id'], plan)
