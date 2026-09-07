@@ -173,6 +173,45 @@ def execution_inventory(thread: Path) -> dict[str, Any]:
     }
 
 
+def retained_development_outputs(thread: Path, work: dict[str, Any]) -> dict[str, Any] | None:
+    """Expose file metadata for recovery, never measurements from a failed run."""
+    binding = work.get('binding', {})
+    if work.get('status') != 'completed' or binding.get('scope') != 'baseline_preflight':
+        return None
+    root = (thread / 'production/tree/baseline_preflight').resolve()
+    node = (root / binding['node_id']).resolve()
+    node.relative_to(root)
+    workspace = (node / 'workspace').resolve()
+    workspace.relative_to(node)
+    runner = _read(workspace / 'runner_result.json')
+    if runner.get('status') not in {'failed', 'timeout'}:
+        return None
+    manifest = _read(node / 'job_manifest.json')
+    files = {}
+    for relative in manifest.get('outputs', {}).get('artifact_dirs', []):
+        directory = workspace / relative
+        if directory.is_symlink() or not directory.resolve().is_relative_to(workspace):
+            continue
+        for path in directory.rglob('*'):
+            if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(workspace):
+                continue
+            stat = path.stat()
+            files[str(path.relative_to(workspace))] = {
+                'path': str(path.resolve()), 'size_bytes': stat.st_size, 'modified_at_ns': stat.st_mtime_ns,
+            }
+    names = sorted(files)
+    return {
+        'work_id': work['work_id'], 'workspace': str(workspace), 'runner_status': runner['status'],
+        'file_count': len(names), 'files': [files[name] for name in names[:32]],
+        'omitted_file_count': max(0, len(names) - 32),
+        'scope': 'Unvalidated files retained in declared output directories after a failed development run. '
+                 'Only file metadata was inspected. This does not establish completed training, usable checkpoints, '
+                 'eligible observations or a scientific effect. Downstream source inspection must verify integrity, '
+                 'provenance and compatibility with the selected procedure before any reuse. '
+                 'If files are omitted, inspect the referenced workspace rather than assuming they are absent.',
+    }
+
+
 def analysis_findings(thread: Path) -> dict[str, Any]:
     from research_harness.orchestrator.research_knowledge import work_history
 
@@ -489,6 +528,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
         'active_sampling_registration': active_sampling_registration(thread),
         'active_claim': _read(thread / 'production/tree/search_state.json').get('nodes', []),
         'development_evidence': evidence, 'previous_work': previous,
+        'retained_development_outputs': retained_development_outputs(thread, previous),
         'historical_measurements': historical_results,
         'historical_measurement_scope': 'Completed development measurements with their declared objectives, not validated interpretations. Check relevant older measurements before re-establishing task feasibility or repeating a diagnostic. Protocols, implementations and conditions may differ: references do not establish applicability to the present question. Reuse what they actually establish with explicit limits; if a new measurement is needed, identify its new distinction. Final holdout and falsifier results are excluded.',
         'diagnostic_required': diagnostic_required, 'max_runtime_seconds': ceiling,

@@ -108,6 +108,7 @@ def test_planning_consumes_critiqued_hypotheses_and_retains_work_link(tmp_path):
 
 
 def test_execution_inventory_includes_preparation_without_reading_measurements(tmp_path):
+    from research_harness.orchestrator.research_control import retained_development_outputs
     for scope, node_id in [('baseline_preflight', 'preflight'), ('nodes', 'formal')]:
         directory = tmp_path / 'production/tree' / scope / node_id
         (directory / 'workspace').mkdir(parents=True)
@@ -118,6 +119,22 @@ def test_execution_inventory_includes_preparation_without_reading_measurements(t
     groups = execution_inventory(tmp_path)['groups']
     assert groups['baseline_preflight']['preflight'] == {'runner_status': 'timeout', 'runner_receipt_exists': True}
     assert groups['nodes']['formal'] == {'runner_status': None, 'runner_receipt_exists': False}
+    node = tmp_path / 'production/tree/baseline_preflight/preflight'
+    artifacts = node / 'workspace/artifacts'
+    artifacts.mkdir()
+    for index in range(33):
+        (artifacts / f'partial-{index:02}.pt').write_bytes(b'unvalidated')
+    outside = tmp_path / 'outside.pt'
+    outside.write_bytes(b'not a declared output')
+    (artifacts / 'outside-link.pt').symlink_to(outside)
+    (node / 'job_manifest.json').write_text(json.dumps({'outputs': {'artifact_dirs': ['artifacts', 'artifacts']}}))
+    work = {'work_id': 'failed', 'status': 'completed', 'binding': {'scope': 'baseline_preflight', 'node_id': 'preflight'}}
+    inventory = retained_development_outputs(tmp_path, work)
+    assert inventory['file_count'] == 33 and len(inventory['files']) == 32
+    assert inventory['omitted_file_count'] == 1
+    assert all(Path(item['path']).parent == artifacts for item in inventory['files'])
+    work['binding'] = {'scope': 'nodes', 'node_id': 'formal'}
+    assert retained_development_outputs(tmp_path, work) is None
 
 
 def test_historical_measurements_remain_discoverable_after_recent_window(tmp_path):
@@ -222,6 +239,12 @@ def fixture(tmp_path):
 @pytest.mark.parametrize('explicit_node', [True, False])
 def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_path, monkeypatch, explicit_node):
     thread, tree, node, plan, role = fixture(tmp_path)
+    plan['source_files'][0]['content'] = (
+        "from pathlib import Path\n"
+        "Path('artifacts').mkdir(exist_ok=True)\n"
+        "Path('artifacts/partial.pt').write_bytes(b'unvalidated checkpoint')\n"
+        "Path('artifacts/metrics.json').write_text('incomplete JSON')\n"
+        + plan['source_files'][0]['content'])
     if not explicit_node:
         plan.pop('workspace')
         plan['failure_index_hints'] = {}
@@ -369,6 +392,11 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     next_work = plan_research_work(REPO, thread, transport=planner)
     assert next_work['work_id'] != work['work_id']
     packet = planner.calls[-1]
+    retained = packet['retained_development_outputs']
+    assert retained['runner_status'] == 'failed' and retained['file_count'] == 2
+    assert {Path(item['path']).name for item in retained['files']} == {'partial.pt', 'metrics.json'}
+    assert retained['omitted_file_count'] == 0
+    assert packet['previous_work']['outcome']['observation']['metrics'] == {}
     assert packet['diagnostic_required']
     assert packet['previous_work']['outcome']['observation']['execution_status'] == 'failed'
     assert {node['id'], 'work_' + work['work_id']} <= set(next_work['decision']['evidence_ids'])
