@@ -520,3 +520,11 @@ request_path와 thread_id만 넘긴다. 독립 검토의 모델 호출·소스 �
 원본 요청 보존·거절 상태 비자동재개를 확인했다. 관련 기존 검사 결과는
 116 passed, 1 deselected, 6 subtests passed. 실제 supervisor 자동 재개는
 다음 실행에서 검증한다.
+
+자동 재개 첫 실제 실행 120439는 기본 PATH의 Python을 사용해 pyflakes import에
+실패했다. 독립 검토/게임 실행 전에 발생한 환경 오류다. 기존 감독 세션처럼
+하네스 venv/bin을 PATH 앞에 두도록 수정하고, MCP 오류가 검토 단계에 작업을
+남기면 finish_work의 operational checkpoint로 복귀시킨다. 실제 오류 응답과
+job_manifest 부재를 확인한 뒤 해당 실행 상태도 같은 checkpoint로 복구했다.
+초기 감독 호출 외에 독립 모델 호출이 없음을 확인하고 162초 시점에 세션을
+교체했다. 관련 기존 좁은 검사 3 passed, 93 deselected.

@@ -1763,6 +1763,9 @@ def resume_saved_preflight(repo: Path, tid: str, model: str, active_child: dict)
     token = uuid.uuid4().hex
     env = {**os.environ, **mcp.environment, 'RESEARCH_HARNESS_THREAD_ID': tid,
            'RESEARCH_HARNESS_MODEL': model, 'RESEARCH_HARNESS_SESSION': token}
+    venv_bin = Path(__file__).resolve().parents[1] / 'venv/bin'
+    if venv_bin.is_dir():
+        env['PATH'] = f"{venv_bin}{os.pathsep}{env.get('PATH', '')}"
     response_path = thread / 'production/research_control/work' / work['work_id'] / 'supervisor_resume.jsonl'
     _log(thread / 'supervisor.log', '저장된 개발 실험 체크포인트를 MCP로 직접 재개합니다. 새 연구 판단은 수행하지 않습니다.')
     with response_path.open('w') as output:
@@ -1787,7 +1790,12 @@ def resume_saved_preflight(repo: Path, tid: str, model: str, active_child: dict)
             continue
         if response.get('id') == 1:
             if 'error' in response:
-                raise RuntimeError('Checkpoint MCP replay failed: ' + str(response['error']))
+                reason = 'Checkpoint MCP replay failed: ' + str(response['error'])
+                latest = current_work(thread)
+                if latest.get('execution_phase') == 'implementation_review':
+                    from research_harness.orchestrator.research_control import finish_work
+                    finish_work(thread, {'status': 'checkpoint', 'reason': reason})
+                raise RuntimeError(reason)
             return WORK_UNIT_EXIT_CODE
     raise RuntimeError('Checkpoint MCP replay returned no response')
 

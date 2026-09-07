@@ -25,6 +25,8 @@ from research_harness import thread_supervisor as ts
 
 def test_saved_preflight_checkpoint_replays_exact_mcp_request_without_coordinator(tmp_path, monkeypatch):
     import sys
+    monkeypatch.setattr(ts, '__file__', str(tmp_path / 'research_harness/thread_supervisor.py'))
+    (tmp_path / 'venv/bin').mkdir(parents=True)
     thread = tmp_path / 'runs/threads/thread'
     directory = thread / 'production/research_control/work/work'
     directory.mkdir(parents=True)
@@ -39,6 +41,7 @@ def test_saved_preflight_checkpoint_replays_exact_mcp_request_without_coordinato
         'assert request["params"]["name"] == "execute_baseline_preflight"\n'
         f'assert request["params"]["arguments"] == {{"thread_id":"thread","request_path":{str(request_path)!r}}}\n'
         'assert os.environ["RESEARCH_HARNESS_MODEL"] == "gpt-5.6-luna"\n'
+        f'assert os.environ["PATH"].split(os.pathsep)[0] == {str(Path(ts.__file__).resolve().parents[1] / "venv/bin")!r}\n'
         'print(json.dumps({"jsonrpc":"2.0","id":1,"result":{"content":[]}}))\n'
     )
     monkeypatch.setattr(ts, 'load_settings', lambda repo: {})
