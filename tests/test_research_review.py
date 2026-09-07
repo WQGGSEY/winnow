@@ -248,6 +248,14 @@ def test_inspection_budget_prioritizes_experiment_source_over_recent_framework_r
     recovered = completed_inspection(path, ('/workspace/experiment.py',))
     assert recovered['observations'][0]['output'] == 'source' * 700
     assert recovered['omitted_output_count'] == 1
+    path.write_text('\n'.join(json.dumps({'type': 'item.completed', 'item': {
+        'type': 'command_execution', 'exit_code': 0, 'command': command, 'aggregated_output': output}})
+        for command, output in [('cat /workspace/experiment.py', 'source' * 10000),
+                                ('cat /workspace/inputs/engine.py', 'engine' * 5000),
+                                ('cat /framework/validator.py', 'framework' * 8600)]))
+    recovered = completed_inspection(path, ('/workspace/experiment.py',), source_inlined=True)
+    assert [row['output'] for row in recovered['observations']] == ['engine' * 5000]
+    assert recovered['source_supplied_inline']
 
 
 @pytest.mark.parametrize('scope_status,execution_scope', [('answered', 'eligible_for_source_review'),
