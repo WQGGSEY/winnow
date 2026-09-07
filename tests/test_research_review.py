@@ -71,6 +71,8 @@ def test_review_bundle_preserves_evidence_and_denies_self_replay(tmp_path):
               'experiment_plan': {'source_files': [source], 'resources': {'timeout_sec': 20}},
               'execution_source_manifest': [{'relative_path': 'measure.py', 'path': '/measure.py', 'sha256': 'digest'}],
               'prepared_implementations': {'prior': {'source': 'unchanged'}},
+              'work_decision': {'evidence_ids': ['selected']},
+              'development_executions': {'selected': {'count': 7}, 'older': {'count': 3}},
               'registered_protocol': {'notes': 'Measure honestly.'}}
     destination = tmp_path / 'bundle'
     submitted = review_input_bundle(destination, packet)
@@ -79,6 +81,10 @@ def test_review_bundle_preserves_evidence_and_denies_self_replay(tmp_path):
     reference = submitted['evidence_sections']['prepared_implementations']
     assert json.loads(Path(reference['path']).read_text()) == packet['prepared_implementations']
     assert submitted['registered_protocol'] == packet['registered_protocol']
+    assert submitted['development_executions'] == {'selected': {'count': 7}}
+    history = submitted['evidence_sections']['development_executions']
+    assert json.loads(Path(history['path']).read_text()) == packet['development_executions']
+    assert hashlib.sha256(Path(history['path']).read_bytes()).hexdigest() == history['sha256']
     analysis = {'question': {'evidence_ids': ['selected']},
                 'development_evidence': {'selected': {'count': 7}, 'older': {'count': 3}},
                 'measurement_facts': {'selected': {'pointer': '/count', 'value': 7}}}

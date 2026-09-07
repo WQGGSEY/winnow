@@ -90,7 +90,8 @@ def review_input_bundle(destination: Path, packet: dict[str, Any]) -> dict[str, 
 
     submitted = copy.deepcopy(packet)
     references = {}
-    sections = ['prepared_implementations', 'other_analysis_index', 'executed_diagnostic_bindings']
+    sections = ['prepared_implementations', 'other_analysis_index', 'executed_diagnostic_bindings',
+                'development_executions']
     if packet.get('protocol_scope_analysis'):
         sections.append('protocol_note_history')
     for key in sections:
@@ -103,6 +104,9 @@ def review_input_bundle(destination: Path, packet: dict[str, Any]) -> dict[str, 
         path.write_text(raw)
         references[key] = {'path': str(path.resolve()), 'sha256': hashlib.sha256(raw.encode()).hexdigest(),
                            'keys': list(value) if isinstance(value, dict) else None}
+        if key == 'development_executions':
+            selected = set(packet.get('work_decision', {}).get('evidence_ids', []))
+            submitted[key] = {name: record for name, record in value.items() if name in selected}
     plan = submitted.get('experiment_plan', {})
     if packet.get('execution_source_manifest') and not (packet.get('predecessor_review_delta') or {}).get('bounded_revision'):
         manifest = {s['relative_path']: s for s in packet['execution_source_manifest']}
@@ -114,6 +118,7 @@ def review_input_bundle(destination: Path, packet: dict[str, Any]) -> dict[str, 
     submitted['reading_contract'] = (
         'Full source content is inline for bounded revisions; otherwise it is in the hash-verified materialized files. Evidence sections retain their original packet keys for basis_path citations. '
         'Read only the section or source range needed for an unresolved dependency; do not dump whole JSON records. '
+        'Development executions cited by the selected work remain inline; other execution summaries remain in their evidence section. '
         'Do not read review events, subprocess logs, or the serialized request: they repeat this input and are not research evidence. '
         'Use predecessor_review_delta when present to identify changes before reconsidering unchanged findings. '
         'Use protocol_scope_analysis as a fallible reading guide, not permission or proof of compliance. '
@@ -449,7 +454,7 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
         if scope['assessment']['status'] == 'unresolved' or scope['assessment']['execution_scope'] != 'eligible_for_source_review':
             raise ProtocolScopeNeedsReplanning(packet['protocol_scope_analysis'])
     request_data = {"model": research_model(), "reasoning_effort": model_reasoning_effort(research_model()), "instructions": instructions, "packet": packet, "response_schema": schema_name, "response_schema_sha256": hashlib.sha256((repo / "research_harness/schemas" / f"{schema_name}.schema.json").read_bytes()).hexdigest()}
-    request_data["review_transport_version"] = 5
+    request_data["review_transport_version"] = 6 if schema_name == 'research_execution_review_response' else 5
     if not source_inspection:
         request_data['source_inspection'] = False
     serialized = json.dumps(request_data, sort_keys=True, ensure_ascii=False)
