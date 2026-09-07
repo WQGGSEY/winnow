@@ -209,3 +209,5 @@ Luna가 a33ec53121325d1f4f9998c46023a4b18f329606b8bf6ab2fda810b169b86814를 prot
 root는 완료된 실제 아티팩트에서 deterministic worker report 재구성, 승인 요청 해시와 실행 소스, 입력 manifest, 두 actor SHA 및 endpoint provenance, 짝 reset 일치,224개 예측의capacity 정확도와raw effect를 확인했다. `/tmp/verify_recoverability_artifact.py`로 실행했고 결과는 `201631/recoverability-artifact-verification.json`이다. metrics SHA9cf14bac77bdf0b2910745a03ad3393c13839476c661ea4f29ebf5df1d9e0e77. 추가 학습이나 과거 work 기록 수정은 하지 않았다.
 
 20:38 Luna는f803b116… 기존 자료 분석을 선택하며 capacity 실패 때문에 과거 원인 가설을 해석할 수 없다고 명시했다. 분석 호출은 남은456초가600초보다 짧아 시작 전 중단됐다. 소유 프로세스가 없음을 확인하고20:42:11 `204211` 배치에서 같은 분석을 재개했다. all-role Luna max를 유지한다. 5~7의 강한 결과, 독립 qualification/confirmation 및 논문 패키지는 여전히 미완료다.
+
+20:50 f803의 선택된 분석 질문에 기존 표·예측 재구성뿐 아니라 “analysis-only identity-free control reaches ...0.95”라는 새 fitting 결과 요구가 섞여 있음을 확인했다. 분석 담당자의 실행 계약은 기존 자료 읽기와 재계산만 허용한다. 계획의 analysis 설명에 저장 자료 재계산과 새 모델 fitting을 구분하고, 저장된 훈련 자료의 capacity control도 diagnostic_experiment 또는 competence로 선택하도록 명시했다. 현재 분석의 요청·복구 해시·과거 work는 바꾸지 않았다. 이는 앞으로의 선택 안내이며 실제 계획 개선은 아직 관측하지 않았다. control 기존42개 검사를 실행했다.
