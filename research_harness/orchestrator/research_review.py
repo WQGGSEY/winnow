@@ -29,13 +29,16 @@ def predecessor_review_delta(thread: Path, work: dict[str, Any], packet: dict[st
     """Expose verified prior assessment and exact changes without transferring approval."""
     import difflib
 
-    previous_id = (work['decision'].get('previous_result') or {}).get('work_id')
-    if not previous_id:
-        return None
-    previous_path = thread / 'production/research_control/work' / previous_id / 'work.json'
-    if not previous_path.exists():
-        return None
-    previous = json.loads(previous_path.read_text())
+    previous = work
+    same_work = bool(work.get('implementation_review', {}).get('receipt_path'))
+    if not same_work:
+        previous_id = (work['decision'].get('previous_result') or {}).get('work_id')
+        if not previous_id:
+            return None
+        previous_path = thread / 'production/research_control/work' / previous_id / 'work.json'
+        if not previous_path.exists():
+            return None
+        previous = json.loads(previous_path.read_text())
     receipt_name = previous.get('implementation_review', {}).get('receipt_path')
     if not receipt_name:
         return None
@@ -47,11 +50,14 @@ def predecessor_review_delta(thread: Path, work: dict[str, Any], packet: dict[st
     request_bytes = (receipt_path.parent / 'request.json').read_bytes().rstrip(b'\n')
     if hashlib.sha256(request_bytes).hexdigest() != receipt.get('request_sha256'):
         return None
-    if receipt.get('assessment', {}).get('decision') != 'approve':
+    prior_decision = receipt.get('assessment', {}).get('decision')
+    if prior_decision not in {'approve', 'reject'}:
         return None
     previous_packet = json.loads(request_bytes)['packet']
     old_plan = previous_packet.get('experiment_plan', {})
     new_plan = packet['experiment_plan']
+    if same_work and old_plan == new_plan:
+        return None
     old_sources = {s['path']: s['content'] for s in old_plan.get('source_files', [])}
     new_sources = {s['path']: s['content'] for s in new_plan['source_files']}
     diffs = {}
@@ -71,8 +77,8 @@ def predecessor_review_delta(thread: Path, work: dict[str, Any], packet: dict[st
     return {'prior_receipt_path': str(receipt_path), 'prior_request_sha256': receipt['request_sha256'],
             'prior_assessment': receipt['assessment'], 'unchanged_source_files': unchanged, 'source_diffs': diffs,
             'changed_plan_fields': changed_fields, 'changed_conditions': changed_conditions,
-            'bounded_revision': not changed_conditions and not (set(changed_fields) - {'node_id', 'workspace'}),
-            'scope': 'Prior approval is evidence only. Inspect changes and their dependencies, including changed plan fields and conditions. Reuse an earlier finding only where its dependencies remain unchanged. A new independent decision is required.'}
+            'bounded_revision': prior_decision == 'approve' and not changed_conditions and not (set(changed_fields) - {'node_id', 'workspace'}),
+            'scope': 'Start from the prior objections and exact changes, including changed plan fields and conditions. A prior rejection does not certify unmentioned code. Reuse an earlier finding only where its dependencies remain unchanged. A new independent decision is required.'}
 
 
 def review_input_bundle(destination: Path, packet: dict[str, Any]) -> dict[str, Any]:

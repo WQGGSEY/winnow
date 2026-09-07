@@ -104,6 +104,14 @@ def test_review_bundle_preserves_evidence_and_denies_self_replay(tmp_path):
     assert delta['changed_conditions'] == ['registered_protocol']
     assert not delta['bounded_revision']
     assert predecessor_review_delta(tmp_path, work, packet)['bounded_revision']
+    (prior_dir / 'review.json').write_text(json.dumps({'request_sha256': hashlib.sha256(request).hexdigest(),
+        'assessment': {'decision': 'reject', 'reason': 'Input coordinate type mismatch.'}}))
+    same_work = {**work, 'implementation_review': {'receipt_path': str(prior_dir / 'review.json')}}
+    repaired = predecessor_review_delta(tmp_path, same_work, changed)
+    assert repaired['prior_assessment']['decision'] == 'reject'
+    assert '+print(2)' in repaired['source_diffs']['measure.py']
+    assert not repaired['bounded_revision']
+    assert predecessor_review_delta(tmp_path, same_work, packet) is None
     (prior_dir / 'request.json').write_text('{}')
     assert predecessor_review_delta(tmp_path, work, changed) is None
     assessment = {'decision': 'approve', 'reason': 'Valid development execution.',
