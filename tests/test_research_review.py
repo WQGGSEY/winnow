@@ -208,7 +208,7 @@ def test_valid_saved_objection_survives_host_citation_validator_repair(tmp_path)
 
 
 @pytest.mark.parametrize("role", ["analysis", "execution_review", "protocol_review"])
-def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp_path, role):
+def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp_path, role, monkeypatch):
     from research_harness.orchestrator.research_review import analyze_research_packet
     from research_harness.adapters.codex_cli import CodexCliError
     repo = Path(__file__).resolve().parents[1]
@@ -234,8 +234,12 @@ def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp
         assessment = {'decision': 'approve', 'reason': 'The amendment preserves the endpoint.',
                       'evidence': ['proposal.notes'], 'required_work': [], 'next_steps': []}
     requests = []
+    budget = tmp_path / 'call_budget.json'
+    budget.write_text(json.dumps({'max_prompt_bytes': 100000, 'max_call_prompt_bytes': 16000}))
+    monkeypatch.setenv('RESEARCH_HARNESS_CALL_BUDGET', str(budget))
     def complete(request):
         requests.append(request)
+        assert len((request.prompt.instructions + request.prompt.input).encode()) < 16000
         if role == 'protocol_review':
             submitted = json.loads(request.prompt.input)
             assert submitted['analysis_findings'] == {'selected': {'answer': 'Relevant finding.'}}
@@ -245,6 +249,8 @@ def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp
             assert json.loads(Path(reference['path']).read_text()) == packet['analysis_findings']
         if len(requests) == 1:
             request.event_log_path.write_text(json.dumps({'type': 'item.completed', 'item': {
+                'type': 'command_execution', 'command': 'cat history.json',
+                'exit_code': 0, 'aggregated_output': 'x' * 20000}}) + '\n' + json.dumps({'type': 'item.completed', 'item': {
                 'type': 'command_execution', 'command': 'cat metrics.json',
                 'exit_code': 0, 'aggregated_output': '{"count":7}'}}) + '\n{"type":')
             raise CodexCliError('timeout')

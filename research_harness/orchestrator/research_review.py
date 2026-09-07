@@ -341,6 +341,27 @@ def analyze_research_packet(repo: Path, directory: Path, packet: dict[str, Any],
     return _complete_packet(repo, directory, packet, instructions=instructions, schema_name='research_analysis_response')
 
 
+def review_submission(destination: Path, submitted: dict[str, Any], schema_name: str) -> dict[str, Any]:
+    packet = submitted
+    if schema_name == 'research_execution_review_response':
+        submitted = review_input_bundle(destination, submitted)
+    elif schema_name == 'research_analysis_response':
+        submitted = analysis_input_bundle(destination, submitted)
+    elif schema_name == 'research_review_response' and 'proposal' in packet and 'work_decision' in packet:
+        submitted = analysis_input_bundle(destination, {**submitted, 'question': packet['work_decision']})
+        submitted.pop('question')
+        if 'protocol_note_history' not in packet.get('prior_review_context', {}).get('unchanged_packet_fields', []):
+            submitted['protocol_note_history'] = packet.get('protocol_note_history', {})
+        submitted['reading_contract'] = (
+            'Review the selected prospective amendment against the original goal, supplied protocol history and selected evidence. '
+            'Use prior_review_context when present to start from the previous objections and changed notes; it is not approval of unchecked conditions. '
+            'Unchanged protocol history remains in evidence_sections for the exact clauses needed; avoid reconstructing unrelated history. '
+            'Other analyses and execution details are preserved in evidence_sections; inspect only a dependency needed for this decision. '
+            'Design approval does not assert that an implementation exists or any scientific outcome has been achieved. '
+            'Do not reread review logs or reconstruct unrelated experiments.')
+    return submitted
+
+
 def completed_inspection(path: Path, source_paths: tuple[str, ...] = (), *, source_inlined: bool = False,
                          max_output_bytes: int = 80000) -> dict[str, Any] | None:
     """Recover completed tool observations, never an interrupted agent's conclusion."""
@@ -486,11 +507,12 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
         inspection_budget = 80000
         import os
         budget_path = os.environ.get('RESEARCH_HARNESS_CALL_BUDGET')
-        if source_inlined and budget_path:
+        if budget_path:
             budget = json.loads(Path(budget_path).read_text())
             limit = budget.get('max_call_prompt_bytes', budget['max_prompt_bytes'])
-            base = review_input_bundle(directory / digest, packet)
-            base['experiment_plan']['source_files'] = packet['experiment_plan']['source_files']
+            base = review_submission(directory / digest, packet, schema_name)
+            if source_inlined:
+                base['experiment_plan']['source_files'] = packet['experiment_plan']['source_files']
             base_size = len((instructions + json.dumps(base, ensure_ascii=False)).encode('utf-8'))
             inspection_budget = max(0, min(inspection_budget, limit - base_size - 4096))
         inspection = completed_inspection(directory / digest / 'events.jsonl', source_paths,
@@ -535,22 +557,7 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
     destination.mkdir(parents=True, exist_ok=True)
     (destination / "request.json").write_text(serialized + "\n")
     submitted = {**packet, 'previous_review_rejection': request_data['previous_review_rejection']} if 'previous_review_rejection' in request_data else packet
-    if schema_name == 'research_execution_review_response':
-        submitted = review_input_bundle(destination, submitted)
-    elif schema_name == 'research_analysis_response':
-        submitted = analysis_input_bundle(destination, submitted)
-    elif schema_name == 'research_review_response' and 'proposal' in packet and 'work_decision' in packet:
-        submitted = analysis_input_bundle(destination, {**submitted, 'question': packet['work_decision']})
-        submitted.pop('question')
-        if 'protocol_note_history' not in packet.get('prior_review_context', {}).get('unchanged_packet_fields', []):
-            submitted['protocol_note_history'] = packet.get('protocol_note_history', {})
-        submitted['reading_contract'] = (
-            'Review the selected prospective amendment against the original goal, supplied protocol history and selected evidence. '
-            'Use prior_review_context when present to start from the previous objections and changed notes; it is not approval of unchecked conditions. '
-            'Unchanged protocol history remains in evidence_sections for the exact clauses needed; avoid reconstructing unrelated history. '
-            'Other analyses and execution details are preserved in evidence_sections; inspect only a dependency needed for this decision. '
-            'Design approval does not assert that an implementation exists or any scientific outcome has been achieved. '
-            'Do not reread review logs or reconstruct unrelated experiments.')
+    submitted = review_submission(destination, submitted, schema_name)
     if inspection:
         submitted['completed_inspection'] = inspection
         if schema_name == 'research_execution_review_response':
