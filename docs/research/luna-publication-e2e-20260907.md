@@ -231,3 +231,16 @@ root는 완료된 실제 아티팩트에서 deterministic worker report 재구�
 중단시남아있던4개metrics파일을production/research_control/preparation_execution_archive에SHA별로보존했다.기록된조건은bloxCapture/alleyCapture/defaultCapture/crowdedCapture,모두시드표기308/start1이다.저장된capacity값은각각0.8392857/0.7611940/0.8175676/0.9104167이다.모두0.95에못미친다.현재소스는그후strategicCapture로바뀌어있으며파일누락으로미실행을증명할수없다.중간coordinator발언과저장값도다르므로이를완전한실행원장또는승인된측정으로취급하지않는다.공개기록preparation_execution_disclosure.json을get_research_state,계획및구현검토문맥에전달한다.실제get_research_state에서4개기록노출을확인했다.기존연구결과·프로토콜·학습코드는root가수정하지않았다.
 
 21:35:29 새도구경계로재개한213529에서Luna가실제read_research_artifact를사용했다.그러나기존MCP완료16회마다작업을종료하는규칙이파일읽기도세어21:37:28과21:39:20에소스읽기중재시작했다.셸안에서읽던때에는드러나지않던연결버그다.순수read_research_artifact만작업완료카운트에서제외하고전체배치시간·예산과실행완료체크포인트는유지했다.기존실행완료회귀앞에20회파일읽기를추가해읽기후실제완료까지도달함을확인했다.이전규칙을로드한supervisor는중단했다.새정식실험은여전히없다.
+
+
+## 소진된 일회성 허가를 바꿔 부르는 계획 반복
+
+214040 배치에서는 read_research_artifact가 30회 완료된 뒤에도 같은 coordinator가 준비를 계속했고, 21:46:38 실제 실행 요청까지 도달했다. 읽기 호출 때문에 작업이 조기 종료되는 현상은 이 실행에서 재발하지 않았다. 새 도구 경계 이후 coordinator의 직접 셸 학습은 관측되지 않았다.
+
+그러나 8b59271e…는 bloxCapture/start1을 유지한 채 시드 표기만 311로 바꿨다. 21:50경 범위 검토73e5607d…는 amendment32의 단일 진단 허가가 이미 5c 실행으로 소진됐다고 판정했다. 소스 검토나 새 LocalRunner 실행은 없었다. 검토 usage는 input70,938/output11,348이었다.
+
+다음 계획 abd4ead0…는 저장된 teacher table만으로 같은 actor를 1000 epoch 학습하는 진단을 선택했다. Luna가 작성한 소스는 정식 실행 요청으로 전달됐다. 그러나 22:00:42까지 범위 검토a75b9887…는 기존 200 epoch 일회성 범위를 바꾸는 저장 자료 재학습도 새 사전 amendment가 필요하다고 판정했다. input70,511/output10,250. 새로운 empirical observation은 없다. 이번 scope packet은 약212KB이며, 전체 amendment history133KB와 실행 이력61KB가 대부분이었다. 이는 중복 제거로 모두 없앨 수 있는 단순 로그가 아니다.
+
+계획 지침을 수정했다. 명시적 범위 거절 후에는 다음 실험의 이름·입력·예산 변경만으로 허가를 가정하지 못하며, 다른 실험을 선택하려면 보이는 허용 조항과 적용 차이를 설명해야 한다. 그렇지 않으면 protocol_revision을 선택한다. 반복되는 일회성 소진에는 유한한 개발 데이터·변경·전체 계산 예산·결과별 후속 선택·중단 규칙과 최종 후보 고정을 갖춘 적응적 개발 절차를 제안하도록 했다. 연구 방법이나 학습 코드는 root가 정하지 않는다. 기존 등록은 독립 승인 전까지 유지되며 최종 평가·성공 기준·시도 공개 의무는 바뀌지 않는다.
+
+기존 research_control 검사44개와 git diff --check를 실행했다. 정책 버전과 진행 중 검토 해시는 바꾸지 않았다. 214040은 다음 호출에 필요한600초보다 잔여590초가 짧아 호출 전에 중단됐고, 소유 PID가 없음을 확인했다. 22:03:18 새 배치220318에서 Luna max의 계획을 재개했다. 이 시점에서 실제 계획 개선, 강한 결과, qualification/confirmation 및 논문 패키지는 아직 검증되지 않았다.
