@@ -217,7 +217,7 @@
         "type": "string",
         "minLength": 1
       },
-      "description": "Host-derived union of the alternatives required_observations. For empirical work, names of numeric metrics counting the eligible observations needed to interpret this test. Each must exceed zero. These are sample-support counts, never positive-outcome requirements or treatment-effect thresholds. Use an empty list for analysis/protocol_revision."
+      "description": "Host-derived union of the alternatives required_observations. For empirical work, names of required numeric observations. Bind sample-support counts and validity gates as support_count, and outcome values as measurement before execution. Zero or negative effects must not be treated as missing support. Use an empty list for analysis/protocol_revision."
     },
     "hypothesis_ids": {
       "type": "array",

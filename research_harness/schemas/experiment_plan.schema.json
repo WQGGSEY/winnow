@@ -26,7 +26,7 @@
   "properties": {
     "observation_bindings": {
       "type": "object",
-      "description": "Required for ResearchWork execution. Map each required count name to its exact emitted value; no implicit aliases or aggregation.",
+      "description": "Required for ResearchWork execution. Map each required observation to its exact emitted value and prospective value_kind; no implicit aliases or aggregation.",
       "additionalProperties": {
         "type": "object",
         "required": [
@@ -43,10 +43,15 @@
             "type": "string",
             "minLength": 1
           },
+          "value_kind": {
+            "type": "string",
+            "enum": ["support_count", "measurement"],
+            "description": "Declare before execution. support_count (default for historical bindings) must be positive for interpretation. measurement permits any finite value, including zero or negative effects. Never classify required sample counts or validity gates as measurements to bypass missing support."
+          },
           "producer": {
             "type": "string",
             "minLength": 1,
-            "description": "Source file and producer that emits this count, for independent review."
+            "description": "Source file and producer that emits this value, for independent review."
           }
         },
         "additionalProperties": false

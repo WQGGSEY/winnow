@@ -1107,6 +1107,33 @@ def test_repair_handoff_binds_predecessor_bytes_and_fresh_identity(tmp_path):
     assert 'request_draft' not in execution_handoff(thread, work)
 
 
+@pytest.mark.parametrize('effect', [0, -2.0, 2.0])
+def test_signed_measurement_is_interpretable_only_with_positive_support(tmp_path, effect):
+    from research_harness.orchestrator.research_observations import (
+        observation_contract, collect_observation_support, prediction_support)
+    artifact = tmp_path / 'metrics.json'
+    decision = {'required_observations': ['pairs', 'effect'],
+                'alternatives': [{'required_observations': ['pairs', 'effect']}]}
+    plan = {'workspace': str(tmp_path), 'expected_outputs': {'metrics_files': ['metrics.json']},
+            'observation_bindings': {name: {'artifact_path': 'metrics.json',
+                'json_pointer': '/' + name, 'producer': 'compare.py aggregate', 'value_kind': kind}
+                for name, kind in [('pairs', 'support_count'), ('effect', 'measurement')]}}
+    observation_contract(decision, plan)
+    for pairs, available in [(1, True), (0, False)]:
+        artifact.write_text(json.dumps({'pairs': pairs, 'effect': effect}))
+        support = collect_observation_support(decision, plan, {}, tmp_path)
+        assert support['evaluable'] is available
+        assert support['observations']['effect']['status'] == 'available'
+        previous = {'decision': decision, 'outcome': {'measurement_support': support}}
+        assert prediction_support(previous)[0]['eligible_for_interpretation'] is available
+    for invalid in [None, True, '0', float('nan')]:
+        artifact.write_text(json.dumps({'pairs': 1, 'effect': invalid}))
+        support = collect_observation_support(decision, plan, {}, tmp_path)
+        assert not support['evaluable']
+        assert not prediction_support({'decision': decision, 'outcome': {
+            'measurement_support': support}})[0]['eligible_for_interpretation']
+
+
 def test_output_bindings_and_partial_interpretation_preserve_family_boundaries(tmp_path):
     from research_harness.orchestrator.research_observations import observation_contract, collect_observation_support, measurement_facts
     from research_harness.orchestrator.research_knowledge import validate_previous_result, planning_response_schema

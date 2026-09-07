@@ -71,13 +71,14 @@ def collect_observation_support(decision: dict[str, Any], plan: dict[str, Any],
             row['status'] = 'missing' if value is None else 'invalid'
         else:
             row['value'] = value
-            row['status'] = 'available' if value > 0 else 'empty' if value == 0 else 'invalid'
+            row['status'] = ('available' if binding and binding.get('value_kind') == 'measurement'
+                             else 'available' if value > 0 else 'empty' if value == 0 else 'invalid')
         rows[name] = row
     missing = [name for name, row in rows.items() if row['status'] != 'available']
     return {'counts': {name: row['value'] for name, row in rows.items()},
             'observations': rows, 'missing_or_empty': missing,
             'evaluable': bool(rows) and not missing,
-            'scope': 'Positive support counts permit interpretation of their dependent predictions only. They do not establish power, correctness, a causal effect or qualification.'}
+            'scope': 'Positive support counts and finite prospectively declared measurements permit interpretation of their dependent predictions only. They do not establish power, correctness, a causal effect or qualification.'}
 
 
 def prediction_support(previous: dict[str, Any]) -> list[dict[str, Any]]:
@@ -88,9 +89,11 @@ def prediction_support(previous: dict[str, Any]) -> list[dict[str, Any]]:
     for index, prediction in enumerate(previous.get('decision', {}).get('alternatives', [])):
         dependencies = prediction.get('required_observations', previous['decision'].get('required_observations', []))
         counts = (support or {}).get('counts', {})
-        unavailable = [name for name in dependencies if isinstance(counts.get(name), bool)
-                       or not isinstance(counts.get(name), (int, float))
-                       or not math.isfinite(counts[name]) or counts[name] <= 0]
+        observations = (support or {}).get('observations', {})
+        unavailable = [name for name in dependencies
+                       if (observations[name]['status'] != 'available' if name in observations else
+                           isinstance(counts.get(name), bool) or not isinstance(counts.get(name), (int, float))
+                           or not math.isfinite(counts[name]) or counts[name] <= 0)]
         rows.append({'alternative_index': index, 'required_observations': dependencies,
                      'missing_or_empty': unavailable,
                      'eligible_for_interpretation': True if answered_analysis else not unavailable and bool(dependencies) if support is not None else None,

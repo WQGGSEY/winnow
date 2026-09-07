@@ -1642,7 +1642,8 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
         "observation_binding_contract": {
             "required_for": "Every empirical ResearchWork before implementation review",
             "plan_field": "observation_bindings",
-            "entry": {"count_name": {"artifact_path": "a declared expected_outputs.metrics_files entry",
+            "entry": {"observation_name": {"value_kind": "support_count for positive support or validity gates; measurement for finite outcomes, including zero or negative effects",
+                                      "artifact_path": "a declared expected_outputs.metrics_files entry",
                                       "json_pointer": "/metrics/count_name or exact existing nested value",
                                       "producer": "source file and producer location"}},
             "scope": "Bind exactly the required_observations names. No aliases or implicit sums. Each alternative declares its required subset; the reviewer checks emission and the host resolves values after execution."},
