@@ -178,6 +178,10 @@ class CodexCliAdapter:
         session_token = uuid.uuid4().hex
         session_env = dict(env or _codex_environment())
         session_env['RESEARCH_HARNESS_SESSION'] = session_token
+        if source_workspace is not None:
+            temporary = source_workspace.resolve() / '.tmp'
+            temporary.mkdir(parents=True, exist_ok=True)
+            session_env['TMPDIR'] = str(temporary)
         command = self._build_exec_command(
             request=None,
             model=model,

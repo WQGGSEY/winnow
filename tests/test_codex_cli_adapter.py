@@ -108,6 +108,38 @@ def test_development_subprocess_cannot_read_evaluation_vault(tmp_path, monkeypat
     assert result.stdout.strip() == 'private read blocked'
 
 
+def test_development_session_can_create_default_temporary_files(tmp_path):
+    if shutil.which('codex') is None:
+        pytest.skip('Sandbox executable is unavailable')
+    workspace = tmp_path / 'source_workspace'
+    child = []
+    script = (
+        'import sys,tempfile\n'
+        'from pathlib import Path\n'
+        'sys.stdin.read()\n'
+        'with tempfile.NamedTemporaryFile() as handle:\n'
+        '    handle.write(b"development temporary file")\n'
+        f'    assert Path(handle.name).is_relative_to(Path({str(workspace)!r}))\n'
+        'print("temporary file created")\n'
+    )
+    def launch(command, **kwargs):
+        profile = command[command.index('default_permissions="research-development"') - 1:command.index('--cd')]
+        process = subprocess.Popen(['codex', 'sandbox', *profile, '--', sys.executable, '-c', script], **kwargs)
+        child.append(process)
+        return process
+    adapter = CodexCliAdapter(popen=launch)
+    session = adapter.start_session(prompt=AgentPrompt(instructions='Inspect development code.', input=''),
+        model='gpt-5.6-luna', cwd=tmp_path, mcp=ResearchHarnessMcp(command='python', args=()),
+        source_workspace=workspace)
+    try:
+        code = session.wait(timeout=30)
+        output = child[0].stdout.read()
+        assert code == 0, output
+        assert output.strip() == 'temporary file created'
+    finally:
+        session.terminate(force=True)
+
+
 def _jsonl(message: str = "done") -> str:
     return "\n".join(
         [
