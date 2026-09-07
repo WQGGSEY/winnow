@@ -352,3 +352,9 @@ Verification: research_control — 38 passed; research_review/thread_supervisor 
 Source-review delta recovery previously considered only an approved predecessor work. A rejected implementation repaired inside its existing work therefore lost the previous objections and exact diff in the next review input. The review now prefers the same work's hash-verified receipt and can include a rejected assessment. Rejected code never gets the tool-free previously-approved revision path; unmentioned code is not certified. An unchanged same-work plan does not create a new delta that would defeat request caching.
 
 Verification: research_review/research_control — 51 passed; git diff --check. Existing review-delta coverage now checks a same-work rejection, exact changed source, and exclusion from the approved bounded-revision path. Live recovery continues independently; no scientific implementation was supplied by the root.
+
+### Give first inspection the same decision time as recovery
+
+The initial implementation review completed source/API reads and a local type-mismatch probe but hit its 300-second deadline before emitting an assessment. Recovery then resubmitted 244116 prompt bytes with a 600-second limit. The first source review now also receives 600 seconds, avoiding the shorter first-attempt limit as a cause of duplicate submissions. The existing global deadline admission, total call/input limits and inspection checkpoints still apply. This changes scheduling, not the approval standard or experiment runtime.
+
+Verification: research_review/codex_cli_adapter — 29 passed; git diff --check. No additional research-success claim is made by this scheduling change.
