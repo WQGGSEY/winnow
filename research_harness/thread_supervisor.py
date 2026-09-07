@@ -2042,7 +2042,10 @@ def watch_thread(
             spawn_elapsed = time.time() - spawn_started
             work_unit_yielded = exit_code == WORK_UNIT_EXIT_CODE
             work_after = current_work(tdir)
-            allow_direct_resume = allow_direct_resume or work_after != work_before
+            allow_direct_resume = allow_direct_resume or any(
+                work_after.get(key) != work_before.get(key)
+                for key in ('work_id', 'status', 'next_tool_to_call')
+            )
             pending_work_written = exit_code == 0 and work_after != work_before and work_after.get('status') in {'planned', 'completed'}
             resume_without_idle = work_unit_yielded or pending_work_written
             _log(

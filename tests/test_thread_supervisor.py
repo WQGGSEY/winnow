@@ -1795,6 +1795,29 @@ class WatchLoopTests(unittest.TestCase):
                              ['execute_baseline_preflight', 'plan_research_work', 'design_experiment_template'])
             spawn.assert_called_once()
 
+    def test_direct_error_metadata_is_not_research_progress(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            tdir = _make_thread(repo, 't1')
+            path = tdir / 'production/research_control/current.json'
+            path.parent.mkdir(parents=True, exist_ok=True)
+            work = {'work_id': 'old', 'status': 'planned',
+                    'next_tool_to_call': 'revise_evaluation_protocol'}
+            path.write_text(json.dumps(work))
+
+            def direct(*args):
+                path.write_text(json.dumps({**work, 'protocol_review_error': 'Budget exhausted.',
+                                            'updated_at': 'later'}))
+                return ts.WORK_UNIT_EXIT_CODE
+
+            with mock.patch.object(ts, 'resume_known_research_step', side_effect=direct) as resume, \
+                 mock.patch.object(ts, 'spawn_codex_session', return_value=ts.WORK_UNIT_EXIT_CODE) as spawn, \
+                 mock.patch.object(ts, 'advance_resumable_reorientation', return_value=None), \
+                 mock.patch.object(ts, 'mcp_idle_seconds', return_value=0):
+                ts.watch_thread(repo, 't1', max_cycles=2)
+            resume.assert_called_once()
+            spawn.assert_called_once()
+
     def test_signal_during_cycle_preparation_does_not_launch_another_session(self):
         for boundary in ('prompt', 'handoff'):
             with self.subTest(boundary=boundary), TemporaryDirectory() as tmp:
