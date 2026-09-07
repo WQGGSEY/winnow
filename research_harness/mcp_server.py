@@ -4372,6 +4372,9 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
             resolve_preflight_role(plan_input, nested_role)
             args = {**args, 'experiment_plan': plan_input, 'role': role}
             plan = {**args['experiment_plan'], 'source_files': resolve_source_files(_thread_dir(tid), args['experiment_plan']['source_files'])}
+            # Materializing a revision can overwrite its referenced workspace file.
+            # Resume the resolved bytes, not a reference to that mutable predecessor.
+            args = {**args, 'experiment_plan': plan}
             node = args['node'] if 'node' in args else build_preflight_node(_thread_dir(tid), plan)
             node_id = node['id']
             path = _thread_dir(tid) / 'production/tree/baseline_preflight' / node_id

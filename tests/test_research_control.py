@@ -285,6 +285,9 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     assert not (tree / 'baseline_preflight' / node['id'] / 'job_manifest.json').exists()
     request_path = Path(stopped['dispatch_request_path'])
     preserved_request = request_path.read_bytes()
+    if not explicit_node:
+        assert json.loads(preserved_request)['experiment_plan']['source_files'] == plan['source_files']
+        source.write_text('materialized successor replaced the referenced draft')
     refusal = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path),
         'updates': [{'path': ['experiment_plan', 'node_id'], 'value': 'unnecessary_rewrite'}]})
     assert refusal['status'] == 'resume_required'

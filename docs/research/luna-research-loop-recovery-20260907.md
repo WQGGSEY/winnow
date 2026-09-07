@@ -489,3 +489,14 @@ Luna는 이 결과를 과학적 무효과로 기록하지 않고 같은 work의 
 공식 과학적 증거가 아니며, 독립 검토와 등록 실행 요건은 그대로다.
 기존 supervisor 검사 57 passed, 3 subtests passed. 이 지침의 실제 효과는
 다음 감독 세션 이후 확인해야 한다.
+
+음식 감사 수정 재시도에서 SHA 불일치가 실제 발생했다. source_files.from_path가
+같은 node workspace의 이전 파일을 참조했는데 검토 준비가 그 파일을 수정본으로
+덮어썼다. 저장 dispatch는 여전히 이전 해시와 교체 지시를 가지고 있어 다음
+재개가 실패했다. 소스 참조 검증·교체가 성공한 직후 그 결과 bytes를 dispatch의
+source_files.content로 보존하도록 수정했다. 이후 workspace가 바뀌어도 같은
+검토·실행 요청을 재개할 수 있으며 처음 받은 SHA 검증을 생략하지 않는다.
+
+기존 실제 MCP 경로 검사에 checkpoint 뒤 원본 참조 파일을 변경한 상태에서
+재개하는 경우를 추가했다. 관련 검사 58 passed, 1 deselected, 3 subtests passed.
+진행 중인 이전 MCP에는 아직 적용되지 않았다.
