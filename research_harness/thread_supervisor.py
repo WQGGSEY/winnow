@@ -1739,6 +1739,59 @@ def _sync_terminal_thread_index(repo: Path, tid: str, outcome: str | None) -> No
     )
 
 
+def resume_saved_preflight(repo: Path, tid: str, model: str, active_child: dict) -> int | None:
+    """Replay a transport checkpoint through the same MCP boundary, without a coordinator LLM."""
+    import subprocess
+    import uuid
+    from research_harness.adapters.codex_cli import CodexProcessSession
+    from research_harness.orchestrator.research_control import current_work, execution_handoff
+
+    thread = _thread_dir(repo, tid)
+    work = current_work(thread)
+    if (work.get('status') != 'planned'
+            or work.get('outcome', {}).get('execution_result') != 'checkpoint'
+            or work.get('next_tool_to_call') != 'execute_baseline_preflight'):
+        return None
+    handoff = execution_handoff(thread, work)
+    if not handoff:
+        return None
+    request = {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {
+        'name': 'execute_baseline_preflight',
+        'arguments': {**handoff['arguments'], 'thread_id': tid},
+    }}
+    mcp = ResearchHarnessMcp.from_settings(repo, load_settings(repo))
+    token = uuid.uuid4().hex
+    env = {**os.environ, **mcp.environment, 'RESEARCH_HARNESS_THREAD_ID': tid,
+           'RESEARCH_HARNESS_MODEL': model, 'RESEARCH_HARNESS_SESSION': token}
+    response_path = thread / 'production/research_control/work' / work['work_id'] / 'supervisor_resume.jsonl'
+    _log(thread / 'supervisor.log', '저장된 개발 실험 체크포인트를 MCP로 직접 재개합니다. 새 연구 판단은 수행하지 않습니다.')
+    with response_path.open('w') as output:
+        process = subprocess.Popen([mcp.command, *mcp.args], cwd=repo, env=env,
+                                   stdin=subprocess.PIPE, stdout=output, stderr=output,
+                                   text=True, start_new_session=True)
+        session = CodexProcessSession(process, CodexCliAdapter(), session_token=token)
+        active_child.update(pid=session.pid, session=session)
+        try:
+            process.stdin.write(json.dumps(request) + '\n')
+            process.stdin.close()
+            code = session.wait()
+        finally:
+            session.terminate(force=True)
+            active_child.update(pid=None, session=None)
+    if code:
+        return code
+    for line in reversed(response_path.read_text().splitlines()):
+        try:
+            response = json.loads(line)
+        except ValueError:
+            continue
+        if response.get('id') == 1:
+            if 'error' in response:
+                raise RuntimeError('Checkpoint MCP replay failed: ' + str(response['error']))
+            return WORK_UNIT_EXIT_CODE
+    raise RuntimeError('Checkpoint MCP replay returned no response')
+
+
 def watch_thread(
     repo: Path,
     tid: str,
@@ -1862,6 +1915,7 @@ def watch_thread(
     rate_limit_backoff = rate_limit_backoff_initial
     rate_limit_armed = False  # toggled after a fast-fail cycle
     resume_without_idle = False
+    allow_checkpoint_resume = True
     while True:
         terminal, outcome = is_terminal(repo, tid)
         if terminal:
@@ -1928,24 +1982,27 @@ def watch_thread(
         cycle += 1
         prompt = build_resume_prompt(repo, tid, cycle)
         if cycle == 1:
-            _log(log_path, "cycle #1: cold start, starting Codex immediately (idle gate applies from cycle #2)")
+            _log(log_path, "cycle #1: cold start, starting execution immediately (idle gate applies from cycle #2)")
         else:
-            _log(log_path, f"cycle #{cycle}: starting Codex to continue unfinished work" if resume_without_idle
-                 else f"cycle #{cycle}: idle={idle:.0f}s > {max_idle_seconds:.0f}s, starting Codex")
+            _log(log_path, f"cycle #{cycle}: starting execution to continue unfinished work" if resume_without_idle
+                 else f"cycle #{cycle}: idle={idle:.0f}s > {max_idle_seconds:.0f}s, starting execution")
         work_before = current_work(tdir)
         spawn_started = time.time()
         try:
-            exit_code = spawn_codex_session(
-                prompt,
-                repo_root=repo,
-                thread_id=tid,
-                model=model,
-                boot_delay=boot_delay,
-                log_path=tdir / "codex_subprocess.log",
-                active_child_ref=active_child,
-                state_path=state_path,
-                experiment_hard_cap=experiment_hard_cap,
-            )
+            exit_code = resume_saved_preflight(repo, tid, model, active_child) if allow_checkpoint_resume else None
+            allow_checkpoint_resume = exit_code is None
+            if exit_code is None:
+                exit_code = spawn_codex_session(
+                    prompt,
+                    repo_root=repo,
+                    thread_id=tid,
+                    model=model,
+                    boot_delay=boot_delay,
+                    log_path=tdir / "codex_subprocess.log",
+                    active_child_ref=active_child,
+                    state_path=state_path,
+                    experiment_hard_cap=experiment_hard_cap,
+                )
             spawn_elapsed = time.time() - spawn_started
             work_unit_yielded = exit_code == WORK_UNIT_EXIT_CODE
             work_after = current_work(tdir)
@@ -1953,7 +2010,7 @@ def watch_thread(
             resume_without_idle = work_unit_yielded or pending_work_written
             _log(
                 log_path,
-                f"cycle #{cycle}: Codex subprocess exited code={exit_code} after {spawn_elapsed:.1f}s",
+                f"cycle #{cycle}: execution process exited code={exit_code} after {spawn_elapsed:.1f}s",
             )
             # PR8 rate-limit detection. A real Codex session normally runs
             # at least several minutes (MCP tool calls + reasoning). A

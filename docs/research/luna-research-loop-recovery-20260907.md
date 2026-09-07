@@ -500,3 +500,23 @@ source_files.content로 보존하도록 수정했다. 이후 workspace가 바뀌
 기존 실제 MCP 경로 검사에 checkpoint 뒤 원본 참조 파일을 변경한 상태에서
 재개하는 경우를 추가했다. 관련 검사 58 passed, 1 deselected, 3 subtests passed.
 진행 중인 이전 MCP에는 아직 적용되지 않았다.
+
+115327에서 재개만 필요한 감독 에이전트가 이전 리뷰를 새 거절로 해석하고
+기존 claim 노드 소스를 탐색했다. 이후 현재 소스로 이동해 초안 디렉터리에서
+실제로 6셀 실행을 수행했지만, 이는 중단된 독립 검토를 재개하는 데 필요하지
+않은 작업이었다. 이 행동은 시간 예산 외에 감독 역할 분리 문제가 남았음을
+보여준다.
+
+저장된 transport checkpoint의 baseline-preflight 재개는 supervisor가 동일
+MCP 경계를 직접 호출하도록 바꿨다. supervisor LLM 호출을 만들지 않고 저장
+request_path와 thread_id만 넘긴다. 독립 검토의 모델 호출·소스 검증·실행 승인·
+시간 예산은 기존 MCP가 그대로 수행한다. 직접 재개 다음에는 LLM 단계로
+돌아가므로 같은 실패에 직접 재개만 연속 반복하지 않는다. 자식 프로세스는
+기존 세션 소유권과 종료 전파를 사용한다.
+
+재개 응답에는 저장 코드와 실제 bytes가 일치하는 현재 소스 경로·해시를
+추가했다. 실행 binding이 checkpoint에서 해제되어도 관련 없는 claim 노드
+소스를 찾을 필요가 없다. 실제 subprocess로 정확한 MCP 요청과 모델 환경,
+원본 요청 보존·거절 상태 비자동재개를 확인했다. 관련 기존 검사 결과는
+116 passed, 1 deselected, 6 subtests passed. 실제 supervisor 자동 재개는
+다음 실행에서 검증한다.

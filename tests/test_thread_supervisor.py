@@ -23,6 +23,41 @@ from unittest import mock
 from research_harness import thread_supervisor as ts
 
 
+def test_saved_preflight_checkpoint_replays_exact_mcp_request_without_coordinator(tmp_path, monkeypatch):
+    import sys
+    thread = tmp_path / 'runs/threads/thread'
+    directory = thread / 'production/research_control/work/work'
+    directory.mkdir(parents=True)
+    request_path = directory / 'dispatch_request.json'
+    request_path.write_text(json.dumps({'thread_id': 'thread', 'work_id': 'work', 'experiment_plan': {}}))
+    state = thread / 'production/research_control/current.json'
+    state.write_text(json.dumps({'work_id': 'work', 'status': 'planned',
+        'next_tool_to_call': 'execute_baseline_preflight', 'outcome': {'execution_result': 'checkpoint'}}))
+    script = (
+        'import json,sys,os\n'
+        'request=json.loads(sys.stdin.readline())\n'
+        'assert request["params"]["name"] == "execute_baseline_preflight"\n'
+        f'assert request["params"]["arguments"] == {{"thread_id":"thread","request_path":{str(request_path)!r}}}\n'
+        'assert os.environ["RESEARCH_HARNESS_MODEL"] == "gpt-5.6-luna"\n'
+        'print(json.dumps({"jsonrpc":"2.0","id":1,"result":{"content":[]}}))\n'
+    )
+    monkeypatch.setattr(ts, 'load_settings', lambda repo: {})
+    monkeypatch.setattr(ts.ResearchHarnessMcp, 'from_settings', lambda repo, settings:
+                        ts.ResearchHarnessMcp(command=sys.executable, args=('-c', script)))
+    monkeypatch.setattr(ts.CodexCliAdapter, 'start_session', lambda *args, **kwargs:
+                        pytest.fail('Checkpoint resumption must not ask a coordinator LLM'))
+    original = request_path.read_bytes()
+    active = {}
+    assert ts.resume_saved_preflight(tmp_path, 'thread', 'gpt-5.6-luna', active) == ts.WORK_UNIT_EXIT_CODE
+    assert active == {'pid': None, 'session': None}
+    assert request_path.read_bytes() == original
+    assert json.loads((directory / 'supervisor_resume.jsonl').read_text())['id'] == 1
+    work = json.loads(state.read_text())
+    work['outcome']['execution_result'] = 'rejected'
+    state.write_text(json.dumps(work))
+    assert ts.resume_saved_preflight(tmp_path, 'thread', 'gpt-5.6-luna', active) is None
+
+
 def test_watchdog_tracks_launched_preflight_outside_claim_graph(tmp_path):
     production = tmp_path / 'production'
     state = production / 'tree/search_state.json'

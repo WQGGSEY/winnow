@@ -73,11 +73,27 @@ def execution_handoff(thread: Path, work: dict[str, Any]) -> dict[str, Any] | No
                     'usage': 'Resume this exact saved amendment after the transport/budget checkpoint. No design objection was returned; do not rewrite the notes or reinterpret the interruption as research evidence.'}
     saved = thread / 'production/research_control/work' / work['work_id'] / 'dispatch_request.json'
     if saved.exists():
+        request = _read(saved)
+        plan = request.get('experiment_plan', {})
+        source_files = []
+        if plan.get('node_id'):
+            workspace = thread / 'production/tree/baseline_preflight' / plan['node_id'] / 'workspace'
+            for item in plan.get('source_files', []):
+                if not isinstance(item.get('content'), str):
+                    continue
+                path = (workspace / item['path']).resolve()
+                path.relative_to(thread.resolve())
+                data = item['content'].encode('utf-8')
+                if path.is_file() and path.read_bytes() == data:
+                    source_files.append({'path': str(path), 'relative_path': item['path'],
+                                         'sha256': hashlib.sha256(data).hexdigest()})
         if work.get('outcome', {}).get('execution_result') == 'checkpoint':
             return {'request_path': str(saved.resolve()), 'tool': work['next_tool_to_call'],
+                    'current_source_files': source_files,
                     'arguments': {'request_path': str(saved.resolve())},
                     'usage': 'This is a transport/budget checkpoint, not an implementation objection. Resume this exact saved request unchanged when the invocation budget permits. Do not inspect review logs or serialized review requests, rewrite the experiment, or invent a scientific repair for a CLI timeout. The harness retains completed inspection observations for the reviewer.'}
         return {'request_path': str(saved.resolve()), 'tool': work['next_tool_to_call'],
+                'current_source_files': source_files,
                 'arguments': {'thread_id': thread.name, 'request_path': str(saved.resolve())},
                 'usage': 'Resume this current work request. Apply reviewer feedback using updates; do not reconstruct historical requests.'}
     if work.get('decision', {}).get('kind') != 'diagnostic_experiment':

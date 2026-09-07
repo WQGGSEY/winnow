@@ -285,6 +285,10 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     assert not (tree / 'baseline_preflight' / node['id'] / 'job_manifest.json').exists()
     request_path = Path(stopped['dispatch_request_path'])
     preserved_request = request_path.read_bytes()
+    from research_harness.orchestrator.research_control import execution_handoff
+    source_handoff = execution_handoff(thread, current_work(thread))['current_source_files']
+    assert len(source_handoff) == 1
+    assert Path(source_handoff[0]['path']).read_text() == plan['source_files'][0]['content']
     if not explicit_node:
         assert json.loads(preserved_request)['experiment_plan']['source_files'] == plan['source_files']
         source.write_text('materialized successor replaced the referenced draft')
