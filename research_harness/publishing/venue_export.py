@@ -424,7 +424,10 @@ class _LatexHTML(HTMLParser):
         self.parts: list[str] = []
         self._cite_depth = 0
         self._skip_table_depth = 0
-        self._skip_figure_depth = 0
+        self._in_figure = False
+        self._figure_caption: str | None = None
+        self._figure_caption_index: int | None = None
+        self._caption_start: int | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag not in self.allowed:
@@ -447,9 +450,11 @@ class _LatexHTML(HTMLParser):
         elif tag in {"h3", "h4"}:
             self.parts.append("\n\\paragraph{")
         elif tag == "figure":
-            pass
+            self._in_figure = True
+            self._figure_caption = None
+            self._figure_caption_index = None
         elif tag == "figcaption":
-            self._skip_figure_depth += 1
+            self._caption_start = len(self.parts)
         elif tag == "a":
             href = attr.get("href") or ""
             if not href.startswith("#ref_"):
@@ -466,9 +471,12 @@ class _LatexHTML(HTMLParser):
             self.parts.append(
                 "\n\\begin{figure}[t]\n\\centering\n"
                 f"\\includegraphics[width=0.95\\linewidth]{{{path}}}\n"
-                f"\\caption{{{_latex_text(alt)}}}\n"
-                f"\\label{{fig:{figure_id}}}\n\\end{{figure}}\n"
             )
+            if self._in_figure:
+                self._figure_caption_index = len(self.parts)
+            caption = self._figure_caption if self._in_figure and self._figure_caption is not None else _latex_text(alt)
+            self.parts.append(f"\\caption{{{caption}}}\n")
+            self.parts.append(f"\\label{{fig:{figure_id}}}\n\\end{{figure}}\n")
         elif tag == "table":
             table_id = _clean_asset_id(attr.get("id") or attr.get("data-table-id") or "", "table")
             latex = self.assets.tables.get(table_id)
@@ -486,13 +494,21 @@ class _LatexHTML(HTMLParser):
             self.parts.append("}\n")
         elif tag == "a" and self._cite_depth:
             self._cite_depth -= 1
-        elif tag == "figcaption" and self._skip_figure_depth:
-            self._skip_figure_depth -= 1
+        elif tag == "figcaption" and self._caption_start is not None:
+            self._figure_caption = ''.join(self.parts[self._caption_start:])
+            del self.parts[self._caption_start:]
+            self._caption_start = None
+            if self._figure_caption_index is not None:
+                self.parts[self._figure_caption_index] = f"\\caption{{{self._figure_caption}}}\n"
+        elif tag == "figure":
+            self._in_figure = False
+            self._figure_caption = None
+            self._figure_caption_index = None
         elif tag == "table" and self._skip_table_depth:
             self._skip_table_depth -= 1
 
     def handle_data(self, data: str) -> None:
-        if self._cite_depth or self._skip_figure_depth:
+        if self._cite_depth:
             return
         if self._skip_table_depth:
             if data.strip():

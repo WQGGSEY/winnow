@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -72,7 +73,7 @@ def _export(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, archive: Path):
         sections=[
             {
                 "title": "Introduction",
-                "prose_html": r"<p>Objective \(J(\theta)=\mathbb{E}[R]\), where \(x &lt; y\).</p><h3>Evidence</h3><figure><img src='figures/curve.png' alt='Measured curve'><figcaption>Ignored HTML caption</figcaption></figure><p>The result is grounded in a compiled package.</p><table id='t_results'></table>",
+                "prose_html": r"<p>Objective \(J(\theta)=\mathbb{E}[R]\), where \(x &lt; y\).</p><h3>Evidence</h3><figure><img src='figures/curve.png' alt='Measured curve'><figcaption>Intervals show <em>independent</em> training seeds.</figcaption></figure><p>The result is grounded in a compiled package.</p><table id='t_results'></table>",
             },
         ],
         appendix_sections=[{"title": "Appendix", "latex": "Additional proof detail.", "trusted_latex": True}],
@@ -124,6 +125,8 @@ def test_export_compiles_pinned_template_and_records_artifact_contract(tmp_path,
     assert "Smith, Alex and Jones, Sam" in bib
     assert (out / "figures" / "curve.png").exists()
     assert (out / "paper.pdf").stat().st_size > 0
+    pdf_text = subprocess.check_output(['pdftotext', str(out / 'paper.pdf'), '-'], text=True)
+    assert 'Intervals show independent training seeds.' in pdf_text
     assert (out / "venue_export_receipt.json").exists()
     first_command = receipt["compile"]["commands"][0]["command"]
     assert "-no-shell-escape" in first_command
