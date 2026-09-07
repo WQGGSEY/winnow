@@ -548,3 +548,11 @@ research_control/research_review 검사 52 passed. MCP 프로세스가 검토 �
 처음 예산 거절 뒤 supervisor 예약이 원래 exhausted_label/입력 크기를
 덮어쓰던 문제도 수정했다. 이미 중단된 예산은 최초 실패 기록을 유지한다.
 관련 기존 검사 68 passed. 이 검사는 연구 성공을 의미하지 않는다.
+
+121806의 실제 자동 재개는 감독 LLM 호출 없이 275,062-byte 독립 검토 호출로
+들어갔다. e4fd2341 검토는 b5736f2의 완료 관측 11개와 현재 source를 받아
+도구 재탐색 없이 417.5초 후 판단을 완료했다. 91,029 input / 22,795 output
+중 reasoning 22,205 tokens를 보고했다. 정상 capture/reset 이동을 audit가
+거절하는 실제 결함을 동일 work의 수정 사항으로 반환했으며, 다음 감독
+사이클이 자동 시작되었다. metadata 오류, 새로운 진단 work, 새 과학적
+판정으로 바꾸지 않았다. 공식 비교 실행은 아직 없다.
