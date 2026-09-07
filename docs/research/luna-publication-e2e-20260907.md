@@ -169,3 +169,29 @@ root가 `164413/verify_registered_learning.py`를 실제 완료 아티팩트에 
 후속 계획은 배치 잔여480초가 호출 제한600초보다 짧아 provider 호출 전에 중단됐다. 기존 소유 프로세스가 없음을 확인하고 18:25:05 `luna-publication-e2e-20260907-182505`에서 같은 완료 상태를 이어간다. 강한 결과·독립 확인·논문 패키지는 미완료다.
 
 `ef2d9ab`은 실제 승인 복구가 약12분 걸린 점에 맞춰 최초 source execution review 제한을 복구와 같은1,200초로 조정했다. 연구 실행300/900초와 배치 예산은 유지되며 충분한 잔여 시간이 없으면 시작하지 않는다. 관련15개 기존 검사를 실행했다. `7dc535f`는 계획된 existing-source analysis도 저장 상태에서 직접 resolve_research_work로 전달한다. 준비·오류 복구는 감독 경로를 유지한다. 기존65개 검사와5개 subtest를 실행했다. 두 변경의 실제 시간 절약은 아직 측정하지 않았다.
+
+
+## 후속 행동 재현 진단의 범위 거절
+
+18:29:28 Luna가86c9787d3f7e86cbbaed1a8986162d0609b863ea83bf903e38f33b5b9e5c6da9를 선택했다. 기존 early curve 분석을 받아 identity-free teacher-action agreement를 label-shuffled control과 비교하고 짧은 paired raw endpoint를 보는 진단이다. 학습 코드는 Luna가 작성했다. source experiment.py SHA=d2ece64eccd415bb9028dc074332929f47a8c0fb542c6c84a47d93e81545b7fc, 준비본005e7c20…이다. 로컬 초안에서는395teacher rows/79internal-heldout rows, agreement0.3671 대0.3418, raw endpoint effect0을 생성했지만 등록된 연구 근거는 아니다.
+
+18:46 범위 검토94cb6b6d…가 source review 전에 차단했다. entry31은 이미 완료된4c 진단 한 번만 허용했고, 새 설계는 scratch를label-shuffle로 바꾸며4회fine-tuning을 제거한다. 새 허가가 없으므로 기존 informative result가 다음 실행을 허가하지 않는다. 신규 formal execution은 없다. 계획의 authorization 비차단 가정과 독립 범위 판단이 불일치했다. 다음 계획 호출은 잔여492초가600초보다 짧아 시작 전 중단됐고, 소유 프로세스 정리 후18:47:43배치에서 재개했다.
+
+`a1842b2`는 requires_replanning과 거절 및 next plan_research_work가 모두 저장된 경우, 거절 원문을 reconsider_reason으로 직접MCP에 전달한다. 기존 경로는 이번 재개에서도 감독 호출34,209bytes를 먼저 사용했다. 실제 subprocess 전달 회귀를 확장해66개 검사와5개subtest 및diff check를 실행했다. 현재 배치는 변경 전 프로세스이며 이를 위해 진행 중 계획 호출을 중단하지 않았다. 연구 선택 및 프로토콜 변경 판단은 Luna가 계속 담당한다.
+
+
+## 과제 기회가 없는 조건을 고른 프로토콜 제안
+
+Luna가 a33ec53121325d1f4f9998c46023a4b18f329606b8bf6ab2fda810b169b86814를 protocol_revision으로 선택했다. testCapture|211을 사용하지 않은 새 조건으로 제안했지만 첫 검토927c78fd…가600초에 중단됐다. 19:07:02배치에서 감독 호출 없이276,729bytes의 completed-inspection 복구c414f02a…로 이어갔다.
+
+19:10:42복구는218.9초에 reject를 반환했다. usage input92,219/output11,835(reasoning11,292 포함). seed는 starting_agent가 명시되면 상태를 바꾸지 않고 testCapture는 과거 측정에서 상대 먹이·도달 가능 목표·pickup·return이 없었다. root가 실제 n_preflight_testcapture_mechanics_01의 metrics에서 reachable/pickup/return count가모두0임을 확인했다. 검토는 단순한 시드 라벨 부재로 새 조건을 인증한 점, 과제 양성 대조 부재, 학습기 용량·훈련 예산 미고정을 지적했다. 신규 실험은 실행되지 않았다.
+
+19:18경 Luna는 bloxCapture/조건307/starting_agent1을 고정하고,307은 provenance표기일 뿐이라고 명시하는 수정안을 제출했다. reset-state digest, collect-and-return 양성 대조, 10차원 입력의 공유32/32비순환MLP, Adam0.001/200epoch, 모순 없는 훈련 예시 최소20건에서agreement0.95의capacity gate, 전체전이감사와endpoint pair를 제안했다. 고정240초·개발용·일회성 조건이며 기존 최종평가는 유지한다. 독립 검토97,464bytes가 진행 중이다. 이것은 승인 또는 결과가 아니다.
+
+`7a96e6a`는 단일work 선택과 향후 개발 허용 범위를 구분하도록 계획·검토 지침을 보완했다. 진행 중 프로토콜이600초에 중단된 후, 정책 버전 증가가 기존 work를stale로 만들고 검토 지침 변경이 유료 검사 복구 해시를 바꾼다는 점을 확인했다. `0be1400`에서 정책은25로 유지하고 검토 지침 변경은 원복했다. 계획 담당자의 향후 새 선택에는 유한한 적응적 개발 절차를 고려하라는 안내가 남는다. 기존 허가나 현재 제안의 범위를 확대하지 않는다. 변경 전후 기존control/review57개검사와diff check를 실행했으나 실제선택개선·비용감소는미측정이다.
+
+
+19:28:31 수정안27f39a6f…의 최초 검토가 다시600초에 중단됐다. 최초 요청은c9809a42…이며 아직 판정이 없다. 소유 프로세스가 모두 종료됐음을 확인하고19:30:04배치에서 같은 제안/완료검사로 복구를 시작했다. `f79aa3e`는 이후 protocol_revision 최초 검토도1,200초를 허용한다. 일반 분석·범위 판단600초, 실제실험·총계산·배치 예산은 유지한다. 이전54cc의600+508.6초, a33최초의600+218.9초 사례를 근거로 했다. 요청/영수증해시와검토지침은유지하며기존review15검사와diffcheck를실행했다. 실제절약은아직미측정이다.
+
+
+19:39:45 수정안 복구e6a37e7b…가581.2초에 승인됐다. usage input68,258/output31,957(reasoning31,596포함). 최초 요청은c9809a42…이며 소스가 없는 study_design이라 source는 이후work에서준비·검토한다. 승인범위는고정bloxCapture/start1의양성대조·capacitygate를갖춘개발진단이며 강한결과나qualification은아니다. 감독호출없이170,348bytes의다음계획으로이어졌다.
