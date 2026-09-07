@@ -1623,7 +1623,8 @@ def spawn_codex_session(
                     pending_calls.add(item['id'])
                 elif event.raw.get('type') == 'item.completed':
                     pending_calls.discard(item['id'])
-                    completed_calls += 1
+                    if item.get('tool') != 'read_research_artifact':
+                        completed_calls += 1
                     if item.get('tool') in {'execute_baseline_preflight', 'execute_node_experiment', 'resolve_research_work', 'revise_evaluation_protocol', 'execute_confirmation_experiment', 'design_experiment_template', 'finalize_submission_package'}:
                         for content in (item.get('result') or {}).get('content', []):
                             if content.get('type') == 'text':

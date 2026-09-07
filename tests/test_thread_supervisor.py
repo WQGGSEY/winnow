@@ -1989,7 +1989,11 @@ class WatchLoopTests(unittest.TestCase):
                                             'execution_phase': 'implementation_review'}))
             prose = {'type': 'item.completed', 'item': {'id': 'message1', 'type': 'agent_message',
                      'text': 'LocalRunner has started and is running.'}}
+            inspection = {'type': 'item.completed', 'item': {'id': 'source-read', 'type': 'mcp_tool_call',
+                          'server': 'research_harness', 'tool': 'read_research_artifact',
+                          'arguments': {}, 'result': {}, 'status': 'completed'}}
             fake.write_text("#!/usr/bin/env python3\nimport time\nfrom pathlib import Path\n"
+                            + ("print(" + repr(json.dumps(inspection)) + ", flush=True)\n") * 20
                             + "print(" + repr(json.dumps(preparation)) + ", flush=True)\ntime.sleep(0.2)\n"
                             + "print(" + repr(json.dumps(pending)) + ", flush=True)\n"
                             + ("print(" + repr(json.dumps(prose)) + ", flush=True)\n") * 2
