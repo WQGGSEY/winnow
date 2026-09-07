@@ -40,6 +40,12 @@ def current_work(thread: Path) -> dict[str, Any]:
     return _read(thread / 'production/research_control/current.json')
 
 
+def selected_hypotheses(thread: Path, decision: dict[str, Any]) -> dict[str, Any]:
+    selected = set(decision.get('hypothesis_ids', []))
+    return {item['id']: item for item in _read(thread / 'production/hypotheses/current.json').get('candidates', [])
+            if item.get('id') in selected}
+
+
 def execution_handoff(thread: Path, work: dict[str, Any]) -> dict[str, Any] | None:
     """Provide a repair request from exact predecessor bytes, without running it."""
     import copy
@@ -752,6 +758,7 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
     from research_harness.orchestrator.research_observations import observation_contract
     packet = {'observation_contract': observation_contract(work['decision'], plan),
               'work_decision': work['decision'], 'node': node, 'experiment_plan': plan,
+              'selected_hypotheses': selected_hypotheses(thread, work['decision']),
               'decision_scope': 'development_execution',
               'execution_source_manifest': execution_sources,
               'diagnostic_source_binding_proposal': diagnostic_binding,

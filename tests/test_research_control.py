@@ -74,12 +74,15 @@ def test_crash_cannot_weaken_scientific_prediction(tmp_path):
 
 
 def test_planning_consumes_critiqued_hypotheses_and_retains_work_link(tmp_path):
-    from research_harness.orchestrator.research_control import _write
-    from research_harness.orchestrator.research_knowledge import research_brief
+    from research_harness.orchestrator.research_control import _write, selected_hypotheses
+    from research_harness.orchestrator.research_knowledge import research_brief, compact_planning_context
 
     thread, _, _, _, _ = fixture(tmp_path)
     _write(thread / 'production/hypotheses/current.json', {'status': 'completed', 'candidates': [
         {'id': 'hypothesis_1', 'claim_under_test': 'The measurement aliases distinct inputs.',
+         'candidate': {'proposal': {'fingerprint': {'intervention': 'Use a rank-preserving feature map.',
+                                                  'system_boundary': 'Keep the frozen input representation.'}},
+                       'discriminating_test': 'Compare paired inputs with identical sampling.'},
          'selected_for_diagnostic': True, 'scientific_support': 'unverified'}]})
 
     class HypothesisPlanner(Planner):
@@ -93,6 +96,15 @@ def test_planning_consumes_critiqued_hypotheses_and_retains_work_link(tmp_path):
     work = plan_research_work(REPO, thread, transport=HypothesisPlanner())
     assert work['decision']['hypothesis_ids'] == ['hypothesis_1']
     assert research_brief(thread)['work_index'][-1]['hypothesis_ids'] == ['hypothesis_1']
+    hypotheses = selected_hypotheses(thread, work['decision'])
+    assert list(hypotheses) == ['hypothesis_1']
+    assert selected_hypotheses(thread, {'hypothesis_ids': []}) == {}
+    candidate = hypotheses['hypothesis_1']
+    candidate['long_history'] = 'historical critique ' * 1500
+    compact = compact_planning_context(thread, {'hypotheses': {'candidates': [candidate]}})
+    preview = compact['hypotheses']['candidates']['preview'][0]
+    assert preview['method_definition'] == candidate['candidate']['proposal']['fingerprint']
+    assert preview['proposed_test'] == candidate['candidate']['discriminating_test']
 
 
 def test_execution_inventory_includes_preparation_without_reading_measurements(tmp_path):

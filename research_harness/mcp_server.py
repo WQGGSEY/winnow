@@ -1580,7 +1580,7 @@ def handle_retrieve_research_source(args: dict[str, Any]) -> dict[str, Any]:
 
 def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     from research_harness.runner.baseline_preflight import baseline_preparation_state
-    from research_harness.orchestrator.research_control import current_work, runtime_input_example, executed_diagnostic_bindings
+    from research_harness.orchestrator.research_control import current_work, runtime_input_example, executed_diagnostic_bindings, selected_hypotheses
 
     tid = args["thread_id"]
     d = _thread_dir(tid)
@@ -1690,6 +1690,7 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
         **{key: state[key] for key in ('thread', 'operator_model_preference', '_model_note',
                                       'baseline_preparation', 'baseline_preparation_contract', '_market_usage_contract', 'publication_target')},
         'view': 'current', 'thread_dir': str(d.resolve()), 'research_work': work,
+        'selected_hypotheses': selected_hypotheses(d, work.get('decision', {})),
         'observation_binding_contract': state['observation_binding_contract'],
         'execution_handoff': state['execution_handoff'],
         'research_brief': brief_context(d, state['research_brief']),

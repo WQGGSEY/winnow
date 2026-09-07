@@ -263,7 +263,7 @@ def validate_execution_objections(assessment: dict[str, Any], packet: dict[str, 
         parts = re.sub(r'\[(\d+)\]', r'.\1', basis['basis_path']).split('.')
         allowed = {'work_decision', 'experiment_plan', 'runner_contract', 'measurement_output_contract',
                    'observation_contract', 'registered_protocol', 'protocol_note_history',
-                   'analysis_findings', 'prepared_implementations', 'node'}
+                   'analysis_findings', 'selected_hypotheses', 'prepared_implementations', 'node'}
         if (parts[0] not in allowed or parts[:2] == ['work_decision', 'deferred_questions']
                 or (parts[0] == 'node' and parts[:2] != ['node', 'claim_contract'])):
             raise ValueError('Objection cites a requirement outside its selected scope.')

@@ -263,7 +263,9 @@ def compact_planning_context(thread: Path, packet: dict[str, Any]) -> dict[str, 
         }
         if keys == ('hypotheses', 'candidates'):
             parent[keys[-1]]['preview'] = [
-                {field: item[field] for field in ('id', 'claim_under_test', 'status', 'selected_for_diagnostic', 'scientific_support') if field in item}
+                {**{field: item[field] for field in ('id', 'claim_under_test', 'status', 'selected_for_diagnostic', 'scientific_support') if field in item},
+                 'method_definition': item.get('candidate', {}).get('proposal', {}).get('fingerprint'),
+                 'proposed_test': item.get('candidate', {}).get('discriminating_test')}
                 for item in value]
         elif keys == ('research', 'sources'):
             parent[keys[-1]]['preview'] = {
