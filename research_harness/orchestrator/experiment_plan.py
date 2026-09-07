@@ -226,12 +226,17 @@ def resolve_source_files(thread: Path, sources: list[dict[str, Any]]) -> list[di
         edits = source.get('replacements', [])
         if not isinstance(edits, list) or len(edits) > 32:
             raise ExperimentPlanError('source replacements must be an array of at most 32 edits')
-        for edit in edits:
+        for edit_index, edit in enumerate(edits):
             if (not isinstance(edit, dict) or set(edit) != {'old', 'new'}
                     or not isinstance(edit['old'], str) or not edit['old'] or not isinstance(edit['new'], str)):
                 raise ExperimentPlanError('Each source replacement requires nonempty old text and string new text')
-            if content.count(edit['old']) != 1:
-                raise ExperimentPlanError('Source replacement old text must match exactly once; include more surrounding context')
+            matches = content.count(edit['old'])
+            if matches != 1:
+                raise ExperimentPlanError(
+                    f'Source {source.get("path")!r} from {origin}: replacements[{edit_index}].old '
+                    f'matched {matches} times; expected exactly once in the source after preceding edits. '
+                    'Read that source or edit a draft in source_workspace and register its from_path/sha256.'
+                )
             content = content.replace(edit['old'], edit['new'], 1)
         resolved.append({key: value for key, value in source.items() if key in {'path', 'purpose'}} | {'content': content})
     return resolved

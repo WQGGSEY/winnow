@@ -456,3 +456,13 @@ An actual current-state call returned exactly the two selected hypotheses in 150
 이미 공개된 retrieve_research_source를 기대 목록에 누락한 별도 문제다.
 이 검사는 연구 비교의 성공을 의미하지 않는다. 진행 중인 이전 세션에는 새 권한이
 적용되지 않으며 다음 감독 세션부터 적용된다.
+
+105356 실행은 비교 소스 교체 요청을 보존했지만 task_class, 교체 문자열,
+잘못 적은 from_path를 순차 수정하면서 검토 호출의 최소 시간을 확보하지 못했다.
+1771초 시점에서 invocation_budget checkpoint로 종료되었고 소유 자식 프로세스가
+남지 않았음을 확인했다. 112413 실행은 저장된 동일 요청의 검토부터 재개한다.
+
+교체 실패 응답은 이제 파일, replacements 인덱스, 앞선 교체 적용 후의 실제 일치
+횟수를 돌려준다. 임시 파일의 두 번째 교체가 실패하는 실제 재현으로 오류 위치와
+원본 보존을 확인했다. 기존 experiment_plan/research_control 검사 45 passed.
+연구 결과는 여전히 미검증이다.
