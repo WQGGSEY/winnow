@@ -416,3 +416,9 @@ The next actual planner marked the complete-support prediction supported and inc
 The coordinator prepared a BFS/action-selection implementation, with a request expecting nine paired episodes despite the selected test's six-cell wording. Its scientific fidelity remains under independent review. The root initially described B as necessarily a learning-reward modification; inspection of the registered hypotheses corrected that overstatement: fixed learned-policy action gates are also contemplated. The relevant question is whether this particular BFS substitute and grid answer the selected test. No learner or intervention was authored by the root, and no comparison has yet executed.
 
 The 100651 batch rejected the next 197079-byte review before provider launch because only 479 seconds remained for a 600-second call. Source and request were preserved. Batch 102947 resumes that exact request and pauses at any completed comparison for root inspection before priorities 5–7. This is continued validation of priorities 1–4, not a success report.
+
+### Do not attach a whole unrelated predecessor program as a source diff
+
+The comparison review 53b8044a58c6b077 included 48339 bytes of deleted support_audit_v2.py plus 17226 bytes of added src/experiment.py. There are no shared source paths between these programs; the predecessor result remains relevant, but this full program diff is not a useful revision guide. Review delta construction now returns no source delta for disjoint source inventories, leaving the prior result in normal research evidence and requiring normal review of the new source.
+
+Verification: research_review/research_control — 52 passed; git diff --check. Existing review-delta coverage checks that disjoint source paths do not produce a bounded revision guide. The running reviewer still has its original submitted packet; the change applies to later calls.

@@ -104,6 +104,9 @@ def test_review_bundle_preserves_evidence_and_denies_self_replay(tmp_path):
     assert delta['changed_conditions'] == ['registered_protocol']
     assert not delta['bounded_revision']
     assert predecessor_review_delta(tmp_path, work, packet)['bounded_revision']
+    unrelated = json.loads(json.dumps(packet))
+    unrelated['experiment_plan']['source_files'][0]['path'] = 'another_experiment.py'
+    assert predecessor_review_delta(tmp_path, work, unrelated) is None
     (prior_dir / 'review.json').write_text(json.dumps({'request_sha256': hashlib.sha256(request).hexdigest(),
         'assessment': {'decision': 'reject', 'reason': 'Input coordinate type mismatch.'}}))
     same_work = {**work, 'implementation_review': {'receipt_path': str(prior_dir / 'review.json')}}

@@ -61,6 +61,8 @@ def predecessor_review_delta(thread: Path, work: dict[str, Any], packet: dict[st
         return None
     old_sources = {s['path']: s['content'] for s in old_plan.get('source_files', [])}
     new_sources = {s['path']: s['content'] for s in new_plan['source_files']}
+    if not (old_sources.keys() & new_sources.keys()):
+        return None
     diffs = {}
     unchanged = []
     for name in sorted(old_sources.keys() | new_sources.keys()):
