@@ -900,17 +900,30 @@ def test_citation_repair_preserves_scientific_decision_and_caches_result(tmp_pat
     assert json.loads((directory / 'rejected_response.json').read_text())['decision'] == original
 
 
-def test_rejected_planner_response_cannot_restart_direction_generation(tmp_path, monkeypatch):
+@pytest.mark.parametrize('malformed_inventory', [False, True])
+def test_rejected_planner_response_cannot_restart_direction_generation(tmp_path, monkeypatch, malformed_inventory):
     from research_harness import mcp_server
     from research_harness.orchestrator.research_control import pending_planning_failure
     thread, _, _, _, _ = fixture(tmp_path)
     work = plan_research_work(REPO, thread, transport=Planner())
     work['status'] = 'completed'
     (thread / 'production/research_control/current.json').write_text(json.dumps(work))
-    directory = thread / 'production/research_control/decisions/invalid-citation'
-    directory.mkdir()
-    (directory / 'request.json').write_text(json.dumps({'previous_work': work}))
-    (directory / 'rejected_response.json').write_text(json.dumps({'error': 'Unavailable citation.'}))
+    if malformed_inventory:
+        raw = '{"alternatives":[{}]}'
+        class BrokenPlanner:
+            def complete(self, request):
+                return CompletionResult(text=raw, usage=AgentUsage(), thread_id='test')
+        with pytest.raises(KeyError):
+            plan_research_work(REPO, thread, transport=BrokenPlanner())
+        failure = pending_planning_failure(thread)
+        assert failure is not None
+        directory = Path(failure['receipt_path']).parent
+        assert json.loads((directory / 'rejected_response.json').read_text())['raw_response'] == raw
+    else:
+        directory = thread / 'production/research_control/decisions/invalid-citation'
+        directory.mkdir()
+        (directory / 'request.json').write_text(json.dumps({'previous_work': work}))
+        (directory / 'rejected_response.json').write_text(json.dumps({'error': 'Unavailable citation.'}))
     monkeypatch.setattr(mcp_server, '_thread_dir', lambda _: thread)
     def forbidden_restart(tid):
         raise AssertionError('A planner contract error must not restart the research direction.')

@@ -554,7 +554,7 @@ Preserve deferred_questions as outside the current test. Do not combine unrelate
                 for name in alternative['required_observations']))
             if isinstance(decision, dict) and isinstance(decision.get('solution_path'), dict):
                 decision['solution_path']['parent_work_id'] = (brief.get('current_solution') or {}).get('work_id')
-        except ValueError as exc:
+        except (ValueError, KeyError, TypeError) as exc:
             _write(directory / 'rejected_response.json', {'error': str(exc), 'raw_response': response.text})
             raise
     try:
