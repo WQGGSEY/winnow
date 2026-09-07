@@ -414,6 +414,19 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
         inspection = completed_inspection(directory / digest / 'events.jsonl', source_paths)
         if not inspection and inspection_digest != digest:
             inspection = completed_inspection(directory / inspection_digest / 'events.jsonl', source_paths)
+        if not inspection:
+            for previous_path in sorted(directory.glob('*/request.json'), key=lambda path: path.stat().st_mtime_ns, reverse=True):
+                raw = previous_path.read_bytes().rstrip(b'\n')
+                if hashlib.sha256(raw).hexdigest() != previous_path.parent.name:
+                    continue
+                previous_request = json.loads(raw)
+                if (previous_request.get('packet') != packet
+                        or previous_request.get('response_schema') != schema_name
+                        or previous_request.get('model') != research_model()):
+                    continue
+                inspection = completed_inspection(previous_path.parent / 'events.jsonl', source_paths)
+                if inspection:
+                    break
         if inspection:
             request_data['completed_inspection'] = inspection
             serialized = json.dumps(request_data, sort_keys=True, ensure_ascii=False)

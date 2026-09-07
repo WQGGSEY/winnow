@@ -232,9 +232,9 @@ def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp
     with patch('research_harness.orchestrator.research_review.CodexCliAdapter.complete', side_effect=complete):
         with pytest.raises(CodexCliError):
             assess(repo, tmp_path, packet, purpose='Read the count.')
-        result = assess(repo, tmp_path, packet, purpose='Read the count.')
+        result = assess(repo, tmp_path, packet, purpose='Finish the same count from inspected evidence.')
         assert result['assessment'] == assessment
-        assert assess(repo, tmp_path, packet, purpose='Read the count.') == result
+        assert assess(repo, tmp_path, packet, purpose='Finish the same count from inspected evidence.') == result
         assert len(requests) == 2
 
 
