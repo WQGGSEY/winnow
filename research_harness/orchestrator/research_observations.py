@@ -18,7 +18,7 @@ def observation_contract(decision: dict[str, Any], plan: dict[str, Any]) -> dict
     untyped = [name for name, binding in bindings.items() if 'value_kind' not in binding]
     if untyped:
         raise ValueError('Declare value_kind before execution for each observation binding: ' + ', '.join(untyped)
-                         + '. Use support_count for required positive support or validity gates; measurement for finite outcomes including zero/negative effects. Update plan metadata through design_experiment_template; do not change the measured values.')
+                         + '. Use support_count for required positive support or validity gates; measurement for finite outcomes including zero/negative effects. Resume the current saved dispatch request_path with updates to experiment_plan.observation_bindings only. Keep its source_files unchanged; do not reconstruct source from historical prepared_implementation files or change measured values.')
     outputs = plan['expected_outputs']['metrics_files']
     for name, binding in bindings.items():
         path = Path(binding['artifact_path'])
