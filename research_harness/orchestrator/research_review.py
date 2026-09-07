@@ -29,8 +29,9 @@ def predecessor_review_delta(thread: Path, work: dict[str, Any], packet: dict[st
     """Expose verified prior assessment and exact changes without transferring approval."""
     import difflib
 
-    previous = work
-    same_work = bool(work.get('implementation_review', {}).get('receipt_path'))
+    same_work_review = work.get('implementation_review') or work.get('prior_implementation_review', {})
+    previous = {**work, 'implementation_review': same_work_review}
+    same_work = bool(same_work_review.get('receipt_path'))
     if not same_work:
         previous_id = (work['decision'].get('previous_result') or {}).get('work_id')
         if not previous_id:

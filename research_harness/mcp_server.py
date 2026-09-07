@@ -1676,6 +1676,10 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
     if state['research_work'] and state['research_work'].get('planning_policy_version') != PLANNING_POLICY_VERSION:
         state['research_work'] = {**state['research_work'], 'next_tool_to_call': 'plan_research_work',
                                   'requires_replanning': True, 'reason': 'Research capabilities changed; old work routing is stale.'}
+    if (state['research_work'].get('outcome', {}).get('execution_result') == 'checkpoint'
+            and state['research_work'].get('implementation_review', {}).get('decision') == 'reject'):
+        review = state['research_work'].pop('implementation_review')
+        state['research_work']['prior_implementation_review'] = review
     state['execution_handoff'] = execution_handoff(d, state['research_work'])
     if args.get('view', 'current' if thread.get('current_phase') == 'production' else 'full') == 'full':
         return state
@@ -3271,9 +3275,25 @@ def handle_submit_grad_student_review(
     return {"status": "accepted"}
 
 
+def _preflight_checkpoint_reply(tid: str) -> dict[str, Any] | None:
+    from research_harness.orchestrator.research_control import current_work
+    work = current_work(_thread_dir(tid))
+    if (work.get('status') != 'planned' or work.get('next_tool_to_call') != 'execute_baseline_preflight'
+            or work.get('outcome', {}).get('execution_result') != 'checkpoint'):
+        return None
+    path = _thread_dir(tid) / 'production/research_control/work' / work['work_id'] / 'dispatch_request.json'
+    return {'status': 'resume_required', 'work_id': work['work_id'],
+            'next_tool_to_call': 'execute_baseline_preflight',
+            'arguments': {'thread_id': tid, 'request_path': str(path.resolve())},
+            'reason': 'The current source revision has an interrupted review/execution checkpoint, not a new implementation rejection. Resume the saved request unchanged; older objections are review history.'}
+
+
 def handle_design_experiment_template(args: dict[str, Any]) -> dict[str, Any]:
     with _exclusive_adaptive_writer(args['thread_id']):
         try:
+            checkpoint = _preflight_checkpoint_reply(args['thread_id'])
+            if checkpoint is not None:
+                return checkpoint
             return _handle_design_experiment_template_locked(args)
         except (OSError, ValueError) as exc:
             return {'status': 'rejected', 'reason': str(exc)}
@@ -4287,6 +4307,12 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
     with _exclusive_adaptive_writer(tid):
         if baseline_roles_frozen(_thread_dir(tid)):
             return {"status": "rejected", "reason": "baseline preparation is closed for the approved baseline roles"}
+        checkpoint = _preflight_checkpoint_reply(tid)
+        if checkpoint is not None:
+            saved = checkpoint['arguments']['request_path']
+            if (not args.get('request_path') or str(Path(args['request_path']).resolve()) != saved
+                    or args.get('updates') or 'experiment_plan' in args or 'node' in args):
+                return checkpoint
         bound = False
         request_resolved = not args.get('request_path')
         replay_source = None

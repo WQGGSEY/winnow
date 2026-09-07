@@ -271,6 +271,15 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     assert stopped['next_tool_to_call'] is None
     assert current_work(thread)['status'] == 'planned'
     assert not (tree / 'baseline_preflight' / node['id'] / 'job_manifest.json').exists()
+    request_path = Path(stopped['dispatch_request_path'])
+    preserved_request = request_path.read_bytes()
+    refusal = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path),
+        'updates': [{'path': ['experiment_plan', 'node_id'], 'value': 'unnecessary_rewrite'}]})
+    assert refusal['status'] == 'resume_required'
+    assert refusal['arguments']['request_path'] == str(request_path)
+    assert request_path.read_bytes() == preserved_request
+    assert mcp_server.handle_design_experiment_template({'thread_id': 'thread', 'work_id': work['work_id'],
+        'plan_metadata': {'source_files': []}})['status'] == 'resume_required'
     budget_error.clear()
     invalid_review.append(True)
     invalid = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
@@ -306,6 +315,12 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     assert revision['reconsideration_available']
     plan['source_files'][0]['content'] += '\n# revised measurement path\n'
     request_path.write_text(json.dumps({'node': node, 'experiment_plan': plan, 'role': role, 'work_id': work['work_id']}))
+    budget_error.append(True)
+    interrupted_revision = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
+    assert interrupted_revision['status'] == 'checkpoint'
+    assert 'implementation_review' not in current_work(thread)
+    assert current_work(thread)['prior_implementation_review']['decision'] == 'reject'
+    budget_error.clear()
     import time
     invocation_budget = tmp_path / 'call_budget.json'
     invocation_budget.write_text(json.dumps({'deadline_epoch': time.time() + 6, 'calls': []}))
@@ -316,6 +331,7 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     assert current_work(thread)['status'] == 'planned'
     assert not (tree / 'baseline_preflight' / node['id'] / 'job_manifest.json').exists()
     assert json.loads(invocation_budget.read_text())['calls'] == []
+    request_path = Path(before_launch['dispatch_request_path'])
     reviewed_count = len(reviewed)
     monkeypatch.delenv('RESEARCH_HARNESS_CALL_BUDGET')
     result = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
