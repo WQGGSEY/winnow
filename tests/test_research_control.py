@@ -410,12 +410,14 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     assert Path(rejected['dispatch_request_path']).is_absolute()
     saved_path = Path(rejected['dispatch_request_path'])
     saved_bytes = saved_path.read_bytes()
-    for bad_path in ['experiment_plan.node_id', ['experiment_plan', 'missing', 'node_id']]:
+    for bad_path in ['experiment_plan.node_id', ['experiment_plan', 'missing', 'node_id'],
+                     ['experiment_plan', 'source_files', 0, 'replacements']]:
         bad_update = mcp_server.handle_execute_baseline_preflight({
             'thread_id': 'thread', 'work_id': next_work['work_id'],
             'request_path': str(saved_path),
             'updates': [{'path': ['experiment_plan', 'node_id'], 'value': 'not_committed'},
-                        {'path': bad_path, 'value': 'n_corrected'}],
+                        {'path': bad_path, 'value': [{'old': 'before', 'new': 'after'}]
+                         if bad_path[-1] == 'replacements' else 'n_corrected'}],
         })
         assert bad_update['status'] == 'rejected'
         assert bad_update['dispatch_request_path'] == str(saved_path)

@@ -4357,7 +4357,6 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
                     else:
                         target[keys[-1]] = update['value']
                 args = {**request, 'thread_id': tid}
-                request_resolved = True
             elif args.get('updates'):
                 raise ValueError('Dispatch updates require request_path.')
             plan_input = dict(args['experiment_plan'])
@@ -4373,6 +4372,7 @@ def handle_execute_baseline_preflight(args: dict[str, Any]) -> dict[str, Any]:
             resolve_preflight_role(plan_input, nested_role)
             args = {**args, 'experiment_plan': plan_input, 'role': role}
             plan = {**args['experiment_plan'], 'source_files': resolve_source_files(_thread_dir(tid), args['experiment_plan']['source_files'])}
+            request_resolved = True
             # Materializing a revision can overwrite its referenced workspace file.
             # Resume the resolved bytes, not a reference to that mutable predecessor.
             args = {**args, 'experiment_plan': plan}
