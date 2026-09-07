@@ -157,7 +157,7 @@ def test_execution_review_cannot_omit_declared_output_checks():
 
 
 def test_valid_saved_objection_survives_host_citation_validator_repair(tmp_path):
-    from research_harness.orchestrator.research_review import ReviewContractError
+    from research_harness.orchestrator.research_review import ReviewContractError, validate_execution_objections
     packet = {'decision_scope': 'development_execution',
               'experiment_plan': {'success_criteria': ['Complete the declared cells.']},
               'node': {'claim_contract': {'disproof_conditions': ['The declared cells are incomplete.']}},
@@ -170,6 +170,8 @@ def test_valid_saved_objection_survives_host_citation_validator_repair(tmp_path)
                   'observation_checks': [], 'blocking_basis': [
                       {'required_work_index': 0, 'scope': 'selected_test',
                        'basis_path': 'node.claim_contract.disproof_conditions[0]', 'basis_quote': 'The declared cells are incomplete.'},
+                      {'required_work_index': 0, 'scope': 'selected_test',
+                       'basis_path': 'experiment_plan.success_criteria[0]', 'basis_quote': 'Complete the declared cells.'},
                       {'required_work_index': 1, 'scope': 'method_semantics',
                        'basis_path': 'work_decision.test', 'basis_quote': 'Use the selected intervention.'},
                       {'required_work_index': 2, 'scope': 'runtime_contract',
@@ -188,6 +190,12 @@ def test_valid_saved_objection_survives_host_citation_validator_repair(tmp_path)
         assert recovered['thread_id'] == 'paid-review'
         assert recovered['recovered_after_contract_validation']
         complete.assert_called_once()
+    assessment['blocking_basis'][1]['basis_quote'] = 'Invented extra requirement.'
+    with pytest.raises(ValueError, match='quote does not match'):
+        validate_execution_objections(assessment, packet)
+    assessment['blocking_basis'] = assessment['blocking_basis'][:1]
+    with pytest.raises(ValueError, match='Every blocking change'):
+        validate_execution_objections(assessment, packet)
 
 
 @pytest.mark.parametrize("role", ["analysis", "execution_review", "protocol_review"])

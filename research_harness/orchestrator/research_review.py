@@ -255,8 +255,8 @@ def validate_execution_objections(assessment: dict[str, Any], packet: dict[str, 
         raise ValueError('Cannot approve an implementation with a missing declared observation output.')
     required = assessment['required_work']
     bases = assessment['blocking_basis']
-    if sorted(item['required_work_index'] for item in bases) != list(range(len(required))):
-        raise ValueError('Every blocking change needs exactly one grounded requirement.')
+    if {item['required_work_index'] for item in bases} != set(range(len(required))):
+        raise ValueError('Every blocking change needs a grounded requirement, with no undeclared change indexes.')
     for basis in bases:
         if basis['scope'] == 'final_confirmation':
             raise ValueError('Final confirmation requirements cannot block a development execution.')
