@@ -142,6 +142,15 @@ def test_execution_review_cannot_omit_declared_output_checks():
         validate_execution_objections(assessment, packet)
     assessment['observation_checks'][0]['emitted_by_producer'] = True
     validate_execution_objections(assessment, packet)
+    packet['experiment_plan'] = {'success_criteria': ['Complete the cells.']}
+    rejection = {'decision': 'reject', 'required_work': ['Repair the reachable input exception.'],
+                 'observation_checks': [], 'blocking_basis': [{'required_work_index': 0,
+                     'scope': 'selected_test', 'basis_path': 'experiment_plan.success_criteria.0',
+                     'basis_quote': 'Complete the cells.'}]}
+    validate_execution_objections(rejection, packet)
+    rejection['observation_checks'] = [{'observation_id': 'invented', 'emitted_by_producer': True, 'reason': 'Unknown output.'}]
+    with pytest.raises(ValueError, match='distinct declared'):
+        validate_execution_objections(rejection, packet)
 
 
 def test_valid_saved_objection_survives_host_citation_validator_repair(tmp_path):

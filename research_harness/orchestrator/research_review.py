@@ -226,7 +226,9 @@ def review_research_packet(repo: Path, directory: Path, packet: dict[str, Any], 
         instructions += (
             ' This decision authorizes one development execution only. For each required_work item, '
             'supply a blocking_basis naming its scope, exact packet basis_path and an exact basis_quote. '
-            'For every observation_contract entry supply observation_checks: trace the named producer to that exact emitted JSON value. '
+            'Approval requires observation_checks for every observation_contract entry: trace the named producer to that exact emitted JSON value. '
+            'Once a reachable blocking defect is established, return a grounded rejection promptly with checks only for outputs actually inspected. '
+            'Do not complete an exhaustive audit or execute a hypothetically repaired program before reporting that defect. Unchecked outputs are not certified. '
             'Reject a missing output even if a differently named value exists elsewhere. Counts may be zero; approval checks emission, not a positive outcome. '
             'A requirement for final confirmation or publication is not a prerequisite to this development test; '
             'put it in next_steps. Do not qualify a baseline or approve a scientific conclusion here. '
@@ -241,7 +243,10 @@ def review_research_packet(repo: Path, directory: Path, packet: dict[str, Any], 
 def validate_execution_objections(assessment: dict[str, Any], packet: dict[str, Any]) -> None:
     checks = assessment.get('observation_checks', [])
     contract = packet.get('observation_contract', {})
-    if sorted(item['observation_id'] for item in checks) != sorted(contract):
+    checked = [item['observation_id'] for item in checks]
+    if len(checked) != len(set(checked)) or set(checked) - set(contract):
+        raise ValueError('Observation checks must name distinct declared outputs.')
+    if assessment['decision'] == 'approve' and sorted(checked) != sorted(contract):
         raise ValueError('Review every declared observation output exactly once.')
     if assessment['decision'] == 'approve' and any(not item['emitted_by_producer'] for item in checks):
         raise ValueError('Cannot approve an implementation with a missing declared observation output.')
