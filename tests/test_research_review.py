@@ -229,7 +229,7 @@ def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp
         packet['experiment_plan'] = {'source_files': [{'path': 'measure.py', 'content': 'print(7)'}]}
         assess = review_research_packet
     if role == 'protocol_review':
-        packet.update(proposal={'notes': 'Preserve endpoints.'}, work_decision={'evidence_ids': ['selected']},
+        packet.update(proposal={'notes': 'Preserve endpoints.'}, work_decision={'kind': 'protocol_revision', 'evidence_ids': ['selected']},
                       protocol_note_history={'entries': [{'notes': 'Original endpoints.'}]},
                       analysis_findings={'selected': {'answer': 'Relevant finding.'}, 'older': {'answer': 'Large unrelated history.'}},
                       prior_review_context={'unchanged_packet_fields': ['protocol_note_history']})
@@ -250,7 +250,7 @@ def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp
     def complete(request):
         requests.append(request)
         assert len((request.prompt.instructions + request.prompt.input).encode()) < 16000
-        assert request.timeout_seconds == (1200 if len(requests) > 1 or role == 'execution_review' else 600)
+        assert request.timeout_seconds == (1200 if len(requests) > 1 or role in {'execution_review', 'protocol_review'} else 600)
         if role == 'protocol_review':
             submitted = json.loads(request.prompt.input)
             assert submitted['analysis_findings'] == {'selected': {'answer': 'Relevant finding.'}}
