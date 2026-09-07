@@ -229,7 +229,7 @@ def fixture(tmp_path):
     requirement = plan['baseline_evidence_requirements'][2]
     plan['baseline_evidence_requirements'] = [requirement]
     plan['resources']['timeout_sec'] = 10
-    plan['observation_bindings'] = {'eligible_count': {'artifact_path': plan['expected_outputs']['metrics_files'][0],
+    plan['observation_bindings'] = {'eligible_count': {'value_kind': 'support_count', 'artifact_path': plan['expected_outputs']['metrics_files'][0],
         'json_pointer': '/metrics/eligible_count', 'producer': 'experiment.py measurement output'}}
     plan['source_files'] = [{'path': 'experiment.py', 'purpose': 'Reproduce invalid measurement.',
                              'content': "raise ValueError('measurement construction is invalid')\n"}]
@@ -1118,6 +1118,10 @@ def test_signed_measurement_is_interpretable_only_with_positive_support(tmp_path
             'observation_bindings': {name: {'artifact_path': 'metrics.json',
                 'json_pointer': '/' + name, 'producer': 'compare.py aggregate', 'value_kind': kind}
                 for name, kind in [('pairs', 'support_count'), ('effect', 'measurement')]}}
+    kind = plan['observation_bindings']['effect'].pop('value_kind')
+    with pytest.raises(ValueError, match='Declare value_kind before execution'):
+        observation_contract(decision, plan)
+    plan['observation_bindings']['effect']['value_kind'] = kind
     observation_contract(decision, plan)
     for pairs, available in [(1, True), (0, False)]:
         artifact.write_text(json.dumps({'pairs': pairs, 'effect': effect}))
@@ -1148,7 +1152,7 @@ def test_output_bindings_and_partial_interpretation_preserve_family_boundaries(t
     plan = {'workspace': str(workspace), 'expected_outputs': {'metrics_files': ['metrics.json']}}
     with pytest.raises(ValueError, match='Bind every'):
         observation_contract(decision, plan)
-    plan['observation_bindings'] = {name: {'artifact_path': 'metrics.json',
+    plan['observation_bindings'] = {name: {'value_kind': 'support_count', 'artifact_path': 'metrics.json',
         'json_pointer': '/details/families/' + str(i) + '/count', 'producer': 'diagnostic.py report'}
         for i, name in enumerate(decision['required_observations'])}
     observation_contract(decision, plan)
