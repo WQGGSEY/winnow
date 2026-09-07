@@ -501,6 +501,23 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
         request_data['source_inspection'] = False
     serialized = json.dumps(request_data, sort_keys=True, ensure_ascii=False)
     digest = hashlib.sha256(serialized.encode()).hexdigest()
+    if schema_name == 'research_protocol_scope_response':
+        # Prior readings guide new scope questions; they do not change an identical question's facts.
+        identity = {**request_data, 'packet': {key: value for key, value in packet.items()
+                                             if key != 'prior_scope_context'}}
+        for path in sorted(directory.glob('*/review.json'), key=lambda path: path.stat().st_mtime_ns, reverse=True):
+            raw = (path.parent / 'request.json').read_bytes().rstrip(b'\n')
+            if hashlib.sha256(raw).hexdigest() != path.parent.name:
+                continue
+            prior = json.loads(raw)
+            prior['packet'] = {key: value for key, value in prior['packet'].items() if key != 'prior_scope_context'}
+            if prior != identity:
+                continue
+            record = json.loads(path.read_text())
+            if record.get('request_sha256') != path.parent.name:
+                continue
+            validate_named_schema(schema_name, record['assessment'])
+            return record
     if schema_name == 'research_execution_review_response':
         recovered = recover_execution_review(directory, request_data)
         if recovered is not None:

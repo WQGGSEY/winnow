@@ -348,6 +348,30 @@ def test_protocol_interpretation_is_preserved_across_implementation_revisions(tm
         first = review_research_packet(repo, tmp_path, packet, purpose='Development test.')
         assert review_research_packet(repo, tmp_path, packet, purpose='Development test.') == first
         packet['experiment_plan']['source_files'][0]['content'] = 'print(2)'
+        packet['predecessor_review_delta']['prior_assessment'] = {
+            'decision': 'reject', 'reason': 'Repair source aggregation; selected scope unchanged.'}
         review_research_packet(repo, tmp_path, packet, purpose='Development test.')
     assert len(seen) == 3
     assert sum('amendment_history' in value for value in seen) == 1
+
+
+def test_changed_execution_history_requires_new_scope_judgment(tmp_path):
+    from research_harness.orchestrator.research_review import _complete_packet
+    repo = Path(__file__).resolve().parents[1]
+    packet = {'work_decision': {'test': 'One prospective cell.'},
+              'registered_protocol': {'notes': 'Only once.'},
+              'amendment_history': {'entries': []}, 'development_executions': {}}
+    assessment = {'status': 'answered', 'execution_scope': 'eligible_for_source_review',
+                  'answer': 'Not consumed.', 'evidence': [], 'limitations': [], 'next_steps': []}
+    with patch('research_harness.orchestrator.research_review.CodexCliAdapter.complete',
+               return_value=CompletionResult(json.dumps(assessment), AgentUsage(), None)) as complete:
+        def review():
+            return _complete_packet(repo, tmp_path, packet, instructions='Inspect scope.',
+                                    schema_name='research_protocol_scope_response', source_inspection=False)
+        first = review()
+        packet['prior_scope_context'] = {'prior_assessment': assessment}
+        assert review() == first
+        assert complete.call_count == 1
+        packet['development_executions']['cell'] = {'execution_status': 'completed'}
+        review()
+        assert complete.call_count == 2
