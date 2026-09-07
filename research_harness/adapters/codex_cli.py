@@ -91,8 +91,9 @@ class CodexCliAdapter:
 
     def complete(self, request: CompletionRequest) -> CompletionResult:
         command = self._build_exec_command(request=request)
-        remaining = reserve_call(model=request.model, prompt=self._compose_prompt(request.prompt), label=request.label)
-        timeout = min(request.timeout_seconds, remaining) if remaining is not None else request.timeout_seconds
+        reserve_call(model=request.model, prompt=self._compose_prompt(request.prompt), label=request.label,
+                     minimum_remaining_seconds=request.timeout_seconds)
+        timeout = request.timeout_seconds
         try:
             runner = (lambda command, **kwargs: self._run_owned(command, event_log_path=request.event_log_path, **kwargs)) if self._runner is subprocess.run else self._runner
             completed = runner(

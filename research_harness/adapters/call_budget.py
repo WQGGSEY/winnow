@@ -30,7 +30,7 @@ def _write_budget(path: Path, budget: dict) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def reserve_call(*, model: str, prompt: str, label: str) -> float | None:
+def reserve_call(*, model: str, prompt: str, label: str, minimum_remaining_seconds: float = 0) -> float | None:
     path = os.environ.get('RESEARCH_HARNESS_CALL_BUDGET')
     if not path:
         return
@@ -43,13 +43,16 @@ def reserve_call(*, model: str, prompt: str, label: str) -> float | None:
         used = sum(call['prompt_bytes'] for call in calls)
         # Leave time to persist a failed call before the supervisor's wall-clock stop.
         call_deadline = budget['deadline_epoch'] - 5
-        if (budget.get('exhausted_at') or time.time() >= call_deadline or len(calls) >= budget['max_calls']
+        remaining = call_deadline - time.time()
+        if (budget.get('exhausted_at') or remaining <= 0 or remaining < minimum_remaining_seconds or len(calls) >= budget['max_calls']
                 or used + size > budget['max_prompt_bytes']
                 or size > budget.get('max_call_prompt_bytes', budget['max_prompt_bytes'])):
             budget['exhausted_at'] = time.time()
             budget['exhausted_label'] = label
             budget['rejected_prompt_bytes'] = size
             budget['used_prompt_bytes'] = used
+            budget['remaining_seconds'] = remaining
+            budget['minimum_remaining_seconds'] = minimum_remaining_seconds
             _write_budget(budget_path, budget)
             raise CallBudgetExhausted('Bounded research call budget exhausted; checkpoint without claiming research completion.')
         if model != budget['model']:

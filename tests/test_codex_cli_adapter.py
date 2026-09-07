@@ -294,7 +294,7 @@ def test_bounded_call_budget_rejects_before_launch(tmp_path, monkeypatch):
         raise RuntimeError('simulated provider failure')
     adapter = CodexCliAdapter(runner=runner)
     request = CompletionRequest(prompt=AgentPrompt(instructions='', input='probe'),
-                                model='gpt-5.6-luna')
+                                model='gpt-5.6-luna', timeout_seconds=10)
     with pytest.raises(RuntimeError, match='provider failure'):
         adapter.complete(request)
     with pytest.raises(ValueError, match='budget exhausted'):
@@ -324,10 +324,16 @@ def test_bounded_prompt_limit_and_deadline_apply_before_provider(tmp_path, monke
     assert not calls
     assert json.loads(budget.read_text())['exhausted_at']
     budget.write_text(json.dumps(limits))
+    request = CompletionRequest(prompt=AgentPrompt(instructions='', input='short'),
+                                model='gpt-5.6-luna', timeout_seconds=240)
+    with pytest.raises(ValueError, match='budget exhausted'):
+        adapter.complete(request)
+    assert not calls
+    assert json.loads(budget.read_text()).get('calls', []) == []
+    budget.write_text(json.dumps({**limits, 'deadline_epoch': time.time() + 300}))
     with pytest.raises(RuntimeError, match='provider reached'):
-        adapter.complete(CompletionRequest(prompt=AgentPrompt(instructions='', input='short'),
-                                           model='gpt-5.6-luna', timeout_seconds=240))
-    assert 0 < calls[0]['timeout'] <= 30
+        adapter.complete(request)
+    assert calls[0]['timeout'] == 240
 
 
 def test_synchronous_timeout_kills_detached_tool(tmp_path):
@@ -363,7 +369,7 @@ def test_bounded_timeout_preserves_partial_trace_and_stops_retry(tmp_path, monke
         calls.append(command)
         raise subprocess.TimeoutExpired(command, kwargs['timeout'], output=b'{"type":"item.started"}\n')
     adapter = CodexCliAdapter(runner=runner)
-    request = CompletionRequest(prompt=AgentPrompt(instructions='', input='probe'), model='gpt-5.6-luna')
+    request = CompletionRequest(prompt=AgentPrompt(instructions='', input='probe'), model='gpt-5.6-luna', timeout_seconds=10)
     with pytest.raises(CodexCliError, match='timed out'):
         adapter.complete(request)
     receipt = json.loads(budget.read_text())
