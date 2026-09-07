@@ -640,10 +640,16 @@ def test_protocol_amendment_preserves_the_bar_and_requires_independent_review(tm
     if protocol_change == 'component_binding':
         source_args['plan_metadata']['source_files'][0]['content'] = 'VALUE = 2\n'
         mcp_server.handle_design_experiment_template(source_args)
+    else:
+        kwargs['notes'] += ' Clarify the source review requirement.'
     result = protocol_revision.revise_evaluation_protocol(REPO, thread, **kwargs)
     assert json.loads(path.read_text()) == {**original, 'notes': kwargs['notes']}
     assert result == protocol_revision.revise_evaluation_protocol(REPO, thread, **kwargs)
     assert len(calls) == 2
+    prior = calls[1]['prior_review_context']
+    assert prior['assessment']['required_work'] == ['Preserve the endpoint meaning.']
+    assert prior['previous_notes'] == calls[0]['proposal']['notes']
+    assert 'protocol_note_history' in prior['unchanged_packet_fields']
     if protocol_change == 'component_binding':
         assert calls[0]['prepared_source']['template_digest'] != calls[1]['prepared_source']['template_digest']
         assert Path(calls[1]['prepared_source']['source_files'][0]['path']).read_text() == 'VALUE = 2\n'

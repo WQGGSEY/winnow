@@ -94,6 +94,20 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
             'execution_plans': [str(path.resolve()) for path in sorted((production / 'tree').rglob('experiment_plan.json'))],
         }
         _write(request_path, packet)
+    prior_review = work.get('protocol_review', {})
+    if prior_review.get('request_path') and Path(prior_review['request_path']).resolve() != request_path.resolve():
+        prior_path = Path(prior_review['request_path']).resolve()
+        prior_path.relative_to((production / 'protocol_revisions').resolve())
+        prior_packet = _read(prior_path)
+        if prior_packet.get('work_decision') == packet['work_decision']:
+            packet['prior_review_context'] = {
+                'assessment': {key: value for key, value in prior_review.items() if key != 'request_path'},
+                'request_path': str(prior_path),
+                'previous_notes': prior_packet['proposal']['notes'],
+                'unchanged_packet_fields': [key for key, value in packet.items()
+                    if key not in {'prior_review_context', 'proposal', 'rationale'} and prior_packet.get(key) == value],
+                'scope': 'Prior fallible judgment, not approval of unchecked conditions. Equal packet fields do not prove unchanged file contents. Review the changed proposal and dependencies; inspect original artifacts when needed.'}
+            _write(request_path, packet)
     dispatch_path = production / 'research_control/work' / work_id / 'protocol_review_dispatch.json'
     _write(dispatch_path, {'thread_id': thread.name, 'work_id': work_id, 'notes': notes, 'rationale': rationale,
                            'replace_holdout': replace_holdout, 'defer_holdout_generation': defer_holdout_generation})

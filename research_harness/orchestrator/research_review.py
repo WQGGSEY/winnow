@@ -348,7 +348,7 @@ def protocol_clause_citations(assessment: dict[str, Any], packet: dict[str, Any]
 
 def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, instructions: str, schema_name: str,
                      source_inspection: bool = True) -> dict[str, Any]:
-    inspection_packet = packet
+    inspection_packet = {key: value for key, value in packet.items() if key != 'prior_review_context'}
     if (schema_name == 'research_execution_review_response'
             and len(packet.get('protocol_note_history', {}).get('entries', [])) > 1):
         scope_packet = {key: packet[key] for key in ('work_decision', 'registered_protocol', 'protocol_note_history')}
@@ -397,7 +397,9 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
         source_paths = tuple(source['path'] for source in packet.get('execution_source_manifest', []))
         inspection_digest = hashlib.sha256(json.dumps({**request_data, 'packet': inspection_packet},
                                                        sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-        inspection = completed_inspection(directory / inspection_digest / 'events.jsonl', source_paths)
+        inspection = completed_inspection(directory / digest / 'events.jsonl', source_paths)
+        if not inspection and inspection_digest != digest:
+            inspection = completed_inspection(directory / inspection_digest / 'events.jsonl', source_paths)
         if inspection:
             request_data['completed_inspection'] = inspection
             serialized = json.dumps(request_data, sort_keys=True, ensure_ascii=False)
@@ -427,9 +429,12 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
     elif schema_name == 'research_review_response' and 'proposal' in packet and 'work_decision' in packet:
         submitted = analysis_input_bundle(destination, {**submitted, 'question': packet['work_decision']})
         submitted.pop('question')
-        submitted['protocol_note_history'] = packet.get('protocol_note_history', {})
+        if 'protocol_note_history' not in packet.get('prior_review_context', {}).get('unchanged_packet_fields', []):
+            submitted['protocol_note_history'] = packet.get('protocol_note_history', {})
         submitted['reading_contract'] = (
             'Review the selected prospective amendment against the original goal, supplied protocol history and selected evidence. '
+            'Use prior_review_context when present to start from the previous objections and changed notes; it is not approval of unchecked conditions. '
+            'Unchanged protocol history remains in evidence_sections for the exact clauses needed; avoid reconstructing unrelated history. '
             'Other analyses and execution details are preserved in evidence_sections; inspect only a dependency needed for this decision. '
             'Design approval does not assert that an implementation exists or any scientific outcome has been achieved. '
             'Do not reread review logs or reconstruct unrelated experiments.')

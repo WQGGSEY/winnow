@@ -150,7 +150,8 @@ def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp
     if role == 'protocol_review':
         packet.update(proposal={'notes': 'Preserve endpoints.'}, work_decision={'evidence_ids': ['selected']},
                       protocol_note_history={'entries': [{'notes': 'Original endpoints.'}]},
-                      analysis_findings={'selected': {'answer': 'Relevant finding.'}, 'older': {'answer': 'Large unrelated history.'}})
+                      analysis_findings={'selected': {'answer': 'Relevant finding.'}, 'older': {'answer': 'Large unrelated history.'}},
+                      prior_review_context={'unchanged_packet_fields': ['protocol_note_history']})
         assess = review_research_packet
     assessment = {'status': 'answered', 'answer': 'The recorded count is 7.',
                   'evidence': ['metrics.json /count'], 'limitations': [], 'next_steps': []}
@@ -167,7 +168,8 @@ def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp
         if role == 'protocol_review':
             submitted = json.loads(request.prompt.input)
             assert submitted['analysis_findings'] == {'selected': {'answer': 'Relevant finding.'}}
-            assert submitted['protocol_note_history'] == packet['protocol_note_history']
+            history = submitted['evidence_sections']['protocol_note_history']
+            assert json.loads(Path(history['path']).read_text()) == packet['protocol_note_history']
             reference = submitted['evidence_sections']['analysis_findings']
             assert json.loads(Path(reference['path']).read_text()) == packet['analysis_findings']
         if len(requests) == 1:

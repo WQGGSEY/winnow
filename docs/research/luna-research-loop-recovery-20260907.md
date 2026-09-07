@@ -320,3 +320,13 @@ The coordinator again changed saved sampling flags during resume, this time true
 revise_evaluation_protocol now accepts thread_id plus request_path for exact replay. During a checkpoint, inline resubmission is routed to the saved request instead of letting the coordinator reconstruct notes/options. The saved path must belong to the current thread/work; mixed inline/path inputs are rejected. The handoff exposes only that path, and normal independent review still governs the saved amendment.
 
 Verification: research_control/research_review — 51 passed. Existing protocol cases now attempt an option flip and receive resume_required, then replay the actual saved file through MCP; the stored proposal remains unchanged. Hypothesis-reference enums were also extended from the same confirmed identifier-copy failure class in a separate commit. git diff --check passed.
+
+### Review revisions from their actual change, and recover the latest reads first
+
+The exact-path protocol recovery completed an independent rejection with two concrete design defects: undefined red-side control and ambiguous/tautological reward-audit intervals. Luna then authored a revised proposal defining the red control, seed limitations, and primitive-transition audit from return counters. These are agent-authored design changes; the root supplied no game policy or learner.
+
+Protocol revision now supplies the prior same-work assessment, previous notes and unchanged packet-field list for a changed proposal. A matching unchanged protocol history remains fully available by hash-addressed reference instead of being repeated inline. Prior rejection is explicitly not approval of other conditions, and matching packet metadata is not proof that source files are unchanged. New review still owns the entire decision.
+
+Inspection recovery had another selection defect: when a guide was attached it only looked for the pre-guide digest, missing completed reads from the latest guide-bearing call. Recovery now first checks the actual current request digest, then the pre-guide/annotation digest as a fallback. Adding the prior-review guide therefore preserves both older observations and subsequent exact-request reads.
+
+Verification: research_control/research_review — 51 passed. Existing amendment cases check prior objections and notes across changed proposals; the interrupted protocol-review case now exercises guide-bearing current-digest recovery and the complete archived history. git diff --check passed. The revised live protocol is still under independent review.
