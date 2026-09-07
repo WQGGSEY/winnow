@@ -438,3 +438,21 @@ Live verification: the actual comparison dispatch was replayed through execute_b
 The selector archived bulky hypothesis candidates with title/status previews, omitting their intervention, system boundary and proposed discriminating test. The implementation state exposed a path to the entire hypothesis file, so the coordinator used broad source searches while looking for B. The compact selector preview now retains each candidate's original fingerprint and proposed test. Current state and implementation review receive the full candidates matching the work's validated hypothesis_ids, including their unverified status. This is deterministic retrieval of existing content, not a host-authored method or an approval.
 
 An actual current-state call returned exactly the two selected hypotheses in 15055 UTF-8 bytes, including mechanism, intervention, observables, analysis unit, timescale and system boundary. Verification: research_control/research_review/MCP behavior checks — 72 passed, 3 subtests passed, with one pre-existing inventory assertion deselected. The full run exposed that test_tools_list_exposes_all_expected_tools omits the already-published retrieve_research_source tool from its expected set; the tool and handler exist at the pre-change HEAD. That unrelated stale inventory assertion was not changed. git diff --check passed. The active coordinator is still preparing a corrected comparison, so priority 4 remains outstanding.
+
+### 연구 초안 파일 편집 경계
+
+비교 구현을 거절한 뒤 Luna는 20분 이상 기존 소스와 MCP 호출 구조를 읽고,
+큰 JSON 인자로 소스를 다시 구성했다. 일반 파일 편집이 전부 차단되어 코드 작성이
+등록 메타데이터 작업과 결합되어 있었다. 감독 세션에만 thread/source_workspace
+쓰기 권한을 부여했다. get_research_state가 그 경로를 노출하며, 에이전트는
+초안을 편집한 뒤 기존 from_path/sha256 등록 절차로 소스를 동결한다.
+독립 검토 세션은 여전히 읽기 전용이며 초안 실행은 등록된 연구 증거가 아니다.
+작업 공간 루트의 symlink 우회는 거절한다.
+
+실제 codex sandbox에서 초안 파일 쓰기 성공, 기존 상태 파일 쓰기 거절,
+비공개 평가 입력 읽기 거절을 확인했다. 관련 기존 검사 명령은
+`venv/bin/pytest -q tests/test_codex_cli_adapter.py tests/test_thread_supervisor.py tests/test_research_control.py tests/test_mcp_server.py -k 'not tools_list_exposes_all_expected_tools'`이며
+131 passed, 1 deselected, 6 subtests passed였다. 제외한 기존 도구 목록 assertion은
+이미 공개된 retrieve_research_source를 기대 목록에 누락한 별도 문제다.
+이 검사는 연구 비교의 성공을 의미하지 않는다. 진행 중인 이전 세션에는 새 권한이
+적용되지 않으며 다음 감독 세션부터 적용된다.

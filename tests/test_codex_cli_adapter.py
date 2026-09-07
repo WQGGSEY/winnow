@@ -85,7 +85,22 @@ def test_development_subprocess_cannot_read_evaluation_vault(tmp_path, monkeypat
     if backend == 'runner':
         command = isolated_runner_command(command, workspace)
     else:
-        adapter_command = CodexCliAdapter()._build_exec_command(request=None, model='gpt-5.6-sol', cwd=workspace)
+        draft = workspace / 'source_workspace'
+        draft.mkdir()
+        script += (
+            f'Path({str(draft / "experiment.py")!r}).write_text("research draft")\n'
+            'try:\n'
+            f'    Path({str(public)!r}).write_text("unauthorized state mutation")\n'
+            'except (PermissionError, OSError):\n'
+            '    pass\n'
+            'else:\n'
+            '    raise AssertionError("authoritative files became writable")\n'
+        )
+        command = [sys.executable, '-c', script]
+        adapter_command = CodexCliAdapter()._build_exec_command(
+            request=None, model='gpt-5.6-sol', cwd=workspace,
+            mcp=ResearchHarnessMcp(command='python', args=()), source_workspace=draft,
+        )
         profile = adapter_command[adapter_command.index('default_permissions="research-development"') - 1:adapter_command.index('--cd')]
         command = ['codex', 'sandbox', *profile, '--', *command]
     result = subprocess.run(command, capture_output=True, text=True, timeout=30)

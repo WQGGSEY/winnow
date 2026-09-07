@@ -40,6 +40,13 @@ def current_work(thread: Path) -> dict[str, Any]:
     return _read(thread / 'production/research_control/current.json')
 
 
+def source_workspace(thread: Path) -> Path:
+    path = thread.resolve() / 'source_workspace'
+    if path.resolve() != path:
+        raise ValueError('Research source workspace must not redirect outside its draft directory')
+    return path
+
+
 def selected_hypotheses(thread: Path, decision: dict[str, Any]) -> dict[str, Any]:
     selected = set(decision.get('hypothesis_ids', []))
     return {item['id']: item for item in _read(thread / 'production/hypotheses/current.json').get('candidates', [])

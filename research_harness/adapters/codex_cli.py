@@ -171,6 +171,7 @@ class CodexCliAdapter:
         cwd: Path,
         mcp: ResearchHarnessMcp,
         env: dict[str, str] | None = None,
+        source_workspace: Path | None = None,
     ) -> "CodexProcessSession":
         import uuid
 
@@ -182,6 +183,7 @@ class CodexCliAdapter:
             model=model,
             cwd=cwd,
             mcp=mcp,
+            source_workspace=source_workspace,
         )
         reserve_call(model=model, prompt=self._compose_prompt(prompt), label='research supervisor')
         process = self._popen(
@@ -225,6 +227,7 @@ class CodexCliAdapter:
         model: str | None = None,
         cwd: Path | None = None,
         mcp: ResearchHarnessMcp | None = None,
+        source_workspace: Path | None = None,
     ) -> list[str]:
         if request is not None:
             model = request.model
@@ -271,6 +274,8 @@ class CodexCliAdapter:
             + _toml_string(str(vault)) + '="deny",'
             + _toml_string(str(Path.home() / '.agents/skills')) + '="deny",'
             + _toml_string(str(Path.home() / '.codex/skills')) + '="deny"'
+            + (',' + _toml_string(str(source_workspace.resolve())) + '="write"'
+               if source_workspace is not None and request is None and mcp is not None else '')
             + ''.join(',' + _toml_string(str(path.resolve())) + '="deny"'
                       for path in (request.denied_read_paths if request else ())) + '}',
         ])

@@ -1324,8 +1324,9 @@ def build_resume_prompt(repo: Path, tid: str, cycle: int) -> str:
         "     plan_research_work가 선택한 탐색·판별·개입을 따라. 진단 결과가 다음 해결책 선택을 바꾸는지 확인하고, 개입에서는 원래 목표 지표와 동일 조건의 대조군을 사용해.",
         "     그 근거를 바탕으로 기준선을 구현하고 execute_baseline_preflight로 측정해.",
         "     가설 후보는 미검증 상태다. 비평의 ready_for_test를 검증된 주장으로 해석하지 마.",
-        "     로컬 셸은 읽기 전용이다. 문헌 후보는 update_baseline_sources로,",
-        "     실험 코드는 execute_baseline_preflight 또는 design_experiment_template로 제출해.",
+        "     get_research_state의 source_workspace에서만 연구 초안 파일을 자유롭게 작성·편집할 수 있다. 나머지 로컬 파일은 읽기 전용이다.",
+        "     문헌 후보는 update_baseline_sources로 제출하고, 초안 코드는 design_experiment_template의 source_files.from_path와 sha256으로 등록해.",
+        "     초안 실행은 등록된 연구 증거가 아니다. 실제 비교는 등록된 소스와 독립 검토를 거쳐 execute_baseline_preflight 또는 execute_node_experiment로 실행해.",
         "     하네스 검증기나 운영자 설정 오류는 근거와 함께 보고하고 직접 수정하지 마.",
         "     논문 메타데이터만 있는 것은 추가 검색이 필요한 상태다. 접근 실패를",
         "     실제로 확인한 자원만 external block으로 기록해. 사람의 답변을 기다리지 마.",
@@ -1486,6 +1487,11 @@ def spawn_codex_session(
     if venv_bin.is_dir():
         child_env["PATH"] = f"{venv_bin}{os.pathsep}{child_env.get('PATH', '')}"
     child_env.update(mcp.environment)
+    draft_workspace = None
+    if thread_id is not None:
+        from research_harness.orchestrator.research_control import source_workspace
+        draft_workspace = source_workspace(_thread_dir(repo_root, thread_id))
+        draft_workspace.mkdir(parents=True, exist_ok=True)
     session = CodexCliAdapter(
         codex_path=codex_bin,
         popen=_subprocess.Popen,
@@ -1495,6 +1501,7 @@ def spawn_codex_session(
         cwd=repo_root,
         mcp=mcp,
         env=child_env,
+        source_workspace=draft_workspace,
     )
     if active_child_ref is not None:
         active_child_ref["pid"] = session.pid
