@@ -250,6 +250,7 @@ def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp
     def complete(request):
         requests.append(request)
         assert len((request.prompt.instructions + request.prompt.input).encode()) < 16000
+        assert request.timeout_seconds == (1200 if len(requests) > 1 or role == 'execution_review' else 600)
         if role == 'protocol_review':
             submitted = json.loads(request.prompt.input)
             assert submitted['analysis_findings'] == {'selected': {'answer': 'Relevant finding.'}}

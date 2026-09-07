@@ -593,7 +593,7 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
     with tempfile.TemporaryDirectory(prefix="research-decision-review-") as temporary:
         result = CodexCliAdapter().complete(CompletionRequest(
             prompt=AgentPrompt(instructions=instructions, input=json.dumps(submitted, ensure_ascii=False)),
-            model=research_model(), timeout_seconds=1200 if inspection else 600,
+            model=research_model(), timeout_seconds=1200 if inspection or schema_name == 'research_execution_review_response' else 600,
             output_schema=repo / 'research_harness/schemas' / f'{schema_name}.schema.json',
             cwd=Path(temporary), label="research source analysis" if schema_name == "research_analysis_response" else "independent-research-review",
             allow_local_tools=source_inspection and not inspection and not (packet.get("predecessor_review_delta") or {}).get("bounded_revision", False),
