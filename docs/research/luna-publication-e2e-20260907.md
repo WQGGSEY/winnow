@@ -195,3 +195,17 @@ Luna가 a33ec53121325d1f4f9998c46023a4b18f329606b8bf6ab2fda810b169b86814를 prot
 
 
 19:39:45 수정안 복구e6a37e7b…가581.2초에 승인됐다. usage input68,258/output31,957(reasoning31,596포함). 최초 요청은c9809a42…이며 소스가 없는 study_design이라 source는 이후work에서준비·검토한다. 승인범위는고정bloxCapture/start1의양성대조·capacitygate를갖춘개발진단이며 강한결과나qualification은아니다. 감독호출없이170,348bytes의다음계획으로이어졌다.
+
+## 진단 준비 계약과 실제 실행 후처리
+
+20:08 최초 source 검토4e5e39a8…는 학습 actor 파일과 endpoint의 불변 연결이 없어 거절했다. 이후 감독자가 immutable prepared 요청을 최신 수정본으로 오인해 observation bindings 없는 옛 요청을 재생했다. `205f0da`는 준비 단계에서도 관측 계약을 검사하고, 실행용 경로를 현재 canonical dispatch로 제공하며, 현재 work와 맞지 않는 재생 요청이 dispatch를 덮어쓰지 못하게 했다. 실제 get_research_state에서 현재 요청과18개 관측 binding을 확인했다. 관련108개 검사와5개subtest를 실행했다. 과거 source와 연구 설계는 수정하지 않았다.
+
+20:19 두 번째 source 검토b8e6aa5a…도 같은 actor provenance 문제로 거절했다. Luna가 actor 파일 저장과 arm·훈련조건·SHA의 endpoint 연결을 직접 구현했다. 수정본의 torch import는 읽기 전용 sandbox의 임시 디렉터리 부재로 한 번 실패했고 Luna가 workspace TMPDIR을 지정해 재시도했다. `b94f312`는 이후 coordinator 세션의 TMPDIR을 허용된 source workspace의 `.tmp`로 제공한다. 실제 Codex sandbox에서 Python 임시 파일 생성과17개 adapter 검사를 실행했다. 전역 쓰기 권한은 넓히지 않았다.
+
+20:34:28 source 검토888d16ad… 승인 후5c20b5e2… 진단이15.846774초에 완료됐다. task feasibility 양성 대조는 pickup34회, return12회, returned food27개로 통과했다. capacity 양성 대조는224개 예시에서0.8392857로 사전 기준0.95에 못 미쳤다. held-out teacher agreement0.7017544 대 shuffled0.4736842, 짝 raw endpoint는−36 대−33이지만 capacity 실패로 두 원인 가설은 미결정이다. 이는 강한 결과·기준선 자격·원래 문제 해결의 증거가 아니다.
+
+실행 후처리는 진단에도 단일 qualified baseline key 조건을 적용해 거절했다. 실제 report의 baselines에는 shuffled control의 정확도와 endpoint 두 측정값이 있었다. 해당 조건을 baseline_evidence_requirements가 있는 자격 검증에만 적용하도록 수정했다. 진단은 비교 측정값을 보존하며 baseline 자격 필드 없는 receipt와 scientific_approval=false를 유지한다. 기존 진단 회귀에 두 측정값을 추가하고 자격 검증에서는 추가 key를 계속 거절하는 검사를 확장했다. control/experiment_plan49개 검사와diff check를 실행했다.
+
+root는 완료된 실제 아티팩트에서 deterministic worker report 재구성, 승인 요청 해시와 실행 소스, 입력 manifest, 두 actor SHA 및 endpoint provenance, 짝 reset 일치,224개 예측의capacity 정확도와raw effect를 확인했다. `/tmp/verify_recoverability_artifact.py`로 실행했고 결과는 `201631/recoverability-artifact-verification.json`이다. metrics SHA9cf14bac77bdf0b2910745a03ad3393c13839476c661ea4f29ebf5df1d9e0e77. 추가 학습이나 과거 work 기록 수정은 하지 않았다.
+
+20:38 Luna는f803b116… 기존 자료 분석을 선택하며 capacity 실패 때문에 과거 원인 가설을 해석할 수 없다고 명시했다. 분석 호출은 남은456초가600초보다 짧아 시작 전 중단됐다. 소유 프로세스가 없음을 확인하고20:42:11 `204211` 배치에서 같은 분석을 재개했다. all-role Luna max를 유지한다. 5~7의 강한 결과, 독립 qualification/confirmation 및 논문 패키지는 여전히 미완료다.

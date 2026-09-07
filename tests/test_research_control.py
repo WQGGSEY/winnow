@@ -495,7 +495,7 @@ def test_diagnostic_executes_without_fabricating_a_baseline_or_supporting_a_clai
         validate_experiment_plan(node, plan, tree)
     plan['source_files'][0]['content'] = (
         "from pathlib import Path\nPath('artifacts').mkdir(exist_ok=True)\n"
-        "Path('artifacts/metrics.json').write_text('{\"metrics\": {\"measured_count\": 6}, \"claim_verdict_candidate\": \"supported\"}')\n"
+        "Path('artifacts/metrics.json').write_text('{\"metrics\": {\"measured_count\": 6}, \"baselines\": {\"control_accuracy\": 0.4, \"control_endpoint\": -3}, \"claim_verdict_candidate\": \"supported\"}')\n"
     )
     plan['expected_outputs']['metrics_files'] = ['artifacts/metrics.json']
     with pytest.raises(ValueError, match='selected diagnostic'):
@@ -535,10 +535,11 @@ def test_diagnostic_executes_without_fabricating_a_baseline_or_supporting_a_clai
     report = result['worker_report']
     assert result['status'] == 'executed'
     assert report['metrics'] == {'measured_count': 6}
-    assert report['baselines'] == {}
+    assert report['baselines'] == {'control_accuracy': 0.4, 'control_endpoint': -3}
     assert report['baseline_evidence_status'] == {'overall': 'not_required', 'results': []}
     assert report['claim_verdict_candidate'] == 'inconclusive'
     assert not result['scientific_approval']
+    assert not {'baseline_key', 'metric_id', 'metric_value'}.intersection(result['reproducibility_receipt'])
     finish_work(thread, result)
     if work_kind != 'diagnostic_experiment':
         assert current_work(thread)['outcome']['scientific_verdict'] == 'unverified'

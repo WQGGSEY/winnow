@@ -61,6 +61,14 @@ class ExperimentPlanTests(unittest.TestCase):
             second = execute_baseline_preflight(repo, tdir, node=node, plan=plan, role=requirement["role"], settings={})
             self.assertEqual(first, second)
             self.assertEqual(receipt_file.stat().st_mtime_ns, stamp)
+            report_path = receipt_file.parent.parent / 'worker_report.json'
+            report_bytes = report_path.read_bytes()
+            extra_baseline_report = json.loads(report_bytes)
+            extra_baseline_report['baselines']['unqualified_control'] = 0.4
+            report_path.write_text(json.dumps(extra_baseline_report))
+            with self.assertRaisesRegex(ValueError, 'only its actually executed baseline key'):
+                execute_baseline_preflight(repo, tdir, node=node, plan=plan, role=requirement['role'], settings={})
+            report_path.write_bytes(report_bytes)
             import research_harness.mcp_server as srv
             with mock.patch.object(srv, '_thread_dir', return_value=tdir):
                 state = srv.handle_get_research_state({'thread_id': 'test'}, {})

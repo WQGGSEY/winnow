@@ -171,8 +171,7 @@ def execute_baseline_preflight(
     report = json.loads(report_path.read_text())
     if report.get('status') != 'completed':
         return {'status': 'execution_failed', 'node_dir': str(node_dir), 'worker_report': report}
-    expected_baselines = {requirements[0]['baseline_key']} if requirements else set()
-    if set(report.get('baselines', {})) != expected_baselines:
+    if requirements and set(report.get('baselines', {})) != {requirements[0]['baseline_key']}:
         raise ValueError('preflight must report only its actually executed baseline key')
     verify_strong_execution_evidence(node=node, experiment_plan=plan, worker_report=report, node_dir=node_dir, tree_dir=tree, settings=settings)
     relative = node_dir.relative_to(tree).as_posix()
