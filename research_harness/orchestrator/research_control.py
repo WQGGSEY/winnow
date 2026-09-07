@@ -599,6 +599,13 @@ Preserve deferred_questions as outside the current test. Do not combine unrelate
         except (ValueError, KeyError, TypeError) as exc:
             _write(directory / 'rejected_response.json', {'error': str(exc), 'raw_response': response.text})
             raise
+    assessment = decision.get('previous_result')
+    if (previous.get('status') == 'completed' and isinstance(assessment, dict)
+            and assessment.get('work_id') == previous['work_id']
+            and isinstance(assessment.get('evidence_ids'), list)):
+        receipt_id = 'work_' + previous['work_id']
+        if receipt_id not in assessment['evidence_ids']:
+            assessment['evidence_ids'].append(receipt_id)
     try:
         validate_named_schema('research_work', decision)
         validate_solution_path(decision, brief)

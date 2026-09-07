@@ -1036,6 +1036,37 @@ def test_planner_schema_binds_failed_receipt_before_generation(tmp_path):
         validate_schema(schema, assessment)
 
 
+@pytest.mark.parametrize('stale_work_id', [False, True])
+def test_planner_binds_known_previous_receipt_without_rewriting_judgment(tmp_path, stale_work_id):
+    thread, _, _, _, _ = fixture(tmp_path)
+    previous = plan_research_work(REPO, thread, transport=Planner('analysis'))
+    previous.update(status='completed', outcome={'execution_result': 'analysis_completed'})
+    (thread / 'production/research_control/current.json').write_text(json.dumps(previous))
+
+    class OmittedReceiptPlanner(Planner):
+        def complete(self, request):
+            response = super().complete(request)
+            self.raw_decision = json.loads(response.text)
+            self.raw_decision['previous_result']['evidence_ids'] = []
+            if stale_work_id:
+                self.raw_decision['previous_result']['work_id'] = 'stale-work'
+            return CompletionResult(text=json.dumps(self.raw_decision), usage=AgentUsage(), thread_id='test')
+
+    planner = OmittedReceiptPlanner()
+    if stale_work_id:
+        with pytest.raises(ValueError, match='Interpret the completed previous work'):
+            plan_research_work(REPO, thread, transport=planner)
+        assert current_work(thread)['work_id'] == previous['work_id']
+        return
+    selected = plan_research_work(REPO, thread, transport=planner)
+    assert len(planner.calls) == 1
+    expected = copy.deepcopy(planner.raw_decision['previous_result'])
+    expected['evidence_ids'] = ['work_' + previous['work_id']]
+    assert selected['decision']['previous_result'] == expected
+    raw_responses = list((thread / 'production/research_control/decisions').glob('*/raw_response.txt'))
+    assert any(json.loads(path.read_text()) == planner.raw_decision for path in raw_responses)
+
+
 def test_planned_work_is_reconsidered_when_model_changes(tmp_path, monkeypatch):
     thread, _, _, _, _ = fixture(tmp_path)
     monkeypatch.setenv('RESEARCH_HARNESS_MODEL', 'gpt-5.6-sol')
