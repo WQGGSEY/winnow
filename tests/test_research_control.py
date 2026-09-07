@@ -306,7 +306,20 @@ def test_actual_execution_failure_changes_next_work_without_refuting_claim(tmp_p
     assert revision['reconsideration_available']
     plan['source_files'][0]['content'] += '\n# revised measurement path\n'
     request_path.write_text(json.dumps({'node': node, 'experiment_plan': plan, 'role': role, 'work_id': work['work_id']}))
+    import time
+    invocation_budget = tmp_path / 'call_budget.json'
+    invocation_budget.write_text(json.dumps({'deadline_epoch': time.time() + 6, 'calls': []}))
+    monkeypatch.setenv('RESEARCH_HARNESS_CALL_BUDGET', str(invocation_budget))
+    before_launch = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
+    assert before_launch['status'] == 'checkpoint'
+    assert current_work(thread)['implementation_review']['decision'] == 'approve'
+    assert current_work(thread)['status'] == 'planned'
+    assert not (tree / 'baseline_preflight' / node['id'] / 'job_manifest.json').exists()
+    assert json.loads(invocation_budget.read_text())['calls'] == []
+    reviewed_count = len(reviewed)
+    monkeypatch.delenv('RESEARCH_HARNESS_CALL_BUDGET')
     result = mcp_server.handle_execute_baseline_preflight({'thread_id': 'thread', 'request_path': str(request_path)})
+    assert len(reviewed) == reviewed_count
     checkpoint = finish_work(thread, result)
     assert checkpoint['research_work_checkpoint'] == work['work_id']
     assert checkpoint['next_tool_to_call'] == 'plan_research_work'

@@ -63,6 +63,23 @@ def reserve_call(*, model: str, prompt: str, label: str, minimum_remaining_secon
         return max(0.001, call_deadline - time.time())
 
 
+def admit_execution(timeout_seconds: float) -> None:
+    """Do not launch a development experiment the bounded supervisor will truncate."""
+    raw_path = os.environ.get('RESEARCH_HARNESS_CALL_BUDGET')
+    if not raw_path:
+        return
+    path = Path(raw_path)
+    with path.with_suffix(path.suffix + '.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        budget = json.loads(path.read_text())
+        remaining = budget['deadline_epoch'] - 5 - time.time()
+        if budget.get('exhausted_at') or remaining < timeout_seconds:
+            budget.update(exhausted_at=time.time(), exhausted_label='development execution',
+                          rejected_execution={'timeout_seconds': timeout_seconds, 'remaining_seconds': remaining})
+            _write_budget(path, budget)
+            raise CallBudgetExhausted('Insufficient bounded runtime for this experiment; preserve source approval and resume before launch.')
+
+
 def record_failed_call(*, label: str, reason: str, partial_output: str | bytes = '') -> None:
     """A bounded check stops on transport failure instead of buying the same call again."""
     raw_path = os.environ.get('RESEARCH_HARNESS_CALL_BUDGET')

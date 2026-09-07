@@ -158,6 +158,8 @@ def execute_baseline_preflight(
         if research_work_id is not None:
             from research_harness.orchestrator.research_control import review_work_implementation
             review_work_implementation(repo, thread_dir, research_work_id, node, plan)
+        from research_harness.adapters.call_budget import admit_execution
+        admit_execution(timeout)
         for name, value in [('node.json', node), ('experiment_plan.json', plan), ('job_manifest.json', manifest)]:
             (node_dir / name).write_text(json.dumps(value, indent=2) + '\n')
         if research_work_id:
