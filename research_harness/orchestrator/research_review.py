@@ -592,7 +592,9 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
             submitted['experiment_plan']['source_files'] = packet['experiment_plan']['source_files']
     protocol_review = (schema_name == 'research_review_response'
                        and packet.get('work_decision', {}).get('kind') == 'protocol_revision')
-    timeout_seconds = 1200 if inspection or schema_name == 'research_execution_review_response' or protocol_review else 600
+    timeout_seconds = 1200 if inspection or schema_name in {
+        'research_execution_review_response', 'research_protocol_scope_response'
+    } or protocol_review else 600
     with tempfile.TemporaryDirectory(prefix="research-decision-review-") as temporary:
         result = CodexCliAdapter().complete(CompletionRequest(
             prompt=AgentPrompt(instructions=instructions, input=json.dumps(submitted, ensure_ascii=False)),

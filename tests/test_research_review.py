@@ -327,6 +327,7 @@ def test_protocol_interpretation_is_preserved_across_implementation_revisions(tm
             assert value['development_executions'] == packet['development_executions']
             assert value['prior_scope_context'] == prior_scope
             assert not request.allow_local_tools
+            assert request.timeout_seconds == 1200
             result = {'status': scope_status, 'execution_scope': execution_scope, 'answer': 'Preserve outcome; confirmation is later.',
                       'evidence': ['amendment_history.entries.0.notes: “Keep the original outcome.”'], 'limitations': [], 'next_steps': []}
         else:
