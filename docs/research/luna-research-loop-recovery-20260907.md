@@ -466,3 +466,14 @@ An actual current-state call returned exactly the two selected hypotheses in 150
 횟수를 돌려준다. 임시 파일의 두 번째 교체가 실패하는 실제 재현으로 오류 위치와
 원본 보존을 확인했다. 기존 experiment_plan/research_control 검사 45 passed.
 연구 결과는 여전히 미검증이다.
+
+112413 재개에서 Luna가 기존 prepared_implementation을 최신 dispatch보다
+우선하려 했으나 canonical checkpoint 검증이 이를 거절하고 올바른 요청으로
+복귀시켰다. 실제 bound source hash와 준비본의 source hash가 다르면
+prepared_implementation을 prior_prepared_implementation으로 옮기도록 수정했다.
+기존 준비·개정·실행 연결 검사에서 이 실제 상태 전이를 확인했으며 관련 검사
+58 passed, 1 deselected, 3 subtests passed였다.
+
+새 독립 검토 1dec1ae5는 실제 엔진 step을 호출하여 기존 정수 전용 좌표 검증이
+다시 들어왔음을 발견하고 거절했다. 최신 비교 작성자가 과거 준비 소스를
+재사용한 회귀이며, 검토의 원시 결과가 훼손 없이 에이전트에 전달되었다.

@@ -715,6 +715,13 @@ def bind_work(thread: Path, work_id: str | None, node_id: str, plan: dict[str, A
     binding = {'node_id': node_id, 'plan_digest': _digest(plan), 'scope': scope}
     if work.get('binding') and work['binding'] != binding:
         raise ValueError('This work unit is already bound to another execution.')
+    prepared = work.get('prepared_implementation')
+    if prepared and prepared.get('source_files'):
+        prepared_hashes = {item['relative_path']: item['sha256'] for item in prepared['source_files']}
+        execution_hashes = {item['path']: hashlib.sha256(item['content'].encode('utf-8')).hexdigest()
+                            for item in plan['source_files']}
+        if prepared_hashes != execution_hashes:
+            work['prior_prepared_implementation'] = work.pop('prepared_implementation')
     work.pop('outcome', None)
     work.update(status='running', execution_phase='implementation_review', binding=binding)
     _write(thread / 'production/research_control/current.json', work)

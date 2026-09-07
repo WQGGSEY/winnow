@@ -808,6 +808,8 @@ def test_source_preparation_preserves_scientific_work_and_revision_bytes(tmp_pat
     assert not list(tree.rglob('runner_result.json'))
     bind_work(thread, work['work_id'], node['id'], plan)
     assert current_work(thread)['status'] == 'running'
+    assert 'prepared_implementation' not in current_work(thread)
+    assert current_work(thread)['prior_prepared_implementation'] == complete_revision
 
 
 def test_exploration_retains_solution_lineage_without_invented_predictions(tmp_path):
