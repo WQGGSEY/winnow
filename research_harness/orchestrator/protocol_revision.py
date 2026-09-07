@@ -156,11 +156,6 @@ def revise_evaluation_protocol(repo: Path, thread: Path, *, work_id: str, notes:
     review = review_research_packet(repo, directory / 'review', packet, purpose=(
         'Review a prospective development protocol amendment. Only the notes may change; structured goal, resources and predicate remain identical. '
         'The proposal must complete the selected work_decision, not substitute a promise to do that work later. '
-        'A study-design work may register a bounded adaptive development procedure spanning several later empirical works; '
-        'one selected work does not itself require one-shot execution permission. Assess the explicit replacement of prior restrictions, '
-        'permitted development data and changes, finite aggregate trial/compute budget, continuation and stopping rules, '
-        'per-work source and observation review, and final candidate/comparator freeze. Reject open-ended permission or weakened final evaluation, '
-        'but do not require a separate amendment for each later trial already covered by an approved procedure. '
         'For repair of an executed diagnostic, compare against executed_diagnostic_bindings and inspect its verified approval trace and actual source, '
         'not only an older component-binding amendment. The diagnostic pre-execution transaction can already have approved instrumentation and reporting repairs. '
         'Do not demand their reversion merely because those exact diagnostic bytes were bound through that transaction instead of a separate protocol amendment. '

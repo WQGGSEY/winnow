@@ -14,7 +14,7 @@ from research_harness.schemas.validator import validate_named_schema
 from research_harness.evaluation_vault import sealed_bank_metadata
 from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
 
-PLANNING_POLICY_VERSION = 26
+PLANNING_POLICY_VERSION = 25
 
 
 class StaleResearchWork(ValueError):

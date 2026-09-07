@@ -56,7 +56,7 @@ The scheduling unit does not define the scope of a study-design amendment. In th
 2026-09-07 continuation, a completed one-off diagnostic consumed its permission;
 the planner prepared another diagnostic before scope review rejected it, then
 selected another one-off amendment. Repeating this pattern spends planning,
-implementation and protocol review on each development step. Policy 26 allows the
+implementation and protocol review on each development step. Planner guidance allows the
 planner to consider a finite adaptive development procedure instead. It must name
 the earlier restrictions it replaces, permitted data and changes, aggregate trial
 and compute limits, continuation and stopping rules, and the final freeze.
