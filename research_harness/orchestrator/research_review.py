@@ -150,7 +150,13 @@ def analysis_input_bundle(destination: Path, packet: dict[str, Any]) -> dict[str
         path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
         references[key] = {'path': str(path.resolve()),
                            'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
-        submitted[key] = {name: item for name, item in value.items() if name in selected} if isinstance(value, dict) else {}
+        if key == 'execution_inventory':
+            submitted[key] = {**value, 'groups': {
+                group: {name: item for name, item in entries.items() if name in selected}
+                for group, entries in value.get('groups', {}).items()
+            }}
+        else:
+            submitted[key] = {name: item for name, item in value.items() if name in selected} if isinstance(value, dict) else {}
     submitted['evidence_sections'] = references
     submitted['reading_contract'] = (
         'Answer the selected question, not a full implementation/protocol audit. Start with supplied measurement_facts and selected evidence. '

@@ -87,11 +87,21 @@ def test_review_bundle_preserves_evidence_and_denies_self_replay(tmp_path):
     assert json.loads(Path(history['path']).read_text()) == packet['development_executions']
     assert hashlib.sha256(Path(history['path']).read_bytes()).hexdigest() == history['sha256']
     analysis = {'question': {'evidence_ids': ['selected']},
+                'execution_inventory': {'base_path': '/tree', 'scope': 'Reservations and actual runner states.',
+                    'groups': {'baseline_preflight': {
+                        'selected': {'runner_status': 'timeout', 'runner_receipt_exists': True},
+                        'older': {'runner_status': 'completed', 'runner_receipt_exists': True}}, 'nodes': {}}},
                 'development_evidence': {'selected': {'count': 7}, 'older': {'count': 3}},
                 'measurement_facts': {'selected': {'pointer': '/count', 'value': 7}}}
     focused = analysis_input_bundle(tmp_path / 'analysis', analysis)
     assert focused['development_evidence'] == {'selected': {'count': 7}}
     assert focused['measurement_facts'] == analysis['measurement_facts']
+    inventory = focused['execution_inventory']
+    assert inventory['base_path'] == '/tree'
+    assert inventory['groups']['baseline_preflight'] == {
+        'selected': {'runner_status': 'timeout', 'runner_receipt_exists': True}}
+    archived_inventory = focused['evidence_sections']['execution_inventory']
+    assert json.loads(Path(archived_inventory['path']).read_text()) == analysis['execution_inventory']
     archived = focused['evidence_sections']['development_evidence']
     assert json.loads(Path(archived['path']).read_text()) == analysis['development_evidence']
     assert hashlib.sha256(Path(archived['path']).read_bytes()).hexdigest() == archived['sha256']
