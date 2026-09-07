@@ -116,3 +116,29 @@ Luna가 제출한 amendment에는 이전 900초 실행을 “rejected for scope 
 16:37:24 복구 검토 `0318f493…`가 508.6초에 승인됐다. 사용량은 input 92,714, output 27,804이며 reasoning 27,452는 output에 포함된다. 검토 evidence는 앞선 learner launch가 timeout으로 끝났음을 정확히 적었지만 proposal 원문의 잘못된 “before execution” 서술을 수정 요구하지 않았다. 원문과 판단의 불일치는 남아 있으며 출판 이력의 출처 확인에서 처리해야 한다. 승인은 one-cell·one-seed·four-episode 개발 진단의 설계만 대상으로 한다. 정확한 소스 binding과 독립 검토·실행이 여전히 필요하다.
 
 같은 배치는 감독 호출 없이 research work decision 183,036 bytes로 연결됐다. `35e6dd5`의 실제 진전 연쇄가 확인됐지만 그 자체가 과학적 진전은 아니다.
+
+## 정상적인 영·음수 결과를 결측으로 만드는 관측 경계
+
+16:40:13 Luna가 work `4c010517…`을 선택했다. 동일한 300초 one-cell·seed17·four-episode 비교이며 앞선 timeout을 정확히 보존했다. 그러나 required_observations에 10개 지지 count 외에 engine_transition_validity와 두 효과 metric을 넣었다. 기존 host는 모든 의존 값에 >0을 적용하여 정상적인 영·음수 효과도 해석 불가능하게 만들었다.
+
+`393e497`은 사전 observation binding의 value_kind를 support_count와 measurement로 구분한다. 전자는 양수 지지·유효성 조건을 유지하고 후자는 유한한 값만 요구한다. 독립 검토는 효과를 양수 관문으로 취급하거나 필수 지지를 measurement로 우회하는 바인딩을 거절해야 한다. 과거 과학적 결과를 재분류하지 않는다. 실제 계획 이름을 사용한 합성 경계 재현은 `162855/signed-observation-boundary-verification.json`이다. 연구 결과가 아니다. 관련 56개 검사를 실행했다.
+
+이 변경을 실행 전 MCP에 반영하기 위해 16:43:57 supervisor 3637069를 종료했다. 해당 budget을 가진 프로세스가 모두 정리된 것을 확인한 뒤 16:44:13 `luna-publication-e2e-20260907-164413`에서 동일 work를 재개했다. 과학적 source나 저장 계획을 root가 변경하지 않았다.
+
+16:46 `071a5eb`은 신규 observation_contract에 value_kind 명시를 요구하여 누락을 유료 검토 전 복구 가능한 오류로 처리한다. 저장된 과거 계획의 스키마 및 과거 수집 결과는 유지한다. 진행 중 MCP는 이 후속 검사를 로드하기 전에 시작했으므로 현재 prepared metadata에는 아직 value_kind가 없다.
+
+16:50 이전 scope `8b18df20…`는 eligible_for_source_review로 완료됐다. 사용량 input 69,081 / output 15,405, reasoning 14,502 포함. 이번 판단은 timeout과 “실행 전 거절” 서술의 불일치를 명시하고, 새 entry31의 독립적인 작은 진단 허가와 구분했다. 이후 source review `c4086d94…`에 83,273 bytes가 접수됐고 value_kind 검토 지침을 포함함을 확인했다. 아직 실행 영수증은 없다. 완료 후 확인할 스크립트는 `164413/verify_registered_learning.py`로 준비했으며 미실행이다.
+
+16:57 source review `c4086d94…`는 one-cell 코드에 남은 six-cell/two-seed required_ok 조건을 이유로 거절했다. 현재 실험에서 도달 불가능한 count 조건이 valid run에도 false support-failure를 추가하는 구현 결함이다. root가 learner를 수정하지 않았고 Luna가 16:58 같은 work에서 해당 조건을 수정하기 시작했다. 검토는 관측 종류 누락을 명시하지 않았으며 첫 구체적 결함을 근거로 거절했다. 실제 실험은 아직 시작되지 않았다.
+
+감독 에이전트가 검토 대기 중 300초 runner 예산 초과를 잘못 언급했지만 최종 MCP 거절을 받은 후에는 실행 전 거절로 정확히 정정했다. 중간 서술은 실행 영수증이 아니다. `3fb8ef1`은 완성된 새 실행 요청도 직접 MCP로 전달하게 하며, 준비 또는 수정이 필요한 단계는 감독 모델을 유지한다. 실제 첫 적용은 아직 확인하지 않았다.
+
+17:00 이후 원인 두 가지를 추가로 확인했다. 범위 재검토 `bbd12e54…`는 앞선 `8b18df20…`와 모델·지침·스키마 및 모든 범위 근거가 같고 prior_scope_context만 추가됐다. `7e01f93`은 이 경우 해시가 검증된 원래 범위 영수증을 재사용한다. 실제 두 요청의 비교 및 0-model-call 재현은 `164413/unchanged-scope-reuse-verification.json`에 남겼다. 진행 중이던 재검토는 중단하지 않았고 수정된 소스는 별도 검토 `4cef5274…`로 이어졌다.
+
+`f19fd4d`는 request_path 업데이트에 대해 스키마·소스 참조 검증이 끝난 뒤에만 canonical dispatch를 교체한다. content로 고정된 소스에 replacements를 추가하는 잘못된 패치는 기존 요청을 오염시키지 않고 rejected_dispatch_request.json에 보존된다. 기존 회귀에 실제 오류 구조를 추가해 원본 bytes 보존과 정상 후속 실행을 확인했다. 소스 정규화 자체가 content+replacements를 생성한 것이 아니라 잘못된 업데이트가 거절된 뒤에도 저장된 것이 문제였다.
+
+17:11:31 `4cef5274…` source review가 600초 timeout으로 종료됐다. 작업은 checkpoint, new_observation=false이며 learner는 실행되지 않았다. 소유 프로세스 정리를 확인하고 17:13:36 `luna-publication-e2e-20260907-171336`에서 재개했다. 첫 직접 호출은 value_kind 누락을 0-model-call로 거절했다. Luna는 이를 메타데이터 오류로 정확히 분류했다.
+
+하지만 metadata 수정을 위해 과거 준비 source를 다시 등록하면서 앞서 고친 gate를 되돌렸다. bind_work는 이전 source를 prior_prepared_implementation으로 옮겼으므로 최신 준비본으로 잘못 표시한 것은 아니었다. root가 추가한 오류 안내의 design_experiment_template 경로가 소스 재선택을 유도했다. `97c952e`에서 최신 저장 dispatch의 observation_bindings만 updates로 수정하도록 안내를 바로잡았다. 관련 기존 control 42개 검사와 diff check를 실행했다.
+
+17:17:49 `fbc30456…` 검토가 되돌아간 six-cell gate를 거절했다. Luna는 types를 유지한 채 gate를 다시 수정했다. 17:18:51 이후 새 source review `917da01d…`에 104,682 bytes가 접수됐다. source bytes는 앞선 corrected-timeout 4cef와 정확히 같다. experiment.py SHA256=31669f107ebe1bf42b488ca5d167f17c1d68c07146bfa43991ca7d31fd186a23. 13개 binding 중 두 효과는 measurement, count와 engine validity는 support_count이다. scope는 기존 bbd12 영수증을 재사용하며 두 번의 source 제출 모두 새 scope 모델 호출 없이 진행됐다. 아직 formal learner 실행은 없다.
