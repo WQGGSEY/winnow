@@ -1743,8 +1743,8 @@ def _sync_terminal_thread_index(repo: Path, tid: str, outcome: str | None) -> No
     )
 
 
-def resume_saved_preflight(repo: Path, tid: str, model: str, active_child: dict) -> int | None:
-    """Replay a transport checkpoint through the same MCP boundary, without a coordinator LLM."""
+def resume_known_research_step(repo: Path, tid: str, model: str, active_child: dict) -> int | None:
+    """Dispatch a recorded execution checkpoint or next planning step through MCP."""
     import subprocess
     import uuid
     from research_harness.adapters.codex_cli import CodexProcessSession
@@ -1754,16 +1754,24 @@ def resume_saved_preflight(repo: Path, tid: str, model: str, active_child: dict)
         return -signal.SIGTERM
     thread = _thread_dir(repo, tid)
     work = current_work(thread)
-    if (work.get('status') != 'planned'
-            or work.get('outcome', {}).get('execution_result') != 'checkpoint'
-            or work.get('next_tool_to_call') != 'execute_baseline_preflight'):
-        return None
-    handoff = execution_handoff(thread, work)
-    if not handoff:
+    tool = work.get('next_tool_to_call')
+    if work.get('status') == 'completed' and tool == 'plan_research_work':
+        arguments = {'thread_id': tid}
+        response_name = 'supervisor_plan.jsonl'
+        message = '완료된 작업의 다음 연구 판단을 MCP 계획 담당자에게 직접 요청합니다.'
+    elif (work.get('status') == 'planned'
+            and work.get('outcome', {}).get('execution_result') == 'checkpoint'
+            and tool == 'execute_baseline_preflight'):
+        handoff = execution_handoff(thread, work)
+        if not handoff:
+            return None
+        arguments = {**handoff['arguments'], 'thread_id': tid}
+        response_name = 'supervisor_resume.jsonl'
+        message = '저장된 개발 실험 체크포인트를 MCP로 직접 재개합니다. 새 연구 판단은 수행하지 않습니다.'
+    else:
         return None
     request = {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {
-        'name': 'execute_baseline_preflight',
-        'arguments': {**handoff['arguments'], 'thread_id': tid},
+        'name': tool, 'arguments': arguments,
     }}
     mcp = ResearchHarnessMcp.from_settings(repo, load_settings(repo))
     token = uuid.uuid4().hex
@@ -1772,8 +1780,8 @@ def resume_saved_preflight(repo: Path, tid: str, model: str, active_child: dict)
     venv_bin = Path(__file__).resolve().parents[1] / 'venv/bin'
     if venv_bin.is_dir():
         env['PATH'] = f"{venv_bin}{os.pathsep}{env.get('PATH', '')}"
-    response_path = thread / 'production/research_control/work' / work['work_id'] / 'supervisor_resume.jsonl'
-    _log(thread / 'supervisor.log', '저장된 개발 실험 체크포인트를 MCP로 직접 재개합니다. 새 연구 판단은 수행하지 않습니다.')
+    response_path = thread / 'production/research_control/work' / work['work_id'] / response_name
+    _log(thread / 'supervisor.log', message)
     with response_path.open('w') as output:
         process = subprocess.Popen([mcp.command, *mcp.args], cwd=repo, env=env,
                                    stdin=subprocess.PIPE, stdout=output, stderr=output,
@@ -1790,7 +1798,7 @@ def resume_saved_preflight(repo: Path, tid: str, model: str, active_child: dict)
             session.terminate(force=True)
             active_child.update(pid=None, session=None)
     if code:
-        if current_work(thread).get('execution_phase') == 'implementation_review':
+        if tool == 'execute_baseline_preflight' and current_work(thread).get('execution_phase') == 'implementation_review':
             from research_harness.orchestrator.research_control import finish_work
             finish_work(thread, {'status': 'checkpoint', 'reason': f'Checkpoint MCP process exited {code} before experiment launch.'})
         return code
@@ -1801,14 +1809,14 @@ def resume_saved_preflight(repo: Path, tid: str, model: str, active_child: dict)
             continue
         if response.get('id') == 1:
             if 'error' in response:
-                reason = 'Checkpoint MCP replay failed: ' + str(response['error'])
+                reason = 'Research MCP step failed: ' + str(response['error'])
                 latest = current_work(thread)
-                if latest.get('execution_phase') == 'implementation_review':
+                if tool == 'execute_baseline_preflight' and latest.get('execution_phase') == 'implementation_review':
                     from research_harness.orchestrator.research_control import finish_work
                     finish_work(thread, {'status': 'checkpoint', 'reason': reason})
                 raise RuntimeError(reason)
             return WORK_UNIT_EXIT_CODE
-    raise RuntimeError('Checkpoint MCP replay returned no response')
+    raise RuntimeError('Research MCP step returned no response')
 
 
 def watch_thread(
@@ -1935,7 +1943,7 @@ def watch_thread(
     rate_limit_backoff = rate_limit_backoff_initial
     rate_limit_armed = False  # toggled after a fast-fail cycle
     resume_without_idle = False
-    allow_checkpoint_resume = True
+    allow_direct_resume = True
     while True:
         terminal, outcome = is_terminal(repo, tid)
         if terminal:
@@ -2011,8 +2019,8 @@ def watch_thread(
             continue
         spawn_started = time.time()
         try:
-            exit_code = resume_saved_preflight(repo, tid, model, active_child) if allow_checkpoint_resume else None
-            allow_checkpoint_resume = exit_code is None
+            exit_code = resume_known_research_step(repo, tid, model, active_child) if allow_direct_resume else None
+            allow_direct_resume = exit_code is None
             if exit_code is None:
                 if interrupted['flag']:
                     continue

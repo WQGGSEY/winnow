@@ -23,7 +23,8 @@ from unittest import mock
 from research_harness import thread_supervisor as ts
 
 
-def test_saved_preflight_checkpoint_replays_exact_mcp_request_without_coordinator(tmp_path, monkeypatch):
+@pytest.mark.parametrize('planning', [False, True])
+def test_known_research_step_dispatches_exact_mcp_request_without_coordinator(tmp_path, monkeypatch, planning):
     import sys
     monkeypatch.setattr(ts, '__file__', str(tmp_path / 'research_harness/thread_supervisor.py'))
     (tmp_path / 'venv/bin').mkdir(parents=True)
@@ -33,13 +34,15 @@ def test_saved_preflight_checkpoint_replays_exact_mcp_request_without_coordinato
     request_path = directory / 'dispatch_request.json'
     request_path.write_text(json.dumps({'thread_id': 'thread', 'work_id': 'work', 'experiment_plan': {}}))
     state = thread / 'production/research_control/current.json'
-    state.write_text(json.dumps({'work_id': 'work', 'status': 'planned',
-        'next_tool_to_call': 'execute_baseline_preflight', 'outcome': {'execution_result': 'checkpoint'}}))
+    tool = 'plan_research_work' if planning else 'execute_baseline_preflight'
+    arguments = {'thread_id': 'thread'} if planning else {'thread_id': 'thread', 'request_path': str(request_path)}
+    state.write_text(json.dumps({'work_id': 'work', 'status': 'completed' if planning else 'planned',
+        'next_tool_to_call': tool, 'outcome': {'execution_result': 'checkpoint'}}))
     script = (
         'import json,sys,os\n'
         'request=json.loads(sys.stdin.readline())\n'
-        'assert request["params"]["name"] == "execute_baseline_preflight"\n'
-        f'assert request["params"]["arguments"] == {{"thread_id":"thread","request_path":{str(request_path)!r}}}\n'
+        f'assert request["params"]["name"] == {tool!r}\n'
+        f'assert request["params"]["arguments"] == {arguments!r}\n'
         'assert os.environ["RESEARCH_HARNESS_MODEL"] == "gpt-5.6-luna"\n'
         f'assert os.environ["PATH"].split(os.pathsep)[0] == {str(Path(ts.__file__).resolve().parents[1] / "venv/bin")!r}\n'
         'print(json.dumps({"jsonrpc":"2.0","id":1,"result":{"content":[]}}))\n'
@@ -51,14 +54,16 @@ def test_saved_preflight_checkpoint_replays_exact_mcp_request_without_coordinato
                         pytest.fail('Checkpoint resumption must not ask a coordinator LLM'))
     original = request_path.read_bytes()
     active = {}
-    assert ts.resume_saved_preflight(tmp_path, 'thread', 'gpt-5.6-luna', active) == ts.WORK_UNIT_EXIT_CODE
+    assert ts.resume_known_research_step(tmp_path, 'thread', 'gpt-5.6-luna', active) == ts.WORK_UNIT_EXIT_CODE
     assert active == {'pid': None, 'session': None}
     assert request_path.read_bytes() == original
-    assert json.loads((directory / 'supervisor_resume.jsonl').read_text())['id'] == 1
+    response_name = 'supervisor_plan.jsonl' if planning else 'supervisor_resume.jsonl'
+    assert json.loads((directory / response_name).read_text())['id'] == 1
     work = json.loads(state.read_text())
     work['outcome']['execution_result'] = 'rejected'
+    work['status'] = 'planned'
     state.write_text(json.dumps(work))
-    assert ts.resume_saved_preflight(tmp_path, 'thread', 'gpt-5.6-luna', active) is None
+    assert ts.resume_known_research_step(tmp_path, 'thread', 'gpt-5.6-luna', active) is None
 
 
 def test_watchdog_tracks_launched_preflight_outside_claim_graph(tmp_path):
@@ -1777,7 +1782,7 @@ class WatchLoopTests(unittest.TestCase):
                 with mock.patch.object(ts.signal, 'signal', side_effect=lambda sig, fn: handlers.update({sig: fn})), \
                      mock.patch.object(ts, 'advance_resumable_reorientation', return_value=None), \
                      mock.patch.object(ts, 'build_resume_prompt', side_effect=prompt), \
-                     mock.patch.object(ts, 'resume_saved_preflight', side_effect=handoff), \
+                     mock.patch.object(ts, 'resume_known_research_step', side_effect=handoff), \
                      mock.patch.object(ts, 'spawn_codex_session', return_value=75) as spawn:
                     result = ts.watch_thread(repo, 't1', max_cycles=1)
                 self.assertEqual(result['status'], 'interrupted')
