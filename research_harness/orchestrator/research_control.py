@@ -47,6 +47,9 @@ def execution_handoff(thread: Path, work: dict[str, Any]) -> dict[str, Any] | No
 
     if work.get('requires_replanning') or work.get('status') != 'planned':
         return None
+    if (work.get('next_tool_to_call') == 'design_experiment_template'
+            and work.get('prepared_implementation', {}).get('execution_contract_errors')):
+        return None
     if work.get('protocol_review_checkpoint') and work.get('protocol_review_dispatch_path'):
         saved = Path(work['protocol_review_dispatch_path']).resolve()
         saved.relative_to(thread.resolve())
@@ -61,7 +64,8 @@ def execution_handoff(thread: Path, work: dict[str, Any]) -> dict[str, Any] | No
             return {'request_path': str(saved.resolve()), 'tool': work['next_tool_to_call'],
                     'arguments': {'request_path': str(saved.resolve())},
                     'usage': 'This is a transport/budget checkpoint, not an implementation objection. Resume this exact saved request unchanged when the invocation budget permits. Do not inspect review logs or serialized review requests, rewrite the experiment, or invent a scientific repair for a CLI timeout. The harness retains completed inspection observations for the reviewer.'}
-        return {'request_path': str(saved.resolve()),
+        return {'request_path': str(saved.resolve()), 'tool': work['next_tool_to_call'],
+                'arguments': {'thread_id': thread.name, 'request_path': str(saved.resolve())},
                 'usage': 'Resume this current work request. Apply reviewer feedback using updates; do not reconstruct historical requests.'}
     if work.get('decision', {}).get('kind') != 'diagnostic_experiment':
         return None

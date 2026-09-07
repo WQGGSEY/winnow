@@ -564,7 +564,7 @@ TOOL_DEFINITIONS = [
             f"{PROFESSOR_CONTRACT}\n\n"
             "Prepare or repair code within the SAME planned execution or protocol-revision work: supply work_id and plan_metadata; node_id is not needed. This writes versioned source_files without execution or scientific approval, records exact paths/hashes, and keeps the scientific work planned with the same work_id. Do not create a separate implementation work. For a qualified formal claim, instead supply node_id without work_id to install its normal experiment template, then execute with the existing scientific work_id. Submit a "
             "plan_metadata dict (task_class, objective, entrypoint, resources, "
-            "expected_outputs, baseline_evidence_requirements, source_files). "
+            "expected_outputs, baseline_evidence_requirements, source_files). For work_id execution, include the full experiment_plan contract in plan_metadata; the harness supplies omitted plan_id/node_id and returns execution_contract_errors for missing fields while preserving source. A complete contract returns execution_request_path for execute_baseline_preflight; plan_metadata_path is a template, never a dispatch request. "
             "Reuse or revise source_files without retranscribing them: supply {path, purpose, from_path:absolute_existing_thread_file, sha256:base_file_hash, replacements:[{old:exact_text,new:replacement_text}]} instead of content. Each old string must match exactly once; omit replacements to copy unchanged bytes. Original files are not edited. "
             "source_files paths starting with `_lib/` are shared across the "
             "whole thread (do this once at the root); other paths land under "
@@ -3352,11 +3352,32 @@ def _handle_design_experiment_template_locked(args: dict[str, Any]) -> dict[str,
                     'plan_metadata_path': str((draft / PLAN_METADATA_FILENAME).resolve()),
                     'source_diagnostics': python_source_diagnostics(source_files),
                     'new_observation': False, 'scientific_verdict': 'unverified'}
-        _write(work_dir / 'implementation_preparations' / (template_digest + '.json'), prepared)
-        work['prepared_implementation'] = prepared
         if (work['decision']['kind'] in {'diagnostic_experiment', 'competence', 'comparison', 'replication'}
                 and not (thread / 'market/baseline_qualification.json').exists()):
-            work['next_tool_to_call'] = 'execute_baseline_preflight'
+            plan = {**plan_meta, 'source_files': [
+                {'path': item['relative_path'], 'from_path': item['path'], 'sha256': item['sha256'],
+                 'purpose': source.get('purpose', 'Prepared experiment source')}
+                for item, source in zip(sources, source_files)
+            ]}
+            plan.setdefault('node_id', 'n_preflight_' + work['work_id'][:16])
+            plan.setdefault('plan_id', 'plan_' + work['work_id'])
+            schema = _experiment_plan_input_schema()
+            intent = _read_json(thread / 'production/feasibility_envelope.json').get('operator_intent', {})
+            if not intent.get('data_source_anchor'):
+                schema['required'].append('inputs')
+            errors = schema_errors(schema, plan)
+            prepared['execution_contract_errors'] = errors
+            if errors:
+                work['next_tool_to_call'] = 'design_experiment_template'
+            else:
+                request_path = draft / 'execution_request.json'
+                request = {'thread_id': tid, 'work_id': work['work_id'], 'experiment_plan': plan}
+                _write(request_path, request)
+                _write(work_dir / 'dispatch_request.json', request)
+                prepared['execution_request_path'] = str(request_path.resolve())
+                work['next_tool_to_call'] = 'execute_baseline_preflight'
+        _write(work_dir / 'implementation_preparations' / (template_digest + '.json'), prepared)
+        work['prepared_implementation'] = prepared
         _write(thread / 'production/research_control/current.json', work)
         _write(thread / 'production/research_control/work' / work['work_id'] / 'work.json', work)
         return {**work, 'preparation_checkpoint': template_digest}

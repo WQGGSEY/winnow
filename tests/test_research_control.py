@@ -724,8 +724,10 @@ def test_source_preparation_preserves_scientific_work_and_revision_bytes(tmp_pat
     args = {'thread_id': 'thread', 'work_id': work['work_id'],
             'plan_metadata': {'source_files': [{'path': 'prepared.py', 'content': "raise RuntimeError('must not execute during preparation')\n"}]}}
     prepared = mcp_server.handle_design_experiment_template(args)
-    assert prepared['next_tool_to_call'] == 'execute_baseline_preflight'
+    assert prepared['next_tool_to_call'] == 'design_experiment_template'
     revision = prepared['prepared_implementation']
+    assert revision['execution_contract_errors']
+    assert 'execution_request_path' not in revision
     assert prepared['preparation_checkpoint'] == revision['template_digest']
     assert 'research_work_checkpoint' not in prepared
     source = revision['source_files'][0]
@@ -747,6 +749,22 @@ def test_source_preparation_preserves_scientific_work_and_revision_bytes(tmp_pat
     assert latest['source_files'][0]['path'] != source['path']
     assert _hash(Path(source['path'])) == source['sha256']
     assert prepared_implementations(thread) == {revision['evidence_id']: revision, latest['evidence_id']: latest}
+    from research_harness.orchestrator.research_control import execution_handoff
+    from research_harness.orchestrator.experiment_plan import resolve_source_files
+    complete_metadata = {**plan, 'source_files': args['plan_metadata']['source_files']}
+    complete_metadata.pop('plan_id')
+    complete_metadata.pop('node_id')
+    complete = mcp_server.handle_design_experiment_template({**args, 'plan_metadata': complete_metadata})
+    assert complete['next_tool_to_call'] == 'execute_baseline_preflight'
+    complete_revision = complete['prepared_implementation']
+    assert complete_revision['execution_contract_errors'] == []
+    request = json.loads(Path(complete_revision['execution_request_path']).read_text())
+    assert request['work_id'] == work['work_id']
+    assert request['experiment_plan']['claim_under_test'] == plan['claim_under_test']
+    assert resolve_source_files(thread, request['experiment_plan']['source_files'])[0]['content'] == args['plan_metadata']['source_files'][0]['content']
+    handoff = execution_handoff(thread, complete)
+    assert json.loads(Path(handoff['arguments']['request_path']).read_text()) == request
+    assert not list(tree.rglob('runner_result.json'))
     bind_work(thread, work['work_id'], node['id'], plan)
     assert current_work(thread)['status'] == 'running'
 
