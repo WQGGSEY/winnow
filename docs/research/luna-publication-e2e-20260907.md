@@ -76,3 +76,43 @@ Luna는 최종 checkpoint 저장과 strict reload를 평가 앞으로 옮기고,
 측정 자료는 `luna-publication-e2e-20260907-151509/review-context-measurement.json`이다. 실행 중인 복구 검토 `8469c02f…`는 변경 전 입력으로 시작했으며 새 축소 효과를 주장할 수 없다.
 
 축소 점검의 추가 한계: source_workspace의 recurrent_core.py는 등록본과 해시가 다르다. 대조한 차이는 서식·변수 표기 및 checkpoint metadata 항목 등으로, 여기서 동등성을 인증하지 않는다. 축소 점검의 성공을 등록된 전체 소스 조합의 실행 성공으로 승격하지 않으며, 정식 runner에서 고정된 소스가 실행됐는지 별도로 확인한다.
+
+## 승인 후 정식 실행은 시간 초과
+
+복구 검토 `8469c02f…`가 수정본을 승인했다. input 90,429, output 30,333 tokens이며 reasoning 29,438은 output에 포함된다. 이 검토는 축소 전 입력을 사용했다.
+
+정식 LocalRunner는 승인된 네 소스 파일로 실행됐지만 900.029981초에 timeout으로 종료했다. 체크포인트는 scratch seed 17, imitation seed 17, scratch seed 23 세 개가 생성됐다. 마지막 조건과 metrics 집계는 완료되지 않았다. work는 처리 완료 상태지만 outcome은 execution_failed, measurement는 timeout_or_turn_exhausted, scientific_verdict는 unverified다. 처리 완료를 실험 성공으로 해석하지 않는다. 등록 결과 검증 스크립트 `verify_registered_learning.py`는 준비했으나 완료 결과가 없어 실행하지 않았다.
+
+## 정해진 다음 판단에서 감독 호출 제거
+
+`6a04241`은 완료 work의 next_tool_to_call=plan_research_work를 정상 MCP 경계로 직접 연결한다. 과학적 선택은 기존 계획 모델이 수행한다. 이전 배치에서 감독 호출 31,317 bytes를 사용한 뒤 남은 291초가 계획 호출 제한 600초보다 짧아 실제 판단은 호출 전에 정지했다.
+
+`luna-publication-e2e-20260907-154529`의 실제 첫 호출은 research work decision 159,317 bytes이며 감독 LLM 호출은 없다. 이전 실행 응답은 덮어쓰지 않고 supervisor_plan.jsonl에 새 응답을 보존한다. 이 연결 절감은 확인했지만 다음 연구 절차의 유효성이나 강한 결과는 아직 확인하지 않았다.
+
+## Timeout 해석과 축소 진단
+
+직접 연결한 계획은 155초에 완료됐다. Luna는 두 과학적 예측을 모두 unresolved로 남기고, defaultCapture|101 한 cell·seed 17·300초의 같은 초기화 비교를 선택했다. work `dcc7fbbc…`에서 조건당 fine-tuning 4회로 구현했고 등록 전 smoke는 완료됐다. 이 작은 비교의 null 결과만으로 일반적인 학습 한계나 upstream 원인을 입증할 수는 없다.
+
+`4355752`는 직전 실패한 개발 실행의 선언된 출력 디렉터리에 남은 파일 metadata를 다음 계획에 전달한다. 실제 900초 실패에는 파일 3개가 남았지만 이전 계획 입력에서는 누락돼 있었다. 내용은 읽지 않으며 유효 checkpoint·관측·효과로 취급하지 않는다. 현재 선택된 축소 실험은 바꾸지 않았다. 실제 파일 목록의 독립 확인은 `154529/retained-output-inventory-verification.json`에 있다.
+
+## 같은 원문 아래 바뀐 범위 해석
+
+축소 진단의 scope `529f09df…`는 최신 지원 감사가 학습을 허가하지 않는다는 이유로 source review 전에 차단했다. 앞서 7ce780 학습 진단의 scope `fc905b82…`와 등록 프로토콜 및 amendment 이력이 같음을 비교했다. 새 담당자에게는 이전 해석과 소스 승인 기록이 전달되지 않았다.
+
+`a8d1bf9`는 검증된 predecessor receipt의 이전 work·범위 해석·소스 판단·변경 조건을 범위 담당자에게 전달한다. 앞선 승인은 새 진단의 승인으로 이전하지 않으며 해석을 번복할 경우 원문 조항으로 이유를 설명하도록 한다. 실제 이전 승인 trace는 모델 호출 없이 확인했다. `154529/prior-scope-trace-verification.json`에 근거를 남겼다.
+
+Luna는 기존 거절을 무시하지 않고 protocol_revision work `54cc5a25…`를 선택해 작은 학습 진단을 위한 명시적 사전 amendment를 제출했다. 남은 499초가 검토 제한 600초보다 짧아 provider 호출 전에 checkpoint로 종료했다. `96e8d8b`에서 이미 저장된 프로토콜 요청도 새 감독 LLM 없이 직접 재개하도록 연결했다. `luna-publication-e2e-20260907-161249`가 이 요청의 독립 검토부터 이어간다. 학습 개선이나 논문 완성은 아직 없다.
+
+## 프로토콜 검토 복구 입력과 직접 연결의 오류 재시도
+
+16:22:50 amendment 검토가 600초 제한으로 종료됐다. 16:27:35 재개는 복구 관측을 합친 입력 298,440 bytes가 호출당 280,000 bytes를 초과해 provider 호출 전 정지했다. `9ec18c1`은 실제 제출 자료 생성 경로를 재사용하여 분석·프로토콜 검토에도 복구 관측 예산을 적용한다. 원문과 전체 검사 이벤트는 그대로 보존한다. 16:28:55 동일 저장 요청이 276,741 bytes로 접수됐다. 완료된 관측 15개를 전달하고 큰 출력 11개는 파일에 남겼다. 이것은 입력 전송 확인이며 연구 결론 확인은 아니다.
+
+`35e6dd5`는 직접 MCP 처리 후 work가 진전되면 다음 알려진 단계를 감독 모델 없이 연결한다. 실제 예산 오류에서는 오류·시각만 바뀌어 같은 요청을 반복했으므로 `524df33`에서 진전 판단을 work ID·상태·다음 도구 변경으로 좁혔다. 관련 77개 검사와 5개 subtest를 실행했다. 연구 성공 기준은 실제 학습 결과 및 논문 제출 패키지이며 이 검사 결과로 대체하지 않는다.
+
+16:33 `77fc818`에서 실행 목록의 선택 필터를 수정했다. execution_inventory는 groups 아래 노드가 있지만 이전 필터는 최상위 키와 evidence ID를 비교하여 실제 실행 상태를 모두 생략했다. 동일 저장 요청에서 n_preflight_7ce7801496f430f1의 timeout과 runner_receipt_exists=true가 복구되는 것을 모델 호출 없이 확인했다. 근거는 `162855/selected-inventory-verification.json`이다. 진행 중인 복구 검토는 변경 전 입력으로 계속 수행 중이다.
+
+Luna가 제출한 amendment에는 이전 900초 실행을 “rejected for scope before execution”이라고 잘못 설명한 문장이 있다. 실제로 source 승인 후 900초 실행이 이뤄졌고, 이후 별도 축소 계획이 scope에서 차단됐다. 제안서의 잘못된 이력을 root가 직접 수정하거나 검토를 우회하지 않는다. 독립 검토의 최종 판단에서 이 차이를 처리하는지 확인해야 한다.
+
+16:37:24 복구 검토 `0318f493…`가 508.6초에 승인됐다. 사용량은 input 92,714, output 27,804이며 reasoning 27,452는 output에 포함된다. 검토 evidence는 앞선 learner launch가 timeout으로 끝났음을 정확히 적었지만 proposal 원문의 잘못된 “before execution” 서술을 수정 요구하지 않았다. 원문과 판단의 불일치는 남아 있으며 출판 이력의 출처 확인에서 처리해야 한다. 승인은 one-cell·one-seed·four-episode 개발 진단의 설계만 대상으로 한다. 정확한 소스 binding과 독립 검토·실행이 여전히 필요하다.
+
+같은 배치는 감독 호출 없이 research work decision 183,036 bytes로 연결됐다. `35e6dd5`의 실제 진전 연쇄가 확인됐지만 그 자체가 과학적 진전은 아니다.
