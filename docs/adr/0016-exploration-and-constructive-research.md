@@ -49,9 +49,22 @@ spawned through an inherited host research skill, outside adapter reservations.
 Bounded calls now disable native multi-agent tools and host skill discovery.
 The retry reuses the original budget and deadline. The MCP subprocess receives
 the budget path explicitly; inheriting it only in the supervisor environment
-does not propagate it through the CLI MCP boundary. Shell access is still needed
-for research implementation; this quota is not a security boundary against an
-agent deliberately launching an unrelated model client.
+does not propagate it through the CLI MCP boundary. The quota alone is not an
+execution boundary. ResearchWork preparation now uses managed editing and reading
+tools, and research_review analysis/review calls use a thread-scoped read-only MCP.
+They cannot launch native shell commands; fitting and simulation belong to the
+registered runner. The reader also permits framework source inspection, rejects
+mutation tools even when called directly, and excludes the review's own private
+request and event files. This does not turn initial prompt bytes into a token cap.
+
+Interrupted reviews retain successful reads, including MCP reads. Large source or
+data bundles remain at hash-bound materialized paths instead of being inlined into
+an already bounded prompt. Such a recovery retains the reader for missing evidence;
+small fully supplied revisions may still use tool-free synthesis. Unregistered
+execution attempts must be disclosed to scope review as well as source review.
+Their actual stage and the operative protocol determine whether another execution
+is allowed; a transport failure is neither automatic permission nor a scientific
+negative.
 
 ## Bounded-run evidence
 

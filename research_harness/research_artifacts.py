@@ -1,4 +1,4 @@
-"""Bounded, non-executing inspection for the research coordinator."""
+"""Bounded, non-executing inspection for research agents."""
 from __future__ import annotations
 
 import hashlib
@@ -7,15 +7,22 @@ from pathlib import Path
 from typing import Any
 
 
-def read_research_artifact(thread: Path, args: dict[str, Any]) -> dict[str, Any]:
+def read_research_artifact(thread: Path, args: dict[str, Any], *, denied_paths: tuple[Path, ...] = (),
+                           additional_roots: tuple[Path, ...] = ()) -> dict[str, Any]:
     root = thread.resolve()
     path = (root / args.get('path', '.')).resolve()
-    path.relative_to(root)
+    roots = (root, *(item.resolve() for item in additional_roots))
+    if not any(path.is_relative_to(item) for item in roots):
+        raise ValueError('The artifact is outside the inspection roots.')
+    denied = tuple(item.resolve() for item in denied_paths)
+    if any(path.is_relative_to(item) for item in denied):
+        raise ValueError('This artifact is excluded from the inspection.')
     start, limit = args.get('start_line', 1), args.get('max_lines', 120)
     if type(start) is not int or start < 1 or type(limit) is not int or not 1 <= limit <= 500:
         raise ValueError('Use start_line >= 1 and max_lines between 1 and 500.')
     if path.is_dir():
-        entries = [item for item in sorted(path.iterdir()) if item.resolve().is_relative_to(root)]
+        entries = [item for item in sorted(path.iterdir()) if any(item.resolve().is_relative_to(scope) for scope in roots)
+                   and not any(item.resolve().is_relative_to(excluded) for excluded in denied)]
         return {'path': str(path), 'entries': [
             {'name': item.name, 'kind': 'directory' if item.is_dir() else 'file'}
             for item in entries[:200]], 'truncated': len(entries) > 200}

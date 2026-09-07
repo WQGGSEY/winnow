@@ -51,6 +51,31 @@ def test_artifact_inspection_reads_sources_without_execution_or_thread_escape(tm
         assert 'error' in call(path=path)
     assert 'error' in call(path='experiment.py', thread_id='another-thread')
 
+    protected = thread / 'review-private.json'
+    protected.write_text('{}')
+    (thread / 'private-alias').symlink_to(protected)
+    framework = tmp_path / 'research_harness'
+    framework.mkdir()
+    (framework / 'runner.py').write_text('TIMEOUT = 30\n')
+    monkeypatch.setattr(srv, '_repo_root', lambda: tmp_path)
+    def inspect(method, params=None):
+        return srv._handle_request({'id': 1, 'method': method, 'params': params}, {},
+                                  read_only_thread='thread', denied_read_paths=(protected,))
+    catalog = inspect('tools/list')['result']['tools']
+    assert [tool['name'] for tool in catalog] == ['read_research_artifact']
+    for tool in srv.TOOL_DEFINITIONS:
+        if tool['name'] != 'read_research_artifact':
+            assert 'error' in inspect('tools/call', {'name': tool['name'], 'arguments': {}})
+    for path in (str(protected), 'private-alias', '../private.txt'):
+        assert 'error' in inspect('tools/call', {'name': 'read_research_artifact', 'arguments': {'path': path}})
+    for path in ('experiment.py', str(framework / 'runner.py')):
+        result = inspect('tools/call', {'name': 'read_research_artifact', 'arguments': {'path': path}})
+        assert 'result' in result
+    assert 'error' in inspect('tools/call', {'name': 'read_research_artifact', 'arguments': {'thread_id': 'other'}})
+    listing = inspect('tools/call', {'name': 'read_research_artifact', 'arguments': {}})
+    assert not {'review-private.json', 'private-alias'} & {item['name'] for item in json.loads(listing['result']['content'][0]['text'])['entries']}
+    assert not marker.exists()
+
 
 def test_retrieved_references_reach_manuscript_citations_without_changing_baselines(tmp_path, monkeypatch):
     import urllib.error

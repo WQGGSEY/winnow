@@ -54,6 +54,7 @@ class CompletionRequest:
     allow_web_search: bool = False
     event_log_path: Path | None = None
     denied_read_paths: tuple[Path, ...] = ()
+    mcp: ResearchHarnessMcp | None = None
 
 
 @dataclass(frozen=True)

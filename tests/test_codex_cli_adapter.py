@@ -291,17 +291,20 @@ def test_auth_accepts_chatgpt_and_redacts_raw_status() -> None:
     assert runner.calls[0][0] == ["codex", "login", "status"]
 
 
-def test_production_command_disables_execution_tools_and_keeps_per_call_mcp(tmp_path: Path) -> None:
+@pytest.mark.parametrize('reader', [False, True])
+def test_production_command_disables_execution_tools_and_keeps_per_call_mcp(tmp_path: Path, reader: bool) -> None:
     adapter = CodexCliAdapter(codex_path="codex")
+    mcp = ResearchHarnessMcp(
+        command="python",
+        args=("-m", "research_harness.mcp_server", "--repo-root", str(tmp_path)),
+        environment={"COIN_DATA_DIR": "/data/coin"},
+    )
     command = adapter._build_exec_command(
-        request=None,
+        request=CompletionRequest(prompt=AgentPrompt('', ''), model='gpt-5.6-sol',
+                                  cwd=tmp_path, mcp=mcp, allow_local_tools=False) if reader else None,
         model="gpt-5.6-sol",
         cwd=tmp_path,
-        mcp=ResearchHarnessMcp(
-            command="python",
-            args=("-m", "research_harness.mcp_server", "--repo-root", str(tmp_path)),
-            environment={"COIN_DATA_DIR": "/data/coin"},
-        ),
+        mcp=mcp,
     )
 
     start = command.index('--ask-for-approval')
@@ -316,6 +319,7 @@ def test_production_command_disables_execution_tools_and_keeps_per_call_mcp(tmp_
     disabled = {command[index + 1] for index, item in enumerate(command) if item == '--disable'}
     assert {'shell_tool', 'unified_exec', 'js_repl',
             'multi_agent', 'apps', 'plugins', 'remote_plugin'}.issubset(disabled)
+    assert not {'code_mode', 'code_mode_host'} & disabled
     assert command[command.index('multi_agent_v2') - 1] == '--enable'
     assert 'agents.enabled=false' in command
     assert "--approve-for-me" not in command

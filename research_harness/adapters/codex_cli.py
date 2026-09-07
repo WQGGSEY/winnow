@@ -236,6 +236,7 @@ class CodexCliAdapter:
         if request is not None:
             model = request.model
             cwd = request.cwd
+            mcp = request.mcp
         if not model:
             raise ValueError("Codex requests require a model")
         approval = ["--ask-for-approval", "never"]
@@ -246,17 +247,16 @@ class CodexCliAdapter:
             '--enable', 'multi_agent_v2', '--disable', 'multi_agent',
             '-c', 'agents.enabled=false',
         ]
-        coordinator = request is None and mcp is not None
-        if coordinator or os.environ.get('RESEARCH_HARNESS_CALL_BUDGET') or (request is not None and not request.allow_local_tools):
+        if mcp is not None or os.environ.get('RESEARCH_HARNESS_CALL_BUDGET') or (request is not None and not request.allow_local_tools):
             command.extend(['--enable', 'skip_host_skill_discovery', '--disable', 'skill_search'])
         if request is not None and request.allow_web_search:
             command.append('--search')
-        if (request is not None and not request.allow_local_tools) or coordinator:
+        if (request is not None and not request.allow_local_tools) or mcp is not None:
             for feature in (
                 "shell_tool",
                 "unified_exec",
                 "js_repl",
-            ) + (("code_mode", "code_mode_host", "view_image") if not coordinator else ()):
+            ) + (("code_mode", "code_mode_host", "view_image") if mcp is None else ()):
                 command.extend(["--disable", feature])
         command.extend([
             *approval,

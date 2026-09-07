@@ -258,3 +258,20 @@ root는 완료된 실제 아티팩트에서 deterministic worker report 재구�
 22:34:58 실제 후속 work d4a4f86f…가 승인된 Stage1 calibration을 선택했다. Luna는 기존 준비 코드를 재사용하고 현재13개 관측 이름을 연결했다.22:38:06 준비 담당자는 “구현 검토 통과”라고 표현했지만 실제 상태는 준비 완료 후 독립 검토 진입이었다. raw 발언은 검토·실행 증거가 아니며, pending 호출 중 supervisor는 저장 상태에 따라 “독립 구현 검토 중”으로 표시했다.
 
 22:48경 도구 없는 protocol scope 검토가600초에 중단됐다. 실행은 시작되지 않았고 현재 work는 new_observation=false/checkpoint로 보존됐다. source/protocol revision 검토는1200초인데 같은 프로토콜 이력을 해석하는 범위 검토만600초라, 읽기 결과조차 없는 동일 판단을 반복할 위험이 있다. 범위 검토도1200초로 맞췄다. 요청 내용·검토 해시·일반 분석600초·실험 계산 예산과 배치 한도는 유지했다. 기존 범위 검토 회귀에 실제 요청 timeout을 확인하는 assertion을 추가하고 관련15개 검사와diff check를 실행했다. 소유 프로세스 부재를 확인한 뒤22:49:23 배치224923에서 같은 요청을 재개했다. 실제 완료 시간 개선과 학습 결과는 아직 미검증이다.
+
+
+## 검토자의 등록 외 학습 실행과 읽기 전용 경계
+
+22:53경 범위 검토58a54f50…가 eligible_for_source_review로 완료됐다. 새로운 entry33의 Stage1 허가는 이전200epoch 실행과 별개라는 판단이다. input70,880/output13,623이며 두 번째 호출은600초 미만에 끝났다. 따라서1200초 조정이 이번 완료의 원인이라고 단정할 수 없다. source 검토bf9cb109…가85,505bytes로 시작됐다.
+
+root가 처음 확인한 학습 시도 두 건은 torch import에서 실패했다. 배치를 중단한 후 전체 로그를 확인하니 실제로는 네 건이었다. 세 번째도 import에서 실패했으나 네 번째는 `/dev/shm` 임시 디렉터리와 PYTHONPATH를 설정해 unshuffled/shuffled1000epoch fitting을 마친 뒤 predict에서 `KeyError: split_index`로 실패했다. 정확도 출력이나 저장 actor는 확인되지 않았다. 이것은 등록 runner 실행이 아니며 검토자 shell의 읽기 전용 파일 권한만으로 메모리 내 학습을 막을 수 없다는 실제 사례다. “두 import 실패가 전부”라는 초기 관측을 정정했다. 네 호출의 원문과 오류는 production/research_control/review_execution_attempts/bf9cb109….json에 보존하고 preparation_execution_disclosure의 별도 필드로 전달했다. 소스와 프로토콜 판단을 root가 대신 수정하지 않았다.
+
+이제 research_review의 분석·소스·프로토콜 검토는 native shell/unified_exec/JS REPL을 사용하지 않는다. CompletionRequest에 검토자 전용 MCP를 연결하며, 서버는 현재thread와 framework 소스의 read_research_artifact만 노출하고 다른 MCP 호출을 서버 경계에서 거부한다. 다른 thread, 경로 이탈, 제외한 현재 검토 request/events/raw response 접근도 거부한다. CLI의 Code Mode host는 MCP 호출에 필요하므로 유지하되 외부 앱·플러그인·native 위임은 기존과 같이 비활성화한다. 검토자는 코드·JSON·해시를 읽고 판단하며, 새 fitting이나 rollout은 등록된 runner의 역할이다.
+
+또한 실제 d4 요청은 약1MB saved_teacher_metrics.json을 source_files에 포함한다. 기존 중단 복구는 모든source를inline으로 되돌려280KB 입력 한도를 넘겼다. 전체source bundle이64KB보다 크면 검증된 materialized 경로와 해시를 유지하고 읽기 전용 도구로 부족한 부분을 조회한다. 작은source만 가진 복구는 기존inline/tool-free 경로를 유지한다. 동일 문제가 bounded revision에서 반복되지 않도록 큰bundle은 이 모드에서 제외했다. 성공한 MCP 읽기도 완료된 검사 기록에 포함하며 실패한 읽기는 제외한다.
+
+실제 설치된 Codex CLI에 로컬 무인증Responses 모의 응답기를 붙여 검토 CompletionRequest를 구동했다. 첫 경로 선택은 존재하지 않는 draft라 읽기에 실패했고 실제materialized 경로로 수정했다. 최종 목록은 read_research_artifact와native 편집·자료목록·이미지 도구 등6개이며 셸·외부앱·위임·연구실행 도구가 없다. 실제 소스 SHA473bddd189a0201a33ad339bbef5fe280bfa258cf9fd1a59170ce5ba65e04e7c 읽기가 성공했다. native patch의 임시marker 쓰기는 읽기 전용sandbox에서 거절됐으며 marker가 생성되지 않았다. 실제 MCP stdio 프로세스도 실행도구 직접 호출과 제외경로 읽기를 거부했다. 외부 모델 API·학습·시뮬레이션은 호출하지 않은 검사다.
+
+중단된 실제bf9 요청으로 모델 호출 전 입력을 캡처한 검사는 기존 성공 읽기17건과3개source의원본해시를 유지한166,562bytes 요청을 확인했다. 이후 추가 실행 공개기록을 반영했으므로 실제 재개에서는 범위 판단도 그 새 기록을 읽어야 한다. 앞선 범위 승인으로 이 실행을 자동 허용하지 않는다. 검증자료는224923/reviewer-tool-inventory.json, readonly-mcp-stdio-verification.json, readonly-review-recovery-verification.json 및 대응스크립트에 보존했다.
+
+관련166개 검사와8개subtest를 실행했다. 범위 판단에 공개기록을 전달하는 후속변경 뒤 관련38개와3개subtest도 실행했다. 큰 파일 복구 회귀의 첫 실행은 잘못된 조건 적용 위치 때문에 실패했고, 기존 objection 검증을 복원하고 실제inline 경계에 조건을 적용한 후 통과했다. 초기probe의경로오류와캡처스크립트의schema filename비교오류도수정했다. 이는실제연구성과나출판수준논문생성의증거가아니다.

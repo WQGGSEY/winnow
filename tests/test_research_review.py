@@ -302,12 +302,67 @@ def test_inspection_budget_prioritizes_experiment_source_over_recent_framework_r
     assert recovered['source_supplied_inline']
 
 
+def test_interrupted_large_source_review_keeps_bounded_reader_and_exact_references(tmp_path, monkeypatch):
+    import hashlib
+    import shutil
+    from research_harness.adapters.codex_cli import CodexCliError
+
+    repo = tmp_path / 'repo'
+    schemas = repo / 'research_harness/schemas'
+    schemas.mkdir(parents=True)
+    shutil.copy(Path(__file__).resolve().parents[1] / 'research_harness/schemas/research_execution_review_response.schema.json', schemas)
+    thread = repo / 'runs/threads/t'
+    thread.mkdir(parents=True)
+    source = thread / 'saved_table.json'
+    source.write_text(json.dumps({'rows': ['saved measurement'] * 60000}))
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    packet = {'decision_scope': 'development_execution',
+              'experiment_plan': {'source_files': [{'path': source.name, 'content': source.read_text()}]},
+              'execution_source_manifest': [{'relative_path': source.name, 'path': str(source), 'sha256': digest}]}
+    budget = tmp_path / 'budget.json'
+    budget.write_text(json.dumps({'max_prompt_bytes': 100000, 'max_call_prompt_bytes': 16000}))
+    monkeypatch.setenv('RESEARCH_HARNESS_CALL_BUDGET', str(budget))
+    requests = []
+    def complete(request):
+        requests.append(request)
+        assert len((request.prompt.instructions + request.prompt.input).encode()) < 16000
+        assert not request.allow_local_tools
+        assert request.mcp is not None and '--read-only-thread' in request.mcp.args
+        assert '--deny-read-path' in request.mcp.args
+        submitted = json.loads(request.prompt.input)
+        reference = submitted['experiment_plan']['source_files'][0]
+        assert 'content' not in reference
+        assert reference['materialized_source']['sha256'] == digest
+        if len(requests) == 1:
+            observation = {'type': 'item.completed', 'item': {'type': 'mcp_tool_call',
+                'server': 'research_harness', 'tool': 'read_research_artifact',
+                'arguments': {'path': str(source), 'json_pointer': '/rows/0'}, 'error': None,
+                'result': {'content': [{'type': 'text', 'text': '{"value":"saved measurement"}'}]}}}
+            failed = {'type': 'item.completed', 'item': {**observation['item'],
+                      'error': {'message': 'failed read'}, 'result': None}}
+            request.event_log_path.write_text(json.dumps(observation) + '\n' + json.dumps(failed) + '\n{"type":')
+            raise CodexCliError('interrupted')
+        assert submitted['completed_inspection']['observations'][0]['output'] == '{"value":"saved measurement"}'
+        assert len(submitted['completed_inspection']['observations']) == 1
+        return CompletionResult(json.dumps({'decision': 'approve', 'reason': 'Bound recorded table.',
+            'evidence': ['saved_table.json'], 'required_work': [], 'next_steps': [],
+            'blocking_basis': [], 'observation_checks': []}), AgentUsage(), None)
+    with patch('research_harness.orchestrator.research_review.CodexCliAdapter.complete', side_effect=complete):
+        with pytest.raises(CodexCliError):
+            review_research_packet(repo, thread / 'review', packet, purpose='Inspect saved data binding.')
+        result = review_research_packet(repo, thread / 'review', packet, purpose='Inspect saved data binding.')
+        assert result['assessment']['decision'] == 'approve'
+        assert review_research_packet(repo, thread / 'review', packet, purpose='Inspect saved data binding.') == result
+    assert len(requests) == 2
+
+
 @pytest.mark.parametrize('scope_status,execution_scope', [('answered', 'eligible_for_source_review'),
     ('answered', 'blocked'), ('unresolved', 'unresolved')])
 def test_protocol_interpretation_is_preserved_across_implementation_revisions(tmp_path, scope_status, execution_scope):
     from research_harness.orchestrator.research_review import ProtocolScopeNeedsReplanning
     packet = {'decision_scope': 'development_execution', 'work_decision': {'test': 'Compare matched controls.'},
               'development_executions': {'prior_control': {'execution_status': 'completed'}},
+              'preparation_execution_disclosure': {'attempts': [{'stage': 'fit', 'registered': False}]},
               'registered_protocol': {'notes': 'Keep the original outcome.'},
               'protocol_note_history': {'entries': [{'notes': 'Keep the original outcome.'},
                                                     {'notes': 'A later confirmation must use unused inputs.'}]},
@@ -325,6 +380,7 @@ def test_protocol_interpretation_is_preserved_across_implementation_revisions(tm
         seen.append(value)
         if 'amendment_history' in value:
             assert value['development_executions'] == packet['development_executions']
+            assert value['preparation_execution_disclosure'] == packet['preparation_execution_disclosure']
             assert value['prior_scope_context'] == prior_scope
             assert not request.allow_local_tools
             assert request.timeout_seconds == 1200

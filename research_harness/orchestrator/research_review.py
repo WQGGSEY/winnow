@@ -4,12 +4,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
 
 from research_harness.adapters.codex_cli import CodexCliAdapter
-from research_harness.agent_runtime import research_model, model_reasoning_effort, AgentPrompt, CompletionRequest
+from research_harness.agent_runtime import research_model, model_reasoning_effort, AgentPrompt, CompletionRequest, ResearchHarnessMcp
 from research_harness.schemas.validator import validate_named_schema
 
 
@@ -23,6 +24,11 @@ class ProtocolScopeNeedsReplanning(ValueError):
     def __init__(self, analysis: dict[str, Any]):
         self.analysis = analysis
         super().__init__('Protocol scope needs resolution before source approval: ' + analysis['assessment']['answer'])
+
+
+def _inline_review_sources(packet: dict[str, Any]) -> bool:
+    return len(json.dumps(packet.get('experiment_plan', {}).get('source_files', []),
+                          ensure_ascii=False).encode()) <= 64000
 
 
 def predecessor_review_delta(thread: Path, work: dict[str, Any], packet: dict[str, Any]) -> dict[str, Any] | None:
@@ -82,7 +88,7 @@ def predecessor_review_delta(thread: Path, work: dict[str, Any], packet: dict[st
             'prior_work_decision': previous_packet.get('work_decision'),
             'prior_protocol_scope_analysis': previous_packet.get('protocol_scope_analysis'),
             'changed_plan_fields': changed_fields, 'changed_conditions': changed_conditions,
-            'bounded_revision': prior_decision == 'approve' and not changed_conditions and not (set(changed_fields) - {'node_id', 'workspace'}),
+            'bounded_revision': prior_decision == 'approve' and not changed_conditions and not (set(changed_fields) - {'node_id', 'workspace'}) and _inline_review_sources(packet),
             'scope': 'Start from the prior objections and exact changes, including changed plan fields and conditions. A prior rejection does not certify unmentioned code. Reuse an earlier finding only where its dependencies remain unchanged. A new independent decision is required.'}
 
 
@@ -388,11 +394,20 @@ def completed_inspection(path: Path, source_paths: tuple[str, ...] = (), *, sour
         except ValueError:
             continue  # The process can stop in the middle of its last event.
         item = event.get('item', {})
-        if (event.get('type') != 'item.completed' or item.get('type') != 'command_execution'
-                or item.get('exit_code') != 0 or not item.get('aggregated_output')):
+        if event.get('type') != 'item.completed':
             continue
-        output = item['aggregated_output']
-        command = item['command']
+        if item.get('type') == 'command_execution' and item.get('exit_code') == 0:
+            output, command = item.get('aggregated_output'), item.get('command', '')
+        elif (item.get('type') == 'mcp_tool_call' and item.get('server') == 'research_harness'
+              and item.get('tool') == 'read_research_artifact' and not item.get('error')
+              and isinstance(item.get('result'), dict) and not item['result'].get('isError')):
+            output = '\n'.join(part['text'] for part in item['result'].get('content', [])
+                               if part.get('type') == 'text')
+            command = 'read_research_artifact ' + json.dumps(item.get('arguments', {}), sort_keys=True)
+        else:
+            continue
+        if not output:
+            continue
         if source_inlined:
             import shlex
             try:
@@ -456,6 +471,8 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
         # All text for this interpretation is supplied, so this role needs no source tools.
         scope_packet['amendment_history'] = scope_packet.pop('protocol_note_history')
         scope_packet['development_executions'] = packet.get('development_executions', {})
+        if packet.get('preparation_execution_disclosure'):
+            scope_packet['preparation_execution_disclosure'] = packet['preparation_execution_disclosure']
         prior = packet.get('predecessor_review_delta') or {}
         if prior.get('prior_protocol_scope_analysis'):
             scope_packet['prior_scope_context'] = {key: prior[key] for key in (
@@ -468,7 +485,8 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
                 'a new research plan or a scientific conclusion. All protocol text is supplied; no tools are needed. '
                 'Read amendment_history in chronological order. Preserve inherited definitions and all original goal, '
                 'endpoint, partition and budget constraints; distinguish explicitly replaced rules from still-active ones. '
-                'Check development_executions before treating one-off or once-only permissions as still available. '
+                'Check development_executions and disclosed unregistered execution attempts before treating one-off or once-only permissions as still available. '
+                'Distinguish failed imports, completed fitting and observed measurements; determine their effect under the actual clause, not an automatic ban or automatic permission. '
                 'A completed launch is not a new permission; failed launches must be interpreted under the actual clause. '
                 'When prior_scope_context is supplied, compare the current test and changed conditions with that prior test, '
                 'reading and source-review decision before reconstructing unchanged requirements. Earlier readings and approvals '
@@ -499,6 +517,8 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
     request_data["review_transport_version"] = 6 if schema_name == 'research_execution_review_response' else 5
     if not source_inspection:
         request_data['source_inspection'] = False
+    else:
+        request_data['inspection_tools'] = 'read_research_artifact'
     serialized = json.dumps(request_data, sort_keys=True, ensure_ascii=False)
     digest = hashlib.sha256(serialized.encode()).hexdigest()
     if schema_name == 'research_protocol_scope_response':
@@ -529,7 +549,7 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
         source_paths = tuple(source['path'] for source in packet.get('execution_source_manifest', []))
         inspection_digest = hashlib.sha256(json.dumps({**request_data, 'packet': inspection_packet},
                                                        sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-        source_inlined = schema_name == 'research_execution_review_response'
+        source_inlined = schema_name == 'research_execution_review_response' and _inline_review_sources(packet)
         inspection_budget = 80000
         import os
         budget_path = os.environ.get('RESEARCH_HARNESS_CALL_BUDGET')
@@ -586,7 +606,7 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
     submitted = review_submission(destination, submitted, schema_name)
     if inspection:
         submitted['completed_inspection'] = inspection
-        if schema_name == 'research_execution_review_response':
+        if schema_name == 'research_execution_review_response' and _inline_review_sources(packet):
             # The bound source was already hash-checked by review_work_implementation.
             # A tool-free reviewer must see it even when some old reads were omitted.
             submitted['experiment_plan']['source_files'] = packet['experiment_plan']['source_files']
@@ -595,16 +615,37 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
     timeout_seconds = 1200 if inspection or schema_name in {
         'research_execution_review_response', 'research_protocol_scope_response'
     } or protocol_review else 600
+    denied_paths = tuple(destination / name for name in ("events.jsonl", "request.json", "raw_response.txt"))
+    reader = None
+    needs_reads = source_inspection and not (packet.get('predecessor_review_delta') or {}).get('bounded_revision', False)
+    if inspection and not (schema_name == 'research_execution_review_response' and not _inline_review_sources(packet)):
+        needs_reads = False
+    if needs_reads:
+        try:
+            thread_id = directory.resolve().relative_to((repo / 'runs/threads').resolve()).parts[0]
+        except (ValueError, IndexError):
+            thread_id = None  # Unscoped packets can use only their supplied evidence.
+        if thread_id:
+            reader = ResearchHarnessMcp(command=sys.executable,
+                args=('-m', 'research_harness.mcp_server', '--repo-root', str(repo.resolve()),
+                      '--read-only-thread', thread_id,
+                      *(arg for path in denied_paths for arg in ('--deny-read-path', str(path.resolve())))),
+                environment={'PYTHONPATH': str(repo.resolve())}, tool_timeout_seconds=30)
+            submitted['inspection_contract'] = (
+                'Use read_research_artifact for bounded source lines, directory listings, literal queries, JSON pointers and SHA-256. '
+                'Only this thread and the framework research_harness source directory are readable. '
+                'Use completed_inspection first; read only missing dependencies. '
+                'Inspect the program statically. No shell, model fitting, simulator execution or file mutation is available. '
+                'Execution belongs to the registered LocalRunner after review; do not seek its outcome before approving its method.')
     with tempfile.TemporaryDirectory(prefix="research-decision-review-") as temporary:
         result = CodexCliAdapter().complete(CompletionRequest(
             prompt=AgentPrompt(instructions=instructions, input=json.dumps(submitted, ensure_ascii=False)),
             model=research_model(), timeout_seconds=timeout_seconds,
             output_schema=repo / 'research_harness/schemas' / f'{schema_name}.schema.json',
             cwd=Path(temporary), label="research source analysis" if schema_name == "research_analysis_response" else "independent-research-review",
-            allow_local_tools=source_inspection and not inspection and not (packet.get("predecessor_review_delta") or {}).get("bounded_revision", False),
+            allow_local_tools=False, mcp=reader,
             event_log_path=destination / "events.jsonl",
-            denied_read_paths=tuple(destination / name for name in
-                                    ("events.jsonl", "request.json", "raw_response.txt")),
+            denied_read_paths=denied_paths,
         ))
     (destination / "raw_response.txt").write_text(result.text)
     try:
