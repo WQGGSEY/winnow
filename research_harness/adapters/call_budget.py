@@ -39,12 +39,14 @@ def reserve_call(*, model: str, prompt: str, label: str, minimum_remaining_secon
     with budget_path.with_suffix(budget_path.suffix + '.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         budget = json.loads(budget_path.read_text())
+        if budget.get('exhausted_at'):
+            raise CallBudgetExhausted('Bounded research call budget exhausted; original stopping reason retained.')
         calls = budget.get('calls', [])
         used = sum(call['prompt_bytes'] for call in calls)
         # Leave time to persist a failed call before the supervisor's wall-clock stop.
         call_deadline = budget['deadline_epoch'] - 5
         remaining = call_deadline - time.time()
-        if (budget.get('exhausted_at') or remaining <= 0 or remaining < minimum_remaining_seconds or len(calls) >= budget['max_calls']
+        if (remaining <= 0 or remaining < minimum_remaining_seconds or len(calls) >= budget['max_calls']
                 or used + size > budget['max_prompt_bytes']
                 or size > budget.get('max_call_prompt_bytes', budget['max_prompt_bytes'])):
             budget['exhausted_at'] = time.time()

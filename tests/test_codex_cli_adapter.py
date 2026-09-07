@@ -392,6 +392,7 @@ def test_bounded_timeout_preserves_partial_trace_and_stops_retry(tmp_path, monke
     with pytest.raises(ValueError, match='budget exhausted'):
         adapter.complete(request)
     assert len(calls) == 1
+    assert json.loads(budget.read_text()) == receipt
 
 
 def test_item_error_keeps_reason_instead_of_generic_completed_error():

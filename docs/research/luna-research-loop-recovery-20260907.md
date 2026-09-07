@@ -537,3 +537,14 @@ implementation_review를 prior_implementation_review로 옮긴 뒤 prior_objecti
 수정하고, 중단 전후 실제 MCP 검토 입력이 일치함을 기존 검사에서 확인했다.
 research_control/research_review 검사 52 passed. MCP 프로세스가 검토 중 종료된
 경우도 operational checkpoint로 남겨 후속 세션이 새 구현 거절로 오인하지 않게 했다.
+
+121219에서 b5736f2의 완료 관측을 실제로 회수했지만 소스 전체와 관측을 합친
+재개 입력이 280KB 제한을 넘었다. provider 호출은 0회였다. source가 이미
+전부 inline이면 해당 파일만 cat/sed/nl 등으로 다시 출력한 관측을 제외하고,
+전체 packet 크기를 뺀 나머지 범위에서 관측 예산을 산정하도록 수정했다.
+관측은 원래 실행 순서로 전달한다. 실제 저장된 자료로 입력을 재구성해
+276,869 UTF-8 bytes와 이동 감사 실패의 원시 기록 보존을 확인했다.
+
+처음 예산 거절 뒤 supervisor 예약이 원래 exhausted_label/입력 크기를
+덮어쓰던 문제도 수정했다. 이미 중단된 예산은 최초 실패 기록을 유지한다.
+관련 기존 검사 68 passed. 이 검사는 연구 성공을 의미하지 않는다.
