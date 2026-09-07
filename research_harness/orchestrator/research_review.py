@@ -79,6 +79,8 @@ def predecessor_review_delta(thread: Path, work: dict[str, Any], packet: dict[st
         changed_conditions.append('runtime_input_manifest')
     return {'prior_receipt_path': str(receipt_path), 'prior_request_sha256': receipt['request_sha256'],
             'prior_assessment': receipt['assessment'], 'unchanged_source_files': unchanged, 'source_diffs': diffs,
+            'prior_work_decision': previous_packet.get('work_decision'),
+            'prior_protocol_scope_analysis': previous_packet.get('protocol_scope_analysis'),
             'changed_plan_fields': changed_fields, 'changed_conditions': changed_conditions,
             'bounded_revision': prior_decision == 'approve' and not changed_conditions and not (set(changed_fields) - {'node_id', 'workspace'}),
             'scope': 'Start from the prior objections and exact changes, including changed plan fields and conditions. A prior rejection does not certify unmentioned code. Reuse an earlier finding only where its dependencies remain unchanged. A new independent decision is required.'}
@@ -424,6 +426,11 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
         # All text for this interpretation is supplied, so this role needs no source tools.
         scope_packet['amendment_history'] = scope_packet.pop('protocol_note_history')
         scope_packet['development_executions'] = packet.get('development_executions', {})
+        prior = packet.get('predecessor_review_delta') or {}
+        if prior.get('prior_protocol_scope_analysis'):
+            scope_packet['prior_scope_context'] = {key: prior[key] for key in (
+                'prior_receipt_path', 'prior_request_sha256', 'prior_assessment',
+                'prior_work_decision', 'prior_protocol_scope_analysis', 'changed_conditions')}
         scope = _complete_packet(repo, directory / 'protocol_scope', scope_packet,
             instructions=(
                 'Interpret which registered conditions apply BEFORE the single proposed development test. '
@@ -433,6 +440,11 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
                 'endpoint, partition and budget constraints; distinguish explicitly replaced rules from still-active ones. '
                 'Check development_executions before treating one-off or once-only permissions as still available. '
                 'A completed launch is not a new permission; failed launches must be interpreted under the actual clause. '
+                'When prior_scope_context is supplied, compare the current test and changed conditions with that prior test, '
+                'reading and source-review decision before reconstructing unchanged requirements. Earlier readings and approvals '
+                'are fallible and do not authorize this changed test or renew one-off permission. If correcting a prior reading, '
+                'explain the disagreement against the original operative clauses. Keep a restriction scoped to the test or stage '
+                'its clause describes; do not infer a global prohibition from a restriction on one completed diagnostic. '
                 'Declared objectives are an index, not proof of identical conditions; report unresolved applicability honestly. '
                 'Group the applicable obligations in a concise answer, at most 4000 characters. Separate present execution '
                 'conditions, later qualification/confirmation conditions, and any unresolved conflict. Do not demand a '

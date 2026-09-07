@@ -73,6 +73,7 @@ def test_review_bundle_preserves_evidence_and_denies_self_replay(tmp_path):
               'prepared_implementations': {'prior': {'source': 'unchanged'}},
               'work_decision': {'evidence_ids': ['selected']},
               'development_executions': {'selected': {'count': 7}, 'older': {'count': 3}},
+              'protocol_scope_analysis': {'assessment': {'answer': 'A development test may be source-reviewed.'}},
               'registered_protocol': {'notes': 'Measure honestly.'}}
     destination = tmp_path / 'bundle'
     submitted = review_input_bundle(destination, packet)
@@ -108,6 +109,8 @@ def test_review_bundle_preserves_evidence_and_denies_self_replay(tmp_path):
     delta = predecessor_review_delta(tmp_path, work, changed)
     assert '+print(2)' in delta['source_diffs']['measure.py']
     assert delta['changed_conditions'] == ['registered_protocol']
+    assert delta['prior_work_decision'] == packet['work_decision']
+    assert delta['prior_protocol_scope_analysis'] == packet['protocol_scope_analysis']
     assert not delta['bounded_revision']
     assert predecessor_review_delta(tmp_path, work, packet)['bounded_revision']
     unrelated = json.loads(json.dumps(packet))
@@ -292,6 +295,12 @@ def test_protocol_interpretation_is_preserved_across_implementation_revisions(tm
               'protocol_note_history': {'entries': [{'notes': 'Keep the original outcome.'},
                                                     {'notes': 'A later confirmation must use unused inputs.'}]},
               'experiment_plan': {'source_files': [{'path': 'measure.py', 'content': 'print(1)'}]}}
+    prior_scope = {'prior_receipt_path': '/prior/review.json', 'prior_request_sha256': 'prior-digest',
+                   'prior_assessment': {'decision': 'approve', 'reason': 'Earlier test passed source review.'},
+                   'prior_work_decision': {'test': 'Earlier matched control.'},
+                   'prior_protocol_scope_analysis': {'assessment': {'execution_scope': 'eligible_for_source_review'}},
+                   'changed_conditions': []}
+    packet['predecessor_review_delta'] = {**prior_scope, 'bounded_revision': False}
     repo = Path(__file__).resolve().parents[1]
     seen = []
     def complete(request):
@@ -299,6 +308,7 @@ def test_protocol_interpretation_is_preserved_across_implementation_revisions(tm
         seen.append(value)
         if 'amendment_history' in value:
             assert value['development_executions'] == packet['development_executions']
+            assert value['prior_scope_context'] == prior_scope
             assert not request.allow_local_tools
             result = {'status': scope_status, 'execution_scope': execution_scope, 'answer': 'Preserve outcome; confirmation is later.',
                       'evidence': ['amendment_history.entries.0.notes: “Keep the original outcome.”'], 'limitations': [], 'next_steps': []}
