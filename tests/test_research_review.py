@@ -160,14 +160,19 @@ def test_valid_saved_objection_survives_host_citation_validator_repair(tmp_path)
     from research_harness.orchestrator.research_review import ReviewContractError
     packet = {'decision_scope': 'development_execution',
               'experiment_plan': {'success_criteria': ['Complete the declared cells.']},
+              'node': {'claim_contract': {'disproof_conditions': ['The declared cells are incomplete.']}},
+              'work_decision': {'test': 'Use the selected intervention.'},
+              'predecessor_review_delta': {'bounded_revision': False, 'source_diffs': {'old.py': 'irrelevant old source'}},
               'measurement_output_contract': {'unexpected_observations': 'Evidence must be a string.'}}
     assessment = {'decision': 'reject', 'reason': 'Reachable input and output defects.',
                   'evidence': ['Inspected engine and output producer.'], 'next_steps': [],
-                  'required_work': ['Accept actual engine coordinates.', 'Emit string evidence.'],
+                  'required_work': ['Accept actual engine coordinates.', 'Use the selected intervention.', 'Emit string evidence.'],
                   'observation_checks': [], 'blocking_basis': [
                       {'required_work_index': 0, 'scope': 'selected_test',
-                       'basis_path': 'experiment_plan.success_criteria.0', 'basis_quote': 'Complete the declared cells.'},
-                      {'required_work_index': 1, 'scope': 'runtime_contract',
+                       'basis_path': 'node.claim_contract.disproof_conditions[0]', 'basis_quote': 'The declared cells are incomplete.'},
+                      {'required_work_index': 1, 'scope': 'method_semantics',
+                       'basis_path': 'work_decision.test', 'basis_quote': 'Use the selected intervention.'},
+                      {'required_work_index': 2, 'scope': 'runtime_contract',
                        'basis_path': 'measurement_output_contract.unexpected_observations', 'basis_quote': 'Evidence must be a string.'}]}
     repo = Path(__file__).resolve().parents[1]
     with patch('research_harness.orchestrator.research_review.CodexCliAdapter.complete',
@@ -176,6 +181,7 @@ def test_valid_saved_objection_survives_host_citation_validator_repair(tmp_path)
                    side_effect=ValueError('Old validator omitted the host output contract.')):
             with pytest.raises(ReviewContractError):
                 review_research_packet(repo, tmp_path, packet, purpose='Development test.')
+        packet.pop('predecessor_review_delta')
         recovered = review_research_packet(repo, tmp_path, packet, purpose='Development test.')
         assert recovered['assessment'] == assessment
         assert recovered['usage']['input_tokens'] == 71

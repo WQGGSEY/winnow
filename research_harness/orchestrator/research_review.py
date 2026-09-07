@@ -260,18 +260,13 @@ def validate_execution_objections(assessment: dict[str, Any], packet: dict[str, 
     for basis in bases:
         if basis['scope'] == 'final_confirmation':
             raise ValueError('Final confirmation requirements cannot block a development execution.')
-        parts = basis['basis_path'].split('.')
-        allowed = {
-            'selected_test': {'work_decision', 'experiment_plan'},
-            'runtime_contract': {'runner_contract', 'measurement_output_contract', 'experiment_plan', 'observation_contract'},
-            'development_protocol': {'registered_protocol', 'protocol_note_history'},
-            'method_semantics': {'analysis_findings', 'prepared_implementations', 'experiment_plan'},
-        }
-        if parts[0] not in allowed[basis['scope']] or basis['basis_path'].startswith('work_decision.deferred_questions'):
+        parts = re.sub(r'\[(\d+)\]', r'.\1', basis['basis_path']).split('.')
+        allowed = {'work_decision', 'experiment_plan', 'runner_contract', 'measurement_output_contract',
+                   'observation_contract', 'registered_protocol', 'protocol_note_history',
+                   'analysis_findings', 'prepared_implementations', 'node'}
+        if (parts[0] not in allowed or parts[:2] == ['work_decision', 'deferred_questions']
+                or (parts[0] == 'node' and parts[:2] != ['node', 'claim_contract'])):
             raise ValueError('Objection cites a requirement outside its selected scope.')
-        if (basis['scope'] == 'selected_test' and parts[0] == 'experiment_plan'
-                and (len(parts) < 2 or parts[1] not in {'claim_under_test', 'success_criteria', 'disproof_conditions', 'observation_bindings'})):
-            raise ValueError('Selected-test objection must cite the declared experiment contract.')
         value: Any = packet
         try:
             for part in parts:
@@ -280,6 +275,44 @@ def validate_execution_objections(assessment: dict[str, Any], packet: dict[str, 
             raise ValueError('Blocking requirement does not resolve in the review packet.') from exc
         if not isinstance(value, str) or not basis['basis_quote'].strip() or basis['basis_quote'] not in value:
             raise ValueError('Blocking requirement quote does not match its source.')
+
+
+def recover_execution_review(directory: Path, request: dict[str, Any]) -> dict[str, Any] | None:
+    """Revalidate paid responses; a reading-guide change never grants new approval."""
+    packet = request['packet']
+    evidence = {key: value for key, value in packet.items() if key != 'predecessor_review_delta'}
+    for path in sorted(directory.glob('*/rejected_review.json'), key=lambda item: item.stat().st_mtime_ns, reverse=True):
+        request_path = path.parent / 'request.json'
+        raw = request_path.read_bytes().rstrip(b'\n')
+        if hashlib.sha256(raw).hexdigest() != path.parent.name:
+            continue
+        previous = json.loads(raw)
+        if any(previous.get(key) != request.get(key) for key in
+               ('model', 'reasoning_effort', 'instructions', 'response_schema', 'response_schema_sha256')):
+            continue
+        old_packet = previous.get('packet', {})
+        if {key: value for key, value in old_packet.items() if key != 'predecessor_review_delta'} != evidence:
+            continue
+        rejected = json.loads(path.read_text())
+        try:
+            assessment = json.loads(rejected['raw_response'])
+            validate_named_schema('research_execution_review_response', assessment)
+            validate_execution_objections(assessment, packet)
+            if assessment['decision'] == 'approve' and (assessment['required_work'] or old_packet != packet):
+                continue
+        except (KeyError, ValueError):
+            continue
+        record = {'request_sha256': path.parent.name, 'reviewer': 'independent-research-review',
+                  'model': previous['model'], 'reasoning_effort': previous['reasoning_effort'],
+                  'thread_id': rejected.get('thread_id'), 'usage': rejected.get('usage', {}),
+                  'assessment': assessment, 'response_schema_sha256': previous['response_schema_sha256'],
+                  'recovered_after_contract_validation': True}
+        result_path = path.parent / 'review.json'
+        temporary_path = result_path.with_suffix('.tmp')
+        temporary_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + '\n')
+        temporary_path.replace(result_path)
+        return record
+    return None
 
 
 def analyze_research_packet(repo: Path, directory: Path, packet: dict[str, Any], *, purpose: str) -> dict[str, Any]:
@@ -408,6 +441,10 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
         request_data['source_inspection'] = False
     serialized = json.dumps(request_data, sort_keys=True, ensure_ascii=False)
     digest = hashlib.sha256(serialized.encode()).hexdigest()
+    if schema_name == 'research_execution_review_response':
+        recovered = recover_execution_review(directory, request_data)
+        if recovered is not None:
+            return recovered
     inspection = None
     recoverable = schema_name in {'research_analysis_response', 'research_execution_review_response'} or (
         schema_name == 'research_review_response' and 'proposal' in packet and 'work_decision' in packet)
@@ -439,26 +476,6 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
     rejection_path = directory / digest / 'rejected_review.json'
     if rejection_path.exists():
         rejected = json.loads(rejection_path.read_text())
-        if schema_name == 'research_execution_review_response':
-            try:
-                assessment = json.loads(rejected['raw_response'])
-                validate_named_schema(schema_name, assessment)
-                validate_execution_objections(assessment, packet)
-                if assessment['decision'] == 'approve' and assessment['required_work']:
-                    raise ValueError('Approval retains required work')
-            except (KeyError, ValueError):
-                pass
-            else:
-                record = {'request_sha256': digest, 'reviewer': 'independent-research-review',
-                          'model': research_model(), 'reasoning_effort': model_reasoning_effort(research_model()),
-                          'thread_id': rejected.get('thread_id'), 'usage': rejected.get('usage', {}),
-                          'assessment': assessment, 'response_schema_sha256': request_data['response_schema_sha256'],
-                          'recovered_after_contract_validation': True}
-                result_path = rejection_path.parent / 'review.json'
-                temporary_path = result_path.with_suffix('.tmp')
-                temporary_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + '\n')
-                temporary_path.replace(result_path)
-                return record
         request_data['previous_review_rejection'] = rejected
         serialized = json.dumps(request_data, sort_keys=True, ensure_ascii=False)
         digest = hashlib.sha256(serialized.encode()).hexdigest()
