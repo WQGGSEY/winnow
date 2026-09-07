@@ -1754,6 +1754,35 @@ class LockTests(unittest.TestCase):
 
 
 class WatchLoopTests(unittest.TestCase):
+    def test_signal_during_cycle_preparation_does_not_launch_another_session(self):
+        for boundary in ('prompt', 'handoff'):
+            with self.subTest(boundary=boundary), TemporaryDirectory() as tmp:
+                repo = Path(tmp)
+                _make_thread(repo, 't1')
+                handlers = {}
+
+                def interrupt():
+                    handlers[ts.signal.SIGTERM](ts.signal.SIGTERM, None)
+
+                def prompt(*args):
+                    if boundary == 'prompt':
+                        interrupt()
+                    return 'resume'
+
+                def handoff(*args):
+                    if boundary == 'handoff':
+                        interrupt()
+                    return None
+
+                with mock.patch.object(ts.signal, 'signal', side_effect=lambda sig, fn: handlers.update({sig: fn})), \
+                     mock.patch.object(ts, 'advance_resumable_reorientation', return_value=None), \
+                     mock.patch.object(ts, 'build_resume_prompt', side_effect=prompt), \
+                     mock.patch.object(ts, 'resume_saved_preflight', side_effect=handoff), \
+                     mock.patch.object(ts, 'spawn_codex_session', return_value=75) as spawn:
+                    result = ts.watch_thread(repo, 't1', max_cycles=1)
+                self.assertEqual(result['status'], 'interrupted')
+                spawn.assert_not_called()
+
     def test_updated_pending_work_resumes_after_normal_exit_without_idle(self):
         with TemporaryDirectory() as tmp:
             repo = Path(tmp)

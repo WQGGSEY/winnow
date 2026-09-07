@@ -1456,6 +1456,8 @@ def spawn_codex_session(
     """Run one ephemeral Codex JSONL session with per-invocation MCP config."""
     import subprocess as _subprocess
 
+    if active_child_ref is not None and active_child_ref.get('interrupted'):
+        return -signal.SIGTERM
     codex_bin = _which("codex")
     if not codex_bin:
         raise RuntimeError(
@@ -1578,6 +1580,8 @@ def spawn_codex_session(
     watchdog.start()
 
     try:
+        if active_child_ref is not None and active_child_ref.get('interrupted'):
+            return -signal.SIGTERM
         for event in session.events():
             last_activity[0] = time.time()
             if events_fh:
@@ -1746,6 +1750,8 @@ def resume_saved_preflight(repo: Path, tid: str, model: str, active_child: dict)
     from research_harness.adapters.codex_cli import CodexProcessSession
     from research_harness.orchestrator.research_control import current_work, execution_handoff
 
+    if active_child.get('interrupted'):
+        return -signal.SIGTERM
     thread = _thread_dir(repo, tid)
     work = current_work(thread)
     if (work.get('status') != 'planned'
@@ -1775,6 +1781,8 @@ def resume_saved_preflight(repo: Path, tid: str, model: str, active_child: dict)
         session = CodexProcessSession(process, CodexCliAdapter(), session_token=token)
         active_child.update(pid=session.pid, session=session)
         try:
+            if active_child.get('interrupted'):
+                return -signal.SIGTERM
             process.stdin.write(json.dumps(request) + '\n')
             process.stdin.close()
             code = session.wait()
@@ -1843,6 +1851,7 @@ def watch_thread(
 
     def _sigint(_signum, _frame):
         interrupted["flag"] = True
+        active_child['interrupted'] = True
         _log(
             log_path,
             "signal received, terminating active Codex subprocess then exiting.",
@@ -1998,11 +2007,15 @@ def watch_thread(
             _log(log_path, f"cycle #{cycle}: starting execution to continue unfinished work" if resume_without_idle
                  else f"cycle #{cycle}: idle={idle:.0f}s > {max_idle_seconds:.0f}s, starting execution")
         work_before = current_work(tdir)
+        if interrupted['flag']:
+            continue
         spawn_started = time.time()
         try:
             exit_code = resume_saved_preflight(repo, tid, model, active_child) if allow_checkpoint_resume else None
             allow_checkpoint_resume = exit_code is None
             if exit_code is None:
+                if interrupted['flag']:
+                    continue
                 exit_code = spawn_codex_session(
                     prompt,
                     repo_root=repo,
