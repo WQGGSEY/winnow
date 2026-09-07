@@ -358,3 +358,9 @@ Verification: research_review/research_control — 51 passed; git diff --check. 
 The initial implementation review completed source/API reads and a local type-mismatch probe but hit its 300-second deadline before emitting an assessment. Recovery then resubmitted 244116 prompt bytes with a 600-second limit. The first source review now also receives 600 seconds, avoiding the shorter first-attempt limit as a cause of duplicate submissions. The existing global deadline admission, total call/input limits and inspection checkpoints still apply. This changes scheduling, not the approval standard or experiment runtime.
 
 Verification: research_review/codex_cli_adapter — 29 passed; git diff --check. No additional research-success claim is made by this scheduling change.
+
+### Render pending execution progress from persisted state
+
+The coordinator repeatedly said LocalRunner was running while current.json remained implementation_review. Pending-call prose is now replaced in visible supervisor/subprocess logs by the actual implementation_review or experiment_running phase, with repeated identical phase messages suppressed. Raw agent events remain intact for diagnosis. This addresses an observed reporting error without changing execution or review.
+
+Verification: thread_supervisor — 57 passed, 3 subtests passed; git diff --check. The existing subprocess event case emits a false running claim twice during a pending call and checks one authoritative review message plus preservation of original events. An initial fixture string-construction error was corrected before this successful run.

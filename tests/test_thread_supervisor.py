@@ -1840,9 +1840,17 @@ class WatchLoopTests(unittest.TestCase):
                        "server": "research_harness", "tool": "get_research_state", "arguments": {}}}
             completed = {"type": "item.completed", "item": {**pending['item'], "result": {}, "status": "completed"}}
             marker = Path(tmp) / "pending_finished"
+            state = Path(tmp) / 'production/tree/search_state.json'
+            work_path = state.parent.parent / 'research_control/current.json'
+            work_path.parent.mkdir(parents=True)
+            work_path.write_text(json.dumps({'work_id': 'work1', 'status': 'running',
+                                            'execution_phase': 'implementation_review'}))
+            prose = {'type': 'item.completed', 'item': {'id': 'message1', 'type': 'agent_message',
+                     'text': 'LocalRunner has started and is running.'}}
             fake.write_text("#!/usr/bin/env python3\nimport time\nfrom pathlib import Path\n"
                             + "print(" + repr(json.dumps(preparation)) + ", flush=True)\ntime.sleep(0.2)\n"
                             + "print(" + repr(json.dumps(pending)) + ", flush=True)\n"
+                            + ("print(" + repr(json.dumps(prose)) + ", flush=True)\n") * 2
                             + "print(" + repr(json.dumps(event)) + ", flush=True)\ntime.sleep(0.2)\n"
                             + "Path(" + repr(str(marker)) + ").touch()\n"
                             + "print(" + repr(json.dumps(completed)) + ", flush=True)\ntime.sleep(30)\n")
@@ -1850,13 +1858,16 @@ class WatchLoopTests(unittest.TestCase):
             with mock.patch.object(ts, "_which", return_value=str(fake)):
                 started = time.time()
                 log = Path(tmp) / 'codex_subprocess.log'
-                rc = ts.spawn_codex_session("prompt", stall_timeout=20, log_path=log)
+                rc = ts.spawn_codex_session("prompt", stall_timeout=20, log_path=log, state_path=state)
             self.assertEqual(rc, ts.WORK_UNIT_EXIT_CODE)
             self.assertTrue(marker.exists())
             self.assertLess(time.time() - started, 8)
             self.assertNotIn('tool>', log.read_text())
             self.assertNotIn('status>', log.read_text())
             self.assertIn('execute_baseline_preflight', log.with_suffix('.events.jsonl').read_text())
+            self.assertNotIn('LocalRunner has started', log.read_text())
+            self.assertIn('LocalRunner has started', log.with_suffix('.events.jsonl').read_text())
+            self.assertEqual(log.read_text().count('독립 구현 검토 중'), 1)
             ts._log(log, 'heartbeat waiting')
             ts._log(log, 'execution failed: invalid measurement')
             self.assertNotIn('heartbeat', log.read_text())

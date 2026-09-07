@@ -1518,6 +1518,7 @@ def spawn_codex_session(
     completed_calls = 0
     execution_completed = False
     pending_calls: set[str] = set()
+    last_pending_progress: tuple[str, str] | None = None
 
     def _watchdog() -> None:
         check = max(1.0, min(15.0, stall_timeout / 4.0))
@@ -1575,8 +1576,24 @@ def spawn_codex_session(
                 events_fh.write(json.dumps({"pid": session.pid, "at": time.time(), "kind": event.kind, "raw": dict(event.raw)}, ensure_ascii=False) + "\n")
                 events_fh.flush()
             formatted = f"{event.kind}> {event.summary[:400]}"
+            repeated_progress = False
+            if event.kind == 'message' and pending_calls and state_path is not None:
+                try:
+                    work = json.loads((state_path.parent.parent / 'research_control/current.json').read_text())
+                except (OSError, ValueError):
+                    work = {}
+                phase = work.get('execution_phase')
+                if work.get('status') == 'running' and phase in {'implementation_review', 'experiment_running'}:
+                    progress = (work['work_id'], phase)
+                    repeated_progress = progress == last_pending_progress
+                    last_pending_progress = progress
+                    description = ('독립 구현 검토 중. 등록된 실험은 아직 실행되지 않았습니다.'
+                                   if phase == 'implementation_review' else '등록된 실험 실행 중.')
+                    formatted = f"progress> {description} work={work['work_id']}"
+            elif not pending_calls:
+                last_pending_progress = None
             stamped = f"[{time.strftime('%H:%M:%S')}] {formatted}"
-            if visible_research_log_line(formatted):
+            if not repeated_progress and visible_research_log_line(formatted):
                 if log_fh:
                     try:
                         log_fh.write(stamped + "\n")
