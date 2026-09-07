@@ -1,5 +1,8 @@
 # Pacman research-loop recovery, 2026-09-07
 
+Final 1–4 evidence: [registered comparison and subsequent decision](luna-research-loop-1-4-result-20260907.md).
+The sections below retain the chronological checkpoints, including earlier incomplete states.
+
 Scope: priorities 1–4, ending in a harness-authored intervention and an actual
 controlled comparison. Strong-result confirmation and manuscript production are
 subsequent work, not demonstrated by a diagnostic or passing software checks.
