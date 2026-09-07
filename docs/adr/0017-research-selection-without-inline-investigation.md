@@ -52,6 +52,19 @@ Analysis and implementation review may still be expensive. Removing their access
 to required evidence would weaken validity and is not part of this decision.
 A fast planned work is not an experimental result or publication success.
 
+The scheduling unit does not define the scope of a study-design amendment. In the
+2026-09-07 continuation, a completed one-off diagnostic consumed its permission;
+the planner prepared another diagnostic before scope review rejected it, then
+selected another one-off amendment. Repeating this pattern spends planning,
+implementation and protocol review on each development step. Policy 26 allows the
+planner to consider a finite adaptive development procedure instead. It must name
+the earlier restrictions it replaces, permitted data and changes, aggregate trial
+and compute limits, continuation and stopping rules, and the final freeze.
+Approval still precedes any changed scope. Every empirical work retains its source
+and observation review. Development adaptation does not qualify a method, lower
+the original success bar, or permit outcome-selected confirmation retries. This
+guidance does not expand an existing protocol or establish scientific progress.
+
 On failed execution/measurement, selection is scoped to recovery of the previous
 scientific measurement. The packet retains that question, actual failure, recent
 relevant findings and fixed constraints rather than reopening the entire source
