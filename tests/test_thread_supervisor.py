@@ -23,7 +23,7 @@ from unittest import mock
 from research_harness import thread_supervisor as ts
 
 
-@pytest.mark.parametrize('step', ['preflight', 'planning', 'protocol'])
+@pytest.mark.parametrize('step', ['preflight', 'prepared', 'planning', 'protocol'])
 def test_known_research_step_dispatches_exact_mcp_request_without_coordinator(tmp_path, monkeypatch, step):
     import sys
     monkeypatch.setattr(ts, '__file__', str(tmp_path / 'research_harness/thread_supervisor.py'))
@@ -36,10 +36,11 @@ def test_known_research_step_dispatches_exact_mcp_request_without_coordinator(tm
     saved.update({'notes': 'Keep original endpoints.', 'rationale': 'Permit the diagnostic.'} if step == 'protocol' else {'experiment_plan': {}})
     request_path.write_text(json.dumps(saved))
     state = thread / 'production/research_control/current.json'
-    tool = {'planning': 'plan_research_work', 'preflight': 'execute_baseline_preflight', 'protocol': 'revise_evaluation_protocol'}[step]
+    tool = {'planning': 'plan_research_work', 'preflight': 'execute_baseline_preflight', 'prepared': 'execute_baseline_preflight', 'protocol': 'revise_evaluation_protocol'}[step]
     arguments = {'thread_id': 'thread'} if step == 'planning' else {'thread_id': 'thread', 'request_path': str(request_path)}
     state.write_text(json.dumps({'work_id': 'work', 'status': 'completed' if step == 'planning' else 'planned',
-        'next_tool_to_call': tool, 'outcome': {'execution_result': 'checkpoint'},
+        'next_tool_to_call': tool, 'outcome': {} if step == 'prepared' else {'execution_result': 'checkpoint'},
+        'prepared_implementation': {'execution_request_path': str(request_path), 'execution_contract_errors': []} if step == 'prepared' else {},
         'protocol_review_checkpoint': step == 'protocol', 'protocol_review_dispatch_path': str(request_path)}))
     script = (
         'import json,sys,os\n'
@@ -60,7 +61,7 @@ def test_known_research_step_dispatches_exact_mcp_request_without_coordinator(tm
     assert ts.resume_known_research_step(tmp_path, 'thread', 'gpt-5.6-luna', active) == ts.WORK_UNIT_EXIT_CODE
     assert active == {'pid': None, 'session': None}
     assert request_path.read_bytes() == original
-    response_name = {'planning': 'supervisor_plan.jsonl', 'preflight': 'supervisor_resume.jsonl', 'protocol': 'supervisor_protocol.jsonl'}[step]
+    response_name = {'planning': 'supervisor_plan.jsonl', 'preflight': 'supervisor_resume.jsonl', 'prepared': 'supervisor_resume.jsonl', 'protocol': 'supervisor_protocol.jsonl'}[step]
     assert json.loads((directory / response_name).read_text())['id'] == 1
     work = json.loads(state.read_text())
     work['outcome']['execution_result'] = 'rejected'

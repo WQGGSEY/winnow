@@ -1760,7 +1760,10 @@ def resume_known_research_step(repo: Path, tid: str, model: str, active_child: d
         response_name = 'supervisor_plan.jsonl'
         message = '완료된 작업의 다음 연구 판단을 MCP 계획 담당자에게 직접 요청합니다.'
     elif work.get('status') == 'planned' and (
-            (tool == 'execute_baseline_preflight' and work.get('outcome', {}).get('execution_result') == 'checkpoint')
+            (tool == 'execute_baseline_preflight' and (
+                work.get('outcome', {}).get('execution_result') == 'checkpoint'
+                or (not work.get('outcome') and work.get('prepared_implementation', {}).get('execution_request_path')
+                    and not work['prepared_implementation'].get('execution_contract_errors'))))
             or (tool == 'revise_evaluation_protocol' and work.get('protocol_review_checkpoint'))):
         handoff = execution_handoff(thread, work)
         if not handoff or handoff['tool'] != tool:
@@ -1768,7 +1771,7 @@ def resume_known_research_step(repo: Path, tid: str, model: str, active_child: d
         arguments = {**handoff['arguments'], 'thread_id': tid}
         if tool == 'execute_baseline_preflight':
             response_name = 'supervisor_resume.jsonl'
-            message = '저장된 개발 실험 체크포인트를 MCP로 직접 재개합니다. 새 연구 판단은 수행하지 않습니다.'
+            message = '저장된 개발 실험 요청을 MCP로 직접 전달합니다. 구현 검토와 실행 제한은 그대로 적용합니다.'
         else:
             response_name = 'supervisor_protocol.jsonl'
             message = '저장된 프로토콜 제안을 MCP로 직접 재개합니다. 제안과 옵션은 변경하지 않습니다.'
