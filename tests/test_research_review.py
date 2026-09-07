@@ -144,6 +144,34 @@ def test_execution_review_cannot_omit_declared_output_checks():
     validate_execution_objections(assessment, packet)
 
 
+def test_valid_saved_objection_survives_host_citation_validator_repair(tmp_path):
+    from research_harness.orchestrator.research_review import ReviewContractError
+    packet = {'decision_scope': 'development_execution',
+              'experiment_plan': {'success_criteria': ['Complete the declared cells.']},
+              'measurement_output_contract': {'unexpected_observations': 'Evidence must be a string.'}}
+    assessment = {'decision': 'reject', 'reason': 'Reachable input and output defects.',
+                  'evidence': ['Inspected engine and output producer.'], 'next_steps': [],
+                  'required_work': ['Accept actual engine coordinates.', 'Emit string evidence.'],
+                  'observation_checks': [], 'blocking_basis': [
+                      {'required_work_index': 0, 'scope': 'selected_test',
+                       'basis_path': 'experiment_plan.success_criteria.0', 'basis_quote': 'Complete the declared cells.'},
+                      {'required_work_index': 1, 'scope': 'runtime_contract',
+                       'basis_path': 'measurement_output_contract.unexpected_observations', 'basis_quote': 'Evidence must be a string.'}]}
+    repo = Path(__file__).resolve().parents[1]
+    with patch('research_harness.orchestrator.research_review.CodexCliAdapter.complete',
+               return_value=CompletionResult(json.dumps(assessment), AgentUsage(input_tokens=71), 'paid-review')) as complete:
+        with patch('research_harness.orchestrator.research_review.validate_execution_objections',
+                   side_effect=ValueError('Old validator omitted the host output contract.')):
+            with pytest.raises(ReviewContractError):
+                review_research_packet(repo, tmp_path, packet, purpose='Development test.')
+        recovered = review_research_packet(repo, tmp_path, packet, purpose='Development test.')
+        assert recovered['assessment'] == assessment
+        assert recovered['usage']['input_tokens'] == 71
+        assert recovered['thread_id'] == 'paid-review'
+        assert recovered['recovered_after_contract_validation']
+        complete.assert_called_once()
+
+
 @pytest.mark.parametrize("role", ["analysis", "execution_review", "protocol_review"])
 def test_interrupted_analysis_reuses_completed_reads_for_tool_free_synthesis(tmp_path, role):
     from research_harness.orchestrator.research_review import analyze_research_packet

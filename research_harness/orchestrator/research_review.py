@@ -254,13 +254,16 @@ def validate_execution_objections(assessment: dict[str, Any], packet: dict[str, 
             raise ValueError('Final confirmation requirements cannot block a development execution.')
         parts = basis['basis_path'].split('.')
         allowed = {
-            'selected_test': {'work_decision'},
-            'runtime_contract': {'runner_contract', 'experiment_plan', 'observation_contract'},
+            'selected_test': {'work_decision', 'experiment_plan'},
+            'runtime_contract': {'runner_contract', 'measurement_output_contract', 'experiment_plan', 'observation_contract'},
             'development_protocol': {'registered_protocol', 'protocol_note_history'},
             'method_semantics': {'analysis_findings', 'prepared_implementations', 'experiment_plan'},
         }
         if parts[0] not in allowed[basis['scope']] or basis['basis_path'].startswith('work_decision.deferred_questions'):
             raise ValueError('Objection cites a requirement outside its selected scope.')
+        if (basis['scope'] == 'selected_test' and parts[0] == 'experiment_plan'
+                and (len(parts) < 2 or parts[1] not in {'claim_under_test', 'success_criteria', 'disproof_conditions', 'observation_bindings'})):
+            raise ValueError('Selected-test objection must cite the declared experiment contract.')
         value: Any = packet
         try:
             for part in parts:
@@ -412,7 +415,28 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
             digest = hashlib.sha256(serialized.encode()).hexdigest()
     rejection_path = directory / digest / 'rejected_review.json'
     if rejection_path.exists():
-        request_data['previous_review_rejection'] = json.loads(rejection_path.read_text())
+        rejected = json.loads(rejection_path.read_text())
+        if schema_name == 'research_execution_review_response':
+            try:
+                assessment = json.loads(rejected['raw_response'])
+                validate_named_schema(schema_name, assessment)
+                validate_execution_objections(assessment, packet)
+                if assessment['decision'] == 'approve' and assessment['required_work']:
+                    raise ValueError('Approval retains required work')
+            except (KeyError, ValueError):
+                pass
+            else:
+                record = {'request_sha256': digest, 'reviewer': 'independent-research-review',
+                          'model': research_model(), 'reasoning_effort': model_reasoning_effort(research_model()),
+                          'thread_id': rejected.get('thread_id'), 'usage': rejected.get('usage', {}),
+                          'assessment': assessment, 'response_schema_sha256': request_data['response_schema_sha256'],
+                          'recovered_after_contract_validation': True}
+                result_path = rejection_path.parent / 'review.json'
+                temporary_path = result_path.with_suffix('.tmp')
+                temporary_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + '\n')
+                temporary_path.replace(result_path)
+                return record
+        request_data['previous_review_rejection'] = rejected
         serialized = json.dumps(request_data, sort_keys=True, ensure_ascii=False)
         digest = hashlib.sha256(serialized.encode()).hexdigest()
     destination = directory / digest
@@ -475,7 +499,8 @@ def _complete_packet(repo: Path, directory: Path, packet: dict[str, Any], *, ins
     except ValueError as exc:
         rejection_path.parent.mkdir(parents=True, exist_ok=True)
         rejection_path.write_text(json.dumps({'error': str(exc), 'raw_response': result.text,
-            'usage': result.usage.as_dict(), 'correction': 'Correct the reviewer response against the supplied scope and evidence. This is not an instruction to change the experiment.'}) + '\n')
+            'usage': result.usage.as_dict(), 'thread_id': result.thread_id,
+            'correction': 'Correct the reviewer response against the supplied scope and evidence. This is not an instruction to change the experiment.'}) + '\n')
         raise ReviewContractError('Reviewer response needs correction, not an experiment change: ' + str(exc)) from exc
     record = {
         "request_sha256": digest, "reviewer": "independent-research-review",
