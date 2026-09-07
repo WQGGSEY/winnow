@@ -23,21 +23,24 @@ from unittest import mock
 from research_harness import thread_supervisor as ts
 
 
-@pytest.mark.parametrize('planning', [False, True])
-def test_known_research_step_dispatches_exact_mcp_request_without_coordinator(tmp_path, monkeypatch, planning):
+@pytest.mark.parametrize('step', ['preflight', 'planning', 'protocol'])
+def test_known_research_step_dispatches_exact_mcp_request_without_coordinator(tmp_path, monkeypatch, step):
     import sys
     monkeypatch.setattr(ts, '__file__', str(tmp_path / 'research_harness/thread_supervisor.py'))
     (tmp_path / 'venv/bin').mkdir(parents=True)
     thread = tmp_path / 'runs/threads/thread'
     directory = thread / 'production/research_control/work/work'
     directory.mkdir(parents=True)
-    request_path = directory / 'dispatch_request.json'
-    request_path.write_text(json.dumps({'thread_id': 'thread', 'work_id': 'work', 'experiment_plan': {}}))
+    request_path = directory / ('protocol_review_dispatch.json' if step == 'protocol' else 'dispatch_request.json')
+    saved = {'thread_id': 'thread', 'work_id': 'work'}
+    saved.update({'notes': 'Keep original endpoints.', 'rationale': 'Permit the diagnostic.'} if step == 'protocol' else {'experiment_plan': {}})
+    request_path.write_text(json.dumps(saved))
     state = thread / 'production/research_control/current.json'
-    tool = 'plan_research_work' if planning else 'execute_baseline_preflight'
-    arguments = {'thread_id': 'thread'} if planning else {'thread_id': 'thread', 'request_path': str(request_path)}
-    state.write_text(json.dumps({'work_id': 'work', 'status': 'completed' if planning else 'planned',
-        'next_tool_to_call': tool, 'outcome': {'execution_result': 'checkpoint'}}))
+    tool = {'planning': 'plan_research_work', 'preflight': 'execute_baseline_preflight', 'protocol': 'revise_evaluation_protocol'}[step]
+    arguments = {'thread_id': 'thread'} if step == 'planning' else {'thread_id': 'thread', 'request_path': str(request_path)}
+    state.write_text(json.dumps({'work_id': 'work', 'status': 'completed' if step == 'planning' else 'planned',
+        'next_tool_to_call': tool, 'outcome': {'execution_result': 'checkpoint'},
+        'protocol_review_checkpoint': step == 'protocol', 'protocol_review_dispatch_path': str(request_path)}))
     script = (
         'import json,sys,os\n'
         'request=json.loads(sys.stdin.readline())\n'
@@ -57,11 +60,12 @@ def test_known_research_step_dispatches_exact_mcp_request_without_coordinator(tm
     assert ts.resume_known_research_step(tmp_path, 'thread', 'gpt-5.6-luna', active) == ts.WORK_UNIT_EXIT_CODE
     assert active == {'pid': None, 'session': None}
     assert request_path.read_bytes() == original
-    response_name = 'supervisor_plan.jsonl' if planning else 'supervisor_resume.jsonl'
+    response_name = {'planning': 'supervisor_plan.jsonl', 'preflight': 'supervisor_resume.jsonl', 'protocol': 'supervisor_protocol.jsonl'}[step]
     assert json.loads((directory / response_name).read_text())['id'] == 1
     work = json.loads(state.read_text())
     work['outcome']['execution_result'] = 'rejected'
     work['status'] = 'planned'
+    work['protocol_review_checkpoint'] = False
     state.write_text(json.dumps(work))
     assert ts.resume_known_research_step(tmp_path, 'thread', 'gpt-5.6-luna', active) is None
 
