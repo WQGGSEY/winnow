@@ -213,12 +213,11 @@
     },
     "required_observations": {
       "type": "array",
-      "maxItems": 8,
       "items": {
         "type": "string",
         "minLength": 1
       },
-      "description": "For empirical work, names of numeric metrics counting the eligible observations needed to interpret this test. Each must exceed zero. These are sample-support counts, never positive-outcome requirements or treatment-effect thresholds. Use an empty list for analysis/protocol_revision."
+      "description": "Host-derived union of the alternatives required_observations. For empirical work, names of numeric metrics counting the eligible observations needed to interpret this test. Each must exceed zero. These are sample-support counts, never positive-outcome requirements or treatment-effect thresholds. Use an empty list for analysis/protocol_revision."
     },
     "hypothesis_ids": {
       "type": "array",

@@ -14,7 +14,7 @@ from research_harness.schemas.validator import validate_named_schema
 from research_harness.evaluation_vault import sealed_bank_metadata
 from research_harness.confirmation_sampling import read_sampling_spec, active_sampling_registration
 
-PLANNING_POLICY_VERSION = 24
+PLANNING_POLICY_VERSION = 25
 
 
 class StaleResearchWork(ValueError):
@@ -520,7 +520,7 @@ Choose from:
 - protocol_revision: a prospective design change actually required by the intended question or a cited active restriction. Changes cannot lower the original endpoints or success bar. component_binding requires preparing actual source within the same work; study_design does not. Automatic pre-execution source binding is already available for permitted diagnostics.
 - confirmation: only when confirmation_available is true. The existing freeze, qualification and independent checks still govern dispatch.
 
-After unusable or unchanged observations, choose recovery, existing-source analysis, a different diagnostic or a small exploratory competence/comparison control. An operational failure leaves the hypothesis unresolved but may justify replacing the procedure based on cost or feasibility. First inspect measurement_context facts: if a needed quantity is already recorded, prefer existing-source analysis over rerunning solely to rename or recover it. Declare nonempty required_observations count names for empirical work and their subsets on each alternative, including shared validity dependencies; analysis/protocol_revision must use []. The execution agent must bind every count to an artifact JSON pointer and producer in experiment_plan.observation_bindings; names alone are not an output contract. A selected empirical test must have a plausible opportunity for eligible observations. If unknown, choose a small support probe. Set a runtime no greater than max_runtime_seconds.
+After unusable or unchanged observations, choose recovery, existing-source analysis, a different diagnostic or a small exploratory competence/comparison control. An operational failure leaves the hypothesis unresolved but may justify replacing the procedure based on cost or feasibility. First inspect measurement_context facts: if a needed quantity is already recorded, prefer existing-source analysis over rerunning solely to rename or recover it. Declare nonempty required_observations count names on each empirical alternative, including shared validity dependencies; analysis/protocol_revision alternatives must use []. The host derives the work-level required_observations as the union of these dependencies; do not generate a second copy of the count inventory. The execution agent must bind every count to an artifact JSON pointer and producer in experiment_plan.observation_bindings; names alone are not an output contract. A selected empirical test must have a plausible opportunity for eligible observations. If unknown, choose a small support probe. Set a runtime no greater than max_runtime_seconds.
 
 Required observation names belong to the work that declared them; they are not a universal prerequisite for learning from every historical experiment. Existing-source analysis may transparently derive a summary from saved records and trace its producer in saved source, with exact provenance and limitations. A missing serialized producer label is not proof that provenance cannot be established. This does not rename old support bindings, retroactively qualify a result, or resolve a prediction whose required evidence is absent. If an unresolved diagnostic can be measured within a small matched intervention probe, consider collecting it there instead of demanding a separate diagnostic first. Keep the probe provisional and make its effect uninterpretable when its validity conditions fail.
 
@@ -549,6 +549,9 @@ Preserve deferred_questions as outside the current test. Do not combine unrelate
         })
         try:
             decision = json.loads(response.text)
+            decision['required_observations'] = list(dict.fromkeys(
+                name for alternative in decision['alternatives']
+                for name in alternative['required_observations']))
             if isinstance(decision, dict) and isinstance(decision.get('solution_path'), dict):
                 decision['solution_path']['parent_work_id'] = (brief.get('current_solution') or {}).get('work_id')
         except ValueError as exc:

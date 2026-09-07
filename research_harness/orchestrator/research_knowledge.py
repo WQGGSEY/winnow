@@ -82,6 +82,8 @@ def planning_response_schema(previous: dict[str, Any], *, available_evidence: se
     """Constrain receipt facts before generation; scientific judgments remain open."""
     from research_harness.schemas.validator import load_schema
     schema = load_schema('research_work')
+    del schema['properties']['required_observations']
+    schema['required'].remove('required_observations')
     solution = schema['properties']['solution_path']
     del solution['properties']['parent_work_id']
     solution['required'].remove('parent_work_id')

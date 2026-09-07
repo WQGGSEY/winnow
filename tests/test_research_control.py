@@ -416,14 +416,22 @@ def test_restart_reconciles_reserved_work_and_never_reads_final_holdout(tmp_path
             from dataclasses import replace
             schema = json.loads(request.output_schema.read_text())
             assert 'parent_work_id' not in schema['properties']['solution_path']['properties']
+            assert 'required_observations' not in schema['properties']
             response = super().complete(request)
             decision = json.loads(response.text)
             del decision['solution_path']['parent_work_id']
+            for index, alternative in enumerate(decision['alternatives']):
+                alternative['required_observations'] = [f'count_{index}_{number}' for number in range(6)]
+            self.dependencies = [item['required_observations'] for item in decision['alternatives']]
+            decision['required_observations'] = ['valid_pairs the transition count?']
             return replace(response, text=json.dumps(decision))
     planner = MissingLineagePlanner()
     following = plan_research_work(REPO, thread, transport=planner)
     assert following['status'] == 'planned'
     assert following['decision']['solution_path']['parent_work_id'] == work['work_id']
+    assert following['decision']['required_observations'] == list(dict.fromkeys(
+        name for names in planner.dependencies for name in names))
+    assert [item['required_observations'] for item in following['decision']['alternatives']] == planner.dependencies
     assert 'DO_NOT_USE' not in json.dumps(planner.calls)
     assert planner.calls[0]['previous_work']['status'] == 'completed'
 
