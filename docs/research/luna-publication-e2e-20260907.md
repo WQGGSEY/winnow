@@ -275,3 +275,13 @@ root가 처음 확인한 학습 시도 두 건은 torch import에서 실패했�
 중단된 실제bf9 요청으로 모델 호출 전 입력을 캡처한 검사는 기존 성공 읽기17건과3개source의원본해시를 유지한166,562bytes 요청을 확인했다. 이후 추가 실행 공개기록을 반영했으므로 실제 재개에서는 범위 판단도 그 새 기록을 읽어야 한다. 앞선 범위 승인으로 이 실행을 자동 허용하지 않는다. 검증자료는224923/reviewer-tool-inventory.json, readonly-mcp-stdio-verification.json, readonly-review-recovery-verification.json 및 대응스크립트에 보존했다.
 
 관련166개 검사와8개subtest를 실행했다. 범위 판단에 공개기록을 전달하는 후속변경 뒤 관련38개와3개subtest도 실행했다. 큰 파일 복구 회귀의 첫 실행은 잘못된 조건 적용 위치 때문에 실패했고, 기존 objection 검증을 복원하고 실제inline 경계에 조건을 적용한 후 통과했다. 초기probe의경로오류와캡처스크립트의schema filename비교오류도수정했다. 이는실제연구성과나출판수준논문생성의증거가아니다.
+
+## 9월 8일 검토 복구와 논문 심사의 실행 경계
+
+추가 공개기록을 읽은 범위 검토 b12c56f5…는 23:41:44에 entry33의 Stage1 허가가 등록 외 fitting으로 소진됐다고 판정했다. 정확도 부재는 재실행 허가가 아니었다. Luna는 23:46:55 새 작업 7cb51ec9…에서 알려진 split_index/metric binding 결함을 수정한 뒤 같은 저장 table의 calibration 한 번과 조건부 Stage2 한 번을 허용하는 사전 변경안을 선택했다. 아직 이 변경안의 승인이나 새 정식 실험 결과는 없다.
+
+235109 배치의 독립 검토 e3939ff0…는 00:11:09에1200초 제한으로 종료됐다. 완료된 MCP 조회는109건이며 native command_execution은0건이다. 중간 agent_message는 최종 심사 결과가 아니다. 소유 프로세스가 모두 종료됐음을 확인한 뒤001428 배치에서 동일 제안을 복구했다. 완료된 조회를 포함한 입력은276,704bytes이며 도구 없는 종합 판단 호출이다. 입력 크기는 실제 누적 토큰 사용량의 상한이 아니다.
+
+논문 심사 review_runner에도 그림 또는 원문이 있을 때 native 실행 도구를 켜는 경로가 남아 있었다. 논문 심사 역시 실행 도구를 끄고 명시적으로 제공한 파일만 읽는 MCP를 연결한다. 논문 디렉터리가 연구 thread 밖에 있더라도 제공된 원문을 읽을 수 있으며, 형제 파일이나 디렉터리 조회, 다른 연구 도구 호출은 거부한다. 그림을 보는 view_image와 문헌 심사자의 웹 검색 설정은 유지한다. MCP 설정은 심사 invocation identity에 포함한다. 기존 과학적 판정 기준과 학습 소스는 변경하지 않았다.
+
+실제 설치된 CLI와 로컬 무인증 응답기를 이용한001428/probe_publication_reviewer_tools.py에서6개 도구만 노출되고, 원문 fixture의 SHA-256 읽기가 성공하며, native 임시 파일 쓰기가 거절되는 것을 확인했다. 외부 모델 호출이나 학습은 없다. 최초 실행은 PYTHONPATH 누락으로 시작하지 못했고 설정 후 완료했다. 결과는 publication-reviewer-tool-inventory.json에 저장했다. 관련 pytest29개와3개subtest, CLI adapter18개 검사 및 git diff --check도 실행했다. 이것은 권한 경계의 확인이며5~7번 성공이나 논문 품질의 증거는 아니다.

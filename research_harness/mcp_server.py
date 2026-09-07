@@ -6656,11 +6656,12 @@ def _send(message: dict[str, Any]) -> None:
 
 
 def _handle_request(msg: dict[str, Any], settings: dict[str, Any], *, read_only_thread: str | None = None,
-                    denied_read_paths: tuple[Path, ...] = ()) -> dict[str, Any]:
+                    denied_read_paths: tuple[Path, ...] = (), read_only_files: tuple[Path, ...] = ()) -> dict[str, Any]:
     method = msg.get("method", "")
     params = msg.get("params") or {}
     req_id = msg.get("id")
-    scoped_thread = read_only_thread or os.environ.get("RESEARCH_HARNESS_THREAD_ID")
+    inspection_only = bool(read_only_thread or read_only_files)
+    scoped_thread = 'inspection' if read_only_files else read_only_thread or os.environ.get("RESEARCH_HARNESS_THREAD_ID")
     if method == "initialize":
         return {
             "jsonrpc": "2.0",
@@ -6673,14 +6674,15 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any], *, read_only_
         }
     if method == "tools/list":
         definitions = TOOL_DEFINITIONS
-        if read_only_thread:
+        if inspection_only:
             definitions = [tool for tool in definitions if tool['name'] == 'read_research_artifact']
         if scoped_thread:
             definitions = deepcopy(definitions)
-            if read_only_thread:
+            if inspection_only:
                 definitions[0]['description'] = (
-                    'Inspect text, source, JSON or directories in the current thread and framework source directory. '
-                    'Use line windows, literal query or JSON pointers; results bind the full file SHA-256. '
+                    ('Inspect only the explicitly supplied file paths. Directory browsing is unavailable. '
+                     if read_only_files else 'Inspect text, source, JSON or directories in the current thread and framework source directory. ')
+                    + 'Use line windows, literal query or JSON pointers; results bind the full file SHA-256. '
                     'The inspection server provides reading only. Excluded review files cannot be read.')
             for tool in definitions:
                 schema = tool["inputSchema"]
@@ -6698,7 +6700,7 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any], *, read_only_
         name = params.get("name", "")
         args = params.get("arguments") or {}
         try:
-            if read_only_thread and name != 'read_research_artifact':
+            if inspection_only and name != 'read_research_artifact':
                 raise ValueError('Inspection servers expose only read_research_artifact.')
             if not isinstance(args, dict):
                 raise ValueError("Tool arguments must be an object")
@@ -6711,7 +6713,15 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any], *, read_only_
                 result = handle_get_research_state(args, settings)
             elif name == 'read_research_artifact':
                 from research_harness.research_artifacts import read_research_artifact
-                result = read_research_artifact(_thread_dir(args['thread_id']), args,
+                if read_only_files:
+                    path = Path(args.get('path', '.')).resolve()
+                    if path not in read_only_files or not path.is_file():
+                        raise ValueError('Choose an explicitly supplied review file.')
+                    root = path.parent
+                    args = {**args, 'path': str(path)}
+                else:
+                    root = _thread_dir(args['thread_id'])
+                result = read_research_artifact(root, args,
                                                 denied_paths=denied_read_paths,
                                                 additional_roots=(_repo_root() / 'research_harness',) if read_only_thread else ())
             elif name == "plan_research_work":
@@ -6831,10 +6841,14 @@ def main() -> None:
         help="Override the repo root (default: parent of research_harness/).",
     )
     parser.add_argument('--read-only-thread', default=None)
+    parser.add_argument('--read-only-file', type=Path, action='append', default=[])
     parser.add_argument('--deny-read-path', type=Path, action='append', default=[])
     args = parser.parse_args()
+    if args.read_only_file and args.read_only_thread:
+        parser.error('Choose either thread inspection or explicit file inspection.')
     if args.read_only_thread is not None and not re.fullmatch(r'[A-Za-z0-9_-]+', args.read_only_thread):
         parser.error('--read-only-thread must be a thread identifier')
+    read_only_files = tuple(path.resolve() for path in args.read_only_file)
     repo = (args.repo_root or _repo_root()).resolve()
     _repo_root = lambda: repo  # noqa: E731
     _thread_dir = lambda tid: repo / "runs" / "threads" / tid  # noqa: E731
@@ -6851,7 +6865,8 @@ def main() -> None:
         except json.JSONDecodeError:
             continue
         response = _handle_request(msg, settings, read_only_thread=args.read_only_thread,
-                                   denied_read_paths=tuple(args.deny_read_path))
+                                   denied_read_paths=tuple(args.deny_read_path),
+                                   read_only_files=read_only_files)
         _send(response)
 
 

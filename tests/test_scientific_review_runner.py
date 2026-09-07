@@ -79,7 +79,8 @@ def test_runs_two_isolated_reviews_and_replays_readiness(tmp_path: Path, with_fi
 
     assert len(transport.requests) == 2
     assert [request.allow_web_search for request in transport.requests] == [False, True]
-    assert all(request.allow_local_tools is (with_figure or with_source) for request in transport.requests)
+    assert all(request.allow_local_tools is False for request in transport.requests)
+    assert all(bool(request.mcp) is (with_figure or with_source) for request in transport.requests)
     assert transport.requests[0].cwd != transport.requests[1].cwd
     assert all("Complete paper" in request.prompt.input for request in transport.requests)
     for request in transport.requests:
@@ -87,6 +88,11 @@ def test_runs_two_isolated_reviews_and_replays_readiness(tmp_path: Path, with_fi
         assert evidence[0]["value"] == 12.5
         if with_source:
             assert json.loads(request.prompt.input)['primary_source_files'][0]['path'] == str(primary)
+            import research_harness.mcp_server as server
+            response = server._handle_request({'id': 1, 'method': 'tools/call', 'params': {
+                'name': 'read_research_artifact', 'arguments': {'path': str(primary)}}}, {},
+                read_only_files=(primary.resolve(),))
+            assert json.loads(response['result']['content'][0]['text'])['sha256'] == ledger['primary_sources']['source_1']['text']['sha256']
         if with_figure:
             import hashlib
             figure = json.loads(request.prompt.input)['figure_files'][0]

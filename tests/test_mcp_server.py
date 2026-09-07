@@ -77,6 +77,31 @@ def test_artifact_inspection_reads_sources_without_execution_or_thread_escape(tm
     assert not marker.exists()
 
 
+def test_review_file_inspection_cannot_read_siblings_or_execute(tmp_path, monkeypatch):
+    source = tmp_path / 'paper.txt'
+    source.write_text('Primary source evidence')
+    sibling = tmp_path / 'unlisted.txt'
+    sibling.write_text('Not supplied to this review')
+    monkeypatch.setenv('RESEARCH_HARNESS_THREAD_ID', 'unrelated-thread')
+
+    def call(method, params=None):
+        return srv._handle_request({'id': 1, 'method': method, 'params': params}, {},
+                                   read_only_files=(source,))
+
+    catalog = call('tools/list')['result']['tools']
+    assert [tool['name'] for tool in catalog] == ['read_research_artifact']
+    result = call('tools/call', {'name': 'read_research_artifact', 'arguments': {'path': str(source)}})
+    assert json.loads(result['result']['content'][0]['text'])['lines'][0]['text'] == source.read_text()
+    for path in (sibling, tmp_path):
+        assert 'error' in call('tools/call', {'name': 'read_research_artifact', 'arguments': {'path': str(path)}})
+    for tool in srv.TOOL_DEFINITIONS:
+        if tool['name'] != 'read_research_artifact':
+            assert 'error' in call('tools/call', {'name': tool['name'], 'arguments': {}})
+    source.unlink()
+    source.symlink_to(sibling)
+    assert 'error' in call('tools/call', {'name': 'read_research_artifact', 'arguments': {'path': str(source)}})
+
+
 def test_retrieved_references_reach_manuscript_citations_without_changing_baselines(tmp_path, monkeypatch):
     import urllib.error
     from research_harness.agents import market_research
