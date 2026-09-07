@@ -1763,6 +1763,38 @@ class LockTests(unittest.TestCase):
 
 
 class WatchLoopTests(unittest.TestCase):
+    def test_progressed_direct_steps_do_not_insert_a_coordinator(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            tdir = _make_thread(repo, 't1')
+            path = tdir / 'production/research_control/current.json'
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({'work_id': 'old', 'status': 'planned',
+                                        'next_tool_to_call': 'execute_baseline_preflight'}))
+            direct_calls = []
+
+            def direct(*args):
+                direct_calls.append(json.loads(path.read_text()))
+                if len(direct_calls) == 1:
+                    path.write_text(json.dumps({'work_id': 'old', 'status': 'completed',
+                                                'next_tool_to_call': 'plan_research_work'}))
+                    return ts.WORK_UNIT_EXIT_CODE
+                if len(direct_calls) == 2:
+                    path.write_text(json.dumps({'work_id': 'new', 'status': 'planned',
+                                                'next_tool_to_call': 'design_experiment_template'}))
+                    return ts.WORK_UNIT_EXIT_CODE
+                return None
+
+            with mock.patch.object(ts, 'resume_known_research_step', side_effect=direct), \
+                 mock.patch.object(ts, 'spawn_codex_session', return_value=ts.WORK_UNIT_EXIT_CODE) as spawn, \
+                 mock.patch.object(ts, 'advance_resumable_reorientation', return_value=None), \
+                 mock.patch.object(ts, 'mcp_idle_seconds', return_value=0):
+                result = ts.watch_thread(repo, 't1', max_cycles=3)
+            self.assertEqual(result['cycles'], 3)
+            self.assertEqual([work['next_tool_to_call'] for work in direct_calls],
+                             ['execute_baseline_preflight', 'plan_research_work', 'design_experiment_template'])
+            spawn.assert_called_once()
+
     def test_signal_during_cycle_preparation_does_not_launch_another_session(self):
         for boundary in ('prompt', 'handoff'):
             with self.subTest(boundary=boundary), TemporaryDirectory() as tmp:
