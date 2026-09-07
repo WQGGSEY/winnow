@@ -142,3 +142,30 @@ Luna가 제출한 amendment에는 이전 900초 실행을 “rejected for scope 
 하지만 metadata 수정을 위해 과거 준비 source를 다시 등록하면서 앞서 고친 gate를 되돌렸다. bind_work는 이전 source를 prior_prepared_implementation으로 옮겼으므로 최신 준비본으로 잘못 표시한 것은 아니었다. root가 추가한 오류 안내의 design_experiment_template 경로가 소스 재선택을 유도했다. `97c952e`에서 최신 저장 dispatch의 observation_bindings만 updates로 수정하도록 안내를 바로잡았다. 관련 기존 control 42개 검사와 diff check를 실행했다.
 
 17:17:49 `fbc30456…` 검토가 되돌아간 six-cell gate를 거절했다. Luna는 types를 유지한 채 gate를 다시 수정했다. 17:18:51 이후 새 source review `917da01d…`에 104,682 bytes가 접수됐다. source bytes는 앞선 corrected-timeout 4cef와 정확히 같다. experiment.py SHA256=31669f107ebe1bf42b488ca5d167f17c1d68c07146bfa43991ca7d31fd186a23. 13개 binding 중 두 효과는 measurement, count와 engine validity는 support_count이다. scope는 기존 bbd12 영수증을 재사용하며 두 번의 source 제출 모두 새 scope 모델 호출 없이 진행됐다. 아직 formal learner 실행은 없다.
+
+## 추가 감사 거절과 수정본의 로컬 실행
+
+17:38:13 tool-free recovery `f18914d2…`가 516.1초에 reject를 반환했다. usage input 91,817 / output 28,322 (reasoning 27,333 포함). 두 지적은 충돌 점수 변화와 fine-tuning audit 누락이다. 첫 지적은 pinned capture.py:63의 KILL_POINTS=0과 충돌한다. root가 고정 입력에서 이 상수를 확인했지만 과학 소스나 리뷰 영수증을 수정하지 않았다. 초기 검사/복구 관측에는 collision 분기만 포함됐고 상수 정의는 포함되지 않았다. 이 사실만으로 유효한 충돌에서 nonzero kill score가 생긴다고 단정할 수 없다.
+
+Luna의 준비본 `09e8fe75…`는 returned-food delta와 score delta의 독립 비교를 제거하고 raw emitted reward 대 simulator score delta 일치 검사는 유지했다. fine-tuning endpoints/audits를 반환·집계하고 그 유효성을 paired 결과의 조건으로 추가했다. root가 코드 diff를 읽었으며 독립 점수 확인 제거의 적절성은 다음 검토에서 확인할 사항이다. learner 소스 수정은 Luna가 했다.
+
+17:47:15 Luna가 비등록 local smoke에서 8개 training endpoints와 6,320개 training audits 및 checkpoint reload가 통과했고 imitation effect=0이라고 보고했다. 이는 등록된 연구 증거가 아니다. 동일 작업의 source review에 111,803 bytes가 접수됐다. 여전히 formal one-cell learner 결과·강한 결과·논문은 없다.
+
+## 최초의 등록된 단일 셀 학습 비교 완료
+
+17:57:17 source89f6c985…가 600초 timeout으로 종료돼 소유 프로세스 정리 후 `175743` 배치에서 276,869-byte 복구 검토0610f910…로 재개했다. 0610은 source를 승인했고 usage input92,169/output40,704(reasoning39,529 포함)를 남겼다. 검토는 원시 score/reward 일치와 구조적 전이 조건 및 모든 training audit 집계가 이번 개발 진단에 적합하다고 판단했다. 독립 returned-food score 회계 제거는 명시적으로 언급됐다. 이것은 엔진의 모든 전이 법칙을 별도로 증명한 결과가 아니다.
+
+18:10:39 현재 work4c010517…의 정식 LocalRunner 실행이 완료됐다. 실행시간35.980393초, exit0이다. teacher raw endpoint=+2, scratch=-18, imitation=-18, paired effect=0, positive fraction=0. 8개 fine-tuning endpoint, 6,320개 fine-tuning audit 및 총8,689개 transition audit가 유효하게 기록됐다. 두 정책을 네 에피소드 후 저장·strict reload한 checkpoint와 final endpoint 연결을 확인했다. 단일 셀·단일 시드의 짧은 진단이며 강한 결과·기준선 자격·일반적 실패 또는 원래 문제 해결의 증거가 아니다.
+
+root가 `164413/verify_registered_learning.py`를 실제 완료 아티팩트에 실행해 승인 요청 해시/실행 소스 bytes/입력 매니페스트/두 checkpoint SHA/endpoint 연결/카운트/짝 효과 계산을 확인했다. 결과는 `164413/registered-learning-verification.json`. experiment.py SHA=4d1b55b180cf4d6ab3e380d3aeace7d257ec1cce33a65e1d0ecaf10f2c74f1fc, metrics SHA=d5757861720197234c6baa575616d3280a9f706c5d1d548ee1ce8b32382fa177. measurement_support.evaluable=true, missing_or_empty=[]이며 두 영 효과를 결측으로 분류하지 않았다. 이후 감독 호출 없이 research work decision200,656bytes로 연결됐다. 다음 연구 해석과 강한 결과는 아직 확인되지 않았다.
+
+18:12:40 계획 work9963e2ff79585a10ce8a6d28d53f9c8386220633f4f2bc2d6402aeba28e582ea가 생성됐다. Luna는 complete-support 영 효과로 positive-imitation 예측을 weakened, 이 짧은 route의 충분성 미입증 예측을 supported로 갱신하면서 upstream causal defect·B 반박·일반적 algorithm failure를 입증하지 않는다고 제한했다. 같은 학습을 바로 재실행하지 않고 기존 arm endpoints와 learning curves를 읽어 transient imitation benefit이 fine-tuning으로 사라졌는지 분석하도록 선택했다. next resolve_research_work의 research source analysis 입력44,003bytes가 접수됐다. 아직 분석 결론 및 다음 개입은 없다.
+
+
+## 초기 학습 곡선 분석과 다음 배치
+
+18:19:37 기존 근거 분석9963e2ff…가 answered로 완료됐다. 첫 curve rollout은 BC 또는 scratch 초기화 후 첫 fine-tuning update 전에 수집됐고, 양쪽 모두 첫 회부터 네 번째까지 raw score=-18, returned_food=0이었다. 이 기록에서는 사라진 초기 imitation 이득이 관측되지 않았다. 별도 zero_shot 필드나 action-level teacher-match는 없으므로 관측·보상·표현력의 인과적 결함은 입증하지 못한다. 독립 분석1a4c8a39…의 usage는 input1,427,128 / cached1,271,808 / output15,745(reasoning10,128 포함)이다. 최초 prompt44,003bytes는 이 누적 토큰 사용량을 뜻하지 않는다.
+
+후속 계획은 배치 잔여480초가 호출 제한600초보다 짧아 provider 호출 전에 중단됐다. 기존 소유 프로세스가 없음을 확인하고 18:25:05 `luna-publication-e2e-20260907-182505`에서 같은 완료 상태를 이어간다. 강한 결과·독립 확인·논문 패키지는 미완료다.
+
+`ef2d9ab`은 실제 승인 복구가 약12분 걸린 점에 맞춰 최초 source execution review 제한을 복구와 같은1,200초로 조정했다. 연구 실행300/900초와 배치 예산은 유지되며 충분한 잔여 시간이 없으면 시작하지 않는다. 관련15개 기존 검사를 실행했다. `7dc535f`는 계획된 existing-source analysis도 저장 상태에서 직접 resolve_research_work로 전달한다. 준비·오류 복구는 감독 경로를 유지한다. 기존65개 검사와5개 subtest를 실행했다. 두 변경의 실제 시간 절약은 아직 측정하지 않았다.
