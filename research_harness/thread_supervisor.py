@@ -1759,6 +1759,13 @@ def resume_known_research_step(repo: Path, tid: str, model: str, active_child: d
         arguments = {'thread_id': tid}
         response_name = 'supervisor_plan.jsonl'
         message = '완료된 작업의 다음 연구 판단을 MCP 계획 담당자에게 직접 요청합니다.'
+    elif (work.get('status') == 'planned' and tool == 'plan_research_work'
+          and work.get('requires_replanning')
+          and work.get('outcome', {}).get('execution_result') == 'rejected'
+          and work['outcome'].get('reason')):
+        arguments = {'thread_id': tid, 'reconsider_reason': work['outcome']['reason']}
+        response_name = 'supervisor_plan.jsonl'
+        message = '기록된 범위 거절 사유를 MCP 계획 담당자에게 직접 전달합니다.'
     elif (work.get('status') == 'planned' and tool == 'resolve_research_work'
           and work.get('decision', {}).get('kind') == 'analysis'
           and work['decision'].get('source_mode') == 'existing' and not work.get('outcome')):
