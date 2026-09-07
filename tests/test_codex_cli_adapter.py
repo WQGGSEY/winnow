@@ -199,8 +199,9 @@ def test_one_shot_command_order_prompt_and_schema(tmp_path: Path, model: str, ef
     )
 
     command, kwargs = runner.calls[0]
-    assert command[:8] == [
-        "/bin/codex",
+    assert command[0] == '/bin/codex'
+    start = command.index('--ask-for-approval')
+    assert command[start:start + 7] == [
         "--ask-for-approval",
         "never",
         "exec",
@@ -237,7 +238,8 @@ def test_one_shot_can_disable_every_local_inspection_tool(tmp_path: Path) -> Non
         if value == "--disable"
     }
     assert disabled == {
-        "multi_agent", "multi_agent_v2", "skill_search",
+        "apps", "plugins", "remote_plugin",
+        "multi_agent", "skill_search",
         "shell_tool",
         "unified_exec",
         "js_repl",
@@ -289,7 +291,7 @@ def test_auth_accepts_chatgpt_and_redacts_raw_status() -> None:
     assert runner.calls[0][0] == ["codex", "login", "status"]
 
 
-def test_production_command_uses_read_only_shell_and_per_call_mcp(tmp_path: Path) -> None:
+def test_production_command_disables_execution_tools_and_keeps_per_call_mcp(tmp_path: Path) -> None:
     adapter = CodexCliAdapter(codex_path="codex")
     command = adapter._build_exec_command(
         request=None,
@@ -302,8 +304,8 @@ def test_production_command_uses_read_only_shell_and_per_call_mcp(tmp_path: Path
         ),
     )
 
-    assert command[:7] == [
-        "codex",
+    start = command.index('--ask-for-approval')
+    assert command[start:start + 6] == [
         "--ask-for-approval",
         "never",
         "exec",
@@ -311,6 +313,11 @@ def test_production_command_uses_read_only_shell_and_per_call_mcp(tmp_path: Path
         "--ignore-user-config",
         "--ignore-rules",
     ]
+    disabled = {command[index + 1] for index, item in enumerate(command) if item == '--disable'}
+    assert {'shell_tool', 'unified_exec', 'js_repl',
+            'multi_agent', 'apps', 'plugins', 'remote_plugin'}.issubset(disabled)
+    assert command[command.index('multi_agent_v2') - 1] == '--enable'
+    assert 'agents.enabled=false' in command
     assert "--approve-for-me" not in command
     assert 'default_permissions="research-development"' in command
     assert 'model_reasoning_effort="low"' in command

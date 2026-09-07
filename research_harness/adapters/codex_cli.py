@@ -241,21 +241,22 @@ class CodexCliAdapter:
         approval = ["--ask-for-approval", "never"]
         command = [
             self._codex_path,
+            '--disable', 'apps', '--disable', 'plugins', '--disable', 'remote_plugin',
+            # The legacy tool registry exposes v1 delegation even with multi_agent disabled.
+            '--enable', 'multi_agent_v2', '--disable', 'multi_agent',
+            '-c', 'agents.enabled=false',
         ]
-        if os.environ.get('RESEARCH_HARNESS_CALL_BUDGET') or (request is not None and not request.allow_local_tools):
-            command.extend(['--disable', 'multi_agent', '--disable', 'multi_agent_v2',
-                            '--enable', 'skip_host_skill_discovery', '--disable', 'skill_search'])
+        coordinator = request is None and mcp is not None
+        if coordinator or os.environ.get('RESEARCH_HARNESS_CALL_BUDGET') or (request is not None and not request.allow_local_tools):
+            command.extend(['--enable', 'skip_host_skill_discovery', '--disable', 'skill_search'])
         if request is not None and request.allow_web_search:
             command.append('--search')
-        if request is not None and not request.allow_local_tools:
+        if (request is not None and not request.allow_local_tools) or coordinator:
             for feature in (
                 "shell_tool",
                 "unified_exec",
                 "js_repl",
-                "code_mode",
-                "code_mode_host",
-                "view_image",
-            ):
+            ) + (("code_mode", "code_mode_host", "view_image") if not coordinator else ()):
                 command.extend(["--disable", feature])
         command.extend([
             *approval,

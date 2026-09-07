@@ -137,6 +137,15 @@ AC_CONTRACT = (
 
 TOOL_DEFINITIONS = [
     {
+        'name': 'read_research_artifact',
+        'description': 'Read thread-local text, source, receipts or acquired literature without executing code. A directory lists its children. File results include the full SHA-256 for source_files.from_path. Use line windows, literal query, or a JSON pointer for large records. Author source through design_experiment_template using content or hash-pinned from_path/replacements; run learning and simulation only through registered execution tools.',
+        'inputSchema': {'type': 'object', 'required': ['thread_id', 'path'], 'additionalProperties': False,
+            'properties': {'thread_id': {'type': 'string'}, 'path': {'type': 'string'},
+                'start_line': {'type': 'integer', 'minimum': 1},
+                'max_lines': {'type': 'integer', 'minimum': 1, 'maximum': 500},
+                'query': {'type': 'string', 'minLength': 1}, 'json_pointer': {'type': 'string'}}},
+    },
+    {
         "name": "finalize_submission_package",
         "description": "After rendering the manuscript, run two independent scientific reviews against the complete manuscript and evidence ledger, then compile the chosen official venue template into an anonymous PDF and source archive. Reuse reviews for unchanged content; fix returned objections in the manuscript before resubmitting. This is required for automatic completion; HTML alone is a preview. Supported: ICML/ICLR/NeurIPS/CVPR/COLT 2026 main and ICLR 2027 main. No external submission occurs.",
         "inputSchema": {"type": "object", "required": ["thread_id", "venue", "year"], "properties": {
@@ -1691,6 +1700,7 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
         }
     from research_harness.orchestrator.research_control import source_workspace
     state['source_workspace'] = str(source_workspace(d))
+    state['preparation_execution_disclosure'] = _read_json(d / 'production/research_control/preparation_execution_disclosure.json') or {}
     if args.get('view', 'current' if thread.get('current_phase') == 'production' else 'full') == 'full':
         return state
     work = dict(state['research_work'])
@@ -1701,6 +1711,7 @@ def handle_get_research_state(args: dict[str, Any], settings: dict[str, Any]) ->
                                       'baseline_preparation', 'baseline_preparation_contract', '_market_usage_contract', 'publication_target')},
         'view': 'current', 'thread_dir': str(d.resolve()), 'research_work': work,
         'source_workspace': state['source_workspace'],
+        'preparation_execution_disclosure': state['preparation_execution_disclosure'],
         'selected_hypotheses': selected_hypotheses(d, work.get('decision', {})),
         'observation_binding_contract': state['observation_binding_contract'],
         'execution_handoff': state['execution_handoff'],
@@ -6688,6 +6699,9 @@ def _handle_request(msg: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
                 args = {**args, "thread_id": scoped_thread}
             if name == "get_research_state":
                 result = handle_get_research_state(args, settings)
+            elif name == 'read_research_artifact':
+                from research_harness.research_artifacts import read_research_artifact
+                result = read_research_artifact(_thread_dir(args['thread_id']), args)
             elif name == "plan_research_work":
                 result = handle_plan_research_work(args)
             elif name == "retrieve_research_source":

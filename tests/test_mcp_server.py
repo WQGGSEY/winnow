@@ -17,6 +17,41 @@ from unittest import mock
 import research_harness.mcp_server as srv
 
 
+def test_artifact_inspection_reads_sources_without_execution_or_thread_escape(tmp_path, monkeypatch):
+    import hashlib
+    from research_harness.orchestrator.experiment_plan import resolve_source_files
+
+    thread = tmp_path / 'thread'
+    thread.mkdir()
+    marker = tmp_path / 'executed'
+    source = thread / 'experiment.py'
+    source.write_text(f'from pathlib import Path\nPath({str(marker)!r}).touch()\n')
+    (thread / 'metrics.json').write_text(json.dumps({'rows': [{'effect': -3}]}))
+    outside = tmp_path / 'private.txt'
+    outside.write_text('outside thread')
+    (thread / 'escape.txt').symlink_to(outside)
+    monkeypatch.setattr(srv, '_thread_dir', lambda tid: thread)
+    monkeypatch.setenv('RESEARCH_HARNESS_THREAD_ID', 'thread')
+
+    def call(**args):
+        return srv._handle_request({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+            'params': {'name': 'read_research_artifact', 'arguments': args}}, {})
+
+    result = json.loads(call(path='experiment.py', query='touch')['result']['content'][0]['text'])
+    assert result['sha256'] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert result['lines'] == [{'line': 2, 'text': source.read_text().splitlines()[1]}]
+    assert not marker.exists()
+    copied = resolve_source_files(thread, [{'path': 'experiment.py', 'purpose': 'safe source copy',
+        'from_path': result['path'], 'sha256': result['sha256'],
+        'replacements': [{'old': '.touch()', 'new': '.exists()'}]}])
+    assert '.exists()' in copied[0]['content'] and not marker.exists()
+    value = json.loads(call(path='metrics.json', json_pointer='/rows/0/effect')['result']['content'][0]['text'])
+    assert value['value'] == -3
+    for path in ('escape.txt', '../private.txt', str(outside)):
+        assert 'error' in call(path=path)
+    assert 'error' in call(path='experiment.py', thread_id='another-thread')
+
+
 def test_retrieved_references_reach_manuscript_citations_without_changing_baselines(tmp_path, monkeypatch):
     import urllib.error
     from research_harness.agents import market_research
@@ -486,6 +521,8 @@ class MCPServerTests(unittest.TestCase):
         self.assertIn("top-level `baselines`", design_tool["description"])
         self.assertIn("primary_dataset.relative_path", design_tool["description"])
         core_expected = {
+            "read_research_artifact",
+            "retrieve_research_source",
             "plan_research_work",
             "resolve_research_work",
             "revise_evaluation_protocol",

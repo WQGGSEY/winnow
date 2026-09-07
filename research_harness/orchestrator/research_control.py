@@ -490,6 +490,7 @@ def plan_research_work(repo: Path, thread: Path, *, reconsider_reason: str = '',
     packet = {
         'available_evidence_ids': sorted(available_evidence),
         'review_runtime': runtime,
+        'preparation_execution_disclosure': _read(thread / 'production/research_control/preparation_execution_disclosure.json'),
         'runtime_input_example': runtime_input_example(thread),
         'measurement_output_contract': {
             'unexpected_observations': 'Array of objects with string observation, evidence, scope_relation; optional suggested_branch_type is string or null. Use [] if absent; plain strings are invalid.',
@@ -865,6 +866,7 @@ def review_work_implementation(repo: Path, thread: Path, work_id: str, node: dic
               'registered_protocol': _read(thread / 'production/feasibility_envelope.json'),
               'protocol_note_history': protocol_note_history(thread),
               'development_executions': development_execution_history(thread),
+              'preparation_execution_disclosure': _read(thread / 'production/research_control/preparation_execution_disclosure.json'),
               'prior_objections': prior.get('required_work', []),
               'development_artifacts': {key: str((thread / value['report_path']).resolve())
                                         for key, value in work['source_observations'].items()}}
