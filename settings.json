@@ -2,33 +2,13 @@
   "data_adapters": {
     "_comment": "Registered local adapters. The supervisor probes canonical entries before advertising them as ready.",
     "_example": {
-      "id": "wq_brain_snapshot_2024_2025",
+      "id": "local_benchmark",
       "materializer_type": "benchmark",
       "role": "evaluation",
-      "source": "file:///absolute/path/to/snapshot",
-      "provenance": "operator-curated snapshot of WorldQuant Brain S&P 500 universe 2024-01 to 2025-12, stored at runs/datasets/wq_brain_snapshot/"
+      "source": "file:///absolute/path/to/your/licensed/benchmark",
+      "provenance": "Describe the source, version, split, and redistribution permissions."
     },
-    "registered": [
-      {
-        "id": "arxiv_category_taxonomy",
-        "materializer_type": "benchmark",
-        "role": "evaluation",
-        "source": "file:///home/hsj68/research_harness/research_harness/connector/data/arxiv_categories.json",
-        "provenance": "Frozen arXiv category taxonomy shipped with research_harness"
-      },
-      {
-        "id": "fashion_mnist_dev_gpu",
-        "materializer_type": "benchmark",
-        "role": "evaluation",
-        "source": "file:///home/hsj68/.local/share/research_harness_datasets/fashion_mnist_dev_seed20260831.pt",
-        "provenance": "Fashion-MNIST official train split from Zalando Research via torchvision 0.20.1; fixed class-balanced 12,000-train/2,000-validation tensor snapshot, seed 20260831"
-      },
-      {
-        "id": "okx_usdt_perp_1m",
-        "kind": "real_panel",
-        "provenance": "OKX USDT-margined perpetual swaps — top ~50 by 24h liquidity, survivorship-aware universe snapshots. 1-minute OHLCV + funding, ~5y (2021-06 onward), collected via okx_collector, stored at /mnt/d/coin_trading/data on home-wsl. real_holdout observed values are measured externally by the coin_trading backtester (next-open fill, size-based pessimistic fill model, reconstructed funding); the harness stays air-gapped from execution."
-      }
-    ]
+    "registered": []
   },
   "experiment_plan_templates": {
     "directories": [
@@ -97,10 +77,7 @@
     }
   },
   "runtime": {
-    "runner_executable_overrides": {
-      "python": "/home/hsj68/miniconda3/envs/ml/bin/python",
-      "python3": "/home/hsj68/miniconda3/envs/ml/bin/python3"
-    },
+    "runner_executable_overrides": {},
     "runner_environment_overrides": {
       "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
       "OMP_NUM_THREADS": "1",
@@ -110,10 +87,7 @@
     },
     "runner_capabilities": [
       "local_runner",
-      "cpu",
-      "accelerator:cuda",
-      "module:torch",
-      "data:fashion_mnist_dev_gpu"
+      "cpu"
     ],
     "legacy_claude_agent_budgets": {
       "default": "0.5",
@@ -213,9 +187,7 @@
           "--repo-root",
           "{repo_root}"
         ],
-        "server_env": {
-          "COIN_DATA_DIR": "/mnt/d/coin_trading/data"
-        }
+        "server_env": {}
       }
     },
     "runner_timeouts": {

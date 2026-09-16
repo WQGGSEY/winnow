@@ -3312,14 +3312,20 @@ def _preflight_checkpoint_reply(tid: str) -> dict[str, Any] | None:
 
 
 def handle_design_experiment_template(args: dict[str, Any]) -> dict[str, Any]:
-    with _exclusive_adaptive_writer(args['thread_id']):
-        try:
+    try:
+        # Reject unrelated nodes before the lock creates production state.
+        # The locked handler rechecks authority in case it changed meanwhile.
+        if not args.get('work_id') and args.get('node_id'):
+            rejected = _require_authoritative_node(args['thread_id'], args['node_id'])
+            if rejected is not None:
+                return rejected
+        with _exclusive_adaptive_writer(args['thread_id']):
             checkpoint = _preflight_checkpoint_reply(args['thread_id'])
             if checkpoint is not None:
                 return checkpoint
             return _handle_design_experiment_template_locked(args)
-        except (OSError, ValueError) as exc:
-            return {'status': 'rejected', 'reason': str(exc)}
+    except (OSError, ValueError) as exc:
+        return {'status': 'rejected', 'reason': str(exc)}
 
 
 def _handle_design_experiment_template_locked(args: dict[str, Any]) -> dict[str, Any]:

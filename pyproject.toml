@@ -1,9 +1,20 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "research-harness"
 version = "0.1.0"
-description = "Sakana v2-style research harness with bounded Codex workers."
+description = "Research prototype for evidence-governed experiments with bounded Codex workers."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "research_harness/frontend/static/htmx.LICENSE"]
 requires-python = ">=3.11"
 dependencies = ["pyflakes>=3.4,<4"]
+
+[project.urls]
+Repository = "https://github.com/WQGGSEY/research_harness"
+Issues = "https://github.com/WQGGSEY/research_harness/issues"
 
 [project.optional-dependencies]
 frontend = [

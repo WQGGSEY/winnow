@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Linux / Python ${{ matrix.python }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.12', '3.13']
+    env:
+      MPLBACKEND: Agg
+      RESEARCH_HARNESS_DISABLE_CLAUDE_WEBSEARCH: '1'
+      RESEARCH_HARNESS_ALLOW_CODEX_LIVE: ''
+      RESEARCH_HARNESS_EXECUTE_CODEX_LIVE: ''
+      RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE: ''
+      RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE: ''
+      RESEARCH_HARNESS_VERIFY_CODEX_LIVE: '0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install experiment isolation and publication test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            bubblewrap ripgrep texlive-latex-base texlive-latex-recommended \
+            texlive-fonts-recommended poppler-utils
+          bwrap --ro-bind / / --unshare-net --unshare-pid --proc /proc --dev /dev -- true
+          for tool in pdflatex bibtex pdfinfo pdftotext; do command -v "$tool"; done
+          test -f /usr/share/texlive/texmf-dist/bibtex/bst/base/plain.bst
+      - name: Install project and test dependencies
+        id: install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[test]'
+          python -m pip check
+      - name: Run existing and public-default regression tests
+        run: python -B -m pytest -ra --tb=short
+      - name: Run credential-free local preflight
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python -B -m research_harness.local_preflight
+      - name: Build wheel and check license metadata
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: |
+          python -m pip wheel --no-deps --wheel-dir dist .
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          from email.parser import Parser
+          wheels = list(Path('dist').glob('research_harness-*.whl'))
+          assert len(wheels) == 1, wheels
+          with ZipFile(wheels[0]) as wheel:
+              names = wheel.namelist()
+              metadata_path = next(n for n in names if n.endswith('.dist-info/METADATA'))
+              metadata = Parser().parsestr(wheel.read(metadata_path).decode())
+              assert metadata['License-Expression'] == 'MIT'
+              assert any(n.endswith('.dist-info/licenses/LICENSE') for n in names)
+              assert any(n.endswith('/htmx.LICENSE') for n in names)
+              assert 'research_harness/frontend/static/htmx.min.js' in names
+              assert 'research_harness/frontend/templates/base.html' in names
+              assert any(n.startswith('research_harness/schemas/') and n.endswith('.schema.json') for n in names)
+          print('Wheel, license metadata and packaged assets verified')
+          PY
+      - name: Check patch whitespace
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: git diff --check HEAD^ HEAD

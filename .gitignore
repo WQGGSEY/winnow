@@ -23,8 +23,10 @@ runs/
 # operator_frontend per-machine state (subscription_ack, full_auto_mode).
 settings.local.json
 
-# Editable-install metadata.
+# Editable-install metadata and distribution builds.
 *.egg-info/
+build/
+dist/
 
 # Claude Code local session state.
 .claude/

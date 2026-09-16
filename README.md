@@ -1,506 +1,193 @@
 # Research Harness
 
-Production-track research harness inspired by Sakana AI Scientist-v2. Codex
-workers are bounded runtime tools behind provider-neutral request, result,
-usage, auth, and event types. The active new-thread flow is grilling,
-connector, then supervisor-driven blind sequential production.
+A Python research prototype for **evidence-governed experiments with bounded
+Codex workers**. It separates hypothesis generation, experiment execution,
+baseline qualification, independent review, and publication checks instead of
+treating an agent's success report as sufficient evidence.
 
-References:
+**Status: maintained research prototype.** Maintenance focuses on correctness,
+regressions, documentation, and reproducibility. This is not a turnkey autonomous
+scientist or a claim of publication-quality research. Internal states such as
+`goal_achieved` describe harness checks, not independent scientific certification.
+See the [paper-readiness audit](docs/research/paper-readiness-audit.md) for known
+limitations.
 
-- Sakana AI Scientist-v2 repository: https://github.com/SakanaAI/AI-Scientist-v2
-- Sakana AI Scientist-v2 BFTS config: https://github.com/SakanaAI/AI-Scientist-v2/blob/main/bfts_config.yaml
-
-## Pipeline Overview
+## Current workflow
 
 ```text
-user goal
-  -> grilling agent (multi-turn Codex) -> grilling_session.json
-  -> domain connector (multi-call Codex generation) -> connector_session.json
-        -> diverse intake research context
-  -> MCP server (supervised Codex sessions drive production via tools)
-        -> immutable GoalContract -> one blind direction at a time
-        -> verified strong result
-        -> publication artifacts (paper.html, interactive_summary.html, slides_summary.html)
+research goal
+  -> grilling (structured interview)
+  -> connector (diverse research perspectives and baseline research)
+  -> immutable GoalContract
+  -> one direction attempt at a time
+  -> execution evidence, independent reviews, and real-holdout checks
+  -> manuscript preview and separate audit summary, only if gates pass
 ```
 
-See [docs/PIPELINE.md](docs/PIPELINE.md) for the authoritative new-thread flow.
-The older market and refiner agents remain available only for historical runs.
+The active frontend phases are `grilling`, `connector`, and `production`.
+The [pipeline specification](docs/PIPELINE.md) is authoritative. Older market,
+refiner, and tree-search documentation describes historical workflows, not the
+new-thread entry path.
 
-`research_harness.research_runner` is the high-level CLI that drives this. Live
-Codex invocations remain behind subscription-quota and execution acknowledgements.
+The current implementation includes:
 
-Local experiment execution requires Linux with `bubblewrap` (`bwrap` on PATH).
-Experiments can write their assigned workspace and private temporary files; staged
-inputs and the rest of the filesystem are read-only. Network access is disabled
-inside experiments. Fetch research inputs through the harness acquisition tools.
-The research agent's shell is read-only; submit code and literature updates through
-the corresponding MCP tools.
+- Provider-neutral request/result types around Codex CLI sessions, explicit
+  live-use acknowledgements, and per-invocation MCP configuration.
+- Claim and experiment contracts, deterministic execution manifests, baseline
+  qualification, and reports derived from recorded source/metric evidence.
+- An immutable goal, isolated direction attempts, private failure context,
+  construct-adversary and real-holdout gates, and rebuttal review.
+- A localhost operator UI and persistent run artifacts. `paper.html` is a
+  manuscript preview; `interactive_summary.html` exposes the supporting state.
 
-## Included
+These mechanisms reduce some failure modes; they do not prove that generated
+code, measurements, reviews, or scientific conclusions are correct.
 
-- Claim-centered node schema and runtime envelope.
-- Baseline dossier structure with current-best, naive, and random/null roles.
-- Private failure lessons excluded from the next direction-generation request.
-- Deterministic critic folder routing.
-- Rebuttal packet, rebuttal critic stage, AC decision.
-- Worker-task contracts that restrict Codex worker output to source patches or
-  observed results; the harness derives worker reports.
-- Deterministic experiment-plan contracts, local runner manifest validation,
-  bounded execution, baseline-evidence checks, and source/metrics-evidence
-  ingestion into worker reports.
-- Live Codex smoke runner + operator-controlled live node dispatch with
-  reduction/memory/rebuttal modules behind approval gates.
-- MCP-driven production pipeline (`research_harness.mcp_server`): Codex calls
-  per-stage tools (`prepare_rebuttal_packet`,
-  `submit_rebuttal_critic_review`, `submit_orchestrator_reduction`,
-  `submit_ac_decision`, `submit_camera_ready_revision`,
-  `prepare_paper_writing_context`, `submit_paper_outline`,
-  `register_paper_figure`, `submit_paper_section`, `render_final_paper`) to
-  produce a real Sakana-v2 ICML paper with practitioner-reviewed
-  evidence and camera-ready directives. See `docs/MCP_OPERATIONS.md`.
-- **Grilling agent** (`research_harness.agents.grilling`): multi-turn Codex
-  loop driven by the harness; outputs schema-valid `grilling_session.json`.
-- **Legacy market research agent** (`research_harness.agents.market_research`):
-  agent-level (tools allowed, not a worker). arXiv API + Google Scholar
-  scraping; downloads PDFs; produces a baseline_dossier candidate satisfying
-  full dossier invariants.
-- **Root node generator** (`research_harness.orchestrator.root_node_from_grilling`):
-  deterministic conversion of grilling output into a schema-valid root node;
-  placeholder baseline_dossier_id is replaced after market research.
-- **Legacy lesson distillation agent** (`research_harness.memory.lesson_distillation`):
-  deterministic byte-threshold trigger; live sonnet compresses lessons; old
-  `lessons.yaml` archived under `memory/lessons/archive/`; approval gate
-  required before writing.
-- **Legacy research_refiner agent** (`research_harness.agents.research_refiner`):
-  multi-turn live sonnet between market_research and root_node. 3-action
-  protocol (`ASK | PROPOSE_DATASET | DONE`). PROPOSE_DATASET silently
-  dispatches to the dataset materializer registry and injects the result
-  into the next round. Forces SOTA reconciliation against the market
-  research analysis. Emits `refined_research_plan.json` + `dataset_manifest.json`.
-- **Dataset materializers** (`research_harness.datasets.*`): one Protocol,
-  one class per type. HuggingFace (raw_data / benchmark / model_weights),
-  LocalPath (factor_set / custom), Synthetic (synthetic with generator
-  recipe). Optional dependencies degrade gracefully.
+## Requirements and installation
 
-## Still Open
+Use a **Linux checkout** with Python 3.11+ and `bubblewrap` (`bwrap` on `PATH`).
+The CI configuration targets Ubuntu 22.04 with Python 3.12 and 3.13; it does not
+establish macOS or Windows support. Local experiments require usable Linux
+namespaces, not just an installed `bwrap` binary.
 
-- Sakana-v2 BFTS parity for cross-node search heuristics.
-- Real long-running training runner (slurm/container path).
-- Final TeX renderer (disabled by default per token policy).
-- Richer tree-visualization drilldown.
-
-## Operator Frontend (local UI)
-
-Localhost single-user web UI in front of the harness CLI. Replaces
-terminal interaction for grilling and exposes per-phase artifacts in a
-sidebar and accordion. See
-[docs/adr/0002-operator-frontend-in-process.md](docs/adr/0002-operator-frontend-in-process.md)
-and [docs/adr/0003-operator-frontend-htmx-stack.md](docs/adr/0003-operator-frontend-htmx-stack.md)
-for design rationale, and `CONTEXT.md` (operator_frontend,
-research_thread, thread_id, thread.json, single_active_run,
-phase_accordion, multi_turn_session_persistence, live_acks) for the
-domain language.
+The documented workflow runs from the repository root because configuration,
+critic personas, and research profiles live outside the Python package. A wheel
+is not a self-contained replacement for this checkout. Ensure `python3` selects
+Python 3.11 or newer before creating the environment; the operating system's
+default Python may be older.
 
 ```bash
-# install the optional frontend dependencies
-pip install -e ".[frontend]"
+# Debian/Ubuntu: install the host tools, then create an isolated Python environment.
+sudo apt-get update
+sudo apt-get install --yes git python3-venv bubblewrap ripgrep
 
-# start the local server (bound to 127.0.0.1 only)
+# Required for the full suite's actual LaTeX/PDF export tests, not ordinary UI use.
+sudo apt-get install --yes --no-install-recommends \
+  texlive-latex-base texlive-latex-recommended texlive-fonts-recommended poppler-utils
+
+git clone https://github.com/WQGGSEY/research_harness.git
+cd research_harness
+python3 -c 'import sys; assert sys.version_info >= (3, 11), "Select Python 3.11+"'
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e '.[test]'
+python -m pip check
+
+# Verify that this host permits the isolation primitives used by LocalRunner.
+bwrap --ro-bind / / --unshare-net --unshare-pid --proc /proc --dev /dev -- true
+```
+
+`.[test]` includes the frontend and Python validation dependencies, but cannot
+install system binaries such as `pdflatex`, `bibtex`, `pdfinfo`, and `pdftotext`.
+The venue-export tests also use TeX Live's `plain.bst` fixture on Debian/Ubuntu.
+For a smaller UI installation without the test dependencies, use `.[frontend]`
+instead. Model CLIs, CUDA/PyTorch, private datasets, and experiment-specific
+dependencies are not installed by either extra. If the namespace probe fails,
+use a compatible Linux host; do not remove sandboxing to make a check pass.
+
+## Credential-free validation
+
+From the repository root, with the virtual environment active:
+
+```bash
+python -B -m pytest -ra
+python -B -m research_harness.local_preflight
+```
+
+Use **pytest**, not `unittest discover`, for the full suite: the shared pytest
+configuration disables legacy Claude web-search subprocesses. CI does not
+install or authenticate Codex/Claude, supply provider keys, or acknowledge live
+model execution. Dependency installation still uses the network.
+
+For a legacy deterministic artifact demonstration, `python -m research_harness`
+uses the local runner. Its demo metrics are not research evidence. Read the
+[CI workflow](.github/workflows/ci.yml) for the exact validation scope; no fixed
+test count or scientific performance result is asserted here.
+
+## Configure resources before live work
+
+The distributed `settings.json` is deliberately portable:
+
+- Executable overrides are empty, so the runner uses the active `PATH`.
+- Advertised runner capabilities are `local_runner` and `cpu` only.
+- Registered local data adapters and MCP server environment overrides are empty.
+
+Register resources that actually exist on your machine before starting research.
+Use the settings UI or edit `settings.json` locally. Add CUDA, framework, data,
+and absolute executable settings only when they are available. Do not commit
+private paths, credentials, restricted data, or claims of unavailable resources.
+
+Existing operators should back up their old `settings.json` **outside the
+repository before upgrading**, then reapply only the required local resource
+settings. This change does not delete their datasets or environments.
+`settings.local.json` is frontend acknowledgement/state storage, **not** a
+complete runtime-configuration override file.
+
+Per-role models remain configurable under `runtime.agent_models`; supervisor
+model selection is under `runtime.llm_orchestrator.mcp`. Existing model defaults
+are retained, but account availability must be checked locally. An optional
+`experiment_plan_templates/` directory can hold operator-authored templates; no
+ready-to-use retrieval template is bundled in this checkout. The fallback demo
+is not a substitute for an experiment with real evidence.
+
+## Live operator workflow
+
+Live work requires a separately installed, authenticated Codex CLI and access
+to the configured models. It consumes the operator's quota. Installing this
+repository does not grant Codex access or any credits.
+
+```bash
+codex login status
 python -m research_harness.frontend --port 8765
-
-# open http://127.0.0.1:8765 in a browser
 ```
 
-What you get:
+Open `http://127.0.0.1:8765`, create a thread, complete grilling and connector,
+and start production from its panel. Review the resource settings and live-use
+acknowledgements before doing so. Keep the UI on localhost; it is not a
+multi-user or internet-facing service. See [MCP operations](docs/MCP_OPERATIONS.md)
+for supervisor operation and per-invocation MCP configuration.
 
-- **Sidebar** lists every `research_thread` under `runs/threads/<thread_id>/`.
-  Each row shows the current phase × status + outcome badge. Click `+ New`
-  to mint a `thread_<8hex>` and start a grilling session.
-- **Accordion** per new thread: Grilling / Connector / Production.
-  The current phase auto-expands; completed phases collapse with a one-line
-  summary. Each panel shows curated cards plus a raw-JSON `<details>` fallback.
-- **Live chat** (SSE) for grilling. The
-  agent's ASK arrives as a streamed message; replies POST back through the
-  in-process `input_provider`.
-- **Per-round persistence**: every grilling round is flushed to
-  `grilling_session.json` with status
-  `in_progress` immediately after the user reply is appended. On server
-  restart, in-flight threads are demoted to `awaiting_input` and gain a
-  Resume button.
-- **single_active_run lock**: at most one live phase executes at a time
-  (single-GPU constraint). A second launch attempt is refused, not queued.
-- **Settings panel**: grant `subscription_ack` once (persistent in
-  `settings.local.json`, gitignored). Toggle `full_auto_mode` to skip the
-  per-phase `execute_ack` modal — a persistent `● AUTO` badge in the top bar
-  makes the mode hard to forget.
-
-The frontend does not change harness CLI behavior. You can keep using
-`python -m research_harness.research_runner grill ...` from the terminal
-and the resulting `runs/grilling/...` artifacts are unaffected. Threads
-created through the UI live under `runs/threads/` and are completely
-separate from any legacy single-phase runs.
-
-## Run The Full Research Pipeline
+A CLI grilling session is also available:
 
 ```bash
-# 1. grilling — multi-turn live Codex interview
 RESEARCH_HARNESS_ALLOW_CODEX_LIVE=subscription_ack \
 RESEARCH_HARNESS_EXECUTE_CODEX_LIVE=live_smoke_ack \
 python -B -m research_harness.research_runner grill \
   --user-goal "your research goal" \
   --billing-ack --execute-ack \
-  --run-dir runs/grilling/<id>
-
-# Legacy only: refine iterates on the dormant research_refiner against an existing
-#    grilling session + market brief.
-python -B -m research_harness.research_runner refine \
-  --grilling-session runs/grilling/<id>/grilling_session.json \
-  --market-research-brief runs/research/<id>/market_research/market_research_brief.json \
-  --billing-ack --execute-ack
-
-# Legacy only: distill uses the dormant Claude lesson runtime.
-RESEARCH_HARNESS_ALLOW_CLAUDE_LIVE=subscription_ack \
-RESEARCH_HARNESS_EXECUTE_CLAUDE_LIVE=live_smoke_ack \
-python -B -m research_harness.research_runner distill --approve
+  --run-dir runs/grilling/example
 ```
 
-`grill` runs a bounded multi-turn loop against Codex (each round emits
-either `{"action":"ASK","question":...}` or `{"action":"DONE","extracted":...}`);
-the harness asks the user via stdin between turns. The session is force-extracted
-on max_rounds and persisted as schema-valid `grilling_session.json`.
+Do not set these acknowledgements in CI. Production can continue through retries
+and multiple model sessions; soft milestone counts are not spending caps.
+Monitor runs and stop the supervisor when necessary. No live model run is needed
+to perform the credential-free checks above.
 
-`distill` only triggers when total active-lesson bytes exceed
-`settings.memory.lessons.distillation_token_threshold_bytes`. It calls live
-sonnet, archives the existing `lessons.yaml` under
-`memory/lessons/archive/lessons_<utc>.yaml`, and only rewrites `lessons.yaml`
-after `--approve`.
+## Safety and limitations
 
-## Run The Production Pipeline
+LocalRunner restricts experiment writes and disables experiment networking, but
+its read-only host filesystem mount is **not a confidentiality boundary**. Run
+untrusted experiments in a disposable environment without sensitive readable
+files or credentials. The supervisor, acquisition tools, model CLI, and browser
+are separate trust boundaries. See [SECURITY.md](SECURITY.md).
 
-Production is driven by Codex JSONL sessions supervised by
-`research_harness.thread_supervisor`. Start the operator frontend, complete
-grilling and connector, then start the supervisor from the production panel.
-Each invocation receives the repository MCP configuration directly; no global
-MCP registration is required. See `docs/MCP_OPERATIONS.md`.
+A clean test run does not prove end-to-end research validity. Real-holdout data,
+baseline implementation quality, source rights, model behavior, long-running
+training, and manuscript readiness require separate verification. Historical
+records under `.audit/` and `docs/research/` must not be read as current successful
+runs or as a complete security audit.
 
-Production proceeds without human decision requests or approval forms. Baseline
-qualification and evaluation-protocol registration invoke an independent Sol low
-reviewer. It receives the implementation and execution evidence, persists its
-assessment, and returns required work to the research agent when it rejects a
-proposal. Approval applies to the reviewed evidence; changing the evidence
-requires another review. Protocol review cannot expand initialized resources or
-change a frozen goal. Historical operator feedback remains available as context,
-but unanswered legacy prompts do not pause the supervisor. Review failures do not
-count as approval, and publication still requires the research validation gates.
+## Documentation and contribution
 
-The question and success bar freeze before baseline qualification. A goal with
-`baseline_evidence: []` has pending baseline assignments; it can generate and
-materialize an actual research claim and acquire inputs. Source updates, baseline
-execution and independent qualification remain available. Approval attaches the
-reviewed baseline references to the existing nodes without changing the goal bar.
-Conclusive acceptance or rejection of a comparison and terminal verification reject
-pending or stale baseline reviews.
+- [Current pipeline](docs/PIPELINE.md), [architecture](docs/ARCHITECTURE.md),
+  [MCP operations](docs/MCP_OPERATIONS.md), and [domain vocabulary](CONTEXT.md).
+- [Contributing](CONTRIBUTING.md), [security reporting](SECURITY.md), and the
+  [public-release checklist](docs/PUBLIC_RELEASE.md).
+- [License](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md).
 
-A missing real holdout protocol returns `protocol_required` and routes the agent to
-`submit_feasibility_envelope`. This is autonomous design and independent review
-work, not an external blocker. A reviewed protocol must still be registered before
-the success bar freezes. The compiler accepts the independent review's
-`adversary_pass` registration, while rejecting a missing holdout or a transfer
-screen as a final evaluation protocol.
-
-Before baseline qualification, `develop_research_hypotheses` records the connector's
-existing ideas as unverified graph nodes. It then develops a null/confound explanation
-and two distinct mechanism hypotheses, critiques their evidence and distinguishing tests, and revises weak
-proposals. Each stage is a separate resumable Sol low invocation. The inputs retain
-the connector's perspective packets and source metadata, including missing abstracts;
-an analogy or paper title is not treated as established method evidence.
-
-Candidate proposals include competing explanations, source limitations, refuting
-outcomes, prerequisites, and a diagnostic budget of at most 120 seconds. Invalid
-responses are retained and returned as correction context on retry. Source identifiers
-are constrained to the actual evidence packet in the model's output schema. The selected
-candidate guides preparation through `get_research_state` and the supervisor prompt.
-The claim graph displays these candidates separately from execution-backed research
-nodes. A critique's `ready_for_test` means worth testing, not a supported claim.
-Scientific comparison and publication still require the qualified baseline and
-existing evidence gates.
-
-## Experiment Plan Templates (per-domain, directory-based)
-
-Real experiment code lives in user-owned template directories listed in
-`settings.json`:
-
-```json
-"experiment_plan_templates": {
-  "directories": ["experiment_plan_templates", "my_other_templates"]
-}
-```
-
-Each directory contains **one subdirectory per domain**, which is a real
-Python project — not a single file:
-
-```
-experiment_plan_templates/
-  retrieval/
-    plan.json                 # metadata only
-    src/                      # actual project tree, materialized verbatim
-      __init__.py
-      experiment.py           # entrypoint
-      data.py
-      proposed.py
-      baselines/
-        current_best.py
-        naive.py
-        random_baseline.py
-      eval/
-        ndcg.py
-```
-
-The router
-(`research_harness.orchestrator.experiment_plan.build_experiment_plan_for_node`)
-searches the configured directories in order, loads `<domain>/plan.json`,
-walks `<domain>/src/` and embeds every allowed source file into the
-materialized experiment plan, then validates against
-`experiment_plan.schema.json`. The whole `src/` tree is copied into the
-node workspace before the runner executes the entrypoint, so normal
-multi-module Python imports work.
-
-If no directory matches the node's domain, the router falls back to the
-deterministic demo plan and the publish dispatcher refuses to render
-artifacts (`evidence_is_fake` guard).
-
-See `experiment_plan_templates/README.md` for the full authoring contract.
-
-`production_run_summary.json` includes:
-
-```json
-"templates_used": {"n_xxx": "retrieval" | "_fallback_demo" | ...},
-"fallback_node_ids": ["n_yyy", ...],
-"evidence_is_fake": true | false
-```
-
-So you can immediately see whether the metrics you are reading came from
-your real evaluation script or from the demo fallback.
-
-### Grilling agent only emits registered domain names
-
-`research_runner grill` injects the list of available domains (gathered from
-your configured template directories) into the grilling system prompt as a
-required enum. The agent must pick exactly one of them — it cannot invent a
-new domain name. If the LLM ever returns an off-enum domain, the harness
-rejects the session with a clear error rather than silently falling back to
-fake evidence.
-
-### Market research writes a real analysis brief
-
-The market-research agent (used by the operator frontend during the
-"market" phase) runs:
-
-1. Searches arXiv (and optionally Google Scholar) for the grilled query.
-2. Downloads PDFs into `<run>/reference_papers/`.
-3. Writes a deterministic baseline-analysis markdown (or, with
-   `enable_sonnet_analysis=True` + billing/execution ack, an LLM-written
-   markdown brief) at `<run>/baseline_analysis.md`. The markdown identifies
-   the most likely current-best / naive / random baselines with reported
-   metrics and citations.
-4. The path is recorded on the root node under
-   `lineage.inherited_assumptions` so downstream orchestrator / template
-   code can find it.
-
-A starter template for the `retrieval` domain (toy nDCG@10 evaluation) is
-included as an example. See `experiment_plan_templates/README.md` for the
-full authoring contract.
-
-## Per-Agent Model Selection
-
-`settings.json` exposes per-role model selection for active Codex agents. The
-default is `gpt-5.6-sol`; override one role at a time:
-
-```json
-"runtime": {
-  "agent_models": {
-    "default": "gpt-5.6-sol",
-    "grilling_agent": "gpt-5.6-sol",
-    "domain_connector_agent": "gpt-5.6-sol"
-  }
-}
-```
-
-Resolution order is explicit role entry, then `default`, then
-`gpt-5.6-sol`. Dormant market, refiner, and lesson-distillation code reads
-`legacy_claude_agent_models` instead, so Codex model IDs do not leak into the
-legacy runtime.
-
-## Critic Personas
-
-`critics/` is organised by routing (`always/`, `by_node_type/<type>/`,
-`by_domain/<domain>/`, `by_stage/<stage>/`). Current personas:
-
-- `always/invariants_v1` — constitutional rule check.
-- `always/runtime_safety_v1` — runtime envelope and permission policy.
-- `always/senior_quant_researcher_v1` — quantitative rigor: variance,
-  significance, baseline parity. Flags within-noise improvements as
-  non-blocking objections.
-- `always/reproducibility_auditor_v1` — seed / snapshot / artifact
-  reproducibility. Flags missing JSON metrics.
-- `by_node_type/capability/capability_strict_v1` — capability claim depth.
-- `by_node_type/capability/experimental_methodologist_v1` — design controls
-  the variable the claim names.
-- `by_node_type/necessity/...`, `by_node_type/mechanism/...`,
-  `by_node_type/validity/...` — type-specific rigor.
-- `by_stage/rebuttal/whole_case_validity_v1`,
-  `by_stage/rebuttal/overclaim_detector_v1`,
-  `by_stage/rebuttal/publication_readiness_v1`,
-  `by_stage/rebuttal/claim_skeptic_v1` — rebuttal-stage challenges.
-
-Add a persona by dropping a markdown file in the right routing directory
-with `critic_profile_id` frontmatter.
-
-## Run The Demo
-
-```bash
-python -m research_harness
-```
-
-The demo writes:
-
-```text
-runs/demo_run/node.json
-runs/demo_run/experiment_plan.json
-runs/demo_run/nodes/n_demo_001/workspace/worker_task.json
-runs/demo_run/job_manifest.json
-runs/demo_run/nodes/n_demo_001/workspace/experiment.py
-runs/demo_run/nodes/n_demo_001/workspace/artifacts/metrics.json
-runs/demo_run/nodes/n_demo_001/workspace/runner_result.json
-runs/demo_run/worker_report.json
-runs/demo_run/critic_review_bundle.json
-runs/demo_run/orchestrator_reduction.json
-runs/demo_run/rebuttal_packet.md
-runs/demo_run/orchestrator_rebuttal.md
-runs/demo_run/rebuttal_critic_bundle.json
-runs/demo_run/ac_decision.json
-runs/demo_run/research_state_bundle.json
-runs/demo_run/interactive_summary.html
-```
-
-## Run Tests
-
-```bash
-python -B -m unittest discover -s tests -v
-```
-
-## Run Mock Tree Search
-
-```bash
-python -B -m unittest tests.test_tree_search -v
-```
-
-```bash
-python -B -m research_harness.orchestrator.tree_search
-```
-
-The staged tree-search loop currently accepts only dry-run/local backends. Each
-node first writes an orchestrator-owned `experiment_plan.json`, materializes
-declared workspace-local source files from that plan, derives `job_manifest.json`,
-writes `workspace/runner_result.json` and declared metrics files, then builds
-`worker_report.json` only from that runner evidence. The experiment plan declares
-which metric must beat current-best, naive, and random/null baselines. If a
-worker reports a supported result but the mandatory baseline comparison fails,
-the claim is downgraded to a non-promotable `negative_result`. Runner failures,
-missing metrics, or missing baseline evidence become non-promotable worker
-reports. Live Codex remains behind `research_harness.workers.live_gate`
-and is not called by tree search.
-
-## Run Pre-Live Local Preflight
-
-```bash
-python -B -m research_harness.local_preflight
-```
-
-This checks config/profile loading, node invariants, deterministic critic
-routing, dry-run Codex invocation envelope generation, worker-report schema
-validation, experiment-plan contract validation, deterministic runner
-manifest/result validation, baseline dossier validation, tree-search runner
-artifact validation, rebuttal/AC gating, and interactive HTML generation without
-calling Codex.
-
-## Build Manual Live Smoke Plan
-
-```bash
-python -B -m research_harness.workers.live_gate
-```
-
-This still does not call Codex. It writes a schema-valid manual smoke plan and
-runbook under `runs/manual_live_smoke/`, records the exact command, and records
-the expected JSONL and ingest paths. By default, the plan is blocked by the
-usage guard; live Codex requires an explicit
-`RESEARCH_HARNESS_ALLOW_CODEX_LIVE=subscription_ack` acknowledgement. The auth
-probe accepts ChatGPT login and stores only redacted status fields. Codex live
-output is constrained to `worker_task_result`; `codex_stdout_ingest` requires the matching
-`manual_live_smoke_plan.json` for live backend stdout and writes
-`worker_report.json` only after gate, schema, and scope validation.
-
-For a repeatable one-node smoke after reviewing the generated plan, use the
-explicit runner:
-
-```bash
-RESEARCH_HARNESS_ALLOW_CODEX_LIVE=subscription_ack \
-RESEARCH_HARNESS_EXECUTE_CODEX_LIVE=live_smoke_ack \
-python -B -m research_harness.workers.live_smoke_runner
-```
-
-The runner still keeps `execution_enabled: false` in the plan. It only runs the
-single smoke command after the second execution acknowledgement, captures
-stdout/stderr, ingests JSONL through the same live gate, and writes
-`live_smoke_run_summary.json` with the five Codex token counters.
-Internally the same runner path now supports a single arbitrary node through
-`run_live_node_once(...)`, but tree search still rejects `codex_live` so
-the live worker cannot expand into autonomous search execution.
-
-To dispatch the next queued `search_state` node without letting tree search call
-the live backend directly:
-
-```bash
-python -B -m research_harness.orchestrator.live_dispatch \
-  --search-state runs/<tree_run>/search_state.json
-```
-
-Add `--execute --billing-ack --execute-ack` only after reviewing the generated
-`live_node_dispatch.json` and live plan. The dispatch layer selects one queued
-ready node, preserves the search state unchanged, and records that tree-search
-mutation is forbidden.
-
-## Core Files
-
-```text
-settings.json                          Runtime, memory, publishing, publication-gate, distillation knobs.
-configs/harness.yaml                   Sakana-like search config plus harness_semantics.
-research_profile.md                    Positive research taste and branch-generation priors.
-lessons.yaml                           Active one-line lessons always included in orchestration.
-critics/                               Deterministic critic personas.
-memory/                                Failure, lesson, and baseline dossier indexes.
-research_harness/agents/grilling.py    Multi-turn Codex grilling agent.
-research_harness/agents/market_research.py  Agent-level paper search and dossier candidate generation.
-research_harness/memory/lesson_distillation.py  Periodic deterministic-trigger distillation.
-research_harness/orchestrator/         Tree search, reduction, live dispatch, root node generator.
-research_harness/mcp_server.py         MCP server used by Codex production sessions.
-research_harness/publishing/sakana_paper.py  Sakana-v2 ICML paper assembler (LLM-written sections).
-research_harness/research_runner.py    User-facing CLI (grill / refine / distill).
-```
-
-## Non-Overridable Invariants
-
-- Workers do not own search policy.
-- Workers write only node-local artifacts.
-- **Agents** (grilling, market research, distillation) are conceptually
-  elevated above workers: tools allowed and multi-turn allowed, but still
-  bounded by schema contracts, billing/execution gates, and (for memory-mutating
-  agents) an approval gate.
-- Critics are read-only and selected by deterministic governance.
-- Experiments require claim contracts.
-- Missing mandatory baselines make a claim not evaluable or confounded.
-- Codex ChatGPT login is a runtime preflight responsibility.
-- Long-running jobs belong to deterministic runners, not agent sessions.
-- Publication requires rebuttal and AC gating when enabled.
-- `lessons.yaml` and `memory/baseline_dossiers/` mutations require the
-  appropriate approval gate; the existing file is archived before being replaced.
+The design was inspired by
+[Sakana AI Scientist-v2](https://github.com/SakanaAI/AI-Scientist-v2).
+This is an independent project, not an official Sakana or OpenAI product.
+Original project code is offered under MIT; third-party assets retain their
+own terms, including the bundled htmx distribution.
