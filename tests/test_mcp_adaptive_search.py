@@ -727,6 +727,32 @@ def test_node_mutation_rejects_non_authoritative_legacy_node(
     assert not (tmp_path / "t_gate" / "production").exists()
 
 
+def test_template_design_rechecks_node_authority_under_writer_lock(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    authoritative = "n_before_lock"
+    monkeypatch.setattr(mcp, "_thread_dir", lambda tid: tmp_path / tid)
+    monkeypatch.setattr(mcp, "_authoritative_active_node_id", lambda _tid: authoritative)
+    checks = []
+
+    @contextmanager
+    def changed_authority(_tid):
+        nonlocal authoritative
+        checks.append("locked")
+        authoritative = "n_after_lock"
+        yield
+
+    monkeypatch.setattr(mcp, "_exclusive_adaptive_writer", changed_authority)
+    result = mcp.handle_design_experiment_template({
+        "thread_id": "t_gate", "node_id": "n_before_lock", "plan_metadata": {"source_files": []},
+    })
+
+    assert checks == ["locked"]
+    assert result["status"] == "rejected"
+    assert "not the authoritative blind node" in result["reason"]
+    assert not (tmp_path / "t_gate" / "production").exists()
+
+
 def test_readiness_records_authoritative_candidate_despite_legacy_pause(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

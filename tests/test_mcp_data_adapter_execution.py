@@ -117,14 +117,26 @@ def _setup(tmp_path, monkeypatch):
 
     def builder(*args, **kwargs):
         plan, used = original_builder(*args, **kwargs)
+        plan["observation_bindings"] = {
+            "eligible_count": {
+                "value_kind": "support_count",
+                "artifact_path": "artifacts/metrics.json",
+                "json_pointer": "/metrics/eligible_count",
+                "producer": "experiment.py counts loaded JSON fixture items",
+            }
+        }
         plan["source_files"][0]["content"] += (
             "\nimport os\nimport json\nfrom pathlib import Path\n"
             "_manifest_path = Path(os.environ['RESEARCH_HARNESS_INPUT_MANIFEST'])\n"
             "_manifest = json.loads(_manifest_path.read_text())\n"
             "_dataset_path = _manifest_path.parent / "
             "_manifest['primary_dataset']['relative_path']\n"
-            "(_dataset_path / 'index.json').read_text() "
-            "if _dataset_path.is_dir() else _dataset_path.read_text()\n"
+            "_payload = json.loads((_dataset_path / 'index.json').read_text() "
+            "if _dataset_path.is_dir() else _dataset_path.read_text())\n"
+            "_metrics_path = Path('artifacts/metrics.json')\n"
+            "_metrics = json.loads(_metrics_path.read_text())\n"
+            "_metrics['metrics']['eligible_count'] = len(_payload)\n"
+            "_metrics_path.write_text(json.dumps(_metrics))\n"
         )
         return plan, used
 
@@ -146,7 +158,7 @@ def test_execute_binds_before_running_and_propagates_identity(tmp_path, monkeypa
         {"thread_id": "thread_bound", "node_id": node["id"]}
     )
 
-    assert result["status"] == "ok"
+    assert result["status"] == "ok", result
     node_dir = thread_dir / "production" / "tree" / "nodes" / node["id"]
     plan = json.loads((node_dir / "experiment_plan.json").read_text())
     job = json.loads((node_dir / "job_manifest.json").read_text())
@@ -156,6 +168,11 @@ def test_execute_binds_before_running_and_propagates_identity(tmp_path, monkeypa
     assert plan["inputs"]["snapshot_id"] == snapshot["snapshot_id"]
     assert runner["input_evidence"]["snapshot_id"] == snapshot["snapshot_id"]
     assert worker["input_evidence"] == runner["input_evidence"]
+    from research_harness.orchestrator.research_control import current_work
+
+    support = current_work(thread_dir)["outcome"]["measurement_support"]
+    assert support["counts"]["eligible_count"] == 1
+    assert support["evaluable"] is True
 
 
 def test_execute_binds_verified_acquisition_manifest(tmp_path, monkeypatch):
@@ -218,7 +235,7 @@ def test_execute_binds_verified_acquisition_manifest(tmp_path, monkeypatch):
         {"thread_id": "thread_bound", "node_id": node["id"]}
     )
 
-    assert result["status"] == "ok"
+    assert result["status"] == "ok", result
     node_dir = thread_dir / "production" / "tree" / "nodes" / node["id"]
     job = json.loads((node_dir / "job_manifest.json").read_text())
     runner = json.loads((node_dir / "workspace" / "runner_result.json").read_text())
@@ -365,3 +382,34 @@ def test_invalid_baseline_evidence_contract_requeues_node(tmp_path, monkeypatch)
     state = json.loads(state_path.read_text())
     persisted = next(item for item in state["nodes"] if item["id"] == node["id"])
     assert persisted["status"] == "completed_worker_report"
+
+
+def test_execute_requires_declared_observations_before_review_or_execution(tmp_path, monkeypatch):
+    from research_harness.orchestrator import research_review
+    from research_harness.runner.local_runner import LocalRunner
+
+    thread_dir, state_path, _, _, node = _setup(tmp_path, monkeypatch)
+    original_builder = plans.build_experiment_plan_for_node
+
+    def missing_bindings(*args, **kwargs):
+        plan, used = original_builder(*args, **kwargs)
+        plan.pop("observation_bindings")
+        return plan, used
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Invalid observation contract reached review or execution")
+
+    monkeypatch.setattr(plans, "build_experiment_plan_for_node", missing_bindings)
+    monkeypatch.setattr(research_review, "review_research_packet", forbidden)
+    monkeypatch.setattr(LocalRunner, "execute", forbidden)
+    result = mcp.handle_execute_node_experiment(
+        {"thread_id": "thread_bound", "node_id": node["id"]}
+    )
+
+    assert result["status"] == "work_required"
+    assert "required_observations" in result["reason"]
+    state = json.loads(state_path.read_text())
+    assert next(item for item in state["nodes"] if item["id"] == node["id"])["status"] == "ready"
+    node_dir = thread_dir / "production/tree/nodes" / node["id"]
+    assert not (node_dir / "workspace/runner_result.json").exists()
+    assert not (node_dir / "worker_report.json").exists()
