@@ -6,25 +6,194 @@ on:
     paths: [.github/workflows/oss-diagnostics.yml]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  snapshot:
-    if: github.repository == 'WQGGSEY/research_harness'
+  apply-reviewed-fix:
+    if: github.repository == 'WQGGSEY/research_harness' && github.event.before == '720fa5cfe8ca5fd1aa6b3aea601eb86fa388ee74'
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Snapshot tracked history for offline regression diagnosis
+          ref: ${{ github.sha }}
+      - name: Apply exact reviewed regression patch
         run: |
-          git bundle create "$RUNNER_TEMP/research-harness.bundle" --all
-          git bundle verify "$RUNNER_TEMP/research-harness.bundle"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: oss-debug-snapshot
-          path: ${{ runner.temp }}/research-harness.bundle
-          retention-days: 1
-          if-no-files-found: error
+          cat > "$RUNNER_TEMP/ci-fixes.patch" <<'PATCH'
+          diff --git a/research_harness/mcp_server.py b/research_harness/mcp_server.py
+          index e932bc4..81fbfbe 100644
+          --- a/research_harness/mcp_server.py
+          +++ b/research_harness/mcp_server.py
+          @@ -3312,14 +3312,20 @@ def _preflight_checkpoint_reply(tid: str) -> dict[str, Any] | None:
+           
+           
+           def handle_design_experiment_template(args: dict[str, Any]) -> dict[str, Any]:
+          -    with _exclusive_adaptive_writer(args['thread_id']):
+          -        try:
+          +    try:
+          +        # Reject unrelated nodes before the lock creates production state.
+          +        # The locked handler rechecks authority in case it changed meanwhile.
+          +        if not args.get('work_id') and args.get('node_id'):
+          +            rejected = _require_authoritative_node(args['thread_id'], args['node_id'])
+          +            if rejected is not None:
+          +                return rejected
+          +        with _exclusive_adaptive_writer(args['thread_id']):
+                       checkpoint = _preflight_checkpoint_reply(args['thread_id'])
+                       if checkpoint is not None:
+                           return checkpoint
+                       return _handle_design_experiment_template_locked(args)
+          -        except (OSError, ValueError) as exc:
+          -            return {'status': 'rejected', 'reason': str(exc)}
+          +    except (OSError, ValueError) as exc:
+          +        return {'status': 'rejected', 'reason': str(exc)}
+           
+           
+           def _handle_design_experiment_template_locked(args: dict[str, Any]) -> dict[str, Any]:
+          diff --git a/tests/test_mcp_adaptive_search.py b/tests/test_mcp_adaptive_search.py
+          index d8a53dd..fc42463 100644
+          --- a/tests/test_mcp_adaptive_search.py
+          +++ b/tests/test_mcp_adaptive_search.py
+          @@ -727,6 +727,32 @@ def test_node_mutation_rejects_non_authoritative_legacy_node(
+               assert not (tmp_path / "t_gate" / "production").exists()
+           
+           
+          +def test_template_design_rechecks_node_authority_under_writer_lock(tmp_path, monkeypatch):
+          +    from contextlib import contextmanager
+          +
+          +    authoritative = "n_before_lock"
+          +    monkeypatch.setattr(mcp, "_thread_dir", lambda tid: tmp_path / tid)
+          +    monkeypatch.setattr(mcp, "_authoritative_active_node_id", lambda _tid: authoritative)
+          +    checks = []
+          +
+          +    @contextmanager
+          +    def changed_authority(_tid):
+          +        nonlocal authoritative
+          +        checks.append("locked")
+          +        authoritative = "n_after_lock"
+          +        yield
+          +
+          +    monkeypatch.setattr(mcp, "_exclusive_adaptive_writer", changed_authority)
+          +    result = mcp.handle_design_experiment_template({
+          +        "thread_id": "t_gate", "node_id": "n_before_lock", "plan_metadata": {"source_files": []},
+          +    })
+          +
+          +    assert checks == ["locked"]
+          +    assert result["status"] == "rejected"
+          +    assert "not the authoritative blind node" in result["reason"]
+          +    assert not (tmp_path / "t_gate" / "production").exists()
+          +
+          +
+           def test_readiness_records_authoritative_candidate_despite_legacy_pause(
+               tmp_path: Path,
+               monkeypatch: pytest.MonkeyPatch,
+          diff --git a/tests/test_mcp_data_adapter_execution.py b/tests/test_mcp_data_adapter_execution.py
+          index 0f89d2e..92cd7bf 100644
+          --- a/tests/test_mcp_data_adapter_execution.py
+          +++ b/tests/test_mcp_data_adapter_execution.py
+          @@ -117,14 +117,26 @@ def _setup(tmp_path, monkeypatch):
+           
+               def builder(*args, **kwargs):
+                   plan, used = original_builder(*args, **kwargs)
+          +        plan["observation_bindings"] = {
+          +            "eligible_count": {
+          +                "value_kind": "support_count",
+          +                "artifact_path": "artifacts/metrics.json",
+          +                "json_pointer": "/metrics/eligible_count",
+          +                "producer": "experiment.py counts loaded JSON fixture items",
+          +            }
+          +        }
+                   plan["source_files"][0]["content"] += (
+                       "\nimport os\nimport json\nfrom pathlib import Path\n"
+                       "_manifest_path = Path(os.environ['RESEARCH_HARNESS_INPUT_MANIFEST'])\n"
+                       "_manifest = json.loads(_manifest_path.read_text())\n"
+                       "_dataset_path = _manifest_path.parent / "
+                       "_manifest['primary_dataset']['relative_path']\n"
+          -            "(_dataset_path / 'index.json').read_text() "
+          -            "if _dataset_path.is_dir() else _dataset_path.read_text()\n"
+          +            "_payload = json.loads((_dataset_path / 'index.json').read_text() "
+          +            "if _dataset_path.is_dir() else _dataset_path.read_text())\n"
+          +            "_metrics_path = Path('artifacts/metrics.json')\n"
+          +            "_metrics = json.loads(_metrics_path.read_text())\n"
+          +            "_metrics['metrics']['eligible_count'] = len(_payload)\n"
+          +            "_metrics_path.write_text(json.dumps(_metrics))\n"
+                   )
+                   return plan, used
+           
+          @@ -146,7 +158,7 @@ def test_execute_binds_before_running_and_propagates_identity(tmp_path, monkeypa
+                   {"thread_id": "thread_bound", "node_id": node["id"]}
+               )
+           
+          -    assert result["status"] == "ok"
+          +    assert result["status"] == "ok", result
+               node_dir = thread_dir / "production" / "tree" / "nodes" / node["id"]
+               plan = json.loads((node_dir / "experiment_plan.json").read_text())
+               job = json.loads((node_dir / "job_manifest.json").read_text())
+          @@ -156,6 +168,11 @@ def test_execute_binds_before_running_and_propagates_identity(tmp_path, monkeypa
+               assert plan["inputs"]["snapshot_id"] == snapshot["snapshot_id"]
+               assert runner["input_evidence"]["snapshot_id"] == snapshot["snapshot_id"]
+               assert worker["input_evidence"] == runner["input_evidence"]
+          +    from research_harness.orchestrator.research_control import current_work
+          +
+          +    support = current_work(thread_dir)["outcome"]["measurement_support"]
+          +    assert support["counts"]["eligible_count"] == 1
+          +    assert support["evaluable"] is True
+           
+           
+           def test_execute_binds_verified_acquisition_manifest(tmp_path, monkeypatch):
+          @@ -218,7 +235,7 @@ def test_execute_binds_verified_acquisition_manifest(tmp_path, monkeypatch):
+                   {"thread_id": "thread_bound", "node_id": node["id"]}
+               )
+           
+          -    assert result["status"] == "ok"
+          +    assert result["status"] == "ok", result
+               node_dir = thread_dir / "production" / "tree" / "nodes" / node["id"]
+               job = json.loads((node_dir / "job_manifest.json").read_text())
+               runner = json.loads((node_dir / "workspace" / "runner_result.json").read_text())
+          @@ -365,3 +382,34 @@ def test_invalid_baseline_evidence_contract_requeues_node(tmp_path, monkeypatch)
+               state = json.loads(state_path.read_text())
+               persisted = next(item for item in state["nodes"] if item["id"] == node["id"])
+               assert persisted["status"] == "completed_worker_report"
+          +
+          +
+          +def test_execute_requires_declared_observations_before_review_or_execution(tmp_path, monkeypatch):
+          +    from research_harness.orchestrator import research_review
+          +    from research_harness.runner.local_runner import LocalRunner
+          +
+          +    thread_dir, state_path, _, _, node = _setup(tmp_path, monkeypatch)
+          +    original_builder = plans.build_experiment_plan_for_node
+          +
+          +    def missing_bindings(*args, **kwargs):
+          +        plan, used = original_builder(*args, **kwargs)
+          +        plan.pop("observation_bindings")
+          +        return plan, used
+          +
+          +    def forbidden(*args, **kwargs):
+          +        raise AssertionError("Invalid observation contract reached review or execution")
+          +
+          +    monkeypatch.setattr(plans, "build_experiment_plan_for_node", missing_bindings)
+          +    monkeypatch.setattr(research_review, "review_research_packet", forbidden)
+          +    monkeypatch.setattr(LocalRunner, "execute", forbidden)
+          +    result = mcp.handle_execute_node_experiment(
+          +        {"thread_id": "thread_bound", "node_id": node["id"]}
+          +    )
+          +
+          +    assert result["status"] == "work_required"
+          +    assert "required_observations" in result["reason"]
+          +    state = json.loads(state_path.read_text())
+          +    assert next(item for item in state["nodes"] if item["id"] == node["id"])["status"] == "ready"
+          +    node_dir = thread_dir / "production/tree/nodes" / node["id"]
+          +    assert not (node_dir / "workspace/runner_result.json").exists()
+          +    assert not (node_dir / "worker_report.json").exists()
+          PATCH
+          git apply --check "$RUNNER_TEMP/ci-fixes.patch"
+          git apply "$RUNNER_TEMP/ci-fixes.patch"
+          test "$(git hash-object research_harness/mcp_server.py)" = 81fbfbe282b96f46b25f475e1c2d34dead4b8f95
+          test "$(git hash-object tests/test_mcp_adaptive_search.py)" = fc424639e1e70e16620f0d78f5e6eaa76b620195
+          test "$(git hash-object tests/test_mcp_data_adapter_execution.py)" = 92cd7bfd4644dd37d842b7a443baf1d58eb1162f
+          git diff --check
+          python -m compileall -q research_harness/mcp_server.py tests/test_mcp_adaptive_search.py tests/test_mcp_data_adapter_execution.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add research_harness/mcp_server.py tests/test_mcp_adaptive_search.py tests/test_mcp_data_adapter_execution.py
+          git commit -m 'fix: 비권한 요청 부수 효과와 관측 바인딩 fixture 수정'
+          git push origin HEAD:refs/heads/codex/oss-release-readiness
