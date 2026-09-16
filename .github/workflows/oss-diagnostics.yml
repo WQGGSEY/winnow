@@ -1,0 +1,30 @@
+name: OSS diagnostics
+
+on:
+  push:
+    branches: [codex/oss-release-readiness]
+    paths: [.github/workflows/oss-diagnostics.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    if: github.repository == 'WQGGSEY/research_harness'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Snapshot tracked history for offline regression diagnosis
+        run: |
+          git bundle create "$RUNNER_TEMP/research-harness.bundle" --all
+          git bundle verify "$RUNNER_TEMP/research-harness.bundle"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: oss-debug-snapshot
+          path: ${{ runner.temp }}/research-harness.bundle
+          retention-days: 1
+          if-no-files-found: error
