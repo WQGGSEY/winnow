@@ -52,15 +52,22 @@ namespaces, not just an installed `bwrap` binary.
 
 The documented workflow runs from the repository root because configuration,
 critic personas, and research profiles live outside the Python package. A wheel
-is not a self-contained replacement for this checkout.
+is not a self-contained replacement for this checkout. Ensure `python3` selects
+Python 3.11 or newer before creating the environment; the operating system's
+default Python may be older.
 
 ```bash
 # Debian/Ubuntu: install the host tools, then create an isolated Python environment.
 sudo apt-get update
 sudo apt-get install --yes git python3-venv bubblewrap ripgrep
 
+# Required for the full suite's actual LaTeX/PDF export tests, not ordinary UI use.
+sudo apt-get install --yes --no-install-recommends \
+  texlive-latex-base texlive-latex-recommended texlive-fonts-recommended poppler-utils
+
 git clone https://github.com/WQGGSEY/research_harness.git
 cd research_harness
+python3 -c 'import sys; assert sys.version_info >= (3, 11), "Select Python 3.11+"'
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade pip
@@ -71,11 +78,13 @@ python -m pip check
 bwrap --ro-bind / / --unshare-net --unshare-pid --proc /proc --dev /dev -- true
 ```
 
-`.[test]` includes the frontend and validation dependencies. For a smaller UI
-installation without the test dependencies, use `.[frontend]` instead. Model
-CLIs, CUDA/PyTorch, private datasets, and experiment-specific dependencies are
-not installed by either extra. If the namespace probe fails, use a compatible
-Linux host; do not remove sandboxing to make a check pass.
+`.[test]` includes the frontend and Python validation dependencies, but cannot
+install system binaries such as `pdflatex`, `bibtex`, `pdfinfo`, and `pdftotext`.
+The venue-export tests also use TeX Live's `plain.bst` fixture on Debian/Ubuntu.
+For a smaller UI installation without the test dependencies, use `.[frontend]`
+instead. Model CLIs, CUDA/PyTorch, private datasets, and experiment-specific
+dependencies are not installed by either extra. If the namespace probe fails,
+use a compatible Linux host; do not remove sandboxing to make a check pass.
 
 ## Credential-free validation
 
